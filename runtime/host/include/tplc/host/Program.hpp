@@ -93,6 +93,10 @@ public:
     /* call after restoring retain bytes into the blob, before start() */
     void setRetainRestored() { ctx_.ctx_flags |= TPLC_CTXF_RETAIN_RESTORED; }
 
+    /* online change: retarget mod_ after the bound Module moved to
+       its final (heap) address — create() captured a temporary home */
+    void rebindModule(const Module& m) { mod_ = &m; }
+
     /* Migration (doc 08): snapshot old blob, allocate new program via
        create(), then migrateFrom(). Runs module tplc_migrate. */
     int32_t migrateFrom(const Program& old_prog,

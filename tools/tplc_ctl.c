@@ -249,6 +249,28 @@ int main(int argc, char** argv) {
         if (!arg) { fprintf(stderr, "deploy <file.tplc>\n"); return 2; }
         return do_deploy(sock, arg);
     }
+    else if (!strcmp(cmd, "layout"))   op = TPLC_OP_PROG_LAYOUT;
+    else if (!strcmp(cmd, "rollback")) op = TPLC_OP_PROG_ROLLBACK;
+    else if (!strcmp(cmd, "swap")) {
+        op = TPLC_OP_PROG_SWAP;
+        if (!arg) { fprintf(stderr, "swap <path|uuid>\n"); return 2; }
+        size_t al = strlen(arg);
+        uint8_t u[16];
+        if (al == 32) {
+            int ok = 1;
+            for (int i = 0; i < 16 && ok; i++) {
+                int v; char t[3] = {arg[i*2], arg[i*2+1], 0};
+                if (sscanf(t, "%02x", &v) != 1) ok = 0; else u[i]=(uint8_t)v;
+            }
+            if (!ok) { fprintf(stderr, "bad uuid\n"); return 2; }
+            memcpy(pre, u, 16); pre_len = 16;
+        } else {
+            uint16_t pl = (uint16_t)al;
+            memcpy(pre, &pl, 2);
+            memcpy(pre + 2, arg, al);
+            pre_len = 2 + pl;
+        }
+    }
     else { fprintf(stderr, "unknown cmd %s\n", cmd); return 2; }
 
     int fd = ctl_connect(sock, 3000);
@@ -276,6 +298,33 @@ int main(int argc, char** argv) {
                (unsigned long)rs->master_hb_ns);
         printf("plc_st     %u  hb %lu\n", rs->plc_status,
                (unsigned long)rs->plc_hb_ns);
+    }
+    else if (op == TPLC_OP_PROG_LAYOUT) {
+        printf("uuid  ");
+        for (int i = 0; i < 16; i++) printf("%02x", pl[i]);
+        printf("\nlayout_hash  ");
+        for (int i = 0; i < 32; i++) printf("%02x", pl[16 + i]);
+        printf("\nlayd  %u B%s\n", len - 48,
+               len > 48 ? "" : " (none stored)");
+        if (arg && len > 48) {
+            FILE* f = fopen(arg, "wb");
+            if (f) { fwrite(pl + 48, 1, len - 48, f); fclose(f);
+                     printf("wrote %s\n", arg); }
+        }
+    }
+    else if (op == TPLC_OP_PROG_SWAP) {
+        if (len == 64) {          /* SWAP_RACE reply: live|pkg hashes */
+            printf("swap refused: SWAP_RACE\n  live    ");
+            for (int i = 0; i < 32; i++) printf("%02x", pl[i]);
+            printf("\n  pkg-pre ");
+            for (int i = 0; i < 32; i++) printf("%02x", pl[32 + i]);
+            printf("\n");
+        } else {
+            uint32_t st_, fe_;
+            memcpy(&st_, pl, 4); memcpy(&fe_, pl + 4, 4);
+            printf("swap: out_status=%u out_first_error=%u\n",
+                   st_, fe_);
+        }
     }
     else if (op == TPLC_OP_IMAGE_STATS) {
         const TplcCtlImageStats* is = (const TplcCtlImageStats*)pl;

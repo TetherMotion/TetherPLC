@@ -51,6 +51,9 @@ enum TplcCtlOp {
     TPLC_OP_PROG_UNLOAD    = 0x0306,  /* P2 */
     TPLC_OP_PROG_STATUS    = 0x0307,  /* P0 */
     TPLC_OP_PROG_LIST      = 0x0308,  /* P0 */
+    TPLC_OP_PROG_LAYOUT    = 0x0309,  /* P3 → {uuid,layout_hash,layd}  */
+    TPLC_OP_PROG_SWAP      = 0x030A,  /* P3 {pkg uuid|path}            */
+    TPLC_OP_PROG_ROLLBACK  = 0x030B,  /* P3 */
     /* task 0x0400 */
     TPLC_OP_TASK_STATS     = 0x0401,  /* P0 */
     /* debug 0x0500 — P6 */

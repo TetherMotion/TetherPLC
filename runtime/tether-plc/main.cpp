@@ -279,6 +279,8 @@ int main(int argc, char** argv) {
     std::string retain_dir, runbook_dir, instance_name, packages_dir;
     uint64_t retain_flush_ms = 1000;
     uint64_t wcet_hard_ns = 0;
+    int      quarantine_cycles = 10;
+    bool     auto_rollback = false;
     uint64_t hang_timeout_ms = 2000;
     uint8_t  fault_policy = 0;
     uint32_t restart_max = 3;
@@ -317,6 +319,9 @@ int main(int argc, char** argv) {
         else if (a == "--runbook") runbook_dir = next();
         else if (a == "--instance") instance_name = next();
         else if (a == "--packages") packages_dir = next();
+        else if (a == "--quarantine-cycles")
+            quarantine_cycles = atoi(next().c_str());
+        else if (a == "--auto-rollback") auto_rollback = true;
         else if (a == "--sim") ctx_flags |= TPLC_CTXF_SIM;
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -397,10 +402,22 @@ int main(int argc, char** argv) {
     pcfg.restart_max = restart_max;
 
     std::deque<uint64_t> fault_restarts;
-    std::optional<tplc::Module>      mod;
+    /* heap Module: Program::mod_ binds its address — unique_ptr keeps
+       the object stable across quar/mod ownership moves (doc 08)   */
+    std::unique_ptr<tplc::Module>    mod;
     std::optional<tplc::Program>     prog;
     std::optional<tplc::RetainStore> retain;
     TplcProgramDescriptor            d{};
+    std::vector<uint8_t>             pkg_layd;   /* for OP_PROG_LAYOUT */
+    /* online-change quarantine (doc 08 §7): the swapped-out program
+       + module stay live for quarantine_cycles scans so rollback is
+       a pointer swap back to untouched pre-swap state              */
+    struct Quarantine {
+        std::unique_ptr<tplc::Module> mod;
+        std::optional<tplc::Program> prog;
+        std::vector<uint8_t>         layd;
+        int                          cycles_left = 0;
+    } quar;
 
     auto unload_program = [&] {
         /* monitor thread skips non-RUNNING states, so clearing state
@@ -409,6 +426,8 @@ int main(int argc, char** argv) {
         if (prog) { sched.removeProgram(*prog); prog.reset(); }
         mod.reset();
         if (retain) retain->close();
+        quar = Quarantine{};
+        pkg_layd.clear();
         d = TplcProgramDescriptor{};
         prog_started = false;
     };
@@ -417,7 +436,7 @@ int main(int argc, char** argv) {
         unload_program();
         auto mres = tplc::Module::open(mpath, /*host_caps*/ 0);
         if (!mres.ok()) return mres.st;
-        mod.emplace(std::move(mres.value));
+        mod = std::make_unique<tplc::Module>(std::move(mres.value));
         const TplcProgramDescriptor& nd = mod->descriptor();
         if (nd.image_in_bytes > tplc_image_in_size(&img) ||
             nd.image_out_bytes > tplc_image_out_size(&img))
@@ -447,6 +466,41 @@ int main(int argc, char** argv) {
         last_fault = 0;
         fault_restarts.clear();
         return tplc::Status::Ok();
+    };
+
+    /* rollback (doc 08 §7): quarantined pre-swap program+module swap
+       back in — its blob is untouched since the snapshot, so the
+       restore is a pure pointer swap (retain file is re-opened under
+       the old identity but not re-loaded: the blob already holds it) */
+    auto do_rollback = [&]() -> bool {
+        if (!quar.prog) return false;
+        /* same storage-address rule as commit: the scheduler keeps
+           Program* — move objects between homes explicitly, then
+           register the final address (heap Modules never move)     */
+        sched.removeProgram(*prog);
+        tplc::Program oldp = std::move(*quar.prog);
+        quar.prog.reset();
+        tplc::Program newp = std::move(*prog);
+        prog.reset();
+        quar.prog.emplace(std::move(newp));
+        prog.emplace(std::move(oldp));
+        std::swap(mod, quar.mod);
+        std::swap(pkg_layd, quar.layd);
+        sched.addProgram(*prog);
+        d = mod->descriptor();
+        if (retain) {
+            retain->close();
+            if (!retain_dir.empty()) {
+                uint64_t lh;
+                memcpy(&lh, d.layout_hash, 8);
+                retain->open(retain_dir, d.program_uuid, lh,
+                             prog->retainSize());
+            }
+        }
+        quar = Quarantine{};
+        prog_state = PS_RUNNING;
+        prog_started = true;
+        return true;
     };
 
     tplc::Status lst = load_program(module_path);
@@ -487,6 +541,20 @@ int main(int argc, char** argv) {
         last_fault = frc;
         tplc_image_set_fault(&img, (uint64_t)-frc);
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
+        /* doc 08 §7: a fault inside the quarantine window restores
+           the prior program — alarm loud, never silently healthy   */
+        if (auto_rollback && quar.prog) {
+            fprintf(stderr,
+                    "tether-plc: new program faulted rc=%d within "
+                    "quarantine — auto-rollback\n", frc);
+            do_rollback();
+            tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
+            runbook_write(runbook_dir, instance_name,
+                          package_path.empty() ? module_path.c_str()
+                                               : package_path.c_str(),
+                          d.program_uuid, "error");
+            return;
+        }
         if (ctl_enabled)
             ctl.event(TPLC_EV_FAULT, 1u << (TPLC_EV_FAULT & 0xFF),
                   &frc, sizeof frc);
@@ -762,6 +830,214 @@ int main(int argc, char** argv) {
         TplcCtlProgStateChange sc{PS_EMPTY, PS_STOPPED, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
     });
+
+    /* ---------------- online change (doc 08) ----------------------
+       PROG_LAYOUT: live layout query for `tplcc --change-against`.
+       PROG_SWAP: migrate-and-swap of the running program against a
+       staged package — snapshot → tplc_migrate → pointer commit →
+       quarantine. PROG_ROLLBACK: restore inside the window.       */
+    ctl.on(TPLC_OP_PROG_LAYOUT, [&](int fd, uint16_t t,
+                                    const uint8_t*, uint32_t,
+                                    uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        std::vector<uint8_t> out(48 + pkg_layd.size());
+        memcpy(out.data(), d.program_uuid, 16);
+        memcpy(out.data() + 16, d.layout_hash, 32);
+        if (!pkg_layd.empty())
+            memcpy(out.data() + 48, pkg_layd.data(), pkg_layd.size());
+        ctl.reply(fd, t, out.data(), (uint32_t)out.size(), req);
+    });
+
+    ctl.on(TPLC_OP_PROG_ROLLBACK, [&](int fd, uint16_t t,
+                                      const uint8_t*, uint32_t,
+                                      uint64_t req) {
+        if (!quar.prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no quarantined program", req);
+            return;
+        }
+        do_rollback();
+        fprintf(stderr, "tether-plc: rollback restored prior program\n");
+        ctl.replyEmpty(fd, t, req);
+    });
+
+    ctl.on(TPLC_OP_PROG_SWAP, [&](int fd, uint16_t t,
+                                  const uint8_t* payload,
+                                  uint32_t len, uint64_t req) {
+        if (prog_state != PS_RUNNING || !prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "program not running", req);
+            return;
+        }
+        /* resolve the staged package — 16B uuid or {len,path} */
+        std::string path;
+        if (len == 16) {
+            char hex[33]; uuid_hex(payload, hex);
+            path = packages_dir + "/" + hex + ".tplc";
+        } else if (len >= 2) {
+            uint16_t plen;
+            memcpy(&plen, payload, 2);
+            if ((uint32_t)plen + 2 > len) {
+                ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                               "bad path", req);
+                return;
+            }
+            path.assign((const char*)payload + 2, plen);
+        } else {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "uuid or path", req);
+            return;
+        }
+        auto pres = tplc::Package::open(path);
+        if (!pres.ok()) {
+            ctl.errorReply(fd, t, pres.st.code, pres.st.msg.c_str(),
+                           req);
+            return;
+        }
+        tplc::Package pk = std::move(pres.value);
+        tplc::PkgSection obj{}, migd{}, layd{};
+        if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
+            ctl.errorReply(fd, t, TPLC_E_PKG_TOC, "no target_obj",
+                           req);
+            return;
+        }
+        bool has_migd = pk.section(TPLC_SEC_MIGRATE_DESC, migd);
+        pk.section(TPLC_SEC_LAYOUT_DESC, layd);
+        char tp[] = "/tmp/tplc_swap_XXXXXX";
+        int tfd = mkstemp(tp);
+        if (tfd < 0 ||
+            write(tfd, obj.data, obj.size) != (ssize_t)obj.size) {
+            if (tfd >= 0) close(tfd);
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_DLOPEN,
+                           "extract failed", req);
+            return;
+        }
+        close(tfd);
+        auto mres = tplc::Module::open(tp, /*host_caps*/ 0);
+        if (!mres.ok()) {
+            ctl.errorReply(fd, t, mres.st.code, mres.st.msg.c_str(),
+                           req);
+            return;
+        }
+        tplc::Module nmod = std::move(mres.value);
+        const TplcProgramDescriptor& nd = nmod.descriptor();
+        if (nd.image_in_bytes > tplc_image_in_size(&img) ||
+            nd.image_out_bytes > tplc_image_out_size(&img)) {
+            ctl.errorReply(fd, t, TPLC_E_IMG_TOO_SMALL,
+                           "image too small", req);
+            return;
+        }
+        bool same_layout =
+            memcmp(nd.layout_hash, d.layout_hash, 32) == 0;
+        if (!same_layout) {
+            if (!nmod.hasMigrate() || !has_migd) {
+                ctl.errorReply(fd, t, TPLC_E_MIGRATE_LAYOUT,
+                               "no migrate path in package", req);
+                return;
+            }
+            /* §8.2 race gate: migd predecessor hash vs live layout */
+            if (migd.size < 32 ||
+                memcmp(migd.data, d.layout_hash, 32) != 0) {
+                uint8_t rep[64] = {};
+                memcpy(rep, d.layout_hash, 32);
+                if (migd.size >= 32)
+                    memcpy(rep + 32, migd.data, 32);
+                ctl.reply(fd, t, rep, sizeof rep, req); /* both hashes */
+                fprintf(stderr,
+                        "tether-plc: swap refused — SWAP_RACE "
+                        "(compiled against stale layout)\n");
+                return;
+            }
+        }
+        auto nres = tplc::Program::create(nmod, pcfg);
+        if (!nres.ok()) {
+            ctl.errorReply(fd, t, nres.st.code, nres.st.msg.c_str(),
+                           req);
+            return;
+        }
+        tplc::Program nprog = std::move(nres.value);
+        tplc::Status ist = nprog.start();      /* tplc_init: defaults */
+        if (!ist.ok()) {
+            ctl.errorReply(fd, t, ist.code, ist.msg.c_str(), req);
+            return;
+        }
+        /* the pause: blob snapshot — everything else runs off-cycle
+           relative to the old program which simply is not ticked
+           while ctl is being serviced                              */
+        std::vector<uint8_t> snap = prog->snapshotBlob();
+        TplcMigrateCtx mo{};
+        memset(&mo, 0, sizeof mo);
+        if (same_layout) {
+            if (nprog.blobSize() == snap.size())
+                memcpy(nprog.blob(), snap.data(), snap.size());
+        } else {
+            int32_t mrc = nprog.migrateFrom(*prog, migd.data,
+                                            migd.size, &mo);
+            if (mrc != 0) {
+                /* migrate refused/failed — old program untouched */
+                uint8_t rep[8];
+                memcpy(rep, &mo.out_status, 4);
+                memcpy(rep + 4, &mo.out_first_error, 4);
+                ctl.reply(fd, t, rep, sizeof rep, req);
+                fprintf(stderr,
+                        "tether-plc: migrate rc=%d status=%u — "
+                        "swap aborted, old program running\n",
+                        mrc, mo.out_status);
+                return;
+            }
+        }
+        /* commit: quarantine old, adopt new — the scheduler keeps
+           Program* pointers, so registration happens only after
+           every object rests at its final storage address (heap
+           Modules move owners freely — their address never does)   */
+        sched.removeProgram(*prog);
+        tplc::Program oldp = std::move(*prog);
+        prog.reset();
+        quar.prog.emplace(std::move(oldp));
+        quar.mod = std::move(mod);
+        mod.reset();
+        quar.layd = std::move(pkg_layd);
+        quar.cycles_left = quarantine_cycles;
+        mod = std::make_unique<tplc::Module>(std::move(nmod));
+        /* rebind: Program::create captured &nmod — retarget the new
+           program's mod_ to the heap Module before it ticks        */
+        prog.emplace(std::move(nprog));
+        prog->rebindModule(*mod);
+        sched.addProgram(*prog);
+        d = mod->descriptor();
+        if (layd.data && layd.size)
+            pkg_layd.assign(layd.data, layd.data + layd.size);
+        else
+            pkg_layd.clear();
+        if (!retain_dir.empty()) {
+            if (!retain) retain.emplace();
+            retain->close();
+            uint64_t lh;
+            memcpy(&lh, d.layout_hash, 8);
+            /* no load(): the migrated blob already carries retain */
+            retain->open(retain_dir, d.program_uuid, lh,
+                         prog->retainSize());
+        }
+        prog_state = PS_RUNNING;
+        prog_started = true;
+        last_fault = 0;
+        fprintf(stderr,
+                "tether-plc: online change committed (%s, "
+                "quarantine %d scans)\n",
+                same_layout ? "module-swap" : "migrated",
+                quarantine_cycles);
+        if (ctl_enabled)
+            ctl.event(TPLC_EV_PROG_TRANSITION, 2, nullptr, 0);
+        uint8_t rep[8];
+        memcpy(rep, &mo.out_status, 4);
+        memcpy(rep + 4, &mo.out_first_error, 4);
+        ctl.reply(fd, t, rep, sizeof rep, req);
+    });
+
     ctl.on(TPLC_OP_IMAGE_STATS, [&](int fd, uint16_t t,
                                     const uint8_t*, uint32_t,
                                     uint64_t req) {
@@ -1094,6 +1370,14 @@ int main(int argc, char** argv) {
              mst == TPLC_IMG_MASTER_INIT)) {
             sched.tick(now, hooks);
             progress.fetch_add(1);
+            /* quarantine window: N scans after commit the old module
+               is released — doc 08 §7 (drop order: Program first)  */
+            if (quar.cycles_left > 0 && --quar.cycles_left == 0) {
+                quar.prog.reset();
+                quar.mod.reset();
+                quar.layd.clear();
+                fprintf(stderr, "tether-plc: quarantine released\n");
+            }
         }
 
         /* retain: module dirty hints mark the store; staging happens
