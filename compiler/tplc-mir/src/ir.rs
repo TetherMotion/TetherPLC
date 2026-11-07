@@ -86,6 +86,15 @@ pub enum VarKind {
     External,
 }
 
+/// An `AT`-bound variable ↔ process-image binding (doc 01 §5).
+#[derive(Debug, Clone)]
+pub struct IoBind {
+    /// qualified name `POU.var`
+    pub name: String,
+    pub at: At,
+    pub ty: Type,
+}
+
 /// An `AT %IX0.0` style image address (doc 05 §4: only via declared names).
 #[derive(Debug, Clone, PartialEq)]
 pub struct At {

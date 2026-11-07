@@ -16,13 +16,7 @@ use tplc_mir as mir;
 
 /// An `AT`-bound variable: qualified name + image address + declared
 /// type → becomes an `io_binding` in the package descriptor.
-#[derive(Debug, Clone)]
-pub struct IoBind {
-    /// qualified name `POU.var`
-    pub name: String,
-    pub at: mir::At,
-    pub ty: mir::Type,
-}
+pub use tplc_mir::ir::IoBind;
 
 #[derive(Debug)]
 pub struct FrontendOutput {

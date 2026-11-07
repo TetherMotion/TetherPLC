@@ -20,13 +20,47 @@ use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 use std::collections::BTreeMap;
 use tplc_mir::ir::*;
+use tplc_mir::ir::AtRegion;
 use tplc_mir::interp::{fb_ctx, program_ctx, Ctx};
 use tplc_mir::layout::{builtin_fb_layout, Layout};
 
 const CTX_STATE_BLOB: u64 = 8;
-const CTX_NOW_NS: u64 = 48;
 const CTX_ABORT: u64 = 88;
 const TCTX_PROG: u64 = 0;
+
+/// Type → TplcIoType code (tplc_abi.h §enum TplcIoType); unit = bit idx.
+fn io_codes(at: &At, ty: &Type) -> (u8, u8, u8) {
+    let region = match at.region {
+        AtRegion::I => 0,
+        AtRegion::Q => 1,
+        AtRegion::M => 2,
+    };
+    let tc = match ty {
+        Type::Bool => 0,
+        Type::Int { signed: false, bits: 8 } => 1,
+        Type::Int { signed: true, bits: 8 } => 2,
+        Type::Int { signed: false, bits: 16 } => 3,
+        Type::Int { signed: true, bits: 16 } => 4,
+        Type::Int { signed: false, bits: 32 } => 5,
+        Type::Int { signed: true, bits: 32 } => 6,
+        Type::Int { signed: false, bits: 64 } => 7,
+        Type::Int { signed: true, bits: 64 } => 8,
+        Type::Real { bits: 32 } => 9,
+        Type::Real { bits: 64 } => 10,
+        _ => 15,
+    };
+    (region, tc, at.bit.unwrap_or(0))
+}
+
+/// highest byte touched in an image region (descriptor image_*_bytes)
+fn img_bytes(binds: &[IoBind], r: AtRegion) -> u64 {
+    binds
+        .iter()
+        .filter(|b| b.at.region == r)
+        .map(|b| b.at.byte + b.ty.size().max(1))
+        .max()
+        .unwrap_or(0)
+}
 
 pub struct Gen<'ctx> {
     pub ctx: &'ctx Context,
@@ -517,6 +551,21 @@ impl<'ctx> Gen<'ctx> {
         self.b.build_load(llty(self.ctx, &rty), rp, "ret").unwrap()
     }
 
+    /// store a literal init value at blob+off
+    fn lit_store(&mut self, blob: PointerValue<'ctx>, off: u64, ty: &Type, init: &Expr) {
+        let v = self.expr(&Ctx::new(), init); // Lit → const, ctx unused
+        let p = self.off_ptr(blob, off);
+        let v = if is_bool(ty) {
+            self.b
+                .build_int_z_extend(v.into_int_value(), self.ctx.i8_type(), "z")
+                .unwrap()
+                .into()
+        } else {
+            v
+        };
+        self.b.build_store(p, v).unwrap();
+    }
+
     // ---- statements ----
     fn abort_check(&mut self) {
         let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
@@ -722,6 +771,248 @@ impl<'ctx> Gen<'ctx> {
         }
     }
 
+    /// descriptor globals + tplc_get_descriptor + tplc_task_run
+    /// dispatcher (task_fns table + bounds check + indirect call).
+    fn emit_descriptor(
+        &mut self,
+        _program: &Pou,
+        io_binds: &[IoBind],
+        program_name: &str,
+        uuid: [u8; 16],
+        layout_hash: [u8; 32],
+    ) {
+        let lctx = self.ctx;
+        let i8p = self.i8p();
+
+        // -- TplcTaskDesc[1]: MAIN cyclic enabled-at-start
+        let mut name_b = [0u8; 32];
+        name_b[..4].copy_from_slice(b"MAIN");
+        let name_init = lctx.const_string(&name_b, false);
+        let task_ty = lctx.struct_type(
+            &[
+                lctx.i8_type().array_type(32).into(), // name[32]
+                lctx.i8_type().into(),                // kind
+                lctx.i8_type().into(),                // flags
+                lctx.i8_type().into(),                // priority
+                lctx.i8_type().into(),                // _pad0
+                lctx.i64_type().into(),               // period_ns
+                lctx.i64_type().into(),               // wcet_hint_ns
+                lctx.i32_type().into(),               // entry_index
+                lctx.i32_type().into(),               // task_local_size
+            ],
+            false,
+        );
+        let task0 = lctx.const_struct(
+            &[
+                name_init.into(),
+                lctx.i8_type().const_int(0, false).into(), // CYCLIC
+                lctx.i8_type().const_int(1, false).into(), // ENABLED_AT_START
+                lctx.i8_type().const_int(10, false).into(),
+                lctx.i8_type().const_zero().into(),
+                lctx.i64_type().const_zero().into(),
+                lctx.i64_type().const_zero().into(),
+                lctx.i32_type().const_zero().into(), // entry 0
+                lctx.i32_type().const_zero().into(),
+            ],
+            false,
+        );
+        let tasks_arr = task_ty.const_array(&[task0]);
+        let g_tasks = self
+            .module
+            .add_global(tasks_arr.get_type(), None, "__tplc_tasks");
+        g_tasks.set_initializer(&tasks_arr);
+        g_tasks.set_constant(true);
+        g_tasks.set_linkage(Linkage::Internal);
+
+        // -- task_fns[1] = { __tplc_task_0 }
+        let tfn = self.module.get_function("__tplc_task_0").unwrap();
+        let fns_arr = i8p.const_array(&[tfn.as_global_value().as_pointer_value()]);
+        let g_fns = self
+            .module
+            .add_global(fns_arr.get_type(), None, "__tplc_task_fns");
+        g_fns.set_initializer(&fns_arr);
+        g_fns.set_constant(true);
+        g_fns.set_linkage(Linkage::Internal);
+
+        // -- io bindings
+        let io_ty = lctx.struct_type(
+            &[
+                lctx.i32_type().into(), // blob_offset
+                lctx.i8_type().into(),  // region
+                lctx.i8_type().into(),  // type_code
+                lctx.i8_type().into(),  // flags
+                lctx.i8_type().into(),  // unit
+                lctx.i32_type().into(), // image_offset
+                lctx.i32_type().into(), // size
+                lctx.i32_type().into(), // _pad
+            ],
+            false,
+        );
+        let scope = program_ctx(self.layout);
+        let entries: Vec<_> = io_binds
+            .iter()
+            .filter_map(|b| {
+                let (off, ty) = scope.get(b.name.split('.').last().unwrap_or(&b.name))?;
+                let (region, tc, unit) = io_codes(&b.at, ty);
+                Some(
+                    self.ctx.const_struct(
+                        &[
+                            lctx.i32_type().const_int(*off, false).into(),
+                            lctx.i8_type().const_int(region as u64, false).into(),
+                            lctx.i8_type().const_int(tc as u64, false).into(),
+                            lctx
+                                .i8_type()
+                                .const_int((tc == 0) as u64, false)
+                                .into(), // forceable (bool)
+                            lctx.i8_type().const_int(unit as u64, false).into(),
+                            lctx.i32_type().const_int(b.at.byte, false).into(),
+                            lctx.i32_type().const_int(ty.size(), false).into(),
+                            lctx.i32_type().const_zero().into(),
+                        ],
+                        false,
+                    ),
+                )
+            })
+            .collect();
+        let io_arr = io_ty.const_array(&entries);
+        let g_io = self
+            .module
+            .add_global(io_arr.get_type(), None, "__tplc_io");
+        g_io.set_initializer(&io_arr);
+        g_io.set_constant(true);
+        g_io.set_linkage(Linkage::Internal);
+
+        // -- TplcProgramDescriptor
+        let mut pname = [0u8; 64];
+        let nb = program_name.as_bytes();
+        pname[..nb.len().min(64)].copy_from_slice(&nb[..nb.len().min(64)]);
+        let desc_ty = lctx.struct_type(
+            &[
+                lctx.i32_type().into(),                 // struct_size
+                lctx.i32_type().into(),                 // abi_version
+                lctx.i32_type().into(),                 // abi_ext
+                lctx.i32_type().into(),                 // flags
+                lctx.i8_type().array_type(16).into(),   // program_uuid
+                lctx.i8_type().array_type(32).into(),   // layout_hash
+                lctx.i8_type().array_type(64).into(),   // name
+                lctx.i64_type().into(),                 // state_blob_size
+                lctx.i64_type().into(),                 // retain_size
+                lctx.i64_type().into(),                 // retain_offset
+                lctx.i64_type().into(),                 // task_scratch_size
+                lctx.i32_type().into(),                 // image_in_bytes
+                lctx.i32_type().into(),                 // image_out_bytes
+                lctx.i32_type().into(),                 // marker_bytes
+                lctx.i32_type().into(),                 // _pad0
+                lctx.i32_type().into(),                 // task_count
+                lctx.i32_type().into(),                 // _pad1
+                i8p.into(),                             // tasks
+                i8p.into(),                             // task_fns
+                lctx.i32_type().into(),                 // task_fn_count
+                lctx.i32_type().into(),                 // _pad2
+                i8p.into(),                             // io_bindings
+                lctx.i32_type().into(),                 // io_binding_count
+                lctx.i32_type().into(),                 // _pad3
+            ],
+            false,
+        );
+        let desc = lctx.const_struct(
+            &[
+                lctx.i32_type().const_int(224, false).into(),
+                lctx.i32_type().const_int(1, false).into(), // ABI v1
+                lctx.i32_type().const_zero().into(),        // abi_ext
+                lctx.i32_type().const_zero().into(),        // flags
+                lctx.const_string(&uuid, false).into(),
+                lctx.const_string(&layout_hash, false).into(),
+                lctx.const_string(&pname, false).into(),
+                lctx.i64_type().const_int(self.layout.total_size, false).into(),
+                lctx.i64_type().const_int(self.layout.retain_size, false).into(),
+                lctx.i64_type().const_int(self.layout.retain_offset, false).into(),
+                lctx.i64_type().const_zero().into(),
+                lctx.i32_type().const_int(img_bytes(io_binds, AtRegion::I), false).into(),
+                lctx.i32_type().const_int(img_bytes(io_binds, AtRegion::Q), false).into(),
+                lctx.i32_type().const_int(img_bytes(io_binds, AtRegion::M), false).into(),
+                lctx.i32_type().const_zero().into(),
+                lctx.i32_type().const_int(1, false).into(), // task_count
+                lctx.i32_type().const_zero().into(),
+                g_tasks.as_pointer_value().into(),
+                g_fns.as_pointer_value().into(),
+                lctx.i32_type().const_int(1, false).into(), // task_fn_count
+                lctx.i32_type().const_zero().into(),
+                g_io.as_pointer_value().into(),
+                lctx.i32_type().const_int(entries.len() as u64, false).into(),
+                lctx.i32_type().const_zero().into(),
+            ],
+            false,
+        );
+        let g_desc = self
+            .module
+            .add_global(desc_ty, None, "__tplc_desc");
+        g_desc.set_initializer(&desc);
+        g_desc.set_constant(true);
+        g_desc.set_linkage(Linkage::Internal);
+
+        // tplc_get_descriptor() -> ptr
+        let ft = i8p.fn_type(&[], false);
+        let f = self
+            .module
+            .add_function("tplc_get_descriptor", ft, Some(Linkage::External));
+        let bb = lctx.append_basic_block(f, "e");
+        self.b.position_at_end(bb);
+        self.b
+            .build_return(Some(&g_desc.as_pointer_value()))
+            .unwrap();
+
+        // tplc_task_run(tctx): bounds-check task_index, indirect-call
+        // task_fns[i]
+        let ft = lctx.i32_type().fn_type(&[i8p.into()], false);
+        let f = self
+            .module
+            .add_function("tplc_task_run", ft, Some(Linkage::External));
+        let e_bb = lctx.append_basic_block(f, "e");
+        let ok_bb = lctx.append_basic_block(f, "ok");
+        let bad_bb = lctx.append_basic_block(f, "bad");
+        self.b.position_at_end(e_bb);
+        let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
+        let idx_p = self.off_ptr(tctx, 8);
+        let idx = self
+            .b
+            .build_load(lctx.i32_type(), idx_p, "idx")
+            .unwrap()
+            .into_int_value();
+        let inb = self
+            .b
+            .build_int_compare(
+                IntPredicate::ULT,
+                idx,
+                lctx.i32_type().const_int(1, false),
+                "inb",
+            )
+            .unwrap();
+        self.b.build_conditional_branch(inb, ok_bb, bad_bb).unwrap();
+        self.b.position_at_end(bad_bb);
+        self.b
+            .build_return(Some(&lctx.i32_type().const_int((-2i64) as u64, true)))
+            .unwrap();
+        self.b.position_at_end(ok_bb);
+        let fnpp = unsafe {
+            self.b
+                .build_in_bounds_gep(
+                    fns_arr.get_type(),
+                    g_fns.as_pointer_value(),
+                    &[lctx.i32_type().const_zero().into(), idx],
+                    "fp",
+                )
+                .unwrap()
+        };
+        let fptr = self.b.build_load(i8p, fnpp, "f").unwrap().into_pointer_value();
+        let cs = self
+            .b
+            .build_indirect_call(ft, fptr, &[tctx.into()], "call")
+            .unwrap();
+        let rc = cs.try_as_basic_value().expect_basic("rc");
+        self.b.build_return(Some(&rc)).unwrap();
+    }
+
     /// one generated POU fn: (ctx, this) → i32 rc
     fn emit_pou(&mut self, pou: &Pou, scope: &Ctx) {
         let f = self.pou_fn(&pou.name);
@@ -753,6 +1044,10 @@ pub fn emit_program<'ctx>(
     mir: &'static Module,
     layout: &'static Layout,
     program: &'static Pou,
+    io_binds: &[IoBind],
+    program_name: &str,
+    uuid: [u8; 16],
+    layout_hash: [u8; 32],
 ) -> LlvmModule<'ctx> {
     let module = lctx.create_module("tplc_program");
     let mut g = Gen {
@@ -792,6 +1087,60 @@ pub fn emit_program<'ctx>(
             lctx.i64_type().const_int(layout.total_size, false),
         )
         .unwrap();
+    // literal default inits; retain vars skipped when the host signals
+    // a warm restore (CTXF_RETAIN_RESTORED = ctx_flags bit3)
+    let scope0 = program_ctx(layout);
+    g.this_ptr = blob;
+    let cf = g.ctx_load(4, lctx.i32_type().into(), "cf").into_int_value();
+    let restored = g
+        .b
+        .build_and(cf, lctx.i32_type().const_int(8, false), "rr")
+        .unwrap();
+    let retain_bb = lctx.append_basic_block(f, "i.ret");
+    let done_bb = lctx.append_basic_block(f, "i.done");
+    let plain: Vec<&VarDecl> = program
+        .iface
+        .iter()
+        .filter(|v| {
+            !v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_)))
+        })
+        .collect();
+    let retains: Vec<&VarDecl> = program
+        .iface
+        .iter()
+        .filter(|v| {
+            v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_)))
+        })
+        .collect();
+    for v in &plain {
+        if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
+            g.lit_store(blob, off, &ty, v.init.as_ref().unwrap());
+        }
+    }
+    if retains.is_empty() {
+        g.b.build_unconditional_branch(done_bb).unwrap();
+        g.b.position_at_end(retain_bb);
+        g.b.build_unconditional_branch(done_bb).unwrap();
+    } else {
+        let nz = g
+            .b
+            .build_int_compare(
+                IntPredicate::EQ,
+                restored,
+                lctx.i32_type().const_zero(),
+                "z",
+            )
+            .unwrap();
+        g.b.build_conditional_branch(nz, retain_bb, done_bb).unwrap();
+        g.b.position_at_end(retain_bb);
+        for v in &retains {
+            if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
+                g.lit_store(blob, off, &ty, v.init.as_ref().unwrap());
+            }
+        }
+        g.b.build_unconditional_branch(done_bb).unwrap();
+    }
+    g.b.position_at_end(done_bb);
     g.b.build_return(Some(&lctx.i32_type().const_zero())).unwrap();
 
     // tplc_shutdown(ctx)
@@ -823,9 +1172,9 @@ pub fn emit_program<'ctx>(
         g.emit_pou(pou, &sc);
     }
 
-    // tplc_task_run(tctx) -> i32 : ctx=tctx->prog; call program pou
+    // __tplc_task_0(tctx) -> i32 : ctx=tctx->prog; run program pou
     let ft = lctx.i32_type().fn_type(&[i8p.into()], false);
-    let f = g.module.add_function("tplc_task_run", ft, Some(Linkage::External));
+    let f = g.module.add_function("__tplc_task_0", ft, Some(Linkage::Internal));
     let bb = lctx.append_basic_block(f, "e");
     g.b.position_at_end(bb);
     let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
@@ -845,5 +1194,49 @@ pub fn emit_program<'ctx>(
     let rc = cs.try_as_basic_value().expect_basic("rc");
     g.b.build_return(Some(&rc)).unwrap();
 
+    g.emit_descriptor(program, io_binds, program_name, uuid, layout_hash);
     g.module
+}
+
+/* ------------------------------------------------------------------ */
+/* Object / bitcode emission (P1-07)                                   */
+/* ------------------------------------------------------------------ */
+
+use inkwell::targets::{
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+};
+use inkwell::OptimizationLevel;
+use std::path::Path;
+
+/// Create a TargetMachine for `triple` ("x86_64-unknown-linux-gnu",
+/// "aarch64-unknown-linux-gnu", "armv6-unknown-linux-gnueabihf").
+pub fn target_machine(triple: &str) -> Result<TargetMachine, String> {
+    let _ = triple;
+    Target::initialize_native(&InitializationConfig::default())
+        .map_err(|e| e.to_string())?;
+    let triple_t = TargetMachine::get_default_triple();
+    let target = Target::from_triple(&triple_t).map_err(|e| e.to_string())?;
+    target
+        .create_target_machine(
+            &triple_t,
+            "generic",
+            "",
+            OptimizationLevel::Default,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
+        .ok_or_else(|| "no target machine".to_string())
+}
+
+/// Emit an ELF object file for the native target.
+pub fn emit_object(module: &LlvmModule<'_>, path: &Path) -> Result<(), String> {
+    let tm = target_machine("")?;
+    tm.write_to_file(module, FileType::Object, path)
+        .map_err(|e| e.to_string())
+}
+
+/// Emit LLVM bitcode (the canonical .tplc retained form, doc 01 §4).
+pub fn emit_bitcode(module: &LlvmModule<'_>, path: &Path) -> Result<(), String> {
+    module.write_bitcode_to_path(path);
+    Ok(())
 }

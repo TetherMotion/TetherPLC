@@ -4,7 +4,7 @@
 
 use inkwell::context::Context;
 use inkwell::targets::{InitializationConfig, Target};
-use tplc_codegen::llvm_emit::emit_program;
+use tplc_codegen::llvm_emit::{emit_bitcode, emit_object, emit_program};
 use tplc_mir::interp::program_ctx;
 use tplc_mir::ir::*;
 use tplc_mir::layout::layout_program;
@@ -123,13 +123,19 @@ fn llvm_lowering_executes_through_jit() {
     let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
 
     let lctx = Context::create();
-    let module = emit_program(&lctx, m, l, program);
+    let io_binds = [IoBind {
+        name: "q".into(),
+        at: At { region: AtRegion::Q, byte: 4, bit: None, width: 'B' },
+        ty: Type::Bool,
+    }];
+    let module = emit_program(&lctx, m, l, program, &io_binds, "demo", [0x51; 16], [0xAA; 32]);
     std::fs::write("/tmp/gen.ll", module.print_to_string().to_string()).unwrap();
     module.verify().unwrap_or_else(|e| panic!("IR verify: {e}"));
     let ir = module.print_to_string().to_string();
     assert!(ir.contains("define i32 @tplc_task_run"));
     assert!(ir.contains("define i32 @__tplc_pou_P"));
     assert!(ir.contains("declare i32 @__tplc_rt_TON"));
+    assert!(ir.contains("@__tplc_desc") && ir.contains("tplc_get_descriptor"));
     assert!(!ir.contains("inttoptr"), "no absolute pointers in program state");
 
     Target::initialize_native(&InitializationConfig::default()).unwrap();
@@ -172,8 +178,70 @@ fn llvm_lowering_executes_through_jit() {
         let x = (blob.as_ptr().add(scope["x"].0 as usize) as *const i32).read();
         assert_eq!(x, 10, "x after while loop");
         assert!(q_seen, "TON.Q fired within window");
+        // descriptor sanity: blob size + task/io counts via JIT'd getter
+        let getd: extern "C" fn() -> *const u8 =
+            std::mem::transmute(ee.get_function_address("tplc_get_descriptor").unwrap());
+        let d = getd();
+        assert_eq!((d as *const u32).read(), 224, "desc struct_size");
+        assert_eq!((d.add(4) as *const u32).read(), 1, "abi_version");
+        let blob_sz = (d.add(128) as *const u64).read();
+        assert_eq!(blob_sz, l.total_size);
+        let task_cnt = (d.add(176) as *const u32).read();
+        assert_eq!(task_cnt, 1);
+        let io_cnt = (d.add(216) as *const u32).read();
+        assert_eq!(io_cnt, 1, "one io binding");
+        // out-of-range task index → fault rc
+        tctx.idx = 7;
+        assert_eq!(run(&mut tctx), -2);
+        tctx.idx = 0;
         ctx.abort = 1;
-        let _ = ctx.abort;
         assert_eq!(run(&mut tctx), -1, "cooperative abort propagates");
+    }
+
+    // P1-07: object + bitcode emission
+    let dir = std::env::temp_dir().join("tplc_codegen_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let obj = dir.join("prog.o");
+    emit_object(&module, &obj).unwrap();
+    let hdr = std::fs::read(&obj).unwrap();
+    assert_eq!(&hdr[..4], b"\x7fELF", "ELF object emitted");
+    let bc = dir.join("prog.bc");
+    emit_bitcode(&module, &bc).unwrap();
+    let bh = std::fs::read(&bc).unwrap();
+    assert_eq!(&bh[..2], b"BC", "bitcode emitted");
+
+    // link into a real .so — proves the emitted object is a valid
+    // link unit and the __tplc_rt_* extern seam resolves
+    let shim = dir.join("rt_shim.c");
+    std::fs::write(&shim, r#"
+#include <stdint.h>
+int32_t __tplc_rt_TON(uint8_t* t, uint8_t* c) {
+    uint64_t now = *(uint64_t*)(c + 48);
+    uint8_t in = t[0]; int64_t pt = *(int64_t*)(t + 8);
+    if (in && !t[32]) *(uint64_t*)(t + 40) = now;
+    int64_t st = *(int64_t*)(t + 40);
+    int64_t el = in ? now - st : 0;
+    t[16] = in && el >= pt; *(int64_t*)(t + 24) = in ? (el < pt ? el : pt) : 0;
+    t[32] = in; t[48] = 0;
+    return 0;
+}"#).unwrap();
+    let so = dir.join("prog.so");
+    let out = std::process::Command::new("cc")
+        .args(["-shared", "-o"])
+        .arg(&so)
+        .arg(&obj)
+        .arg(&shim)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "cc: {}", String::from_utf8_lossy(&out.stderr));
+    let nm = std::process::Command::new("nm")
+        .args(["-D", "--defined-only"])
+        .arg(&so)
+        .output()
+        .unwrap();
+    let syms = String::from_utf8_lossy(&nm.stdout);
+    for want in ["tplc_abi_version", "tplc_get_descriptor", "tplc_init",
+                 "tplc_shutdown", "tplc_task_run"] {
+        assert!(syms.contains(want), ".so exports {want}");
     }
 }
