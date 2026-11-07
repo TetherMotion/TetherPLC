@@ -2,10 +2,12 @@
 //! the state-blob layout pass, and an eval interpreter used by spikes,
 //! tests, and the future oracle harness. Doc 07 §2-3.
 
+pub mod desc;
 pub mod interp;
 pub mod ir;
 pub mod layout;
 
 pub use interp::{Rt, Value};
+pub use desc::{emit, Descriptors};
 pub use ir::*;
 pub use layout::{layout_program, Layout};
