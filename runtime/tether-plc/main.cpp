@@ -12,6 +12,7 @@
 #include <tplc/host/Program.hpp>
 #include <tplc/host/Scheduler.hpp>
 #include <tplc/host/CtlServer.hpp>
+#include <tplc/host/RetainStore.hpp>
 
 #include <cerrno>
 #include <csignal>
@@ -35,7 +36,7 @@ static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --image <shm_path> --module <so>\n"
         "          [--ctl <uds_path>|none] [--wait-ms N] [--poll-ns N]\n"
-        "          [--sim]\n",
+        "          [--retain DIR] [--retain-flush-ms N] [--sim]\n",
         a0);
 }
 
@@ -43,6 +44,8 @@ enum ProgState : uint8_t { PS_STOPPED = 0, PS_RUNNING = 1, PS_FAULT = 2 };
 
 int main(int argc, char** argv) {
     std::string image_path, module_path, package_path, ctl_path;
+    std::string retain_dir;
+    uint64_t retain_flush_ms = 1000;
     int wait_ms = 10000;
     uint64_t poll_ns = 1000 * 1000;          /* 1 ms max idle         */
     uint32_t ctx_flags = 0;
@@ -58,6 +61,9 @@ int main(int argc, char** argv) {
         else if (a == "--ctl") ctl_path = next();
         else if (a == "--wait-ms") wait_ms = atoi(next().c_str());
         else if (a == "--poll-ns") poll_ns = strtoull(next().c_str(), 0, 0);
+        else if (a == "--retain") retain_dir = next();
+        else if (a == "--retain-flush-ms")
+            retain_flush_ms = strtoull(next().c_str(), 0, 0);
         else if (a == "--sim") ctx_flags |= TPLC_CTXF_SIM;
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -154,6 +160,28 @@ int main(int argc, char** argv) {
         return 1;
     }
     tplc::Program prog = std::move(pres.value);
+
+    /* retain store (doc 04 §5): mirror retain_region to
+       <dir>/<uuid>.bin; a uuid+layout-hash match restores bytes and
+       marks ctx_flags.retain_restored so init skips retain inits */
+    tplc::RetainStore retain;
+    if (!retain_dir.empty()) {
+        uint64_t lh;
+        memcpy(&lh, d.layout_hash, 8);
+        tplc::Status st = retain.open(retain_dir, d.program_uuid, lh,
+                         prog.retainSize());
+        if (!st.ok()) {
+            fprintf(stderr, "tether-plc: retain open failed %s\n",
+                    st.msg.c_str());
+            tplc_image_close(&img);
+            return 1;
+        }
+        if (retain.load(prog.retainRegion())) {
+            prog.setRetainRestored();
+            fprintf(stderr, "tether-plc: retain restored (%s)\n",
+                    retain.path().c_str());
+        }
+    }
     tplc::Status st = prog.start();
     if (!st.ok()) {
         fprintf(stderr, "tether-plc: init failed (%d) %s\n",
@@ -289,6 +317,41 @@ int main(int argc, char** argv) {
         is.out_size    = tplc_image_out_size(&img);
         ctl.reply(fd, t, &is, sizeof is, req);
     });
+    ctl.on(TPLC_OP_RETAIN_STATUS, [&](int fd, uint16_t t,
+                                      const uint8_t*, uint32_t,
+                                      uint64_t req) {
+        tplc::CtlServer::W w;
+        w.u8(retain.attached() ? 1 : 0);
+        w.u8(retain.dirty() ? 1 : 0);
+        w.u16(0);
+        w.u64(retain.len());
+        w.u64(retain.generation());
+        w.u64(retain.flushes());
+        w.u64(retain.restores());
+        w.u64(retain.losses());
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_RETAIN_FLUSH, [&](int fd, uint16_t t,
+                                     const uint8_t*, uint32_t,
+                                     uint64_t req) {
+        retain.stage(prog.retainRegion());
+        tplc::Status fs = retain.flush();
+        if (fs.ok()) ctl.replyEmpty(fd, t, req);
+        else ctl.errorReply(fd, t, fs.code, fs.msg.c_str(), req);
+    });
+    ctl.on(TPLC_OP_RETAIN_CLEAR, [&](int fd, uint16_t t,
+                                     const uint8_t*, uint32_t,
+                                     uint64_t req) {
+        tplc::Status cs = retain.clear();
+        if (cs.ok()) ctl.replyEmpty(fd, t, req);
+        else ctl.errorReply(fd, t, cs.code, cs.msg.c_str(), req);
+    });
+    ctl.on(TPLC_OP_RETAIN_DUMP, [&](int fd, uint16_t t,
+                                    const uint8_t*, uint32_t,
+                                    uint64_t req) {
+        ctl.reply(fd, t, prog.retainRegion(),
+                  (uint32_t)prog.retainSize(), req);
+    });
     ctl.on(TPLC_OP_RT_STATUS, [&](int fd, uint16_t t,
                                   const uint8_t*, uint32_t,
                                   uint64_t req) {
@@ -316,6 +379,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, on_sig);
     signal(SIGPIPE, SIG_IGN);
 
+    uint64_t last_flush_ns = mono_ns();
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
     fprintf(stderr, "tether-plc: running (module=%s image=%s ctl=%s)\n",
             module_path.c_str(), image_path.c_str(), ctl_path.c_str());
@@ -334,6 +398,21 @@ int main(int argc, char** argv) {
             sched.tick(now, hooks);
         }
 
+        /* retain: module dirty hints mark the store; staging happens
+           here — between ticks, i.e. at task boundaries (doc 04 §5) */
+        if (retain.attached()) {
+            if (!prog.services().retainDirtyRanges().empty()) {
+                prog.services().clearRetainDirty();
+                retain.noteDirty();
+            }
+            if (retain.dirty() ||
+                now - last_flush_ns >= retain_flush_ms * 1000000ull) {
+                retain.stage(prog.retainRegion());
+                retain.flush();
+                last_flush_ns = now;
+            }
+        }
+
         tplc_image_plc_heartbeat(&img, now);
 
         /* wait: min(next task due, poll cap) */
@@ -349,6 +428,10 @@ int main(int argc, char** argv) {
     prog_state = PS_STOPPED;
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
     tplc_image_plc_heartbeat(&img, mono_ns());
+    if (retain.attached()) {
+        retain.stage(prog.retainRegion());
+        retain.flush();               /* final persist on shutdown */
+    }
     prog.stop();
     ctl.close();
     tplc_image_close(&img);

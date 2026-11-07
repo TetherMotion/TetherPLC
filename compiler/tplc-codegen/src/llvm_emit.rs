@@ -1228,15 +1228,32 @@ pub fn emit_program<'ctx>(
     let blob = g
         .ctx_load(CTX_STATE_BLOB, i8p.into(), "blob")
         .into_pointer_value();
-    g.b.build_memset(
-        blob,
-        1,
-        lctx.i8_type().const_zero(),
-        lctx.i64_type().const_int(layout.total_size, false),
-    )
-    .unwrap();
-    // literal default inits; retain vars skipped when the host signals
-    // a warm restore (CTXF_RETAIN_RESTORED = ctx_flags bit3)
+    // zero the blob in two segments around the retain region; the
+    // retain segment itself is zeroed only on a cold start — a warm
+    // restore (CTXF_RETAIN_RESTORED = ctx_flags bit3) keeps host bytes
+    let (roff, rsize) = (layout.retain_offset, layout.retain_size);
+    if rsize == 0 {
+        g.b.build_memset(
+            blob, 1, lctx.i8_type().const_zero(),
+            lctx.i64_type().const_int(layout.total_size, false),
+        ).unwrap();
+    } else {
+        g.b.build_memset(
+            blob, 1, lctx.i8_type().const_zero(),
+            lctx.i64_type().const_int(roff, false),
+        ).unwrap();
+        if roff + rsize < layout.total_size {
+            let tail = unsafe {
+                g.b.build_gep(lctx.i8_type(), blob, &[lctx.i64_type().const_int(roff + rsize, false)], "tb")
+            }.unwrap();
+            g.b.build_memset(
+                tail, 1, lctx.i8_type().const_zero(),
+                lctx.i64_type().const_int(layout.total_size - roff - rsize, false),
+            ).unwrap();
+        }
+    }
+    // literal default inits; retain zeroing + retain literal inits are
+    // skipped when the host signals a warm restore
     let scope0 = program_ctx(layout);
     g.this_ptr = blob;
     let cf = g.ctx_load(4, lctx.i32_type().into(), "cf").into_int_value();
@@ -1260,7 +1277,7 @@ pub fn emit_program<'ctx>(
             g.lit_store(blob, off, &ty, v.init.as_ref().unwrap());
         }
     }
-    if retains.is_empty() {
+    if retains.is_empty() && rsize == 0 {
         g.b.build_unconditional_branch(done_bb).unwrap();
         g.b.position_at_end(retain_bb);
         g.b.build_unconditional_branch(done_bb).unwrap();
@@ -1276,6 +1293,15 @@ pub fn emit_program<'ctx>(
         g.b.build_conditional_branch(nz, retain_bb, done_bb)
             .unwrap();
         g.b.position_at_end(retain_bb);
+        if rsize > 0 {
+            let rseg = unsafe {
+                g.b.build_gep(lctx.i8_type(), blob, &[lctx.i64_type().const_int(roff, false)], "rb")
+            }.unwrap();
+            g.b.build_memset(
+                rseg, 1, lctx.i8_type().const_zero(),
+                lctx.i64_type().const_int(rsize, false),
+            ).unwrap();
+        }
         for v in &retains {
             if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
                 g.lit_store(blob, off, &ty, v.init.as_ref().unwrap());

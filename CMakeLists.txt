@@ -30,6 +30,7 @@ add_library(tplc_host STATIC
   runtime/host/src/Module.cpp
   runtime/host/src/Program.cpp
   runtime/host/src/Scheduler.cpp
+  runtime/host/src/RetainStore.cpp
   runtime/host/src/HostServices.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
@@ -116,6 +117,11 @@ target_compile_definitions(pkg_conformance PRIVATE
   PKG_FIXTURE_PATH="${CMAKE_SOURCE_DIR}/tests/pkg/fixtures/sample.tplc")
 add_test(NAME pkg_conformance
   COMMAND pkg_conformance "${CMAKE_SOURCE_DIR}/tests/pkg/fixtures/sample.tplc")
+
+add_executable(retain_store tests/runtime/retain_store.cpp)
+target_include_directories(retain_store PRIVATE tests)
+target_link_libraries(retain_store PRIVATE tplc_host)
+add_test(NAME retain_store COMMAND retain_store)
 
 add_executable(fault_injection tests/fault/fault_injection.cpp)
 target_include_directories(fault_injection PRIVATE tests)

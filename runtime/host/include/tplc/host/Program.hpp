@@ -77,6 +77,8 @@ public:
     /* Retain: host persistence interface (doc 04 owns flush policy) */
     uint8_t* retainRegion();
     uint64_t retainSize() const;
+    /* call after restoring retain bytes into the blob, before start() */
+    void setRetainRestored() { ctx_.ctx_flags |= TPLC_CTXF_RETAIN_RESTORED; }
 
     /* Migration (doc 08): snapshot old blob, allocate new program via
        create(), then migrateFrom(). Runs module tplc_migrate. */

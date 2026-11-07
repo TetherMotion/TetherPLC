@@ -47,6 +47,10 @@ enum TplcCtlOp {
     TPLC_OP_TASK_STATS     = 0x0401,  /* P0 */
     /* debug 0x0500 — P6 */
     /* retain 0x0600 — P2 */
+    TPLC_OP_RETAIN_STATUS  = 0x0601,
+    TPLC_OP_RETAIN_FLUSH   = 0x0602,
+    TPLC_OP_RETAIN_CLEAR   = 0x0603,
+    TPLC_OP_RETAIN_DUMP    = 0x0604,
     /* image 0x0700 */
     TPLC_OP_IMAGE_STATS    = 0x0701,  /* P0 */
     /* runtime 0x0900 */
