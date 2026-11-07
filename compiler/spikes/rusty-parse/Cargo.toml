@@ -1,0 +1,14 @@
+[package]
+name = "rusty-parse-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "P0.5 spike S1-S3: ruSTy parser/AST consumability for tplc-mir"
+
+[dependencies]
+plc_compiler    = { package = "plc-compiler",    git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8" }
+plc_ast         = { package = "plc_ast",         git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8" }
+plc_source      = { package = "plc_source",      git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8" }
+plc_diagnostics = { package = "plc_diagnostics", git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8" }
+plc_index       = { package = "plc_index",       git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8" }
+[workspace]

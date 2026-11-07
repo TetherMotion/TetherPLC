@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["tplc-pkg"]
+# spikes/ are standalone roots (excluded from the workspace — they pull
+# heavy eval-time deps like ruSTy+LLVM-21 that CI must not build).
+exclude = ["spikes/rusty-parse"]
 
 [workspace.package]
 version = "0.1.0"

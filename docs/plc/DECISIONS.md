@@ -127,3 +127,41 @@ encodings.
 named `TPLC_E_PKG_ABI_MISMATCH` (abi.h already owns
 `TPLC_E_ABI_MISMATCH = -64`). -215 `SECTION_FORMAT` fills an unassigned
 slot for malformed section-internal payloads (bad LAYD magic etc.).
+
+## D-IMPL-16 — Frontend spike S1–S4 verdicts: "half-B" confirmed feasible
+
+Spike `compiler/spikes/rusty-parse` against ruSTy `plc-compiler` at
+pinned rev `11e8107e` (2026-03 HEAD; LGPL-3.0 — linking evaluation for
+the compiler-binary artifact is a separate P8 legal item):
+
+- **S1 PASS** — `parser::parse` consumed as a library; 117 AST nodes in
+  the dialect corpus, 100% traversable with `SourceLocation`s. Only
+  corpus-side syntax fixes needed (IEC `AT` precedes the type;
+  `VAR RETAIN` is a block qualifier).
+- **S2 PASS** — every node kind in the dialect corpus classifies
+  direct-lowerable or needs-our-sema (0 dialect-excluded at AST level).
+  Their AST is a usable lowering source for `tplc-mir`.
+- **S3 PASS-with-note** — `TypeAnnotator` writes a side-table
+  `AnnotationMap` keyed by node; the AST itself is untouched, so no
+  storage-model entanglement at the annotation layer. However their
+  `pre_process` DOES desugar: `AT %QX0.0` bindings become generated
+  `__PI_*` globals — our lowering must either consume that convention
+  or bypass pre_process's hardware-binding rewrite (open detail).
+- **S4 CONFIRMED** — Option A eliminated as predicted: POU members
+  become `module.add_global` LLVM globals (module-owned .data/.bss);
+  FB calls pass `this` pointers to instance structs. Incompatible with
+  host-owned relocatable state blob — structural, not patchable.
+
+Recommendation from doc 13 stands: adopt ruSTy **parser only**
+(half-B), everything downstream of `tplc-mir` ours. S5 (end-to-end
+POU through the B path) and S6 (C-floor RD parser) remain open but are
+now refinement, not gate: S1–S3 already show the AST is consumable.
+
+Build note: `spikes/*` are excluded from the compiler workspace — they
+pull LLVM-21. Local builds need an LLVM-21 prefix (this machine uses
+`~/llvm21` extracted from Ubuntu `llvm-21-dev`/`llvm-21`/
+`llvm-21-tools`/`libpolly-21-dev` debs via `dpkg -x`, no sudo):
+
+    PATH=$HOME/llvm21/usr/lib/llvm-21/bin:$PATH \
+      LLVM_SYS_211_PREFIX=$HOME/llvm21/usr/lib/llvm-21 \
+      cargo build --manifest-path compiler/spikes/rusty-parse/Cargo.toml
