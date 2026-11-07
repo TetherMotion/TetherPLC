@@ -75,11 +75,35 @@ destroyed restored retain data — fixed at P2-01.)
   supervisor respawn. stall_since anchored to thread start.
 - `ctx.last_cycle_overrun_ns` = signed finish-vs-scheduled+period.
 
+## Bridge (`runtime/bridge/`, `tether-plc-bridge`)
+
+The master-side half of doc 03/09 as a reusable library plus a dev
+driver process:
+
+- `ImageServer` — creates/owns the shm image (master role), master
+  hb/status, `writeInputs` (%I) / `readOutputs` (%Q).
+- `MapRunner` — per-cycle `pdo→%I` / `%Q→pdo` over the v1 `sim`
+  transport (each channel key is a file under `--simdir`; absent
+  input files hold last). Output channels substitute `safe`
+  (zero/last/defined) when the PLC is not ok; map is a line format
+  with range + single-%Q-writer validation (`parse_map`).
+- `Supervisor` — spawn/respawn `tether-plc` child, waitpid liveness
+  + plc_hb staleness kill, respawn policy + delay + 3/60s cap (same
+  contract as `--supervise`, as a library for the Tether app).
+- `tether-plc-bridge --image X --map F --hz N --plc <args>` — the
+  standalone driver: image create → spawn plc → cyclic map loop.
+  Verified end-to-end: `simdir/btn` byte → %IX0.0 → TON → %QX0.0 →
+  `simdir/lamp` at 200 Hz; SIGKILL'd child → stale hb → safe=zero
+  on outputs → supervisor respawn → recovery.
+- `plc_ok` uses `tplc_image_hb_stale` (a hb newer than `now` counts
+  as fresh — unsigned-underflow bug fixed).
+
 ## Not yet
 
 - `PROG_PREPARE/KILL/RESET/UNLOAD` (P2/P3 lifecycle).
 - Multi-program scheduling (descriptor supports it; driver is
   single-program).
-- Fault policies/respawn (P2-03), runbook, catalog exporter, bridge
-  (P2-05/06), overrun-policy config (skip is hardcoded), freewheel
-  guard/slice enforcement.
+- Catalog exporter (P2-06), ControlProxy curated ctl client in the
+  bridge (ops work via `tplc-ctl` meanwhile), real EtherCAT/Modbus
+  transports (sim only), overrun-policy config (skip is hardcoded),
+  freewheel guard/slice enforcement.
