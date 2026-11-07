@@ -1,0 +1,9 @@
+[package]
+name = "tplc-pkg"
+description = "Reader/writer for the .tplc deployment package (plan doc 01)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sha2 = "0.10"

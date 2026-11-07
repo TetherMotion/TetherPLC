@@ -55,8 +55,9 @@ offset  size  field
 20      u32   flags               (bit0: signed, bit1: compressed, rest rsvd=0)
 24      u64   total_size          (file size; sanity check)
 32      64    package_uuid        (UUIDv7 or random; unique per build)
-96      32    content_hash        (SHA-256 over all section payloads,
-                                   canonical TOC order)
+96      32    content_hash        (SHA-256 over raw TOC bytes then all
+                                   section payloads, canonical TOC order —
+                                   covers section type/flags/aux tampering)
 128     32    header_hash         (SHA-256 over bytes 0..128)
 160     ...   TOC[toc_count]      (32 bytes each, see below)
 ...     ...   (padding to 16B)

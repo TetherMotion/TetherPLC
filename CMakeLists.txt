@@ -36,6 +36,13 @@ target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
 
 # ------------------------------------------------------------------ #
+# Package library (.tplc C++ reader)
+# ------------------------------------------------------------------ #
+add_library(tplc_pkg STATIC runtime/pkg/src/Package.cpp)
+target_include_directories(tplc_pkg PUBLIC
+  runtime/pkg/include runtime/host/include)
+
+# ------------------------------------------------------------------ #
 # Runtime binary
 # ------------------------------------------------------------------ #
 add_executable(tether-plc runtime/tether-plc/main.cpp)
@@ -102,3 +109,10 @@ target_compile_definitions(ctl_smoke PRIVATE
   STUB_V1_PATH="$<TARGET_FILE:stub_v1>")
 add_dependencies(ctl_smoke tether-plc stub_v1)
 add_test(NAME ctl_smoke COMMAND ctl_smoke)
+
+add_executable(pkg_conformance tests/pkg/pkg_conformance.cpp)
+target_link_libraries(pkg_conformance PRIVATE tplc_pkg)
+target_compile_definitions(pkg_conformance PRIVATE
+  PKG_FIXTURE_PATH="${CMAKE_SOURCE_DIR}/tests/pkg/fixtures/sample.tplc")
+add_test(NAME pkg_conformance
+  COMMAND pkg_conformance "${CMAKE_SOURCE_DIR}/tests/pkg/fixtures/sample.tplc")

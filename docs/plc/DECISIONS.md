@@ -101,3 +101,27 @@ plane concern; the scan path must not depend on it."
   binary (P0-07): next in WBS order.
 - `_Static_assert` in `TplcImageHeader`: `reserved[112]` + `in_off` field
   alignment verified by the 256 B size assert.
+
+## D-IMPL-13 — `content_hash` covers the TOC (doc 01 §2 amended)
+
+Original spec hashed only section payloads; the TOC's `section_type`,
+`flags`, `aux`, `section_version` bytes were then integrity-uncovered —
+a tamper could flip an optional section to required or redirect
+`aux`→`targets[]` undetected. Amended: `content_hash` = SHA-256 over
+the raw TOC bytes followed by all payloads in canonical order.
+Implemented in both `tplc-pkg` (Rust) and `tplc::Package` (C++) and
+locked by `toc_tamper_detected_by_content_hash` tests on both sides.
+
+## D-IMPL-14 — package_uuid is a 64-byte ASCII field
+
+Doc 01 §2 reserves 64 B for `package_uuid`; implementations store the
+UUID's ASCII text (36-char hyphenated UUIDv7) NUL-padded — keeps the
+field self-describing in hex dumps and forward-compatible with longer
+encodings.
+
+## D-IMPL-15 — PkgError block -200..-215, `TPLC_E_PKG_SECTION_FORMAT` added
+
+`tplc_pkg.h` defines the container error block as C macros; -213 is
+named `TPLC_E_PKG_ABI_MISMATCH` (abi.h already owns
+`TPLC_E_ABI_MISMATCH = -64`). -215 `SECTION_FORMAT` fills an unassigned
+slot for malformed section-internal payloads (bad LAYD magic etc.).
