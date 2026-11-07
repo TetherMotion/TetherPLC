@@ -35,6 +35,32 @@ Status of `compiler/fbd-model` against `plan/06-fbd-model.md`.
 (schemars 0.8, draft-07). TS types for the editor are generated from
 this file.
 
+## `plcopen-io` (doc 06 §5 / App E)
+
+- `export(project, Strict|Roundtrip) -> (xml, [LossNote])`.
+  Strict emits TC6-only XML (no `tether:` attrs): networks flatten
+  behind `--- net <id> ---` comment markers (vendor-band localIds),
+  tasks drop, probe flags drop, located vars serialize by `%address`
+  (friendly names lost) — each loss reported.
+  Roundtrip adds `tether:network` wrappers, `tether:wire` ids (fan-out
+  merge key), `tether:probe`, `tether:name`, and `addData` tasks —
+  importing our own export is lossless (test-verified on the App-D
+  example: blocks, wires, params, probes, annotations, tasks).
+- Wire model follows TC6: `<connection refLocalId formalParameter>`
+  lives on the dst `connectionPointIn`; literals become `<expression>`
+  inside the pin's `connectionPointIn`; indexed pins emit
+  `formalParameter="IN<n>"` (reimports to `PortSel::Index(n)`).
+- `import(xml) -> ImportReport{project, notes}`: foreign/flat FBD
+  folds to one implicit network; strict-export `--- net ---` markers
+  re-split into segments; empty implicit nets drop. FB-instance
+  localVars matching a block's (instance, type) fold into the block —
+  extras (AT/init/retain) keep the decl. Elements with no `localId`
+  get allocator ids. Non-FBD bodies (`<SFC>/<LD>/<ST>`) report notes,
+  not silent drops.
+- Coverage verified vs a Beremiz-shaped hand fixture (inVariable →
+  TON IN/PT literal → outVariable fan-in): all construct classes
+  imported correctly.
+
 ## Not yet
 
 - TS type generation / editor bindings (TetherWebUI side).
@@ -43,3 +69,8 @@ this file.
 - `en_eno` semantic implementation (field exists, honored by lowering).
 - `data_types`/`global_vars` decode is pass-through (`Value`) until
   struct decls are modeled.
+- `<dataTypes>` round-trip beyond derived-name baseType; `assoc`
+  edges exist in the model but XML import of wireless
+  `formalParameter` associations is not yet mapped back.
+- Real Beremiz corpus fixtures (P4-06) — coverage is one hand-built
+  doc today, not ≥95% measured.

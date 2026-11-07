@@ -1,0 +1,11 @@
+[package]
+name = "plcopen-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PLCopen TC6 XML import/export for fbd-model"
+
+[dependencies]
+fbd-model = { path = "../fbd-model" }
+quick-xml = "0.38"
+serde_json = "1"
