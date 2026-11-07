@@ -144,14 +144,16 @@ fn bistables() {
     unsafe {
         let ctx = now_ctx(0) as *mut u8;
         // SR: set-dominant
-        b[2] = 1; b[3] = 1; // S1=1, R=1 → set wins
+        b[2] = 1;
+        b[3] = 1; // S1=1, R=1 → set wins
         __tplc_rt_SR(b.as_mut_ptr(), ctx);
         assert_eq!(b[4], 1);
         b[2] = 0;
         __tplc_rt_SR(b.as_mut_ptr(), ctx);
         assert_eq!(b[4], 0, "R clears");
         // RS: reset-dominant
-        b[0] = 1; b[1] = 1; // S=1, R1=1 → reset wins
+        b[0] = 1;
+        b[1] = 1; // S=1, R1=1 → reset wins
         __tplc_rt_RS(b.as_mut_ptr(), ctx);
         assert_eq!(b[4], 0);
         b[1] = 0;
