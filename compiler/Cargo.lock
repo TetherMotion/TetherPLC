@@ -1060,6 +1060,8 @@ dependencies = [
 name = "tplcc"
 version = "0.1.0"
 dependencies = [
+ "fbd-lower",
+ "fbd-model",
  "inkwell",
  "serde_json",
  "sha2",

@@ -43,6 +43,39 @@ fn read_srcs(files: &[String]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Route sources to a frontend: a lone `.fbd.json` project goes through
+/// `fbd-model` + `fbd-lower`; everything else is ST via `tplc-st`.
+fn compile_srcs(srcs: &[(String, String)]) -> tplc_st::FrontendOutput {
+    if srcs.len() == 1 && srcs[0].0.ends_with(".fbd.json") {
+        let (fname, text) = &srcs[0];
+        return match fbd_model::from_json(text) {
+            Ok(project) => {
+                let out = fbd_lower::lower(&project);
+                tplc_st::FrontendOutput {
+                    module: out.module,
+                    io_bindings: out.io_bindings,
+                    diags: out.diags,
+                }
+            }
+            Err(e) => tplc_st::FrontendOutput {
+                module: tplc_mir::ir::Module {
+                    pous: vec![],
+                    gvls: vec![],
+                    tasks: vec![],
+                },
+                io_bindings: vec![],
+                diags: vec![tplc_mir::diag::Diag::error(
+                    "TPLC_E_MODEL_SCHEMA",
+                    format!("{fname}: {e}"),
+                    tplc_mir::ir::Prov::None,
+                )],
+            },
+        };
+    }
+    let refs: Vec<(&str, &str)> = srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
+    tplc_st::compile(&refs)
+}
+
 fn print_diags(diags: &[tplc_st::Diag], srcs: &[(String, String)]) -> usize {
     let mut errs = 0;
     for d in diags {
@@ -64,8 +97,7 @@ fn print_diags(diags: &[tplc_st::Diag], srcs: &[(String, String)]) -> usize {
 
 fn cmd_check(files: &[String]) -> ExitCode {
     let srcs = read_srcs(files);
-    let refs: Vec<(&str, &str)> = srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
-    let mut out = tplc_st::compile(&refs);
+    let mut out = compile_srcs(&srcs);
     let mut errs = print_diags(&out.diags, &srcs);
     if errs == 0 {
         errs += print_diags(&tplc_st::sema::check(&mut out.module), &srcs);
@@ -112,8 +144,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let srcs = read_srcs(&files);
-    let refs: Vec<(&str, &str)> = srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
-    let mut out = tplc_st::compile(&refs);
+    let mut out = compile_srcs(&srcs);
     let mut errs = print_diags(&out.diags, &srcs);
     if errs == 0 {
         errs += print_diags(&tplc_st::sema::check(&mut out.module), &srcs);
