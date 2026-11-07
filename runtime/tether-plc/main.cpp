@@ -29,6 +29,7 @@
 #include <ctime>
 #include <dirent.h>
 #include <optional>
+#include <filesystem>
 #include <string>
 #include <unistd.h>
 
@@ -1199,17 +1200,26 @@ int main(int argc, char** argv) {
                            "sha256 mismatch", req);
             return;
         }
-        /* package_uuid = first 16B of sha256; store atomically */
+        /* package_uuid = first 16B of sha256; store atomically. The
+           tmp file may live on a different fs than packages_dir, so
+           copy into dst.tmp then rename inside the same dir. */
         char hex[33]; uuid_hex(got, hex);
         std::string dst = packages_dir + "/" + hex + ".tplc";
+        std::string staging = dst + ".tmp";
         ::close(up.fd); up.fd = -1;
-        if (::rename(up.tmp_path.c_str(), dst.c_str()) != 0) {
+        std::error_code ec;
+        std::filesystem::copy_file(up.tmp_path, staging,
+                                   std::filesystem::copy_options::overwrite_existing,
+                                   ec);
+        if (ec || ::rename(staging.c_str(), dst.c_str()) != 0) {
             ::unlink(up.tmp_path.c_str());
+            ::unlink(staging.c_str());
             up.drop();
             ctl.errorReply(fd, t, tplc::TPLC_E_HOST_DLOPEN,
                            "store failed", req);
             return;
         }
+        ::unlink(up.tmp_path.c_str());
         auto pres = tplc::Package::open(dst);
         if (!pres.ok()) {
             ::unlink(dst.c_str());

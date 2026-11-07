@@ -79,6 +79,8 @@ add_executable(tplc-ctl tools/tplc_ctl.c)
 target_link_libraries(tplc-ctl PRIVATE tplc_image)
 target_include_directories(tplc-ctl PRIVATE tools)
 
+add_executable(tplc-ctl-proxy tools/tplc_ctl_proxy.cpp)
+
 # ------------------------------------------------------------------ #
 # Tests: stub modules (hand-written .so fixtures)
 # ------------------------------------------------------------------ #
