@@ -18,10 +18,16 @@ Status of `runtime/tether-plc` + `runtime/host` against
 
 ## Control channel (0x0— ops implemented)
 
-`PING`, `RT_STATUS`, `RT_SHUTDOWN`, `PROG_STATUS`, `PROG_LIST`,
-`PROG_START`, `PROG_STOP` (schedule gating only), `TASK_STATS`,
+Session: `HELLO`, `PING`, `SET_NOTIFY`. Deploy: `DEPLOY_BEGIN`,
+`DEPLOY_CHUNK`, `DEPLOY_COMMIT`, `DEPLOY_ABORT`, `PKG_LIST`,
+`PKG_INFO` (package store under `--packages`; sha256 verified on
+commit). Program: `PROG_PREPARE` (by package uuid), `PROG_START`,
+`PROG_STOP`, `PROG_KILL` (deschedule, no fault), `PROG_RESET`
+(non-faulted only), `PROG_UNLOAD`, `PROG_STATUS`, `PROG_LIST`,
+`PROG_LAYOUT`, `PROG_SWAP`, `PROG_ROLLBACK`. `TASK_STATS`,
 `IMAGE_STATS`, `RETAIN_STATUS`, `RETAIN_FLUSH`, `RETAIN_CLEAR`,
-`RETAIN_DUMP`, plus `HELLO`/`SET_NOTIFY` session ops.
+`RETAIN_DUMP`, `RT_STATUS`, `RT_SHUTDOWN`, plus
+`EV_PROG_TRANSITION`/`EV_FAULT` notify events.
 
 ## Retain store (doc 04 §5)
 
@@ -125,9 +131,29 @@ driver process:
   refuses to start on any violation; parse is permissive so all
   violations surface in one pass.
 
+## Online change (doc 08)
+
+- `PROG_SWAP {uuid|path}` stages the new module first; live
+  `layout_hash` is compared to the package's `MIGD`
+  `predecessor_hash` — equal to the *new* hash takes the module-swap
+  fast path (no migration), equal to the predecessor hash runs a
+  migrated swap, anything else replies `SWAP_RACE` with both hashes
+  and leaves the old program untouched.
+- Migrated swap: snapshot old blob at a task boundary, run
+  `tplc_migrate` off-cycle into the new program's blob, atomic
+  program/module/context swap, `tplc_init` skipped (state already
+  migrated). Old program + snapshot stay quarantined for
+  `--quarantine-cycles` scans; `PROG_ROLLBACK` inside the window
+  restores them, outside it reports no quarantined program.
+- Module ownership uses `unique_ptr` (program/task ctxs carry
+  back-pointers — a moved `optional<Module>` left them dangling).
+- Verified live via `tests/online_change/e2e.sh` (CTest
+  `online_change_e2e`, exit 77 = skip without tplcc): state copy,
+  default-init, module-swap, SWAP_RACE, old-program survival,
+  rollback, compile-time deny.
+
 ## Not yet
 
-- `PROG_PREPARE/KILL/RESET/UNLOAD` (P2/P3 lifecycle).
 - Multi-program scheduling (descriptor supports it; driver is
   single-program).
 - ControlProxy curated ctl client in the bridge (ops work via

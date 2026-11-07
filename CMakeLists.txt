@@ -149,3 +149,15 @@ target_compile_definitions(fault_injection PRIVATE
   STUB_V1_PATH="$<TARGET_FILE:stub_v1>")
 add_dependencies(fault_injection tether-plc stub_v1)
 add_test(NAME fault_injection COMMAND fault_injection)
+
+# online-change e2e: drives the real runtime + compiled packages;
+# skips (rc 77) when tplcc/python3 are unavailable. Native-only: tplcc
+# emits host-arch .so files that a cross-built tether-plc cannot load.
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME online_change_e2e
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/online_change/e2e.sh)
+  set_tests_properties(online_change_e2e PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()

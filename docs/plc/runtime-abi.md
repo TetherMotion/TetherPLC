@@ -99,10 +99,10 @@ for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
 
 - Force tables (input/output overlay application points are inside
   `executeTask` where the hooks sit — the force table itself is P6/doc 12).
-- Task-local regions (D-IMPL-6), WCET budget accounting, watchdog kill path,
-  online-change staging (the `migrateFrom` primitive exists; the
-  snapshot/arm/commit dance is P3/doc 08).
-- ctl ops beyond the P0 subset (deploy.*, retain.*, dbg.*, trace.*,
-  map.*, prog.prepare/kill/reset/unload) — declared, pending phases.
-- Non-cooperative task hang (loop with no checkpoints): needs the
-  watchdog/fault-supervisor path — P2.
+- Task-local regions (D-IMPL-6).
+- ctl ops beyond the implemented set (dbg.*, trace.*, map.*) —
+  declared, pending phases.
+- Non-cooperative task hang mid-scan (loop with no checkpoints): the
+  monitor thread sets `abort_flag` + `plc_status=fault` and escalates
+  to `_exit(2)` for supervisor respawn, but the task itself keeps
+  running until it returns — there is no async preemption.
