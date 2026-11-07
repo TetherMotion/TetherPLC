@@ -2,31 +2,46 @@
  * channel (UDS). Browsers cannot reach AF_UNIX sockets; this single-
  * threaded bridge exposes `POST /ctl` so the web IDE can issue ctl ops.
  *
- *   POST /ctl   body = one complete ctl request frame (16B hdr + payload)
- *               response = one complete reply frame, verbatim
- *   GET /health "ok" when the ctl socket connects, else 503
- *   OPTIONS     CORS preflight (Access-Control-Allow-Origin: *)
+ *   POST /ctl           body = one complete ctl request frame (16B hdr +
+ *                       payload); response = reply frame, verbatim
+ *   POST /compile?build body = [u16 count][u16 nameLen,name,u32 len,
+ *                       content]*N (LE). Runs `tplcc check|build --json`
+ *                       in a temp dir; response wraps tplcc's JSON:
+ *                       {"compile":{…},"exit":N,"package":"<base64>"}
+ *                       (package only in build mode, on success)
+ *   GET /health         "ok" when the ctl socket connects, else 503
+ *   OPTIONS             CORS preflight (Access-Control-Allow-Origin: *)
  *
  * Limitations: SET_NOTIFY events are not carried (poll PROG_STATUS or
- * use the tether_io catalog); requests are serialized.
+ * use the tether_io catalog); requests are serialized. /compile shells
+ * out to tplcc per request — a language service should replace this.
  *
  * Usage: tplc-ctl-proxy [--socket <uds>] [--port N] [--bind <addr>]
+ *                       [--tplcc <path>]
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static const char* g_sock = "/tmp/tplc-image.ctl";
+static std::string g_tplcc = "tplcc";
+
+static void http_reply(int fd, int code, const char* text,
+                       const uint8_t* body, size_t blen,
+                       const char* ctype);
 
 static int uds_connect() {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -100,6 +115,144 @@ static bool ctl_roundtrip(const std::vector<uint8_t>& req,
     return ok;
 }
 
+/* keep file names shell- and fs-safe: basename chars only */
+static std::string sanitize_name(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '/' || c == '\\') { out.clear(); continue; }
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-')
+            out += c;
+    }
+    if (out.empty() || out[0] == '.') out = "src" + out;
+    return out;
+}
+
+static std::string b64_encode(const uint8_t* p, size_t n) {
+    static const char* T =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    o.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3) {
+        uint32_t v = (uint32_t)p[i] << 16;
+        if (i + 1 < n) v |= (uint32_t)p[i + 1] << 8;
+        if (i + 2 < n) v |= p[i + 2];
+        o += T[v >> 18];
+        o += T[(v >> 12) & 63];
+        o += i + 1 < n ? T[(v >> 6) & 63] : '=';
+        o += i + 2 < n ? T[v & 63] : '=';
+    }
+    return o;
+}
+
+static bool read_file(const std::string& path, std::vector<uint8_t>& out) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    out.resize(n > 0 ? (size_t)n : 0);
+    bool ok = n <= 0 || fread(out.data(), 1, (size_t)n, f) == (size_t)n;
+    fclose(f);
+    return ok;
+}
+
+/* parse the [u16 count][u16 nameLen,name,u32 len,content]* frame into
+ * per-file (name,content) pairs. LE fields; names sanitized. */
+static bool parse_srcs(const std::vector<uint8_t>& body,
+                       std::vector<std::pair<std::string, std::vector<uint8_t>>>& files) {
+    auto u16 = [&](size_t o) { return (unsigned)body[o] | ((unsigned)body[o + 1] << 8); };
+    auto u32 = [&](size_t o) {
+        return (uint32_t)body[o] | ((uint32_t)body[o + 1] << 8) |
+               ((uint32_t)body[o + 2] << 16) | ((uint32_t)body[o + 3] << 24);
+    };
+    if (body.size() < 2) return false;
+    unsigned count = u16(0);
+    size_t o = 2;
+    for (unsigned i = 0; i < count; i++) {
+        if (o + 2 > body.size()) return false;
+        unsigned nl = u16(o); o += 2;
+        if (nl == 0 || nl > 255 || o + nl + 4 > body.size()) return false;
+        std::string name = sanitize_name(
+            std::string((const char*)body.data() + o, nl));
+        o += nl;
+        uint32_t len = u32(o); o += 4;
+        if (len > 4 * 1024 * 1024 || o + len > body.size()) return false;
+        files.emplace_back(name,
+            std::vector<uint8_t>(body.begin() + (ptrdiff_t)o,
+                                 body.begin() + (ptrdiff_t)(o + len)));
+        o += len;
+    }
+    return o == body.size() && !files.empty();
+}
+
+/* POST /compile: write the src frame to a temp dir, run tplcc --json,
+ * wrap its stdout JSON; build mode appends the .tplc as base64. */
+static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build) {
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> files;
+    if (!parse_srcs(body, files) || files.size() > 64) {
+        const char* m = "bad src frame";
+        http_reply(cfd, 400, "Bad Request", (const uint8_t*)m, strlen(m), "text/plain");
+        return;
+    }
+    char dir_t[] = "/tmp/tplc_compile_XXXXXX";
+    if (!mkdtemp(dir_t)) {
+        const char* m = "mkdtemp failed";
+        http_reply(cfd, 500, "Internal Server Error", (const uint8_t*)m, strlen(m), "text/plain");
+        return;
+    }
+    std::string dir = dir_t;
+    std::string cmd = std::string("cd ") + dir + " && " + g_tplcc +
+                      (build ? " build --json -o out.tplc" : " check --json");
+    for (auto& [name, content] : files) {
+        std::string p = dir + "/" + name;
+        FILE* f = fopen(p.c_str(), "wb");
+        if (!f || fwrite(content.data(), 1, content.size(), f) != content.size()) {
+            if (f) fclose(f);
+            const char* m = "src write failed";
+            http_reply(cfd, 500, "Internal Server Error", (const uint8_t*)m, strlen(m), "text/plain");
+            return;
+        }
+        fclose(f);
+        cmd += " " + name;
+    }
+    cmd += " 2>err.log";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    std::string out;
+    if (pipe) {
+        char b[4096];
+        while (size_t n = fread(b, 1, sizeof b, pipe)) out.append(b, n);
+    }
+    int rc = pipe ? pclose(pipe) : -1;
+    int exit_code = (rc >= 0 && WIFEXITED(rc)) ? WEXITSTATUS(rc) : -1;
+
+    std::string resp;
+    if (!out.empty() && out.front() == '{') {
+        resp = "{\"compile\":" + std::string(out.c_str()) +
+               ",\"exit\":" + std::to_string(exit_code);
+    } else {
+        std::vector<uint8_t> elog;
+        std::string msg = "tplcc invocation failed";
+        if (read_file(dir + "/err.log", elog) && !elog.empty())
+            msg = std::string((const char*)elog.data(), elog.size());
+        resp = "{\"compile\":{\"ok\":false,\"errors\":1,\"diags\":[{"
+               "\"code\":\"TPLC_E_DRIVER\",\"severity\":\"error\",\"message\":";
+        resp += "\"";
+        for (char c : msg) {
+            if (c == '"' || c == '\\') resp += '\\';
+            if (c == '\n') resp += "\\n"; else if (c != '\r') resp += c;
+        }
+        resp += "\"}],},\"exit\":-1";
+    }
+    if (build) {
+        std::vector<uint8_t> pkg;
+        if (rc == 0 && read_file(dir + "/out.tplc", pkg))
+            resp += ",\"package\":\"" + b64_encode(pkg.data(), pkg.size()) + "\"";
+    }
+    resp += "}";
+    http_reply(cfd, 200, "OK", (const uint8_t*)resp.data(), resp.size(), "application/json");
+}
+
 static void http_reply(int fd, int code, const char* text,
                        const uint8_t* body, size_t blen,
                        const char* ctype) {
@@ -156,6 +309,8 @@ static void serve(int cfd) {
         int u = uds_connect();
         if (u >= 0) { close(u); http_reply(cfd, 200, "OK", (const uint8_t*)"ok", 2, "text/plain"); }
         else http_reply(cfd, 503, "Service Unavailable", (const uint8_t*)"down", 4, "text/plain");
+    } else if (method == "POST" && path.rfind("/compile", 0) == 0) {
+        handle_compile(cfd, body, path.find("build") != std::string::npos);
     } else if (method == "POST" && path == "/ctl") {
         std::vector<uint8_t> rep;
         if (ctl_roundtrip(body, rep))
@@ -180,8 +335,9 @@ int main(int argc, char** argv) {
         if (a == "--socket") g_sock = next();
         else if (a == "--port") port = atoi(next());
         else if (a == "--bind") bind_addr = next();
+        else if (a == "--tplcc") g_tplcc = next();
         else {
-            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr] [--tplcc path]\n", argv[0]);
             return 2;
         }
     }

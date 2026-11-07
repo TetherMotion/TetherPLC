@@ -3,6 +3,11 @@
 //!   tplcc check <src.st>…            parse + sema, print diags
 //!   tplcc build <src.st>… -o p.tplc  full pipeline → .tplc package
 //!   tplcc info <p.tplc>              dump package header + sections
+//!
+//! `check` and `build` accept `--json`: diagnostics go to stdout as a
+//! `{"ok",…,"diags":[…]}` report (build adds `"package"` on success)
+//! instead of the human rendering. Used by the ctl proxy's /compile
+//! route for the web IDE.
 
 use inkwell::context::Context;
 use sha2::{Digest, Sha256};
@@ -95,18 +100,110 @@ fn print_diags(diags: &[tplc_st::Diag], srcs: &[(String, String)]) -> usize {
     errs
 }
 
-fn cmd_check(files: &[String]) -> ExitCode {
-    let srcs = read_srcs(files);
+/// Machine-readable diagnostic report (`--json`): one line on stdout,
+/// `{"ok":bool,"errors":N,"diags":[…]}`. St spans carry file/line/col/
+/// offset/len so the web IDE can underline the offending range; Fbd
+/// spans carry sheet/node/pin ids.
+fn diag_json(d: &tplc_st::Diag, srcs: &[(String, String)]) -> serde_json::Value {
+    let sev = match d.severity {
+        tplc_st::Severity::Error => "error",
+        tplc_st::Severity::Warning => "warning",
+        tplc_st::Severity::Note => "note",
+    };
+    let mut o = serde_json::json!({
+        "code": d.code,
+        "severity": sev,
+        "message": d.message,
+        "notes": d.notes,
+    });
+    if let Some(h) = &d.help {
+        o["help"] = serde_json::json!(h);
+    }
+    match d.span {
+        Prov::St { file, offset, len } => {
+            let (name, text) = srcs
+                .get(file as usize)
+                .map(|(n, t)| (n.as_str(), t.as_str()))
+                .unwrap_or(("<src>", ""));
+            o["file"] = serde_json::json!(name);
+            o["offset"] = serde_json::json!(offset);
+            o["len"] = serde_json::json!(len);
+            if let Some((line, col)) = d.line_col(text) {
+                o["line"] = serde_json::json!(line);
+                o["col"] = serde_json::json!(col);
+            }
+        }
+        Prov::Fbd { sheet, node, pin } => {
+            o["fbd"] = serde_json::json!({"sheet": sheet, "node": node, "pin": pin});
+        }
+        _ => {}
+    }
+    o
+}
+
+fn diag_report(
+    diags: &[tplc_st::Diag],
+    srcs: &[(String, String)],
+    errs: usize,
+    package: Option<&std::path::Path>,
+) -> serde_json::Value {
+    let mut r = serde_json::json!({
+        "ok": errs == 0,
+        "errors": errs,
+        "diags": diags.iter().map(|d| diag_json(d, srcs)).collect::<Vec<_>>(),
+    });
+    if let Some(p) = package {
+        r["package"] = serde_json::json!(p.display().to_string());
+    }
+    r
+}
+
+/// non-frontend failures (verify/link/change-deny) in --json mode:
+/// synthesize a single error diag so the envelope stays uniform.
+fn stage_failure_json(stage: &str, message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "ok": false,
+        "errors": 1,
+        "diags": [{
+            "code": "TPLC_E_DRIVER",
+            "severity": "error",
+            "message": format!("{stage}: {message}"),
+            "notes": [],
+        }],
+    })
+}
+
+fn cmd_check(args: &[String]) -> ExitCode {
+    let mut json_mode = false;
+    let mut files: Vec<String> = Vec::new();
+    for a in args {
+        match a.as_str() {
+            "--json" => json_mode = true,
+            f => files.push(f.into()),
+        }
+    }
+    let srcs = read_srcs(&files);
     let mut out = compile_srcs(&srcs);
-    let mut errs = print_diags(&out.diags, &srcs);
-    if errs == 0 {
-        errs += print_diags(&tplc_st::sema::check(&mut out.module), &srcs);
+    let mut diags = std::mem::take(&mut out.diags);
+    if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
+        diags.extend(tplc_st::sema::check(&mut out.module));
+    }
+    let errs = diags
+        .iter()
+        .filter(|d| d.severity == tplc_st::Severity::Error)
+        .count();
+    if json_mode {
+        println!("{}", diag_report(&diags, &srcs, errs, None));
+    } else {
+        print_diags(&diags, &srcs);
     }
     if errs > 0 {
         eprintln!("{errs} error(s)");
         ExitCode::FAILURE
     } else {
-        println!("ok: {} pou(s)", out.module.pous.len());
+        if !json_mode {
+            println!("ok: {} pou(s)", out.module.pous.len());
+        }
         ExitCode::SUCCESS
     }
 }
@@ -115,6 +212,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut out_path = PathBuf::from("out.tplc");
     let mut change_against: Option<PathBuf> = None;
     let mut allow_retain_loss = false;
+    let mut json_mode = false;
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
@@ -129,6 +227,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 i += 1;
             }
             "--allow-retain-loss" => allow_retain_loss = true,
+            "--json" => json_mode = true,
             "--rename" => {
                 if let Some((o, n)) = args[i + 1].split_once('=') {
                     renames.push((o.into(), n.into()));
@@ -145,11 +244,21 @@ fn cmd_build(args: &[String]) -> ExitCode {
     }
     let srcs = read_srcs(&files);
     let mut out = compile_srcs(&srcs);
-    let mut errs = print_diags(&out.diags, &srcs);
-    if errs == 0 {
-        errs += print_diags(&tplc_st::sema::check(&mut out.module), &srcs);
+    let mut diags = std::mem::take(&mut out.diags);
+    if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
+        diags.extend(tplc_st::sema::check(&mut out.module));
+    }
+    let errs = diags
+        .iter()
+        .filter(|d| d.severity == tplc_st::Severity::Error)
+        .count();
+    if !json_mode {
+        print_diags(&diags, &srcs);
     }
     if errs > 0 {
+        if json_mode {
+            println!("{}", diag_report(&diags, &srcs, errs, None));
+        }
         eprintln!("{errs} error(s)");
         return ExitCode::FAILURE;
     }
@@ -243,6 +352,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
             }
         }
         if plan.deny || deny_errs > 0 {
+            if json_mode {
+                println!("{}", stage_failure_json("change", "online change denied"));
+            }
             eprintln!(
                 "online change denied: {deny_errs} rule(s) — deploy a                  cold package instead"
             );
@@ -371,6 +483,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
         mig_emit.as_ref(),
     );
     if let Err(e) = llmod.verify() {
+        if json_mode {
+            println!("{}", stage_failure_json("verify", &e.to_string()));
+        }
         eprintln!("tplcc: LLVM verify failed: {e}");
         return ExitCode::FAILURE;
     }
@@ -435,6 +550,12 @@ fn cmd_build(args: &[String]) -> ExitCode {
         .output()
         .unwrap();
     if !cc.status.success() {
+        if json_mode {
+            println!(
+                "{}",
+                stage_failure_json("link", &String::from_utf8_lossy(&cc.stderr))
+            );
+        }
         eprintln!(
             "tplcc: link failed: {}",
             String::from_utf8_lossy(&cc.stderr)
@@ -508,7 +629,11 @@ fn cmd_build(args: &[String]) -> ExitCode {
         .unwrap();
     let pkg = w.build().unwrap();
     std::fs::write(&out_path, pkg).unwrap();
-    println!("wrote {}", out_path.display());
+    if json_mode {
+        println!("{}", diag_report(&diags, &srcs, 0, Some(&out_path)));
+    } else {
+        println!("wrote {}", out_path.display());
+    }
     ExitCode::SUCCESS
 }
 

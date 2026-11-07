@@ -68,21 +68,7 @@ impl Diag {
             return out;
         };
         let (off, ln) = (offset as usize, len.max(1) as usize);
-        let mut line = 1usize;
-        let mut col = 1usize;
-        let mut line_start = 0usize;
-        for (i, c) in src.char_indices() {
-            if i >= off {
-                break;
-            }
-            if c == '\n' {
-                line += 1;
-                col = 1;
-                line_start = i + 1;
-            } else {
-                col += 1;
-            }
-        }
+        let (line, col, line_start) = line_col(src, off);
         let line_end = src[line_start..]
             .find('\n')
             .map(|e| line_start + e)
@@ -120,6 +106,36 @@ impl Diag {
             span,
         }
     }
+
+    /// 1-based (line, col) of the span start for `Prov::St`, resolved
+    /// against the source text of the diag's file.
+    pub fn line_col(&self, src: &str) -> Option<(usize, usize)> {
+        let Prov::St { offset, .. } = self.span else {
+            return None;
+        };
+        let (line, col, _) = line_col(src, offset as usize);
+        Some((line, col))
+    }
+}
+
+/// byte offset → (line, col, line_start); columns count chars.
+fn line_col(src: &str, off: usize) -> (usize, usize, usize) {
+    let mut line = 1usize;
+    let mut col = 1usize;
+    let mut line_start = 0usize;
+    for (i, c) in src.char_indices() {
+        if i >= off {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            col = 1;
+            line_start = i + 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col, line_start)
 }
 
 #[cfg(test)]
