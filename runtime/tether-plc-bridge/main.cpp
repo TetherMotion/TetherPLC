@@ -7,6 +7,9 @@
 #include <tplc/bridge/ImageServer.hpp>
 #include <tplc/bridge/MapRunner.hpp>
 #include <tplc/bridge/Supervisor.hpp>
+#include <tplc/bridge/CatalogExporter.hpp>
+#include <tplc/host/Module.hpp>
+#include <tplc/pkg/Package.hpp>
 #include <tplc/tplc_image.h>
 
 #include <atomic>
@@ -32,6 +35,7 @@ static uint64_t mono_ns() {
 static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --image <shm_path> --map <file> [options]\n"
+        "       %s --catalog <pkg.tplc> [--out FILE]\n"
         "  --simdir DIR      sim transport directory (default /tmp/tplc_sim)\n"
         "  --hz N            map cycle rate (default 1000)\n"
         "  --plc ARGS…       spawn tether-plc with ARGS (everything after)\n"
@@ -39,8 +43,71 @@ static void usage(const char* a0) {
         a0);
 }
 
+/* --catalog <pkg>: extract symmap+typc+descriptor → JSON catalog  */
+static int do_catalog(const std::string& pkg_path,
+                      const std::string& out_path) {
+    auto pres = tplc::Package::open(pkg_path);
+    if (!pres.ok()) {
+        fprintf(stderr, "catalog: %s unreadable: %s\n",
+                pkg_path.c_str(), pres.st.msg.c_str());
+        return 1;
+    }
+    tplc::Package pkg = std::move(pres.value);
+    tplc::PkgSection smap{}, typc{}, obj{};
+    if (!pkg.section(TPLC_SEC_SYMMAP, smap) ||
+        !pkg.section(TPLC_SEC_TYPE_CATALOG, typc)) {
+        fprintf(stderr, "catalog: package lacks symmap/typecat\n");
+        return 1;
+    }
+    std::string prog = "program";
+    std::vector<std::string> tasks;
+    if (pkg.section(TPLC_SEC_TARGET_OBJ, obj)) {
+        char tp[] = "/tmp/tplc_cat_XXXXXX";
+        int tfd = mkstemp(tp);
+        if (tfd >= 0 &&
+            write(tfd, obj.data, obj.size) == (ssize_t)obj.size) {
+            close(tfd);
+            auto mres = tplc::Module::open(tp, 0);
+            if (mres.ok()) {
+                const TplcProgramDescriptor& d =
+                    mres.value.descriptor();
+                char nm[TPLC_PROG_NAME_MAX + 1]{};
+                memcpy(nm, d.name, TPLC_PROG_NAME_MAX);
+                if (*nm) prog = nm;
+                for (uint32_t i = 0; i < d.task_count; i++) {
+                    char tn[TPLC_TASK_NAME_MAX + 1]{};
+                    memcpy(tn, d.tasks[i].name, TPLC_TASK_NAME_MAX);
+                    tasks.push_back(tn);
+                }
+            }
+        }
+        if (tfd >= 0) { close(tfd); unlink(tp); }
+    }
+    auto cres = tplc::catalog_export(
+        (const uint8_t*)smap.data, (uint32_t)smap.size,
+        (const uint8_t*)typc.data, (uint32_t)typc.size,
+        prog, tasks);
+    if (!cres.ok()) {
+        fprintf(stderr, "catalog: %s\n", cres.st.msg.c_str());
+        return 1;
+    }
+    std::string j = tplc::catalog_json(cres.value);
+    if (out_path.empty()) {
+        fputs(j.c_str(), stdout);
+    } else {
+        FILE* f = fopen(out_path.c_str(), "w");
+        if (!f) { perror("out"); return 1; }
+        fputs(j.c_str(), f);
+        fclose(f);
+        fprintf(stderr, "catalog: %zu entries → %s\n",
+                cres.value.size(), out_path.c_str());
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     std::string image_path, map_path, sim_dir = "/tmp/tplc_sim";
+    std::string catalog_pkg, out_path;
     uint64_t hz = 1000;
     std::vector<std::string> plc_args;
     for (int i = 1; i < argc; i++) {
@@ -53,10 +120,14 @@ int main(int argc, char** argv) {
         else if (a == "--map")      map_path   = argv[++i];
         else if (a == "--simdir")   sim_dir    = argv[++i];
         else if (a == "--hz")       hz = strtoull(argv[++i], 0, 0);
+        else if (a == "--catalog")  catalog_pkg = argv[++i];
+        else if (a == "--out")      out_path    = argv[++i];
         else if (a == "--no-plc")   { /* marker */ }
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
     }
+    if (!catalog_pkg.empty())
+        return do_catalog(catalog_pkg, out_path);
     if (image_path.empty() || map_path.empty()) {
         usage(argv[0]); return 2;
     }

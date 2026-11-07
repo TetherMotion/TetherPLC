@@ -57,12 +57,13 @@ set_target_properties(tether-plc PROPERTIES
 add_library(tplc_bridge STATIC
   runtime/bridge/src/ImageServer.cpp
   runtime/bridge/src/MapRunner.cpp
-  runtime/bridge/src/Supervisor.cpp)
+  runtime/bridge/src/Supervisor.cpp
+  runtime/bridge/src/CatalogExporter.cpp)
 target_include_directories(tplc_bridge PUBLIC runtime/bridge/include)
 target_link_libraries(tplc_bridge PUBLIC tplc_image tplc_host)
 
 add_executable(tether-plc-bridge runtime/tether-plc-bridge/main.cpp)
-target_link_libraries(tether-plc-bridge PRIVATE tplc_bridge tplc_image)
+target_link_libraries(tether-plc-bridge PRIVATE tplc_bridge tplc_image tplc_pkg)
 set_target_properties(tether-plc-bridge PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
