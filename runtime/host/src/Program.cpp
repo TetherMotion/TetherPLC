@@ -76,6 +76,7 @@ void Program::stop() {
 
 Status Program::reset(bool warm) {
     stop();
+    ctx_.abort_flag = 0;
     if (warm) ctx_.ctx_flags |=  TPLC_CTXF_RETAIN_RESTORED;
     else      ctx_.ctx_flags &= ~((uint32_t)TPLC_CTXF_RETAIN_RESTORED);
     int32_t rc = mod_->init(&ctx_);

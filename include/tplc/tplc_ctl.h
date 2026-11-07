@@ -34,6 +34,14 @@ enum TplcCtlOp {
     TPLC_OP_PING           = 0x0103,  /* P0                          */
     TPLC_OP_SET_NOTIFY     = 0x0104,  /* P0                          */
     /* deploy 0x0200 — P2 */
+    /* deploy 0x0200 */
+    TPLC_OP_DEPLOY_BEGIN   = 0x0201,  /* P2 {size,sha256,mode}         */
+    TPLC_OP_DEPLOY_CHUNK   = 0x0202,  /* P2 {upload_id,off,data}       */
+    TPLC_OP_DEPLOY_COMMIT  = 0x0203,  /* P2 {upload_id}                */
+    TPLC_OP_DEPLOY_ABORT   = 0x0204,  /* P2 {upload_id}                */
+    TPLC_OP_PKG_LIST       = 0x0205,  /* P2 */
+    TPLC_OP_PKG_INFO       = 0x0206,  /* P2 {package_uuid}             */
+
     /* program 0x0300 */
     TPLC_OP_PROG_PREPARE   = 0x0301,  /* P2 */
     TPLC_OP_PROG_START     = 0x0302,  /* P0 */

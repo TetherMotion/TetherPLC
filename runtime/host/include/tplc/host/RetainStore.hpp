@@ -60,6 +60,9 @@ public:
     /* persist zeroed payload (IEC cold reset of retain). */
     Status clear();
 
+    /* close the file and reset — used before re-open on swap. */
+    void close();
+
     bool     attached()    const { return fd_ >= 0; }
     bool     dirty()       const { return dirty_; }
     uint64_t len()         const { return len_; }

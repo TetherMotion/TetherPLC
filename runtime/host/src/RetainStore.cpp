@@ -137,4 +137,9 @@ Status RetainStore::clear() {
     return flush();
 }
 
+void RetainStore::close() {
+    if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+    dirty_ = false;
+}
+
 } /* namespace tplc */
