@@ -985,6 +985,7 @@ name = "tplcc"
 version = "0.1.0"
 dependencies = [
  "inkwell",
+ "serde_json",
  "sha2",
  "tplc-codegen",
  "tplc-mir",

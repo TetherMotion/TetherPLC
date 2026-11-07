@@ -13,3 +13,4 @@ tplc-st = { path = "../tplc-st", features = ["rusty"] }
 tplc-codegen = { path = "../tplc-codegen", features = ["llvm"] }
 inkwell = { version = "0.9", features = ["llvm21-1"] }
 sha2 = { version = "0.10", features = ["oid"] }
+serde_json = "1"
