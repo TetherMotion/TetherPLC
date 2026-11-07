@@ -74,6 +74,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tplc-mir"
+version = "0.1.0"
+dependencies = [
+ "tplc-pkg",
+]
+
+[[package]]
 name = "tplc-pkg"
 version = "0.1.0"
 dependencies = [

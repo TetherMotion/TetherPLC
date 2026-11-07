@@ -1,0 +1,9 @@
+[package]
+name = "tplc-mir"
+description = "Typed middle IR shared by ST and FBD frontends (doc 07 §2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tplc-pkg = { path = "../tplc-pkg" }

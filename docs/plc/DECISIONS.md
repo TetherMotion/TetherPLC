@@ -165,3 +165,42 @@ pull LLVM-21. Local builds need an LLVM-21 prefix (this machine uses
     PATH=$HOME/llvm21/usr/lib/llvm-21/bin:$PATH \
       LLVM_SYS_211_PREFIX=$HOME/llvm21/usr/lib/llvm-21 \
       cargo build --manifest-path compiler/spikes/rusty-parse/Cargo.toml
+
+## DEC-2026-01 — ST frontend strategy: half-B (ruSTy parser only), CONFIRMED
+
+  Chosen:    **half-B** — adopt ruSTy's parser/AST (crates
+             `plc_compiler`, `plc_ast`, `plc_source`, `plc_parser`,
+             `plc_lexer`, `plc_index`) at pinned rev `11e8107e` behind a
+             `tplc-st` adapter boundary; everything from `tplc-mir`
+             downward is ours (doc 13 §8 list unchanged).
+  Evidence:  S1–S6 all executed:
+    - S1 PASS — library parse, 117/117 nodes located, 0 diags.
+    - S2 PASS — 100% of corpus lowerable (0 dialect-excluded at AST).
+    - S3 PASS-with-note — annotations side-table (no AST entanglement);
+      `pre_process` desugars AT→`__PI_*` globals ⇒ **we lower the RAW
+      AST and never call pre_process** (decided in S5: AT is parsed as
+      `PointerType{auto_deref: Alias}` we unwrap to shadow+io_binding).
+    - S4 CONFIRMED — module-owned LLVM globals ⇒ Option A eliminated.
+    - S5 PASS — `compiler/spikes/rusty-mir`: full corpus POU lowered to
+      `tplc-mir` (~350 LOC), laid out (148 B blob, retain regioned),
+      executed in `tplc-mir`'s interpreter: TON timing, FB calls with
+      named args, CASE ranges, FOR/WHILE/REPEAT, typed literals,
+      function calls, AT-bound vars, retain init — 5/5 checks, 0 gaps.
+    - S6 DONE — `compiler/spikes/rd-floor`: 451 LOC hand-RD parser
+      covers ~15% of dialect ⇒ full ST own-parser ≈3-5k LOC + sema
+      (weeks) vs ~350 LOC observed for the B-path lowering.
+  Rejected:  A (adopt ruSTy backend) — module-owned state, structural.
+             C (own parser) — 10× observed B cost, no semantic benefit;
+             kept as fallback if ruSTy API churn or license review fails.
+  Consequences:
+    - `compiler/tplc-mir` crate exists (IR + layout + interp) and is
+      the documented producer contract for ST and FBD frontends.
+    - Doc 05: our sema/typeck/diagnostics layer is ACTIVE; grammar is
+      the normative source (ruSTy parser is an implementation detail).
+    - Doc 07: all sections active — `tplc-mir` is real.
+    - **License caveat (P8 item):** ruSTy is **LGPL-3.0**. Statically
+      linked into `tplccd` it is compliant while TetherPLC source is
+      public (users can relink by rebuilding); if a closed binary
+      distribution ever appears, split the parse step into a separate
+      process or replace the parser. Attribution file required.
+      Clean-room FB lib unaffected (ruSTy stdlib not consumed).

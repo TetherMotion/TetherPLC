@@ -1,0 +1,8 @@
+[package]
+name = "rd-floor-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "P0.5 spike S6: C-fallback floor cost — hand RD parser for a subset"
+
+[workspace]
