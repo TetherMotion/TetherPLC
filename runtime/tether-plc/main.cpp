@@ -1075,8 +1075,14 @@ int main(int argc, char** argv) {
     fprintf(stderr, "tether-plc: running (module=%s image=%s ctl=%s)\n",
             module_path.c_str(), image_path.c_str(), ctl_path.c_str());
 
+    const bool sim_mode = (ctx_flags & TPLC_CTXF_SIM) != 0;
     while (!g_stop) {
         uint64_t now = mono_ns();
+        if (sim_mode && prog) {
+            uint64_t sn = tplc_image_sim_now(&img);
+            prog->services().setSimNow(sn);
+            now = sn;
+        }
 
         /* master-loss policy surface (doc 03 §6.3): we keep cycling on
            held inputs — the latch returns last-good data; status goes

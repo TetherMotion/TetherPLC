@@ -98,12 +98,27 @@ driver process:
 - `plc_ok` uses `tplc_image_hb_stale` (a hb newer than `now` counts
   as fresh — unsigned-underflow bug fixed).
 
+## Simulation (doc 14)
+
+- `sim_time_ns` in the image header (carved from reserved) — master
+  publishes, `tether-plc --sim` sources `ctx->now_ns` +
+  `svc->steady_ns` from it (HostServices override), so all program
+  time is virtual while heartbeats stay real.
+- `tether-plc-sim` = L2 process-sim: creates the image, spawns the
+  real binary with `--sim`, runs a step file
+  (`step N time=<ns> [in off=hex..] [expect off=hex..]`), waits for
+  the next committed scan per step, diffs %Q — verified with a TON
+  vector at 200/600/700 ms crossings; divergence prints step+offset.
+- L1 = `tplcc vectors` (interp, same canonical IR). L3 lives in the
+  Tether app's simulated-plant fleet — not this repo.
+
 ## Not yet
 
 - `PROG_PREPARE/KILL/RESET/UNLOAD` (P2/P3 lifecycle).
 - Multi-program scheduling (descriptor supports it; driver is
   single-program).
-- Catalog exporter (P2-06), ControlProxy curated ctl client in the
-  bridge (ops work via `tplc-ctl` meanwhile), real EtherCAT/Modbus
-  transports (sim only), overrun-policy config (skip is hardcoded),
-  freewheel guard/slice enforcement.
+- ControlProxy curated ctl client in the bridge (ops work via
+  `tplc-ctl` meanwhile), real EtherCAT/Modbus transports (sim only),
+  overrun-policy config (skip is hardcoded), freewheel guard/slice
+  enforcement, sim-parity harness across L1/L2 (same vectors on both
+  levels — the formats differ today).

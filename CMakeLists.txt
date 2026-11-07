@@ -67,6 +67,11 @@ target_link_libraries(tether-plc-bridge PRIVATE tplc_bridge tplc_image tplc_pkg)
 set_target_properties(tether-plc-bridge PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
+add_executable(tether-plc-sim runtime/tether-plc-sim/main.cpp)
+target_link_libraries(tether-plc-sim PRIVATE tplc_image)
+set_target_properties(tether-plc-sim PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
 add_executable(tplc-image tools/tplc_image_tool.c)
 target_link_libraries(tplc-image PRIVATE tplc_image)
 

@@ -56,7 +56,9 @@ void HostServices::diagCounter(uint32_t id, int64_t delta) {
     diag_[id] += delta;
 }
 
-uint64_t HostServices::steadyNs() const { return mono_ns(); }
+uint64_t HostServices::steadyNs() const {
+    return sim_on_ ? sim_now_ : mono_ns();
+}
 
 void HostServices::retainDirty(uint64_t off, uint64_t len) {
     retain_dirty_.emplace_back(off, len);

@@ -41,6 +41,11 @@ public:
                  uint32_t len);
     void     diagCounter(uint32_t id, int64_t delta);
     uint64_t steadyNs() const;
+    /* sim clock (doc 14 §2): when enabled, steadyNs returns the
+       master-published sim time — drives ctx->now_ns and deadline
+       checks deterministically in --sim mode                       */
+    void     setSimNow(uint64_t ns) { sim_now_ = ns; sim_on_ = true; }
+    bool     simClock() const { return sim_on_; }
     void     retainDirty(uint64_t off, uint64_t len);
     int32_t  raiseEvent(uint32_t mask);
     void*    getService(const char* name, uint32_t len);
@@ -51,6 +56,8 @@ private:
     std::unordered_map<uint32_t, int64_t> diag_;
     std::vector<std::pair<uint64_t, uint64_t>> retain_dirty_;
     uint64_t     log_count_ = 0;
+    uint64_t     sim_now_ = 0;
+    bool         sim_on_ = false;
 };
 
 } /* namespace tplc */

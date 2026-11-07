@@ -50,7 +50,9 @@ typedef struct TplcImageHeader {
     uint64_t in_retries;                /* latch retries (plc side)   */
     uint64_t out_retries;               /* latch retries (master)     */
     uint64_t last_fault_code;           /* plc writes; master reads   */
-    uint8_t  reserved[112];             /* expansion (per-prog table) */
+    uint64_t sim_time_ns;               /* sim clock (master writes,  */
+                                        /* plc reads when CTXF_SIM)   */
+    uint8_t  reserved[104];             /* expansion (per-prog table) */
 } TplcImageHeader;
 _Static_assert(sizeof(TplcImageHeader) == TPLC_IMAGE_HDRSIZE,
                "image header size");
@@ -175,6 +177,17 @@ uint64_t tplc_image_last_fault(const TplcImage* img);
 /* Sizes */
 uint64_t tplc_image_in_size(const TplcImage* img);
 uint64_t tplc_image_out_size(const TplcImage* img);
+
+/* Sim clock: master publishes sim_time_ns; a plc started with
+   --sim (TPLC_CTXF_SIM) sources ctx->now_ns + svc->steady_ns from
+   it instead of the wall clock (doc 14 §2 determinism).          */
+static inline void tplc_image_sim_set_now(TplcImage* img,
+                                          uint64_t ns) {
+    tplc_img_store_u64(&img->hdr->sim_time_ns, ns);
+}
+static inline uint64_t tplc_image_sim_now(const TplcImage* img) {
+    return tplc_img_load_u64(&img->hdr->sim_time_ns);
+}
 
 /* Staleness: helper for the §6.1 liveness rule. */
 static inline int tplc_image_hb_stale(uint64_t hb_ns, uint64_t now_ns,
