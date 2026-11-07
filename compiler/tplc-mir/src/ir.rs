@@ -16,17 +16,36 @@ pub enum Prov {
 pub enum Type {
     Bool,
     /// signed ints: SINT=8 INT=16 DINT=32 LINT=64; unsigned same widths
-    Int { signed: bool, bits: u8 },
-    Real { bits: u8 }, // 32 | 64
+    Int {
+        signed: bool,
+        bits: u8,
+    },
+    Real {
+        bits: u8,
+    }, // 32 | 64
     /// TIME family stored as i64 ns (TIME/DATE/TOD/DT all time-valued)
     Time,
     /// STRING(cap): blob = u8 len + u8 data[cap], cap+1 rounded to 2
-    Str { cap: u16 },
-    Array { elem: Box<Type>, lo: i64, hi: i64 },
-    Struct { name: String, fields: Vec<(String, Type)> },
-    Enum { name: String, values: Vec<String> },
+    Str {
+        cap: u16,
+    },
+    Array {
+        elem: Box<Type>,
+        lo: i64,
+        hi: i64,
+    },
+    Struct {
+        name: String,
+        fields: Vec<(String, Type)>,
+    },
+    Enum {
+        name: String,
+        values: Vec<String>,
+    },
     /// FB instance type reference (by qualified FB name)
-    Fb { name: String },
+    Fb {
+        name: String,
+    },
 }
 
 impl Type {
@@ -38,9 +57,7 @@ impl Type {
             Type::Real { bits } => (*bits as u64) / 8,
             Type::Time => 8,
             Type::Str { cap } => align2(1 + *cap as u64),
-            Type::Array { elem, lo, hi } => {
-                elem.size() * (*hi - *lo + 1).max(0) as u64
-            }
+            Type::Array { elem, lo, hi } => elem.size() * (*hi - *lo + 1).max(0) as u64,
             Type::Struct { fields, .. } => {
                 let mut sz = 0u64;
                 for (_, t) in fields {
@@ -59,9 +76,7 @@ impl Type {
             Type::Time => 8,
             Type::Str { .. } => 2,
             Type::Array { elem, .. } => elem.align(),
-            Type::Struct { fields, .. } => {
-                fields.iter().map(|(_, t)| t.align()).max().unwrap_or(1)
-            }
+            Type::Struct { fields, .. } => fields.iter().map(|(_, t)| t.align()).max().unwrap_or(1),
             Type::Enum { .. } => 4,
             Type::Fb { .. } => 8,
         }
@@ -156,14 +171,39 @@ pub struct Stmt {
 
 #[derive(Debug, Clone)]
 pub enum StmtKind {
-    Assign { lhs: Ref, rhs: Expr },
-    If { branches: Vec<(Expr, Vec<Stmt>)>, else_: Vec<Stmt> },
-    Case { sel: Expr, arms: Vec<(Vec<CaseSel>, Vec<Stmt>)>, else_: Vec<Stmt> },
-    For { var: String, start: Expr, end: Expr, step: Option<Expr>, body: Vec<Stmt> },
-    While { cond: Expr, body: Vec<Stmt> },
-    Repeat { cond: Expr, body: Vec<Stmt> },
+    Assign {
+        lhs: Ref,
+        rhs: Expr,
+    },
+    If {
+        branches: Vec<(Expr, Vec<Stmt>)>,
+        else_: Vec<Stmt>,
+    },
+    Case {
+        sel: Expr,
+        arms: Vec<(Vec<CaseSel>, Vec<Stmt>)>,
+        else_: Vec<Stmt>,
+    },
+    For {
+        var: String,
+        start: Expr,
+        end: Expr,
+        step: Option<Expr>,
+        body: Vec<Stmt>,
+    },
+    While {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
+    Repeat {
+        cond: Expr,
+        body: Vec<Stmt>,
+    },
     /// FB-instance invocation with named bindings (`ton1(IN := ..)`)
-    Call { inst: Ref, args: Vec<(String, Expr)> },
+    Call {
+        inst: Ref,
+        args: Vec<(String, Expr)>,
+    },
     Return(Option<Expr>),
     Exit,
     Continue,
@@ -199,9 +239,15 @@ pub enum ExprKind {
     Bin(BinOp, Box<Expr>, Box<Expr>),
     Un(UnOp, Box<Expr>),
     /// function call (FUNCTION POUs)
-    Call { fun: String, args: Vec<(String, Expr)> },
+    Call {
+        fun: String,
+        args: Vec<(String, Expr)>,
+    },
     /// explicit conversion inserted by sema — codegen never guesses
-    Conv { to: Type, e: Box<Expr> },
+    Conv {
+        to: Type,
+        e: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -217,11 +263,26 @@ pub enum Lit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Mod,
-    Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or, Xor,
-    AndThen, OrElse,
-    Shl, Shr, Rol, Ror,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    Xor,
+    AndThen,
+    OrElse,
+    Shl,
+    Shr,
+    Rol,
+    Ror,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

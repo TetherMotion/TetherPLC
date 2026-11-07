@@ -90,12 +90,7 @@ pub struct Rt<'a> {
 }
 
 impl<'a> Rt<'a> {
-    pub fn new(
-        blob: &'a mut [u8],
-        layout: &'a Layout,
-        module: &'a Module,
-        now_ns: u64,
-    ) -> Self {
+    pub fn new(blob: &'a mut [u8], layout: &'a Layout, module: &'a Module, now_ns: u64) -> Self {
         Rt {
             blob,
             layout,
@@ -133,7 +128,10 @@ impl<'a> Rt<'a> {
                 32 => i32::from_le_bytes(b[..4].try_into().unwrap()) as i64,
                 _ => i64::from_le_bytes(b[..8].try_into().unwrap()),
             }),
-            Type::Int { signed: false, bits } => Value::U(match bits {
+            Type::Int {
+                signed: false,
+                bits,
+            } => Value::U(match bits {
                 8 => u8::from_le_bytes(b[..1].try_into().unwrap()) as u64,
                 16 => u16::from_le_bytes(b[..2].try_into().unwrap()) as u64,
                 32 => u32::from_le_bytes(b[..4].try_into().unwrap()) as u64,
@@ -165,7 +163,13 @@ impl<'a> Rt<'a> {
                 32 => b[..4].copy_from_slice(&(*x as i32).to_le_bytes()),
                 _ => b[..8].copy_from_slice(&x.to_le_bytes()),
             },
-            (Type::Int { signed: false, bits }, Value::U(x)) => match bits {
+            (
+                Type::Int {
+                    signed: false,
+                    bits,
+                },
+                Value::U(x),
+            ) => match bits {
                 8 => b[..1].copy_from_slice(&(*x as u8).to_le_bytes()),
                 16 => b[..2].copy_from_slice(&(*x as u16).to_le_bytes()),
                 32 => b[..4].copy_from_slice(&(*x as u32).to_le_bytes()),
@@ -212,9 +216,7 @@ impl<'a> Rt<'a> {
                 b[0] = n as u8;
                 b[1..1 + n].copy_from_slice(&s[..n]);
             }
-            (Type::Enum { .. }, Value::I(x)) => {
-                b[..4].copy_from_slice(&(*x as i32).to_le_bytes())
-            }
+            (Type::Enum { .. }, Value::I(x)) => b[..4].copy_from_slice(&(*x as i32).to_le_bytes()),
             _ => {}
         }
     }
@@ -491,7 +493,13 @@ impl<'a> Rt<'a> {
                 }
                 Flow::Normal
             }
-            For { var, start, end, step, body } => {
+            For {
+                var,
+                start,
+                end,
+                step,
+                body,
+            } => {
                 let s0 = self.eval(ctx, start).as_i64();
                 let e0 = self.eval(ctx, end).as_i64();
                 let st = step
@@ -522,9 +530,7 @@ impl<'a> Rt<'a> {
                 for (sels, stmts) in arms {
                     for cs in sels {
                         let hit = match cs {
-                            CaseSel::Lit(e) => {
-                                cmp(&sv, &self.eval(ctx, e)) == 0
-                            }
+                            CaseSel::Lit(e) => cmp(&sv, &self.eval(ctx, e)) == 0,
                             CaseSel::Range(a, b) => {
                                 let lo = self.eval(ctx, a);
                                 let hi = self.eval(ctx, b);
@@ -539,11 +545,7 @@ impl<'a> Rt<'a> {
                 self.exec_all(ctx, else_)
             }
             Call { inst, args } => self.fb_call(ctx, inst, args),
-            Return(e) => Flow::Return(
-                e.as_ref()
-                    .map(|x| self.eval(ctx, x))
-                    .unwrap_or(Value::I(0)),
-            ),
+            Return(e) => Flow::Return(e.as_ref().map(|x| self.eval(ctx, x)).unwrap_or(Value::I(0))),
             Exit => Flow::Exit,
             Continue => Flow::Normal,
         }
@@ -585,7 +587,8 @@ impl<'a> Rt<'a> {
                 let m = &fbl.members;
                 let get = |n: &str| (off + m[n].0) as usize;
                 let in_v = self.blob[get("IN")] != 0;
-                let pt = i64::from_le_bytes(self.blob[get("PT")..get("PT") + 8].try_into().unwrap());
+                let pt =
+                    i64::from_le_bytes(self.blob[get("PT")..get("PT") + 8].try_into().unwrap());
                 let last = self.blob[get("__in_last")] != 0;
                 let now = self.now_ns as i64;
                 if in_v && !last {
@@ -593,7 +596,9 @@ impl<'a> Rt<'a> {
                         .copy_from_slice(&now.to_le_bytes());
                 }
                 let start = i64::from_le_bytes(
-                    self.blob[get("__start")..get("__start") + 8].try_into().unwrap(),
+                    self.blob[get("__start")..get("__start") + 8]
+                        .try_into()
+                        .unwrap(),
                 );
                 let (q, et) = if in_v {
                     let el = now - start;
@@ -621,7 +626,8 @@ impl<'a> Rt<'a> {
                 let cu = self.blob[get("CU")] != 0;
                 let r = self.blob[get("R")] != 0;
                 let last = self.blob[get("__cu_last")] != 0;
-                let pv = i32::from_le_bytes(self.blob[get("PV")..get("PV") + 4].try_into().unwrap());
+                let pv =
+                    i32::from_le_bytes(self.blob[get("PV")..get("PV") + 4].try_into().unwrap());
                 let mut cv =
                     i32::from_le_bytes(self.blob[get("CV")..get("CV") + 4].try_into().unwrap());
                 if r {

@@ -172,9 +172,8 @@ impl PackageWriter {
         // TOC.
         for (i, s) in self.sections.iter().enumerate() {
             let at = HEADER_FIXED + i * TOC_ENTRY_SIZE;
-            s.toc.encode((&mut out[at..at + TOC_ENTRY_SIZE])
-                .try_into()
-                .unwrap());
+            s.toc
+                .encode((&mut out[at..at + TOC_ENTRY_SIZE]).try_into().unwrap());
         }
 
         // Payloads.

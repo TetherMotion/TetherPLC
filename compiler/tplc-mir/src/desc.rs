@@ -26,7 +26,10 @@ struct Strtab {
 }
 impl Strtab {
     fn new() -> Self {
-        Strtab { map: BTreeMap::new(), buf: vec![0] } // 0 = ""
+        Strtab {
+            map: BTreeMap::new(),
+            buf: vec![0],
+        } // 0 = ""
     }
     fn intern(&mut self, s: &str) -> u32 {
         if let Some(&o) = self.map.get(s) {
@@ -58,14 +61,38 @@ impl Strtab {
 fn tag_of(ty: &Type) -> u8 {
     match ty {
         Type::Bool => 0,
-        Type::Int { signed: true, bits: 8 } => 1,
-        Type::Int { signed: true, bits: 16 } => 2,
-        Type::Int { signed: true, bits: 32 } => 3,
-        Type::Int { signed: true, bits: 64 } => 4,
-        Type::Int { signed: false, bits: 8 } => 5,
-        Type::Int { signed: false, bits: 16 } => 6,
-        Type::Int { signed: false, bits: 32 } => 7,
-        Type::Int { signed: false, bits: 64 } => 8,
+        Type::Int {
+            signed: true,
+            bits: 8,
+        } => 1,
+        Type::Int {
+            signed: true,
+            bits: 16,
+        } => 2,
+        Type::Int {
+            signed: true,
+            bits: 32,
+        } => 3,
+        Type::Int {
+            signed: true,
+            bits: 64,
+        } => 4,
+        Type::Int {
+            signed: false,
+            bits: 8,
+        } => 5,
+        Type::Int {
+            signed: false,
+            bits: 16,
+        } => 6,
+        Type::Int {
+            signed: false,
+            bits: 32,
+        } => 7,
+        Type::Int {
+            signed: false,
+            bits: 64,
+        } => 8,
         Type::Real { bits: 32 } => 9,
         Type::Real { bits: 64 } => 10,
         Type::Time => 11,
@@ -74,16 +101,22 @@ fn tag_of(ty: &Type) -> u8 {
         Type::Struct { .. } => 19,
         Type::Enum { .. } => 20,
         Type::Fb { .. } => 21,
-        Type::Int { signed, bits } => {
-            match (signed, bits) {
-                (true, 8) => 1, (true, 16) => 2, (true, 32) => 3,
-                (true, _) => 4,
-                (false, 8) => 5, (false, 16) => 6, (false, 32) => 7,
-                (false, _) => 8,
-            }
-        }
+        Type::Int { signed, bits } => match (signed, bits) {
+            (true, 8) => 1,
+            (true, 16) => 2,
+            (true, 32) => 3,
+            (true, _) => 4,
+            (false, 8) => 5,
+            (false, 16) => 6,
+            (false, 32) => 7,
+            (false, _) => 8,
+        },
         Type::Real { bits } => {
-            if *bits == 32 { 9 } else { 10 }
+            if *bits == 32 {
+                9
+            } else {
+                10
+            }
         }
     }
 }
@@ -121,7 +154,8 @@ impl<'a> Catalog<'a> {
                     self.member_records.push((n.clone(), ti, off as u32, 0));
                     off += t.size();
                 }
-                self.member_ranges.insert(idx as usize, (start, fields.len() as u32));
+                self.member_ranges
+                    .insert(idx as usize, (start, fields.len() as u32));
             }
             Type::Fb { name } => {
                 if let Some(fbl) = self
@@ -133,8 +167,7 @@ impl<'a> Catalog<'a> {
                     let start = self.member_records.len() as u32;
                     for (mn, (moff, mty)) in &fbl.members {
                         let ti = self.index_of(mty);
-                        self.member_records
-                            .push((mn.clone(), ti, *moff as u32, 0));
+                        self.member_records.push((mn.clone(), ti, *moff as u32, 0));
                     }
                     self.member_ranges
                         .insert(idx as usize, (start, fbl.members.len() as u32));
@@ -181,15 +214,17 @@ impl<'a> Catalog<'a> {
         for (i, t) in self.types.iter().enumerate() {
             let mut e = Vec::new();
             let name = match t {
-                Type::Struct { name, .. }
-                | Type::Enum { name, .. }
-                | Type::Fb { name } => st.intern(name),
+                Type::Struct { name, .. } | Type::Enum { name, .. } | Type::Fb { name } => {
+                    st.intern(name)
+                }
                 _ => st.intern(""),
             };
             let (elem, dims, lo, hi) = match t {
                 Type::Array { elem, lo, hi } => (
-                    self.types.iter().position(|x| x == elem.as_ref()).unwrap_or(0)
-                        as u32,
+                    self.types
+                        .iter()
+                        .position(|x| x == elem.as_ref())
+                        .unwrap_or(0) as u32,
                     1,
                     *lo,
                     *hi,

@@ -77,10 +77,24 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "CD", Type::Bool);
             push(&mut off, "R", Type::Bool);
             push(&mut off, "LD", Type::Bool);
-            push(&mut off, "PV", Type::Int { signed: true, bits: 32 });
+            push(
+                &mut off,
+                "PV",
+                Type::Int {
+                    signed: true,
+                    bits: 32,
+                },
+            );
             push(&mut off, "QU", Type::Bool);
             push(&mut off, "QD", Type::Bool);
-            push(&mut off, "CV", Type::Int { signed: true, bits: 32 });
+            push(
+                &mut off,
+                "CV",
+                Type::Int {
+                    signed: true,
+                    bits: 32,
+                },
+            );
             push(&mut off, "__cu_last", Type::Bool);
             push(&mut off, "__cd_last", Type::Bool);
         }
@@ -105,10 +119,7 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
 /// natural alignment ≤8). Used for FB types, FUNCTION call scopes, and
 /// STRUCT member tables. VAR_IN_OUT gets no stored field (call-scoped
 /// binding, doc 07 §3.2).
-pub fn layout_members(
-    vars: &[VarDecl],
-    fb_types: BTreeMap<String, FbLayout>,
-) -> FbLayout {
+pub fn layout_members(vars: &[VarDecl], fb_types: BTreeMap<String, FbLayout>) -> FbLayout {
     let mut members = BTreeMap::new();
     let mut off = 0u64;
     let mut align = 1u64;
@@ -132,7 +143,11 @@ pub fn layout_members(
         off += size;
     }
     let size = (off + align - 1) & !(align - 1);
-    FbLayout { size, align, members }
+    FbLayout {
+        size,
+        align,
+        members,
+    }
 }
 
 /// Layout an FB *type* from its MIR declaration (declaration order).

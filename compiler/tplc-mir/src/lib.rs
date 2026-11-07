@@ -7,7 +7,7 @@ pub mod interp;
 pub mod ir;
 pub mod layout;
 
-pub use interp::{Rt, Value};
 pub use desc::{emit, Descriptors};
+pub use interp::{Rt, Value};
 pub use ir::*;
 pub use layout::{layout_program, Layout};

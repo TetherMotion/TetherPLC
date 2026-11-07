@@ -19,9 +19,9 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 use std::collections::BTreeMap;
-use tplc_mir::ir::*;
-use tplc_mir::ir::AtRegion;
 use tplc_mir::interp::{fb_ctx, program_ctx, Ctx};
+use tplc_mir::ir::AtRegion;
+use tplc_mir::ir::*;
 use tplc_mir::layout::{builtin_fb_layout, Layout};
 
 const CTX_STATE_BLOB: u64 = 8;
@@ -37,14 +37,38 @@ fn io_codes(at: &At, ty: &Type) -> (u8, u8, u8) {
     };
     let tc = match ty {
         Type::Bool => 0,
-        Type::Int { signed: false, bits: 8 } => 1,
-        Type::Int { signed: true, bits: 8 } => 2,
-        Type::Int { signed: false, bits: 16 } => 3,
-        Type::Int { signed: true, bits: 16 } => 4,
-        Type::Int { signed: false, bits: 32 } => 5,
-        Type::Int { signed: true, bits: 32 } => 6,
-        Type::Int { signed: false, bits: 64 } => 7,
-        Type::Int { signed: true, bits: 64 } => 8,
+        Type::Int {
+            signed: false,
+            bits: 8,
+        } => 1,
+        Type::Int {
+            signed: true,
+            bits: 8,
+        } => 2,
+        Type::Int {
+            signed: false,
+            bits: 16,
+        } => 3,
+        Type::Int {
+            signed: true,
+            bits: 16,
+        } => 4,
+        Type::Int {
+            signed: false,
+            bits: 32,
+        } => 5,
+        Type::Int {
+            signed: true,
+            bits: 32,
+        } => 6,
+        Type::Int {
+            signed: false,
+            bits: 64,
+        } => 7,
+        Type::Int {
+            signed: true,
+            bits: 64,
+        } => 8,
         Type::Real { bits: 32 } => 9,
         Type::Real { bits: 64 } => 10,
         _ => 15,
@@ -77,7 +101,10 @@ pub struct Gen<'ctx> {
 fn llty<'c>(ctx: &'c Context, t: &Type) -> BasicTypeEnum<'c> {
     match t {
         Type::Bool => ctx.bool_type().into(),
-        Type::Int { signed: _, bits } => ctx.custom_width_int_type(std::num::NonZeroU32::new(*bits as u32).unwrap()).unwrap().into(),
+        Type::Int { signed: _, bits } => ctx
+            .custom_width_int_type(std::num::NonZeroU32::new(*bits as u32).unwrap())
+            .unwrap()
+            .into(),
         Type::Real { bits: 32 } => ctx.f32_type().into(),
         Type::Real { .. } => ctx.f64_type().into(),
         Type::Time | Type::Enum { .. } => ctx.i64_type().into(),
@@ -168,11 +195,14 @@ impl<'ctx> Gen<'ctx> {
                 let (p, ty) = self.resolve(ctx, inner);
                 if let Type::Array { elem, lo, .. } = ty {
                     let iv = self.expr(ctx, idx);
-                    let iv = self.b.build_int_sub(
-                        iv.into_int_value(),
-                        self.ctx.i64_type().const_int(lo as u64, true),
-                        "idx",
-                    ).unwrap();
+                    let iv = self
+                        .b
+                        .build_int_sub(
+                            iv.into_int_value(),
+                            self.ctx.i64_type().const_int(lo as u64, true),
+                            "idx",
+                        )
+                        .unwrap();
                     let esz = self.ctx.i64_type().const_int(elem.size(), false);
                     let bo = self.b.build_int_mul(iv, esz, "bo").unwrap();
                     unsafe {
@@ -211,11 +241,7 @@ impl<'ctx> Gen<'ctx> {
         let (p, ty) = self.resolve(ctx, r);
         let v = if is_bool(&ty) {
             self.b
-                .build_int_z_extend(
-                    v.into_int_value(),
-                    self.ctx.i8_type(),
-                    "z",
-                )
+                .build_int_z_extend(v.into_int_value(), self.ctx.i8_type(), "z")
                 .unwrap()
                 .into()
         } else {
@@ -247,9 +273,15 @@ impl<'ctx> Gen<'ctx> {
                 match op {
                     UnOp::Neg => {
                         if v.is_float_value() {
-                            self.b.build_float_neg(v.into_float_value(), "n").unwrap().into()
+                            self.b
+                                .build_float_neg(v.into_float_value(), "n")
+                                .unwrap()
+                                .into()
                         } else {
-                            self.b.build_int_neg(v.into_int_value(), "n").unwrap().into()
+                            self.b
+                                .build_int_neg(v.into_int_value(), "n")
+                                .unwrap()
+                                .into()
                         }
                     }
                     UnOp::Not => self.b.build_not(v.into_int_value(), "not").unwrap().into(),
@@ -264,12 +296,7 @@ impl<'ctx> Gen<'ctx> {
         }
     }
 
-    fn conv(
-        &mut self,
-        v: BasicValueEnum<'ctx>,
-        from: &Type,
-        to: &Type,
-    ) -> BasicValueEnum<'ctx> {
+    fn conv(&mut self, v: BasicValueEnum<'ctx>, from: &Type, to: &Type) -> BasicValueEnum<'ctx> {
         match (from, to) {
             (Type::Bool, Type::Int { .. }) => self
                 .b
@@ -289,19 +316,31 @@ impl<'ctx> Gen<'ctx> {
             (Type::Int { signed: s, .. }, Type::Real { .. }) => {
                 if *s {
                     self.b
-                        .build_signed_int_to_float(v.into_int_value(), llty(self.ctx, to).into_float_type(), "c")
+                        .build_signed_int_to_float(
+                            v.into_int_value(),
+                            llty(self.ctx, to).into_float_type(),
+                            "c",
+                        )
                         .unwrap()
                         .into()
                 } else {
                     self.b
-                        .build_unsigned_int_to_float(v.into_int_value(), llty(self.ctx, to).into_float_type(), "c")
+                        .build_unsigned_int_to_float(
+                            v.into_int_value(),
+                            llty(self.ctx, to).into_float_type(),
+                            "c",
+                        )
                         .unwrap()
                         .into()
                 }
             }
             (Type::Real { .. }, Type::Int { .. }) => self
                 .b
-                .build_float_to_signed_int(v.into_float_value(), llty(self.ctx, to).into_int_type(), "c")
+                .build_float_to_signed_int(
+                    v.into_float_value(),
+                    llty(self.ctx, to).into_int_type(),
+                    "c",
+                )
                 .unwrap()
                 .into(),
             (Type::Int { signed: s, .. }, Type::Int { bits: _, .. }) => {
@@ -324,9 +363,15 @@ impl<'ctx> Gen<'ctx> {
             (Type::Real { .. }, Type::Real { bits }) => {
                 let dt = llty(self.ctx, to).into_float_type();
                 if *bits == 32 {
-                    self.b.build_float_trunc(v.into_float_value(), dt, "c").unwrap().into()
+                    self.b
+                        .build_float_trunc(v.into_float_value(), dt, "c")
+                        .unwrap()
+                        .into()
                 } else {
-                    self.b.build_float_ext(v.into_float_value(), dt, "c").unwrap().into()
+                    self.b
+                        .build_float_ext(v.into_float_value(), dt, "c")
+                        .unwrap()
+                        .into()
                 }
             }
             _ => v,
@@ -335,12 +380,7 @@ impl<'ctx> Gen<'ctx> {
 
     /// numeric coercion for operand-width plumbing (sema owns semantic
     /// conversions; LLVM just needs equal-width operands)
-    fn coerce(
-        &mut self,
-        v: BasicValueEnum<'ctx>,
-        from: &Type,
-        to: &Type,
-    ) -> BasicValueEnum<'ctx> {
+    fn coerce(&mut self, v: BasicValueEnum<'ctx>, from: &Type, to: &Type) -> BasicValueEnum<'ctx> {
         if v.is_int_value() && matches!(to, Type::Int { .. } | Type::Time | Type::Enum { .. }) {
             let dt = llty(self.ctx, to).into_int_type();
             let iv = v.into_int_value();
@@ -376,7 +416,9 @@ impl<'ctx> Gen<'ctx> {
             _ => 64,
         };
         if matches!(a, Type::Real { .. }) || matches!(b, Type::Real { .. }) {
-            return Type::Real { bits: bits(a).max(bits(b)).max(32) };
+            return Type::Real {
+                bits: bits(a).max(bits(b)).max(32),
+            };
         }
         let (ba, bb) = (bits(a), bits(b));
         let w = ba.max(bb);
@@ -390,7 +432,14 @@ impl<'ctx> Gen<'ctx> {
         Type::Int { signed, bits: w }
     }
 
-    fn bin(&mut self, ctx: &Ctx, op: BinOp, a: &Expr, b: &Expr, e_ty: &Type) -> BasicValueEnum<'ctx> {
+    fn bin(
+        &mut self,
+        ctx: &Ctx,
+        op: BinOp,
+        a: &Expr,
+        b: &Expr,
+        e_ty: &Type,
+    ) -> BasicValueEnum<'ctx> {
         use BinOp::*;
         match op {
             AndThen | OrElse => {
@@ -482,10 +531,20 @@ impl<'ctx> Gen<'ctx> {
         }
     }
 
-    fn icmp(&mut self, p: IntPredicate, l: IntValue<'ctx>, r: IntValue<'ctx>) -> BasicValueEnum<'ctx> {
+    fn icmp(
+        &mut self,
+        p: IntPredicate,
+        l: IntValue<'ctx>,
+        r: IntValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
         self.b.build_int_compare(p, l, r, "c").unwrap().into()
     }
-    fn fcmp(&mut self, p: FloatPredicate, l: inkwell::values::FloatValue<'ctx>, r: inkwell::values::FloatValue<'ctx>) -> BasicValueEnum<'ctx> {
+    fn fcmp(
+        &mut self,
+        p: FloatPredicate,
+        l: inkwell::values::FloatValue<'ctx>,
+        r: inkwell::values::FloatValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
         self.b.build_float_compare(p, l, r, "c").unwrap().into()
     }
 
@@ -500,7 +559,8 @@ impl<'ctx> Gen<'ctx> {
             .ctx
             .i32_type()
             .fn_type(&[i8p.into(), i8p.into()], false);
-        self.module.add_function(&fname, ft, Some(Linkage::External))
+        self.module
+            .add_function(&fname, ft, Some(Linkage::External))
     }
 
     fn rt_fn(&mut self, name: &str) -> FunctionValue<'ctx> {
@@ -513,7 +573,8 @@ impl<'ctx> Gen<'ctx> {
             .ctx
             .i32_type()
             .fn_type(&[i8p.into(), i8p.into()], false);
-        self.module.add_function(&fname, ft, Some(Linkage::External))
+        self.module
+            .add_function(&fname, ft, Some(Linkage::External))
     }
 
     /// check rc after call → propagate nonzero to abort_bb
@@ -569,12 +630,7 @@ impl<'ctx> Gen<'ctx> {
 
     /// FUNCTION call: caller-side scratch alloca, bind inputs, invoke,
     /// read the name-var back.
-    fn fn_call(
-        &mut self,
-        ctx: &Ctx,
-        fun: &str,
-        args: &[(String, Expr)],
-    ) -> BasicValueEnum<'ctx> {
+    fn fn_call(&mut self, ctx: &Ctx, fun: &str, args: &[(String, Expr)]) -> BasicValueEnum<'ctx> {
         let pou = self
             .mir
             .pous
@@ -660,7 +716,9 @@ impl<'ctx> Gen<'ctx> {
                 for (cond, body) in branches.iter().rev() {
                     let then_bb = self.ctx.append_basic_block(f, "if.then");
                     let cv = self.expr(ctx, cond).into_int_value();
-                    self.b.build_conditional_branch(cv, then_bb, next_bb).unwrap();
+                    self.b
+                        .build_conditional_branch(cv, then_bb, next_bb)
+                        .unwrap();
                     self.b.position_at_end(then_bb);
                     for st in body {
                         self.stmt(ctx, st);
@@ -685,7 +743,9 @@ impl<'ctx> Gen<'ctx> {
                 self.b.position_at_end(cond_bb);
                 self.abort_check();
                 let cv = self.expr(ctx, cond).into_int_value();
-                self.b.build_conditional_branch(cv, body_bb, end_bb).unwrap();
+                self.b
+                    .build_conditional_branch(cv, body_bb, end_bb)
+                    .unwrap();
                 self.b.position_at_end(body_bb);
                 self.loop_stack.push((cond_bb, end_bb));
                 for st in body {
@@ -711,10 +771,18 @@ impl<'ctx> Gen<'ctx> {
                 self.b.position_at_end(cond_bb);
                 self.abort_check();
                 let cv = self.expr(ctx, cond).into_int_value();
-                self.b.build_conditional_branch(cv, end_bb, body_bb).unwrap();
+                self.b
+                    .build_conditional_branch(cv, end_bb, body_bb)
+                    .unwrap();
                 self.b.position_at_end(end_bb);
             }
-            StmtKind::For { var, start, end, step, body } => {
+            StmtKind::For {
+                var,
+                start,
+                end,
+                step,
+                body,
+            } => {
                 let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
                 let vr = Ref::Var(var.clone());
                 let sv = self.expr(ctx, start);
@@ -737,7 +805,9 @@ impl<'ctx> Gen<'ctx> {
                     .b
                     .build_int_compare(IntPredicate::SLE, cur, end_v, "fc")
                     .unwrap();
-                self.b.build_conditional_branch(cmp, body_bb, end_bb).unwrap();
+                self.b
+                    .build_conditional_branch(cmp, body_bb, end_bb)
+                    .unwrap();
                 self.b.position_at_end(body_bb);
                 self.loop_stack.push((step_bb, end_bb));
                 for st in body {
@@ -813,10 +883,11 @@ impl<'ctx> Gen<'ctx> {
             }
             StmtKind::Call { inst, args } => self.fb_call(ctx, inst, args),
             StmtKind::Return(_) => {
-                self.b.build_unconditional_branch(self.abort_bb.unwrap_or_else(|| {
-                    panic!("return outside fn")
-                }))
-                .unwrap();
+                self.b
+                    .build_unconditional_branch(
+                        self.abort_bb.unwrap_or_else(|| panic!("return outside fn")),
+                    )
+                    .unwrap();
             }
             StmtKind::Exit => {
                 let (_, end) = *self.loop_stack.last().expect("EXIT outside loop");
@@ -874,8 +945,8 @@ impl<'ctx> Gen<'ctx> {
                 lctx.i8_type().const_int(10, false).into(),
                 lctx.i8_type().const_zero().into(),
                 lctx.i64_type().const_int(10_000_000, false).into(), // 10ms
-                lctx.i64_type().const_zero().into(), // wcet_hint
-                lctx.i32_type().const_zero().into(), // entry 0
+                lctx.i64_type().const_zero().into(),                 // wcet_hint
+                lctx.i32_type().const_zero().into(),                 // entry 0
                 lctx.i32_type().const_zero().into(),
             ],
             false,
@@ -918,30 +989,23 @@ impl<'ctx> Gen<'ctx> {
             .filter_map(|b| {
                 let (off, ty) = scope.get(b.name.split('.').last().unwrap_or(&b.name))?;
                 let (region, tc, unit) = io_codes(&b.at, ty);
-                Some(
-                    self.ctx.const_struct(
-                        &[
-                            lctx.i32_type().const_int(*off, false).into(),
-                            lctx.i8_type().const_int(region as u64, false).into(),
-                            lctx.i8_type().const_int(tc as u64, false).into(),
-                            lctx
-                                .i8_type()
-                                .const_int((tc == 0) as u64, false)
-                                .into(), // forceable (bool)
-                            lctx.i8_type().const_int(unit as u64, false).into(),
-                            lctx.i32_type().const_int(b.at.byte, false).into(),
-                            lctx.i32_type().const_int(ty.size(), false).into(),
-                            lctx.i32_type().const_zero().into(),
-                        ],
-                        false,
-                    ),
-                )
+                Some(self.ctx.const_struct(
+                    &[
+                        lctx.i32_type().const_int(*off, false).into(),
+                        lctx.i8_type().const_int(region as u64, false).into(),
+                        lctx.i8_type().const_int(tc as u64, false).into(),
+                        lctx.i8_type().const_int((tc == 0) as u64, false).into(), // forceable (bool)
+                        lctx.i8_type().const_int(unit as u64, false).into(),
+                        lctx.i32_type().const_int(b.at.byte, false).into(),
+                        lctx.i32_type().const_int(ty.size(), false).into(),
+                        lctx.i32_type().const_zero().into(),
+                    ],
+                    false,
+                ))
             })
             .collect();
         let io_arr = io_ty.const_array(&entries);
-        let g_io = self
-            .module
-            .add_global(io_arr.get_type(), None, "__tplc_io");
+        let g_io = self.module.add_global(io_arr.get_type(), None, "__tplc_io");
         g_io.set_initializer(&io_arr);
         g_io.set_constant(true);
         g_io.set_linkage(Linkage::Internal);
@@ -952,30 +1016,30 @@ impl<'ctx> Gen<'ctx> {
         pname[..nb.len().min(64)].copy_from_slice(&nb[..nb.len().min(64)]);
         let desc_ty = lctx.struct_type(
             &[
-                lctx.i32_type().into(),                 // struct_size
-                lctx.i32_type().into(),                 // abi_version
-                lctx.i32_type().into(),                 // abi_ext
-                lctx.i32_type().into(),                 // flags
-                lctx.i8_type().array_type(16).into(),   // program_uuid
-                lctx.i8_type().array_type(32).into(),   // layout_hash
-                lctx.i8_type().array_type(64).into(),   // name
-                lctx.i64_type().into(),                 // state_blob_size
-                lctx.i64_type().into(),                 // retain_size
-                lctx.i64_type().into(),                 // retain_offset
-                lctx.i64_type().into(),                 // task_scratch_size
-                lctx.i32_type().into(),                 // image_in_bytes
-                lctx.i32_type().into(),                 // image_out_bytes
-                lctx.i32_type().into(),                 // marker_bytes
-                lctx.i32_type().into(),                 // _pad0
-                lctx.i32_type().into(),                 // task_count
-                lctx.i32_type().into(),                 // _pad1
-                i8p.into(),                             // tasks
-                i8p.into(),                             // task_fns
-                lctx.i32_type().into(),                 // task_fn_count
-                lctx.i32_type().into(),                 // _pad2
-                i8p.into(),                             // io_bindings
-                lctx.i32_type().into(),                 // io_binding_count
-                lctx.i32_type().into(),                 // _pad3
+                lctx.i32_type().into(),               // struct_size
+                lctx.i32_type().into(),               // abi_version
+                lctx.i32_type().into(),               // abi_ext
+                lctx.i32_type().into(),               // flags
+                lctx.i8_type().array_type(16).into(), // program_uuid
+                lctx.i8_type().array_type(32).into(), // layout_hash
+                lctx.i8_type().array_type(64).into(), // name
+                lctx.i64_type().into(),               // state_blob_size
+                lctx.i64_type().into(),               // retain_size
+                lctx.i64_type().into(),               // retain_offset
+                lctx.i64_type().into(),               // task_scratch_size
+                lctx.i32_type().into(),               // image_in_bytes
+                lctx.i32_type().into(),               // image_out_bytes
+                lctx.i32_type().into(),               // marker_bytes
+                lctx.i32_type().into(),               // _pad0
+                lctx.i32_type().into(),               // task_count
+                lctx.i32_type().into(),               // _pad1
+                i8p.into(),                           // tasks
+                i8p.into(),                           // task_fns
+                lctx.i32_type().into(),               // task_fn_count
+                lctx.i32_type().into(),               // _pad2
+                i8p.into(),                           // io_bindings
+                lctx.i32_type().into(),               // io_binding_count
+                lctx.i32_type().into(),               // _pad3
             ],
             false,
         );
@@ -988,13 +1052,25 @@ impl<'ctx> Gen<'ctx> {
                 lctx.const_string(&uuid, false).into(),
                 lctx.const_string(&layout_hash, false).into(),
                 lctx.const_string(&pname, false).into(),
-                lctx.i64_type().const_int(self.layout.total_size, false).into(),
-                lctx.i64_type().const_int(self.layout.retain_size, false).into(),
-                lctx.i64_type().const_int(self.layout.retain_offset, false).into(),
+                lctx.i64_type()
+                    .const_int(self.layout.total_size, false)
+                    .into(),
+                lctx.i64_type()
+                    .const_int(self.layout.retain_size, false)
+                    .into(),
+                lctx.i64_type()
+                    .const_int(self.layout.retain_offset, false)
+                    .into(),
                 lctx.i64_type().const_zero().into(),
-                lctx.i32_type().const_int(img_bytes(io_binds, AtRegion::I), false).into(),
-                lctx.i32_type().const_int(img_bytes(io_binds, AtRegion::Q), false).into(),
-                lctx.i32_type().const_int(img_bytes(io_binds, AtRegion::M), false).into(),
+                lctx.i32_type()
+                    .const_int(img_bytes(io_binds, AtRegion::I), false)
+                    .into(),
+                lctx.i32_type()
+                    .const_int(img_bytes(io_binds, AtRegion::Q), false)
+                    .into(),
+                lctx.i32_type()
+                    .const_int(img_bytes(io_binds, AtRegion::M), false)
+                    .into(),
                 lctx.i32_type().const_zero().into(),
                 lctx.i32_type().const_int(1, false).into(), // task_count
                 lctx.i32_type().const_zero().into(),
@@ -1003,14 +1079,14 @@ impl<'ctx> Gen<'ctx> {
                 lctx.i32_type().const_int(1, false).into(), // task_fn_count
                 lctx.i32_type().const_zero().into(),
                 g_io.as_pointer_value().into(),
-                lctx.i32_type().const_int(entries.len() as u64, false).into(),
+                lctx.i32_type()
+                    .const_int(entries.len() as u64, false)
+                    .into(),
                 lctx.i32_type().const_zero().into(),
             ],
             false,
         );
-        let g_desc = self
-            .module
-            .add_global(desc_ty, None, "__tplc_desc");
+        let g_desc = self.module.add_global(desc_ty, None, "__tplc_desc");
         g_desc.set_initializer(&desc);
         g_desc.set_constant(true);
         g_desc.set_linkage(Linkage::Internal);
@@ -1068,7 +1144,11 @@ impl<'ctx> Gen<'ctx> {
                 )
                 .unwrap()
         };
-        let fptr = self.b.build_load(i8p, fnpp, "f").unwrap().into_pointer_value();
+        let fptr = self
+            .b
+            .build_load(i8p, fnpp, "f")
+            .unwrap()
+            .into_pointer_value();
         let cs = self
             .b
             .build_indirect_call(ft, fptr, &[tctx.into()], "call")
@@ -1129,52 +1209,51 @@ pub fn emit_program<'ctx>(
     let i8p = g.i8p();
     // tplc_abi_version
     let ft = lctx.i32_type().fn_type(&[], false);
-    let f = g.module.add_function("tplc_abi_version", ft, Some(Linkage::External));
+    let f = g
+        .module
+        .add_function("tplc_abi_version", ft, Some(Linkage::External));
     let bb = lctx.append_basic_block(f, "e");
     g.b.position_at_end(bb);
-    g.b.build_return(Some(&lctx.i32_type().const_int(1, false))).unwrap();
+    g.b.build_return(Some(&lctx.i32_type().const_int(1, false)))
+        .unwrap();
 
     // tplc_init(ctx): memset blob + zero-init (literal inits: P1-07)
     let ft = lctx.i32_type().fn_type(&[i8p.into()], false);
-    let f = g.module.add_function("tplc_init", ft, Some(Linkage::External));
+    let f = g
+        .module
+        .add_function("tplc_init", ft, Some(Linkage::External));
     let bb = lctx.append_basic_block(f, "e");
     g.b.position_at_end(bb);
     g.ctx_ptr = f.get_nth_param(0).unwrap().into_pointer_value();
     let blob = g
         .ctx_load(CTX_STATE_BLOB, i8p.into(), "blob")
         .into_pointer_value();
-    g.b
-        .build_memset(
-            blob,
-            1,
-            lctx.i8_type().const_zero(),
-            lctx.i64_type().const_int(layout.total_size, false),
-        )
-        .unwrap();
+    g.b.build_memset(
+        blob,
+        1,
+        lctx.i8_type().const_zero(),
+        lctx.i64_type().const_int(layout.total_size, false),
+    )
+    .unwrap();
     // literal default inits; retain vars skipped when the host signals
     // a warm restore (CTXF_RETAIN_RESTORED = ctx_flags bit3)
     let scope0 = program_ctx(layout);
     g.this_ptr = blob;
     let cf = g.ctx_load(4, lctx.i32_type().into(), "cf").into_int_value();
-    let restored = g
-        .b
-        .build_and(cf, lctx.i32_type().const_int(8, false), "rr")
-        .unwrap();
+    let restored =
+        g.b.build_and(cf, lctx.i32_type().const_int(8, false), "rr")
+            .unwrap();
     let retain_bb = lctx.append_basic_block(f, "i.ret");
     let done_bb = lctx.append_basic_block(f, "i.done");
     let plain: Vec<&VarDecl> = program
         .iface
         .iter()
-        .filter(|v| {
-            !v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_)))
-        })
+        .filter(|v| !v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_))))
         .collect();
     let retains: Vec<&VarDecl> = program
         .iface
         .iter()
-        .filter(|v| {
-            v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_)))
-        })
+        .filter(|v| v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_))))
         .collect();
     for v in &plain {
         if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
@@ -1186,16 +1265,16 @@ pub fn emit_program<'ctx>(
         g.b.position_at_end(retain_bb);
         g.b.build_unconditional_branch(done_bb).unwrap();
     } else {
-        let nz = g
-            .b
-            .build_int_compare(
+        let nz =
+            g.b.build_int_compare(
                 IntPredicate::EQ,
                 restored,
                 lctx.i32_type().const_zero(),
                 "z",
             )
             .unwrap();
-        g.b.build_conditional_branch(nz, retain_bb, done_bb).unwrap();
+        g.b.build_conditional_branch(nz, retain_bb, done_bb)
+            .unwrap();
         g.b.position_at_end(retain_bb);
         for v in &retains {
             if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
@@ -1205,11 +1284,14 @@ pub fn emit_program<'ctx>(
         g.b.build_unconditional_branch(done_bb).unwrap();
     }
     g.b.position_at_end(done_bb);
-    g.b.build_return(Some(&lctx.i32_type().const_zero())).unwrap();
+    g.b.build_return(Some(&lctx.i32_type().const_zero()))
+        .unwrap();
 
     // tplc_shutdown(ctx)
     let ft = lctx.void_type().fn_type(&[i8p.into()], false);
-    let f = g.module.add_function("tplc_shutdown", ft, Some(Linkage::External));
+    let f = g
+        .module
+        .add_function("tplc_shutdown", ft, Some(Linkage::External));
     let bb = lctx.append_basic_block(f, "e");
     g.b.position_at_end(bb);
     g.b.build_return(None).unwrap();
@@ -1238,7 +1320,9 @@ pub fn emit_program<'ctx>(
 
     // __tplc_task_0(tctx) -> i32 : ctx=tctx->prog; run program pou
     let ft = lctx.i32_type().fn_type(&[i8p.into()], false);
-    let f = g.module.add_function("__tplc_task_0", ft, Some(Linkage::Internal));
+    let f = g
+        .module
+        .add_function("__tplc_task_0", ft, Some(Linkage::Internal));
     let bb = lctx.append_basic_block(f, "e");
     g.b.position_at_end(bb);
     let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
@@ -1251,10 +1335,9 @@ pub fn emit_program<'ctx>(
         .ctx_load(CTX_STATE_BLOB, i8p.into(), "blob")
         .into_pointer_value();
     let pf = g.pou_fn(&program.name);
-    let cs = g
-        .b
-        .build_call(pf, &[prog.into(), blob.into()], "run")
-        .unwrap();
+    let cs =
+        g.b.build_call(pf, &[prog.into(), blob.into()], "run")
+            .unwrap();
     let rc = cs.try_as_basic_value().expect_basic("rc");
     g.b.build_return(Some(&rc)).unwrap();
 
@@ -1276,8 +1359,7 @@ use std::path::Path;
 /// "aarch64-unknown-linux-gnu", "armv6-unknown-linux-gnueabihf").
 pub fn target_machine(triple: &str) -> Result<TargetMachine, String> {
     let _ = triple;
-    Target::initialize_native(&InitializationConfig::default())
-        .map_err(|e| e.to_string())?;
+    Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
     let triple_t = TargetMachine::get_default_triple();
     let target = Target::from_triple(&triple_t).map_err(|e| e.to_string())?;
     target

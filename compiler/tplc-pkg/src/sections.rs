@@ -182,9 +182,7 @@ impl Migd {
         let ver_len = self.predecessor_version.len() as u32;
         let body_start = 32 + 2 + ver_len as usize;
         let pad = (4 - (body_start % 4)) % 4;
-        let mut o = Vec::with_capacity(
-            body_start + pad + 4 + self.rules.len() * 16 + layd.len(),
-        );
+        let mut o = Vec::with_capacity(body_start + pad + 4 + self.rules.len() * 16 + layd.len());
         o.extend_from_slice(&self.predecessor_layout_hash);
         o.extend_from_slice(&(self.predecessor_version.len() as u16).to_le_bytes());
         o.extend_from_slice(&self.predecessor_version);

@@ -33,8 +33,12 @@ fn main() -> ExitCode {
                     println!("\nmanifest:\n{}", m);
                 }
             } else {
-                println!("{}: OK ({} bytes, {} sections)",
-                         args[2], data.len(), pkg.toc().len());
+                println!(
+                    "{}: OK ({} bytes, {} sections)",
+                    args[2],
+                    data.len(),
+                    pkg.toc().len()
+                );
             }
             ExitCode::SUCCESS
         }
@@ -63,7 +67,13 @@ fn dump(pkg: &Package) {
             .unwrap_or_else(|| "unknown".into());
         println!(
             "sec {:>2}  {:<16} 0x{:04x}  size {:>6}  ver {}  aux {}  flags 0x{:x}",
-            i, name, s.section_type, s.data.len(), s.section_version, s.aux, s.flags
+            i,
+            name,
+            s.section_type,
+            s.data.len(),
+            s.section_version,
+            s.aux,
+            s.flags
         );
     }
 }
@@ -86,10 +96,22 @@ fn fixture_bytes() -> Vec<u8> {
         0,
     )
     .unwrap();
-    w.add_section(SectionType::IrBitcode, b"FAKE-BC-PLACEHOLDER".to_vec(), true, 1, 0)
-        .unwrap();
-    w.add_section(SectionType::TargetObj, vec![0x7f, b'E', b'L', b'F'], true, 1, 0)
-        .unwrap();
+    w.add_section(
+        SectionType::IrBitcode,
+        b"FAKE-BC-PLACEHOLDER".to_vec(),
+        true,
+        1,
+        0,
+    )
+    .unwrap();
+    w.add_section(
+        SectionType::TargetObj,
+        vec![0x7f, b'E', b'L', b'F'],
+        true,
+        1,
+        0,
+    )
+    .unwrap();
     w.add_section(SectionType::Symmap, b"SMAP-STUB".to_vec(), true, 1, 0)
         .unwrap();
     w.add_section(SectionType::TypeCatalog, b"TCAT-STUB".to_vec(), true, 1, 0)
@@ -98,14 +120,38 @@ fn fixture_bytes() -> Vec<u8> {
         version: 1,
         total_size: 64,
         regions: vec![
-            LaydRegion { kind: 0, align: 8, offset: 0, size: 48 },
-            LaydRegion { kind: 3, align: 8, offset: 48, size: 16 },
+            LaydRegion {
+                kind: 0,
+                align: 8,
+                offset: 0,
+                size: 48,
+            },
+            LaydRegion {
+                kind: 3,
+                align: 8,
+                offset: 48,
+                size: 16,
+            },
         ],
         fields: vec![
-            LaydField { sym_entry: u32::MAX, field_kind: 0, flags: 0, gen: 0,
-                        offset: 0, size: 8, type_ref: 4 },
-            LaydField { sym_entry: u32::MAX, field_kind: 0, flags: 1, gen: 0,
-                        offset: 48, size: 8, type_ref: 4 },
+            LaydField {
+                sym_entry: u32::MAX,
+                field_kind: 0,
+                flags: 0,
+                gen: 0,
+                offset: 0,
+                size: 8,
+                type_ref: 4,
+            },
+            LaydField {
+                sym_entry: u32::MAX,
+                field_kind: 0,
+                flags: 1,
+                gen: 0,
+                offset: 48,
+                size: 8,
+                type_ref: 4,
+            },
         ],
     };
     w.add_section(SectionType::LayoutDesc, layd.encode(), true, 1, 0)
@@ -124,17 +170,33 @@ fn fixture_bytes() -> Vec<u8> {
         predecessor_layd: Layd {
             version: 1,
             total_size: 8,
-            regions: vec![LaydRegion { kind: 0, align: 8, offset: 0, size: 8 }],
+            regions: vec![LaydRegion {
+                kind: 0,
+                align: 8,
+                offset: 0,
+                size: 8,
+            }],
             fields: vec![LaydField {
-                sym_entry: u32::MAX, field_kind: 0, flags: 0, gen: 0,
-                offset: 0, size: 8, type_ref: 4,
+                sym_entry: u32::MAX,
+                field_kind: 0,
+                flags: 0,
+                gen: 0,
+                offset: 0,
+                size: 8,
+                type_ref: 4,
             }],
         },
     };
     w.add_section(SectionType::MigrateDesc, migd.encode(), false, 1, 0)
         .unwrap();
-    w.add_section(SectionType::Toolchain, b"tplc-pkg 0.1 (fixture)".to_vec(), false, 1, 0)
-        .unwrap();
+    w.add_section(
+        SectionType::Toolchain,
+        b"tplc-pkg 0.1 (fixture)".to_vec(),
+        false,
+        1,
+        0,
+    )
+    .unwrap();
     w.build().unwrap()
 }
 

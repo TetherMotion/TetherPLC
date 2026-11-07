@@ -9,17 +9,34 @@ fn demo_module() -> mir::Module {
         name: "FB_TonWrap".into(),
         iface: vec![
             mir::VarDecl {
-                name: "IN".into(), kind: mir::VarKind::Input, ty: mir::Type::Bool,
-                init: None, retain: false, at: None, probe: false, prov: mir::Prov::None,
+                name: "IN".into(),
+                kind: mir::VarKind::Input,
+                ty: mir::Type::Bool,
+                init: None,
+                retain: false,
+                at: None,
+                probe: false,
+                prov: mir::Prov::None,
             },
             mir::VarDecl {
-                name: "Q".into(), kind: mir::VarKind::Output, ty: mir::Type::Bool,
-                init: None, retain: false, at: None, probe: false, prov: mir::Prov::None,
+                name: "Q".into(),
+                kind: mir::VarKind::Output,
+                ty: mir::Type::Bool,
+                init: None,
+                retain: false,
+                at: None,
+                probe: false,
+                prov: mir::Prov::None,
             },
             mir::VarDecl {
-                name: "tmr".into(), kind: mir::VarKind::Local,
+                name: "tmr".into(),
+                kind: mir::VarKind::Local,
                 ty: mir::Type::Fb { name: "TON".into() },
-                init: None, retain: false, at: None, probe: false, prov: mir::Prov::None,
+                init: None,
+                retain: false,
+                at: None,
+                probe: false,
+                prov: mir::Prov::None,
             },
         ],
         body: mir::Body::Stmts(vec![]),
@@ -31,28 +48,63 @@ fn demo_module() -> mir::Module {
         name: "MAIN".into(),
         iface: vec![
             mir::VarDecl {
-                name: "ton1".into(), kind: mir::VarKind::Local,
-                ty: mir::Type::Fb { name: "FB_TonWrap".into() },
-                init: None, retain: false, at: None, probe: false,
-                prov: mir::Prov::St { file: 0, offset: 10, len: 20 },
+                name: "ton1".into(),
+                kind: mir::VarKind::Local,
+                ty: mir::Type::Fb {
+                    name: "FB_TonWrap".into(),
+                },
+                init: None,
+                retain: false,
+                at: None,
+                probe: false,
+                prov: mir::Prov::St {
+                    file: 0,
+                    offset: 10,
+                    len: 20,
+                },
             },
             mir::VarDecl {
-                name: "running".into(), kind: mir::VarKind::Local, ty: mir::Type::Bool,
-                init: None, retain: false,
-                at: Some(mir::At { region: mir::AtRegion::Q, byte: 0, bit: Some(0), width: 'X' }),
-                probe: false, prov: mir::Prov::St { file: 0, offset: 40, len: 12 },
+                name: "running".into(),
+                kind: mir::VarKind::Local,
+                ty: mir::Type::Bool,
+                init: None,
+                retain: false,
+                at: Some(mir::At {
+                    region: mir::AtRegion::Q,
+                    byte: 0,
+                    bit: Some(0),
+                    width: 'X',
+                }),
+                probe: false,
+                prov: mir::Prov::St {
+                    file: 0,
+                    offset: 40,
+                    len: 12,
+                },
             },
             mir::VarDecl {
-                name: "r".into(), kind: mir::VarKind::Local,
-                ty: mir::Type::Int { signed: true, bits: 32 },
-                init: None, retain: true, at: None, probe: false, prov: mir::Prov::None,
+                name: "r".into(),
+                kind: mir::VarKind::Local,
+                ty: mir::Type::Int {
+                    signed: true,
+                    bits: 32,
+                },
+                init: None,
+                retain: true,
+                at: None,
+                probe: false,
+                prov: mir::Prov::None,
             },
         ],
         body: mir::Body::Stmts(vec![]),
         ret_ty: None,
         prov: mir::Prov::None,
     };
-    mir::Module { pous: vec![fb, prog], gvls: vec![], tasks: vec![] }
+    mir::Module {
+        pous: vec![fb, prog],
+        gvls: vec![],
+        tasks: vec![],
+    }
 }
 
 #[test]
@@ -62,11 +114,16 @@ fn emit_descriptors() {
     let mut layout = mir::layout_program(&module, program);
     assert!(layout.fields.contains_key("ton1"));
 
-    let io = vec![
-        ("MAIN.running".to_string(),
-         mir::At { region: mir::AtRegion::Q, byte: 0, bit: Some(0), width: 'X' },
-         0u64),
-    ];
+    let io = vec![(
+        "MAIN.running".to_string(),
+        mir::At {
+            region: mir::AtRegion::Q,
+            byte: 0,
+            bit: Some(0),
+            width: 'X',
+        },
+        0u64,
+    )];
     let prov_of = |q: &str| -> Option<mir::Prov> {
         program
             .iface
@@ -112,7 +169,10 @@ fn emit_descriptors() {
         let mut l2 = mir::layout_program(&module, program);
         mir::desc::emit(&mut l2, program, &io, &prov_of)
     };
-    assert_eq!(d.payload_for_hash, d2.payload_for_hash, "nondeterministic emit");
+    assert_eq!(
+        d.payload_for_hash, d2.payload_for_hash,
+        "nondeterministic emit"
+    );
     assert!(!d.payload_for_hash.is_empty());
 }
 

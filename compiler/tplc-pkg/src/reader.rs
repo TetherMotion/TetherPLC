@@ -63,8 +63,10 @@ impl<'a> Package<'a> {
             return Err(PkgError::HashHeader);
         }
 
-        let want_header =
-            crate::writer::align_up(HEADER_FIXED as u64 + header.toc_count as u64 * 32, SECTION_ALIGN);
+        let want_header = crate::writer::align_up(
+            HEADER_FIXED as u64 + header.toc_count as u64 * 32,
+            SECTION_ALIGN,
+        );
         if header.header_size as u64 != want_header || data.len() < header.header_size as usize {
             return Err(PkgError::Toc);
         }
@@ -172,7 +174,11 @@ impl<'a> Package<'a> {
         if !ir_stripped && self.section(SectionType::IrBitcode).is_none() {
             return Err(PkgError::Toc);
         }
-        if self.sections_of(SectionType::TargetObj as u32).next().is_none() {
+        if self
+            .sections_of(SectionType::TargetObj as u32)
+            .next()
+            .is_none()
+        {
             return Err(PkgError::TargetMismatch);
         }
         Ok(())
