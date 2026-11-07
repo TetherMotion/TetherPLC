@@ -6,6 +6,7 @@ pub mod desc;
 pub mod interp;
 pub mod ir;
 pub mod layout;
+pub mod migrate;
 
 pub use desc::{emit, Descriptors};
 pub use interp::{Rt, Value};

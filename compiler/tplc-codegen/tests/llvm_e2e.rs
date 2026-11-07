@@ -214,7 +214,7 @@ fn llvm_lowering_executes_through_jit() {
         ty: Type::Bool,
     }];
     let module = emit_program(
-        &lctx, m, l, program, &io_binds, "demo", [0x51; 16], [0xAA; 32],
+        &lctx, m, l, program, &io_binds, "demo", [0x51; 16], [0xAA; 32], None,
     );
     std::fs::write("/tmp/gen.ll", module.print_to_string().to_string()).unwrap();
     module.verify().unwrap_or_else(|e| panic!("IR verify: {e}"));
@@ -301,11 +301,11 @@ fn llvm_lowering_executes_through_jit() {
         assert_eq!(run(&mut tctx), -22, "abort flag → TPLC_TASK_E_ABORTED");
         ctx.abort = 0;
         /* armed deadline → svc->steady_ns compare → -23 OVERRUN;
-           FakeSvc.steady returns a huge value so any armed deadline
-           is immediately exceeded                                  */
+        FakeSvc.steady returns a huge value so any armed deadline
+        is immediately exceeded                                  */
         let mut svc: [u64; 8] = [0; 8];
         svc[3] = steady_probe as usize as u64; /* steady_ns @byte24  */
-        svc[7] = 0;                            /* host cookie @byte56*/
+        svc[7] = 0; /* host cookie @byte56*/
         ctx.svc = svc.as_ptr() as *const u8;
         ctx.dl = 1;
         assert_eq!(run(&mut tctx), -23, "deadline → TPLC_TASK_E_OVERRUN");
@@ -369,5 +369,127 @@ int32_t __tplc_rt_TON(uint8_t* t, uint8_t* c) {
         "tplc_task_run",
     ] {
         assert!(syms.contains(want), ".so exports {want}");
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* tplc_migrate: predecessor-hash gate + copy/widen ops                 */
+/* ------------------------------------------------------------------ */
+
+#[repr(C)]
+struct FakeMCtx {
+    new_prog: *mut FakeCtx,
+    old_blob: *const u8,
+    old_blob_size: u64,
+    old_layout_hash: [u8; 32],
+    old_abi_version: u32,
+    _pad0: u32,
+    migrate_desc: *const u8,
+    migrate_desc_size: u64,
+    out_status: u32,
+    out_first_error: u32,
+}
+
+#[test]
+fn migrate_jit() {
+    use tplc_mir::migrate::{MigOp, MigrateEmit};
+    let m = demo_module();
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+    let io_binds: Vec<IoBind> = vec![];
+    let lctx = Context::create();
+    let mut hash = [0u8; 32];
+    hash[0] = 0xDE;
+    hash[31] = 0xAD;
+    let mig = MigrateEmit {
+        predecessor_hash: hash,
+        degraded: false,
+        ops: vec![
+            MigOp::Copy {
+                old_off: 0,
+                new_off: 8,
+                size: 8,
+            },
+            MigOp::Widen {
+                old_off: 16,
+                new_off: 24,
+                old_tag: 2, // i16
+                new_tag: 3, // → i32
+            },
+        ],
+    };
+    let module = emit_program(
+        &lctx,
+        m,
+        l,
+        program,
+        &io_binds,
+        "mig",
+        [0x51; 16],
+        [0xAA; 32],
+        Some(&mig),
+    );
+    module.verify().unwrap_or_else(|e| panic!("IR verify: {e}"));
+    let ee = module.create_execution_engine().unwrap();
+    let ton = module.get_function("__tplc_rt_TON").unwrap();
+    ee.add_global_mapping(&ton, tplc_rt::__tplc_rt_TON as *const () as usize);
+
+    let mut nblob = vec![0u8; l.total_size as usize];
+    let mut nctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: nblob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: std::ptr::null_mut(),
+        iout: std::ptr::null_mut(),
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut oblob = vec![0u8; 128];
+    oblob[0..8].copy_from_slice(&0x1122334455667788u64.to_le_bytes());
+    oblob[16..18].copy_from_slice(&(-123i16).to_le_bytes());
+    let mut mc = FakeMCtx {
+        new_prog: &mut nctx,
+        old_blob: oblob.as_ptr(),
+        old_blob_size: 128,
+        old_layout_hash: hash,
+        old_abi_version: 1,
+        _pad0: 0,
+        migrate_desc: std::ptr::null(),
+        migrate_desc_size: 0,
+        out_status: 0xFF,
+        out_first_error: 0xFF,
+    };
+    unsafe {
+        let migfn: extern "C" fn(*mut FakeMCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_migrate").unwrap());
+        assert_eq!(migfn(&mut mc), 0);
+        assert_eq!(mc.out_status, 0);
+        assert_eq!(
+            u64::from_le_bytes(nblob[8..16].try_into().unwrap()),
+            0x1122334455667788
+        );
+        assert_eq!(i32::from_le_bytes(nblob[24..28].try_into().unwrap()), -123);
+        // predecessor mismatch → DENY (-33), status 2
+        mc.old_layout_hash[0] = 0x00;
+        mc.out_status = 0xFF;
+        assert_eq!(migfn(&mut mc), -33);
+        assert_eq!(mc.out_status, 2);
+        assert_eq!(mc.out_first_error, 1);
+        // blob-range guard → -35, status 4
+        mc.old_layout_hash = hash;
+        mc.old_blob_size = 4;
+        mc.out_status = 0xFF;
+        assert_eq!(migfn(&mut mc), -35);
+        assert_eq!(mc.out_status, 4);
     }
 }

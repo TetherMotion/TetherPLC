@@ -81,12 +81,26 @@ fn cmd_check(files: &[String]) -> ExitCode {
 
 fn cmd_build(args: &[String]) -> ExitCode {
     let mut out_path = PathBuf::from("out.tplc");
+    let mut change_against: Option<PathBuf> = None;
+    let mut allow_retain_loss = false;
+    let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-o" => {
                 out_path = PathBuf::from(&args[i + 1]);
+                i += 1;
+            }
+            "--change-against" => {
+                change_against = Some(PathBuf::from(&args[i + 1]));
+                i += 1;
+            }
+            "--allow-retain-loss" => allow_retain_loss = true,
+            "--rename" => {
+                if let Some((o, n)) = args[i + 1].split_once('=') {
+                    renames.push((o.into(), n.into()));
+                }
                 i += 1;
             }
             f => files.push(f.into()),
@@ -136,6 +150,169 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let descs = desc::emit(&mut layout, &program, &io_triples, &prov_of);
     let layout_hash: [u8; 32] = Sha256::digest(&descs.payload_for_hash).into();
 
+    // online-change analysis (doc 08 §4): diff the predecessor's
+    // layout against the new one — denies are compile errors, the
+    // approved rule table becomes migrate_desc + tplc_migrate
+    let mut migd: Option<tplc_pkg::sections::Migd> = None;
+    let mut mig_emit: Option<tplc_mir::migrate::MigrateEmit> = None;
+    if let Some(prev_path) = &change_against {
+        use tplc_mir::migrate as mig;
+        let prev_bytes =
+            std::fs::read(prev_path).unwrap_or_else(|e| panic!("{}: {e}", prev_path.display()));
+        let prev = tplc_pkg::reader::Package::parse(&prev_bytes)
+            .unwrap_or_else(|e| panic!("prev pkg: {e}"));
+        let sec = |t| {
+            prev.section(t)
+                .unwrap_or_else(|| panic!("prev pkg missing section"))
+                .data
+        };
+        let old_layd =
+            tplc_pkg::sections::Layd::decode(sec(tplc_pkg::format::SectionType::LayoutDesc))
+                .expect("prev LAYD");
+        let old_smap =
+            mig::decode_smap(sec(tplc_pkg::format::SectionType::Symmap)).expect("prev SMAP");
+        let old_typc =
+            mig::decode_typc(sec(tplc_pkg::format::SectionType::TypeCatalog)).expect("prev TYPC");
+        let new_smap = mig::decode_smap(&descs.symmap).expect("SMAP");
+        let new_typc = mig::decode_typc(&descs.typecat).expect("TYPC");
+        let retain_region = |l: &tplc_pkg::sections::Layd| {
+            l.regions
+                .iter()
+                .find(|r| r.kind == 3)
+                .map(|r| (r.offset, r.size))
+                .unwrap_or((0, 0))
+        };
+        let old_side = mig::Side {
+            leaves: mig::leaf_fields(&old_layd, &old_smap, &old_typc),
+            retain_region: retain_region(&old_layd),
+        };
+        let new_side = mig::Side {
+            leaves: mig::leaf_fields(&descs.layd, &new_smap, &new_typc),
+            retain_region: retain_region(&descs.layd),
+        };
+        let plan = mig::diff(&old_side, &new_side, &renames, allow_retain_loss);
+        // report every rule; denies are compile errors
+        let mut deny_errs = 0;
+        for r in &plan.rules {
+            match r {
+                mig::Rule::Deny { reason, detail, .. } => {
+                    deny_errs += 1;
+                    eprintln!("error[CHANGE-DENY{reason}]: {detail}");
+                }
+                mig::Rule::Dropped { name, retain, .. } => eprintln!(
+                    "note: field {name} dropped{}",
+                    if *retain { " (retain value lost)" } else { "" }
+                ),
+                mig::Rule::Alias {
+                    old_name, new_name, ..
+                } => {
+                    eprintln!("note: alias {old_name} → {new_name}")
+                }
+                _ => {}
+            }
+        }
+        if plan.deny || deny_errs > 0 {
+            eprintln!(
+                "online change denied: {deny_errs} rule(s) — deploy a                  cold package instead"
+            );
+            return ExitCode::FAILURE;
+        }
+        let mut emit = mig::plan_to_emit(&plan);
+        emit.predecessor_hash = Sha256::digest(
+            sec(tplc_pkg::format::SectionType::LayoutDesc)
+                .iter()
+                .chain(sec(tplc_pkg::format::SectionType::Symmap).iter())
+                .chain(sec(tplc_pkg::format::SectionType::TypeCatalog).iter())
+                .copied()
+                .collect::<Vec<u8>>(),
+        )
+        .into();
+        // rule table for migrate_desc — field indices as emitted
+        let rules = plan
+            .rules
+            .iter()
+            .map(|r| match r {
+                mig::Rule::Copy {
+                    old_field,
+                    new_field,
+                    ..
+                } => tplc_pkg::sections::MigdRule {
+                    kind: 0,
+                    severity: 0,
+                    transform_id: 0,
+                    old_field: *old_field,
+                    new_field: *new_field,
+                    aux: 0,
+                },
+                mig::Rule::Transform {
+                    id,
+                    old_field,
+                    new_field,
+                    ..
+                } => tplc_pkg::sections::MigdRule {
+                    kind: 1,
+                    severity: if matches!(
+                        id,
+                        mig::Transform::StringTrunc | mig::Transform::ArrayGrow
+                    ) {
+                        1
+                    } else {
+                        0
+                    },
+                    transform_id: *id as u16,
+                    old_field: *old_field,
+                    new_field: *new_field,
+                    aux: 0,
+                },
+                mig::Rule::DefaultInit { new_field, .. } => tplc_pkg::sections::MigdRule {
+                    kind: 2,
+                    severity: 0,
+                    transform_id: 0,
+                    old_field: u32::MAX,
+                    new_field: *new_field,
+                    aux: 0,
+                },
+                mig::Rule::Dropped {
+                    old_field, retain, ..
+                } => tplc_pkg::sections::MigdRule {
+                    kind: 3,
+                    severity: 1,
+                    transform_id: 0,
+                    old_field: *old_field,
+                    new_field: u32::MAX,
+                    aux: *retain as u32,
+                },
+                mig::Rule::Alias {
+                    old_field,
+                    new_field,
+                    ..
+                } => tplc_pkg::sections::MigdRule {
+                    kind: 5,
+                    severity: 0,
+                    transform_id: 0,
+                    old_field: *old_field,
+                    new_field: *new_field,
+                    aux: 0,
+                },
+                mig::Rule::Deny { reason, field, .. } => tplc_pkg::sections::MigdRule {
+                    kind: 4,
+                    severity: 2,
+                    transform_id: 0,
+                    old_field: *field,
+                    new_field: u32::MAX,
+                    aux: *reason,
+                },
+            })
+            .collect();
+        migd = Some(tplc_pkg::sections::Migd {
+            predecessor_layout_hash: emit.predecessor_hash,
+            predecessor_version: b"prev".to_vec(),
+            rules,
+            predecessor_layd: old_layd,
+        });
+        mig_emit = Some(emit);
+    }
+
     // uuid from source hash → deterministic per program content
     let mut h = Sha256::new();
     for (_, s) in &srcs {
@@ -160,6 +337,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         &prog_name,
         uuid,
         layout_hash,
+        mig_emit.as_ref(),
     );
     if let Err(e) = llmod.verify() {
         eprintln!("tplcc: LLVM verify failed: {e}");
@@ -291,6 +469,10 @@ fn cmd_build(args: &[String]) -> ExitCode {
         0,
     )
     .unwrap();
+    if let Some(m) = migd {
+        w.add_section(SectionType::MigrateDesc, m.encode(), true, 1, 0)
+            .unwrap();
+    }
     w.add_section(SectionType::StSources, src_bundle.into_bytes(), false, 1, 0)
         .unwrap();
     let pkg = w.build().unwrap();

@@ -23,6 +23,7 @@ use tplc_mir::interp::{fb_ctx, program_ctx, Ctx};
 use tplc_mir::ir::AtRegion;
 use tplc_mir::ir::*;
 use tplc_mir::layout::{builtin_fb_layout, Layout};
+use tplc_mir::migrate::{MigOp, MigrateEmit};
 
 const CTX_STATE_BLOB: u64 = 8;
 const CTX_SVC: u64 = 72;
@@ -125,10 +126,6 @@ impl<'ctx> Gen<'ctx> {
     fn i8p(&self) -> inkwell::types::PointerType<'ctx> {
         self.ctx.ptr_type(inkwell::AddressSpace::default())
     }
-    fn c32(&self, v: u64) -> IntValue<'ctx> {
-        self.ctx.i64_type().const_int(v, false)
-    }
-
     /// gep on an i8* base by constant offset
     fn off_ptr(&self, base: PointerValue<'ctx>, off: u64) -> PointerValue<'ctx> {
         unsafe {
@@ -346,7 +343,7 @@ impl<'ctx> Gen<'ctx> {
                 )
                 .unwrap()
                 .into(),
-            (Type::Int { signed: s, .. }, Type::Int { bits: _, .. }) => {
+            (Type::Int { signed: s, .. }, Type::Int { .. }) => {
                 let dt = llty(self.ctx, to).into_int_type();
                 let iv = v.into_int_value();
                 let sw = iv.get_type().get_bit_width();
@@ -699,10 +696,7 @@ impl<'ctx> Gen<'ctx> {
         let dlck = self.ctx.append_basic_block(f, "ck.dl");
         let af = {
             let p = self.off_ptr(self.ctx_ptr, CTX_ABORT);
-            let l = self
-                .b
-                .build_load(self.ctx.i32_type(), p, "af")
-                .unwrap();
+            let l = self.b.build_load(self.ctx.i32_type(), p, "af").unwrap();
             l.as_instruction_value()
                 .unwrap()
                 .set_volatile(true)
@@ -723,7 +717,12 @@ impl<'ctx> Gen<'ctx> {
             .into_int_value();
         let armed = self
             .b
-            .build_int_compare(IntPredicate::NE, dl, self.ctx.i64_type().const_zero(), "arm")
+            .build_int_compare(
+                IntPredicate::NE,
+                dl,
+                self.ctx.i64_type().const_zero(),
+                "arm",
+            )
             .unwrap();
         let clock_bb = self.ctx.append_basic_block(f, "ck.clk");
         self.b
@@ -996,6 +995,7 @@ impl<'ctx> Gen<'ctx> {
         program_name: &str,
         uuid: [u8; 16],
         layout_hash: [u8; 32],
+        has_migrate: bool,
     ) {
         let lctx = self.ctx;
         let i8p = self.i8p();
@@ -1068,7 +1068,7 @@ impl<'ctx> Gen<'ctx> {
         let entries: Vec<_> = io_binds
             .iter()
             .filter_map(|b| {
-                let (off, ty) = scope.get(b.name.split('.').last().unwrap_or(&b.name))?;
+                let (off, ty) = scope.get(b.name.split('.').next_back().unwrap_or(&b.name))?;
                 let (region, tc, unit) = io_codes(&b.at, ty);
                 Some(self.ctx.const_struct(
                     &[
@@ -1129,7 +1129,7 @@ impl<'ctx> Gen<'ctx> {
                 lctx.i32_type().const_int(224, false).into(),
                 lctx.i32_type().const_int(1, false).into(), // ABI v1
                 lctx.i32_type().const_zero().into(),        // abi_ext
-                lctx.i32_type().const_zero().into(),        // flags
+                lctx.i32_type().const_int(has_migrate as u64, false).into(), // flags bit0: has_migrate
                 lctx.const_string(&uuid, false).into(),
                 lctx.const_string(&layout_hash, false).into(),
                 lctx.const_string(&pname, false).into(),
@@ -1220,7 +1220,7 @@ impl<'ctx> Gen<'ctx> {
                 .build_in_bounds_gep(
                     fns_arr.get_type(),
                     g_fns.as_pointer_value(),
-                    &[lctx.i32_type().const_zero().into(), idx],
+                    &[lctx.i32_type().const_zero(), idx],
                     "fp",
                 )
                 .unwrap()
@@ -1270,6 +1270,260 @@ impl<'ctx> Gen<'ctx> {
 }
 
 /// Emit the module: abi_version, init, shutdown, task_run + per-POU fns.
+/// Field offsets in TplcMigrateCtx (doc 02 ABI).
+const MCTX_NEW_PROG: u64 = 0;
+const MCTX_OLD_BLOB: u64 = 8;
+const MCTX_OLD_BLOB_SIZE: u64 = 16;
+const MCTX_OLD_LAYOUT_HASH: u64 = 24;
+const MCTX_OUT_STATUS: u64 = 80;
+const MCTX_OUT_FIRST_ERR: u64 = 84;
+
+impl<'ctx> Gen<'ctx> {
+    /// `i32 tplc_migrate(i8* mctx)` — baked rule table: verify the
+    /// predecessor hash, then straight-line copy/transform ops of the
+    /// old blob into the new program's state_blob (doc 08 §2: the
+    /// snapshot is the source, defaults already ran via tplc_init).
+    fn emit_migrate(&mut self, mig: &MigrateEmit) {
+        let lctx = self.ctx;
+        let i8p = self.i8p();
+        let i32t = lctx.i32_type();
+        let i64t = lctx.i64_type();
+        let ft = i32t.fn_type(&[i8p.into()], false);
+        let f = self
+            .module
+            .add_function("tplc_migrate", ft, Some(Linkage::External));
+        let ld = |g: &Self,
+                  base: inkwell::values::PointerValue<'ctx>,
+                  off: u64,
+                  ty: inkwell::types::BasicTypeEnum<'ctx>,
+                  n: &str| {
+            let p = unsafe {
+                g.b.build_gep(lctx.i8_type(), base, &[i64t.const_int(off, false)], n)
+                    .unwrap()
+            };
+            g.b.build_load(ty, p, n).unwrap()
+        };
+        let entry = lctx.append_basic_block(f, "e");
+        let deny_bb = lctx.append_basic_block(f, "deny");
+        let brange_bb = lctx.append_basic_block(f, "brange");
+        let ok_bb = lctx.append_basic_block(f, "ok");
+        let done_bb = lctx.append_basic_block(f, "done");
+        self.b.position_at_end(entry);
+
+        let mctx = f.get_nth_param(0).unwrap().into_pointer_value();
+        // predecessor hash check: 4 × u64 compare, bail to deny on
+        // first mismatch (SWAP_RACE — wrong-layout migrate is unsafe)
+        for i in 0..4u64 {
+            let word = u64::from_le_bytes(
+                mig.predecessor_hash[i as usize * 8..i as usize * 8 + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            let v =
+                ld(self, mctx, MCTX_OLD_LAYOUT_HASH + i * 8, i64t.into(), "hw").into_int_value();
+            let eq = self
+                .b
+                .build_int_compare(
+                    inkwell::IntPredicate::EQ,
+                    v,
+                    i64t.const_int(word, false),
+                    "eq",
+                )
+                .unwrap();
+            let ne = self.b.build_not(eq, "mm").unwrap();
+            let cont = lctx.append_basic_block(f, "hcont");
+            self.b.build_conditional_branch(ne, deny_bb, cont).unwrap();
+            self.b.position_at_end(cont);
+        }
+        self.b.build_unconditional_branch(ok_bb).unwrap();
+
+        // ok: per-op byte copies / widens
+        self.b.position_at_end(ok_bb);
+        let new_ctx = ld(self, mctx, MCTX_NEW_PROG, i8p.into(), "nctx").into_pointer_value();
+        let new_blob = ld(self, new_ctx, CTX_STATE_BLOB, i8p.into(), "nblob").into_pointer_value();
+        let old_blob = ld(self, mctx, MCTX_OLD_BLOB, i8p.into(), "oblob").into_pointer_value();
+        let old_size = ld(self, mctx, MCTX_OLD_BLOB_SIZE, i64t.into(), "osize").into_int_value();
+        for op in &mig.ops {
+            let (oo, no, need) = match op {
+                MigOp::Copy {
+                    old_off,
+                    new_off,
+                    size,
+                } => (*old_off, *new_off, *size),
+                MigOp::Widen {
+                    old_off, new_off, ..
+                } => (*old_off, *new_off, 8),
+                MigOp::CopyMin {
+                    old_off,
+                    new_off,
+                    old_size,
+                    ..
+                } => (*old_off, *new_off, *old_size),
+            };
+            // bound: old_off + need <= old_size
+            let end = self
+                .b
+                .build_int_add(
+                    i64t.const_int(oo, false),
+                    i64t.const_int(need, false),
+                    "end",
+                )
+                .unwrap();
+            let inb = self
+                .b
+                .build_int_compare(inkwell::IntPredicate::ULE, end, old_size, "inb")
+                .unwrap();
+            let next = lctx.append_basic_block(f, "op");
+            self.b
+                .build_conditional_branch(inb, next, brange_bb)
+                .unwrap();
+            self.b.position_at_end(next);
+            let src = unsafe {
+                self.b
+                    .build_gep(
+                        lctx.i8_type(),
+                        old_blob,
+                        &[i64t.const_int(oo, false)],
+                        "src",
+                    )
+                    .unwrap()
+            };
+            let dst = unsafe {
+                self.b
+                    .build_gep(
+                        lctx.i8_type(),
+                        new_blob,
+                        &[i64t.const_int(no, false)],
+                        "dst",
+                    )
+                    .unwrap()
+            };
+            match op {
+                MigOp::Copy { size, .. } => {
+                    self.b
+                        .build_memcpy(dst, 1, src, 1, i64t.const_int(*size, false))
+                        .unwrap();
+                }
+                MigOp::Widen {
+                    old_tag, new_tag, ..
+                } => {
+                    let ot = prim_ty(lctx, *old_tag);
+                    let nt = prim_ty(lctx, *new_tag);
+                    let v = self.b.build_load(ot, src, "v").unwrap();
+                    let w = widen_value(&self.b, v, ot, nt, *old_tag, *new_tag);
+                    self.b.build_store(dst, w).unwrap();
+                }
+                MigOp::CopyMin {
+                    old_size, new_size, ..
+                } => {
+                    let n = (*old_size).min(*new_size);
+                    self.b
+                        .build_memcpy(dst, 1, src, 1, i64t.const_int(n, false))
+                        .unwrap();
+                }
+            }
+        }
+        self.b.build_unconditional_branch(done_bb).unwrap();
+
+        self.b.position_at_end(deny_bb);
+        self.b
+            .build_store(
+                out_ptr(self, mctx, MCTX_OUT_STATUS),
+                i32t.const_int(2, false),
+            )
+            .unwrap(); // TPLC_MIGRATE_DENY
+        self.b
+            .build_store(
+                out_ptr(self, mctx, MCTX_OUT_FIRST_ERR),
+                i32t.const_int(1, false),
+            )
+            .unwrap(); // SWAP_RACE
+        self.b
+            .build_return(Some(&i32t.const_int((u32::MAX - 32) as u64, true)))
+            .unwrap(); // -33
+
+        self.b.position_at_end(brange_bb);
+        self.b
+            .build_store(
+                out_ptr(self, mctx, MCTX_OUT_STATUS),
+                i32t.const_int(4, false),
+            )
+            .unwrap(); // ERR_BLOB_RANGE
+        self.b
+            .build_return(Some(&i32t.const_int((u32::MAX - 34) as u64, true)))
+            .unwrap(); // -35
+
+        self.b.position_at_end(done_bb);
+        self.b
+            .build_store(
+                out_ptr(self, mctx, MCTX_OUT_STATUS),
+                i32t.const_int(mig.degraded as u64, false),
+            )
+            .unwrap();
+        self.b
+            .build_store(out_ptr(self, mctx, MCTX_OUT_FIRST_ERR), i32t.const_zero())
+            .unwrap();
+        self.b.build_return(Some(&i32t.const_zero())).unwrap();
+    }
+}
+
+/// TYPC tag → LLVM primitive type for migrate widening.
+fn prim_ty<'ctx>(
+    lctx: &'ctx inkwell::context::Context,
+    tag: u8,
+) -> inkwell::types::BasicTypeEnum<'ctx> {
+    match tag {
+        1 | 5 => lctx.i8_type().into(),
+        2 | 6 => lctx.i16_type().into(),
+        3 | 7 | 11 => lctx.i32_type().into(),
+        4 | 8 => lctx.i64_type().into(),
+        9 => lctx.f32_type().into(),
+        10 => lctx.f64_type().into(),
+        _ => lctx.i64_type().into(),
+    }
+}
+
+fn widen_value<'ctx>(
+    b: &inkwell::builder::Builder<'ctx>,
+    v: inkwell::values::BasicValueEnum<'ctx>,
+    ot: inkwell::types::BasicTypeEnum<'ctx>,
+    nt: inkwell::types::BasicTypeEnum<'ctx>,
+    old_tag: u8,
+    new_tag: u8,
+) -> inkwell::values::BasicValueEnum<'ctx> {
+    let _ = (ot, nt);
+    if old_tag == 9 && new_tag == 10 {
+        return b
+            .build_float_ext(v.into_float_value(), nt.into_float_type(), "f")
+            .unwrap()
+            .into();
+    }
+    let src = v.into_int_value();
+    let dst_ty = nt.into_int_type();
+    if (5..=8).contains(&old_tag) {
+        b.build_int_z_extend(src, dst_ty, "z").unwrap().into()
+    } else {
+        b.build_int_s_extend(src, dst_ty, "s").unwrap().into()
+    }
+}
+
+fn out_ptr<'ctx>(
+    g: &Gen<'ctx>,
+    mctx: inkwell::values::PointerValue<'ctx>,
+    off: u64,
+) -> inkwell::values::PointerValue<'ctx> {
+    unsafe {
+        g.b.build_gep(
+            g.ctx.i8_type(),
+            mctx,
+            &[g.ctx.i64_type().const_int(off, false)],
+            "op",
+        )
+        .unwrap()
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn emit_program<'ctx>(
     lctx: &'ctx Context,
     mir: &'static Module,
@@ -1279,6 +1533,7 @@ pub fn emit_program<'ctx>(
     program_name: &str,
     uuid: [u8; 16],
     layout_hash: [u8; 32],
+    migrate: Option<&MigrateEmit>,
 ) -> LlvmModule<'ctx> {
     let module = lctx.create_module("tplc_program");
     let mut g = Gen {
@@ -1322,22 +1577,38 @@ pub fn emit_program<'ctx>(
     let (roff, rsize) = (layout.retain_offset, layout.retain_size);
     if rsize == 0 {
         g.b.build_memset(
-            blob, 1, lctx.i8_type().const_zero(),
+            blob,
+            1,
+            lctx.i8_type().const_zero(),
             lctx.i64_type().const_int(layout.total_size, false),
-        ).unwrap();
+        )
+        .unwrap();
     } else {
         g.b.build_memset(
-            blob, 1, lctx.i8_type().const_zero(),
+            blob,
+            1,
+            lctx.i8_type().const_zero(),
             lctx.i64_type().const_int(roff, false),
-        ).unwrap();
+        )
+        .unwrap();
         if roff + rsize < layout.total_size {
             let tail = unsafe {
-                g.b.build_gep(lctx.i8_type(), blob, &[lctx.i64_type().const_int(roff + rsize, false)], "tb")
-            }.unwrap();
+                g.b.build_gep(
+                    lctx.i8_type(),
+                    blob,
+                    &[lctx.i64_type().const_int(roff + rsize, false)],
+                    "tb",
+                )
+            }
+            .unwrap();
             g.b.build_memset(
-                tail, 1, lctx.i8_type().const_zero(),
-                lctx.i64_type().const_int(layout.total_size - roff - rsize, false),
-            ).unwrap();
+                tail,
+                1,
+                lctx.i8_type().const_zero(),
+                lctx.i64_type()
+                    .const_int(layout.total_size - roff - rsize, false),
+            )
+            .unwrap();
         }
     }
     // literal default inits; retain zeroing + retain literal inits are
@@ -1383,12 +1654,21 @@ pub fn emit_program<'ctx>(
         g.b.position_at_end(retain_bb);
         if rsize > 0 {
             let rseg = unsafe {
-                g.b.build_gep(lctx.i8_type(), blob, &[lctx.i64_type().const_int(roff, false)], "rb")
-            }.unwrap();
+                g.b.build_gep(
+                    lctx.i8_type(),
+                    blob,
+                    &[lctx.i64_type().const_int(roff, false)],
+                    "rb",
+                )
+            }
+            .unwrap();
             g.b.build_memset(
-                rseg, 1, lctx.i8_type().const_zero(),
+                rseg,
+                1,
+                lctx.i8_type().const_zero(),
                 lctx.i64_type().const_int(rsize, false),
-            ).unwrap();
+            )
+            .unwrap();
         }
         for v in &retains {
             if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
@@ -1455,7 +1735,17 @@ pub fn emit_program<'ctx>(
     let rc = cs.try_as_basic_value().expect_basic("rc");
     g.b.build_return(Some(&rc)).unwrap();
 
-    g.emit_descriptor(program, io_binds, program_name, uuid, layout_hash);
+    if let Some(m) = migrate {
+        g.emit_migrate(m);
+    }
+    g.emit_descriptor(
+        program,
+        io_binds,
+        program_name,
+        uuid,
+        layout_hash,
+        migrate.is_some(),
+    );
     g.module
 }
 

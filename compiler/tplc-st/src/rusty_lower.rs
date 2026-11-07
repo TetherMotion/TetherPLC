@@ -404,6 +404,18 @@ impl Ctx {
         let at = v.address.as_ref().and_then(|a| self.at_of(a));
         let vprov = self.sloc(&v.location);
         let ty = self.ty_of(&v.data_type_declaration, &vprov);
+        let init = v
+            .initializer
+            .as_ref()
+            .and_then(|i| self.init_of(i))
+            .map(|mut e| {
+                // literals lower untyped (Bool default); the declared
+                // type is authoritative for the stored constant width
+                if matches!(e.kind, mir::ExprKind::Lit(_)) {
+                    e.ty = ty.clone();
+                }
+                e
+            });
         if let Some(at) = &at {
             self.io_bindings.push(IoBind {
                 name: format!("{}.{}", self.scope, v.name),
@@ -415,7 +427,7 @@ impl Ctx {
             name: v.name.clone(),
             kind,
             ty,
-            init: v.initializer.as_ref().and_then(|i| self.init_of(i)),
+            init,
             retain: blk.retain,
             at,
             probe: false,
