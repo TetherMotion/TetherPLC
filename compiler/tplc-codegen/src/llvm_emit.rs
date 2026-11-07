@@ -16,7 +16,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::{Linkage, Module as LlvmModule};
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 use std::collections::BTreeMap;
 use tplc_mir::interp::{fb_ctx, program_ctx, Ctx};
@@ -25,7 +25,9 @@ use tplc_mir::ir::*;
 use tplc_mir::layout::{builtin_fb_layout, Layout};
 
 const CTX_STATE_BLOB: u64 = 8;
+const CTX_SVC: u64 = 72;
 const CTX_ABORT: u64 = 88;
+const CTX_DEADLINE: u64 = 96;
 const TCTX_PROG: u64 = 0;
 
 /// Type → TplcIoType code (tplc_abi.h §enum TplcIoType); unit = bit idx.
@@ -93,6 +95,7 @@ pub struct Gen<'ctx> {
     layout: &'static Layout,
     mir: &'static Module,
     abort_bb: Option<BasicBlock<'ctx>>,
+    overrun_bb: Option<BasicBlock<'ctx>>,
     loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>, // (cond, exit)
     ctx_ptr: PointerValue<'ctx>,
     this_ptr: PointerValue<'ctx>,
@@ -687,20 +690,98 @@ impl<'ctx> Gen<'ctx> {
     }
 
     // ---- statements ----
+    /// __ckpt (doc 04 §2.2): abort_flag → TPLC_TASK_E_ABORTED;
+    /// armed budget_deadline → svc->steady_ns() compare →
+    /// TPLC_TASK_E_OVERRUN. deadline==0 = unbounded (no clock call).
     fn abort_check(&mut self) {
         let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
         let cont = self.ctx.append_basic_block(f, "ck.cont");
-        let af = self
-            .ctx_load(CTX_ABORT, self.ctx.i32_type().into(), "af")
-            .into_int_value();
+        let dlck = self.ctx.append_basic_block(f, "ck.dl");
+        let af = {
+            let p = self.off_ptr(self.ctx_ptr, CTX_ABORT);
+            let l = self
+                .b
+                .build_load(self.ctx.i32_type(), p, "af")
+                .unwrap();
+            l.as_instruction_value()
+                .unwrap()
+                .set_volatile(true)
+                .unwrap();
+            l.into_int_value()
+        };
         let bad = self
             .b
             .build_int_compare(IntPredicate::NE, af, self.ctx.i32_type().const_zero(), "ck")
             .unwrap();
         self.b
-            .build_conditional_branch(bad, self.abort_bb.unwrap(), cont)
+            .build_conditional_branch(bad, self.abort_bb.unwrap(), dlck)
+            .unwrap();
+        // deadline armed? then read the host clock once
+        self.b.position_at_end(dlck);
+        let dl = self
+            .ctx_load(CTX_DEADLINE, self.ctx.i64_type().into(), "dl")
+            .into_int_value();
+        let armed = self
+            .b
+            .build_int_compare(IntPredicate::NE, dl, self.ctx.i64_type().const_zero(), "arm")
+            .unwrap();
+        let clock_bb = self.ctx.append_basic_block(f, "ck.clk");
+        self.b
+            .build_conditional_branch(armed, clock_bb, cont)
+            .unwrap();
+        self.b.position_at_end(clock_bb);
+        let now = self.steady_ns();
+        let over = self
+            .b
+            .build_int_compare(IntPredicate::UGT, now, dl, "ov")
+            .unwrap();
+        self.b
+            .build_conditional_branch(over, self.overrun_bb.unwrap(), cont)
             .unwrap();
         self.b.position_at_end(cont);
+    }
+
+    /// svc->steady_ns(svc->host) — TplcServices offsets: steady_ns@24,
+    /// host cookie@56; TplcCtx.svc@72.
+    fn steady_ns(&mut self) -> IntValue<'ctx> {
+        let i8p = self.ctx.ptr_type(inkwell::AddressSpace::default());
+        let svc = self
+            .ctx_load(CTX_SVC, i8p.into(), "svc")
+            .into_pointer_value();
+        let fpp = unsafe {
+            self.b
+                .build_gep(
+                    self.ctx.i8_type(),
+                    svc,
+                    &[self.ctx.i64_type().const_int(24, false)],
+                    "sfp",
+                )
+                .unwrap()
+        };
+        let fp = self
+            .b
+            .build_load(i8p, fpp, "fp")
+            .unwrap()
+            .into_pointer_value();
+        let hp = unsafe {
+            self.b
+                .build_gep(
+                    self.ctx.i8_type(),
+                    svc,
+                    &[self.ctx.i64_type().const_int(56, false)],
+                    "hp",
+                )
+                .unwrap()
+        };
+        let host = self.b.build_load(i8p, hp, "h").unwrap();
+        let ft = self.ctx.i64_type().fn_type(&[i8p.into()], false);
+        let call = self
+            .b
+            .build_indirect_call(ft, fp, &[host.into()], "now")
+            .unwrap();
+        call.try_as_basic_value()
+            .expect_basic("steady_ns returns i64")
+            .into_int_value()
     }
 
     fn stmt(&mut self, ctx: &Ctx, s: &Stmt) {
@@ -941,7 +1022,7 @@ impl<'ctx> Gen<'ctx> {
             &[
                 name_init.into(),
                 lctx.i8_type().const_int(0, false).into(), // CYCLIC
-                lctx.i8_type().const_int(1, false).into(), // ENABLED_AT_START
+                lctx.i8_type().const_int(3, false).into(), // ENABLED|WATCHDOGGED
                 lctx.i8_type().const_int(10, false).into(),
                 lctx.i8_type().const_zero().into(),
                 lctx.i64_type().const_int(10_000_000, false).into(), // 10ms
@@ -1164,12 +1245,18 @@ impl<'ctx> Gen<'ctx> {
         self.b.position_at_end(entry);
         self.ctx_ptr = f.get_nth_param(0).unwrap().into_pointer_value();
         self.this_ptr = f.get_nth_param(1).unwrap().into_pointer_value();
-        // abort exit block: return -1
+        // abort exit blocks: -22 aborted, -23 WCET overrun
         let ab = self.ctx.append_basic_block(f, "abort");
         self.abort_bb = Some(ab);
         self.b.position_at_end(ab);
         self.b
-            .build_return(Some(&self.ctx.i32_type().const_int((-1i64) as u64, true)))
+            .build_return(Some(&self.ctx.i32_type().const_int((-22i64) as u64, true)))
+            .unwrap();
+        let ob = self.ctx.append_basic_block(f, "overrun");
+        self.overrun_bb = Some(ob);
+        self.b.position_at_end(ob);
+        self.b
+            .build_return(Some(&self.ctx.i32_type().const_int((-23i64) as u64, true)))
             .unwrap();
         self.b.position_at_end(entry);
         self.abort_check();
@@ -1201,6 +1288,7 @@ pub fn emit_program<'ctx>(
         layout,
         mir,
         abort_bb: None,
+        overrun_bb: None,
         loop_stack: Vec::new(),
         ctx_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
         this_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),

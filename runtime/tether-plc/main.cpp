@@ -15,8 +15,10 @@
 #include <tplc/host/RetainStore.hpp>
 
 #include <cerrno>
+#include <atomic>
 #include <csignal>
 #include <cstdio>
+#include <thread>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -36,7 +38,8 @@ static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --image <shm_path> --module <so>\n"
         "          [--ctl <uds_path>|none] [--wait-ms N] [--poll-ns N]\n"
-        "          [--retain DIR] [--retain-flush-ms N] [--sim]\n",
+        "          [--retain DIR] [--retain-flush-ms N]\n"
+        "          [--wcet-hard-ns N] [--hang-timeout-ms N] [--sim]\n",
         a0);
 }
 
@@ -46,6 +49,8 @@ int main(int argc, char** argv) {
     std::string image_path, module_path, package_path, ctl_path;
     std::string retain_dir;
     uint64_t retain_flush_ms = 1000;
+    uint64_t wcet_hard_ns = 0;
+    uint64_t hang_timeout_ms = 2000;
     int wait_ms = 10000;
     uint64_t poll_ns = 1000 * 1000;          /* 1 ms max idle         */
     uint32_t ctx_flags = 0;
@@ -64,6 +69,10 @@ int main(int argc, char** argv) {
         else if (a == "--retain") retain_dir = next();
         else if (a == "--retain-flush-ms")
             retain_flush_ms = strtoull(next().c_str(), 0, 0);
+        else if (a == "--wcet-hard-ns")
+            wcet_hard_ns = strtoull(next().c_str(), 0, 0);
+        else if (a == "--hang-timeout-ms")
+            hang_timeout_ms = strtoull(next().c_str(), 0, 0);
         else if (a == "--sim") ctx_flags |= TPLC_CTXF_SIM;
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -152,6 +161,7 @@ int main(int argc, char** argv) {
 
     tplc::ProgramConfig pcfg;
     pcfg.ctx_flags = ctx_flags;
+    pcfg.wcet_hard_ns = wcet_hard_ns;
     auto pres = tplc::Program::create(mod, pcfg);
     if (!pres.ok()) {
         fprintf(stderr, "tether-plc: program create failed %s\n",
@@ -380,6 +390,41 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
 
     uint64_t last_flush_ns = mono_ns();
+    /* watchdog monitor (doc 04 §6): the scan path is this thread, so
+       a hang inside a task stalls progress counting — the monitor is
+       the backstop that aborts cooperatively, then self-terminates
+       for supervisor respawn */
+    std::atomic<uint64_t> progress{0};
+    std::atomic<bool>     mon_running{true};
+    std::thread monitor([&] {
+        uint64_t last_seen = 0;
+        uint64_t stale_since = mono_ns();
+        while (mon_running.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            uint64_t p = progress.load();
+            uint64_t now = mono_ns();
+            if (p != last_seen) { last_seen = p; stale_since = now; }
+            if (prog_state != PS_RUNNING) { stale_since = now; continue; }
+            uint64_t stale_ms = (now - stale_since) / 1000000ull;
+            if (stale_ms > hang_timeout_ms) {
+                if (prog_state == PS_RUNNING) {
+                    prog.requestAbort();
+                    prog_state = PS_FAULT;
+                    tplc_image_set_fault(&img, (uint64_t)-TPLC_TASK_E_FAULT);
+                    tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
+                    fprintf(stderr,
+                            "tether-plc: scan stall %llums — fault + abort\n",
+                            (unsigned long long)stale_ms);
+                }
+                if (stale_ms > 2 * hang_timeout_ms) {
+                    fprintf(stderr,
+                            "tether-plc: unrecovered stall — exiting\n");
+                    _exit(2);
+                }
+            }
+        }
+    });
+
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
     fprintf(stderr, "tether-plc: running (module=%s image=%s ctl=%s)\n",
             module_path.c_str(), image_path.c_str(), ctl_path.c_str());
@@ -396,6 +441,7 @@ int main(int argc, char** argv) {
              mst == TPLC_IMG_MASTER_DEGRADED ||
              mst == TPLC_IMG_MASTER_INIT)) {
             sched.tick(now, hooks);
+            progress.fetch_add(1);
         }
 
         /* retain: module dirty hints mark the store; staging happens
@@ -425,6 +471,8 @@ int main(int argc, char** argv) {
     }
 
     fprintf(stderr, "tether-plc: stopping\n");
+    mon_running = false;
+    if (monitor.joinable()) monitor.join();
     prog_state = PS_STOPPED;
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
     tplc_image_plc_heartbeat(&img, mono_ns());

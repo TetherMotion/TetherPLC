@@ -21,6 +21,8 @@ struct ProgramConfig {
     uint32_t host_caps   = 0;      /* caps to advertise to the module  */
     uint32_t ctx_flags   = 0;      /* extra TPLC_CTXF_* bits           */
     bool     retain_restored = false; /* host pre-loaded retain data   */
+    /* hard WCET bound for watchdoggled tasks; 0 = 2x task wcet_hint   */
+    uint64_t wcet_hard_ns = 0;
 };
 
 class Program {
@@ -74,6 +76,9 @@ public:
     void requestAbort() { ctx_.abort_flag = 1; }
     void clearAbort()   { ctx_.abort_flag = 0; }
 
+    /* duration of the last executeTask call (budget/jitter surface)  */
+    uint64_t lastExecNs() const { return last_exec_ns_; }
+
     /* Retain: host persistence interface (doc 04 owns flush policy) */
     uint8_t* retainRegion();
     uint64_t retainSize() const;
@@ -109,6 +114,8 @@ private:
     TplcCtx ctx_{};
     std::unique_ptr<HostServices> services_;  /* stable address: svc cookie */
     std::vector<TplcTaskCtx> tctxs_;
+    ProgramConfig cfg_;
+    uint64_t last_exec_ns_ = 0;
     uint64_t cycle_no_ = 0;
     bool     running_ = false;
     bool     started_ = false;

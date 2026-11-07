@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
 #include <tplc/host/Program.hpp>
+#include <ctime>
+
+static uint64_t mono_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
 
 #include <cstdlib>
 #include <cstring>
@@ -33,6 +40,7 @@ Result<Program> Program::create(const Module& mod,
         return Result<Program>::Err(TPLC_E_INIT_RESOURCE,
                                     "region allocation failed");
 
+    p.cfg_ = cfg;
     p.services_ = std::make_unique<HostServices>(cfg.host_caps);
 
     TplcCtx& c = p.ctx_;
@@ -142,6 +150,15 @@ int32_t Program::executeTask(uint32_t task_idx, uint64_t now_ns,
     ctx_.now_ns = now_ns;
     ctx_.cycle_no = ++cycle_no_;
 
+    /* WCET arm: checkpoints compare svc->steady_ns() against this */
+    if (td.flags & TPLC_TASKF_WATCHDOGGED) {
+        uint64_t hard = cfg_.wcet_hard_ns ? cfg_.wcet_hard_ns
+                                          : 2 * td.wcet_hint_ns;
+        ctx_.budget_deadline_ns = hard ? now_ns + hard : 0;
+    } else {
+        ctx_.budget_deadline_ns = 0;
+    }
+
     TplcTaskCtx& tc = tctxs_[task_idx];
     memset(&tc, 0, sizeof tc);
     tc.prog = &ctx_;
@@ -150,7 +167,17 @@ int32_t Program::executeTask(uint32_t task_idx, uint64_t now_ns,
     tc.deadline_ns = td.period_ns ? now_ns + td.period_ns : 0;
     tc.task_local = nullptr;  /* task-local regions: layout_desc-sourced,
                                  P2 item (stub uses task_local_size=0) */
+    uint64_t t0 = mono_ns();
     int32_t rc = fn(&tc);
+    uint64_t t1 = mono_ns();
+    last_exec_ns_ = t1 - t0;
+    /* signed overrun: how far past scheduled+period this cycle ran
+       (negative = finished early); module-facing per doc 02 §2.6   */
+    if (td.kind == TPLC_TASK_CYCLIC && td.period_ns)
+        ctx_.last_cycle_overrun_ns =
+            (int64_t)(t1 - (td.period_ns + now_ns));
+    else
+        ctx_.last_cycle_overrun_ns = 0;
     if (rc != 0) return rc;
 
     copyOutputsOut();

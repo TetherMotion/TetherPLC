@@ -48,6 +48,10 @@ size_t Scheduler::tick(uint64_t now_ns, const TickHooks& hooks) {
                        : (int64_t)now_ns - (int64_t)e->next_due;
         int32_t rc = p.executeTask(e->task_idx, now_ns,
                                    hooks.latch, hooks.commit);
+        uint64_t exec = p.lastExecNs();
+        e->stats.exec_total_ns += exec;
+        if (exec < e->stats.exec_min_ns) e->stats.exec_min_ns = exec;
+        if (exec > e->stats.exec_max_ns) e->stats.exec_max_ns = exec;
         e->stats.runs++;
         if (e->first_run) e->first_run = false;
         if (late > 0) {
@@ -59,10 +63,14 @@ size_t Scheduler::tick(uint64_t now_ns, const TickHooks& hooks) {
             if (hooks.fault) hooks.fault(p, e->task_idx, rc);
         }
         e->last_run = now_ns;
-        if (e->desc->kind == TPLC_TASK_CYCLIC)
+        if (e->desc->kind == TPLC_TASK_CYCLIC) {
             e->next_due += e->desc->period_ns;     /* phase-stable */
-        else
+            /* overrun: finished past the next release — skip policy
+               is start-immediately, never catch up (doc 04 §3.2)  */
+            if (now_ns >= e->next_due) e->stats.overruns++;
+        } else {
             e->next_due = now_ns;
+        }
     }
     return due.size();
 }

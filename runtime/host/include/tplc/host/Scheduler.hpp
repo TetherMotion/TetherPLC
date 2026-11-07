@@ -40,8 +40,13 @@ public:
 
     /* Stats for the service plane */
     struct TaskStats {
-        uint64_t runs = 0, late = 0, faults = 0;
+        uint64_t runs = 0, late = 0, faults = 0, overruns = 0;
         int64_t  max_late_ns = 0;
+        uint64_t exec_min_ns = UINT64_MAX, exec_max_ns = 0,
+                 exec_total_ns = 0;
+        uint64_t execAvgNs() const {
+            return runs ? exec_total_ns / runs : 0;
+        }
     };
     const TaskStats* stats(Program& prog, uint32_t task_idx) const;
 

@@ -190,6 +190,10 @@ struct FakeTCtx {
     dt: u64,
 }
 
+extern "C" fn steady_probe(_h: *mut u8) -> u64 {
+    u64::MAX
+}
+
 #[test]
 fn llvm_lowering_executes_through_jit() {
     let m = demo_module();
@@ -294,7 +298,17 @@ fn llvm_lowering_executes_through_jit() {
         assert_eq!(run(&mut tctx), -2);
         tctx.idx = 0;
         ctx.abort = 1;
-        assert_eq!(run(&mut tctx), -1, "cooperative abort propagates");
+        assert_eq!(run(&mut tctx), -22, "abort flag → TPLC_TASK_E_ABORTED");
+        ctx.abort = 0;
+        /* armed deadline → svc->steady_ns compare → -23 OVERRUN;
+           FakeSvc.steady returns a huge value so any armed deadline
+           is immediately exceeded                                  */
+        let mut svc: [u64; 8] = [0; 8];
+        svc[3] = steady_probe as usize as u64; /* steady_ns @byte24  */
+        svc[7] = 0;                            /* host cookie @byte56*/
+        ctx.svc = svc.as_ptr() as *const u8;
+        ctx.dl = 1;
+        assert_eq!(run(&mut tctx), -23, "deadline → TPLC_TASK_E_OVERRUN");
     }
 
     // P1-07: object + bitcode emission
