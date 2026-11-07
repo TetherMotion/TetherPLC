@@ -160,4 +160,10 @@ if(NOT CMAKE_CROSSCOMPILING)
       bash ${CMAKE_SOURCE_DIR}/tests/online_change/e2e.sh)
   set_tests_properties(online_change_e2e PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+  # FBD gallery: ST/FBD pairs must produce identical %Q images
+  add_test(NAME fbd_gallery_e2e
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/fbd_gallery/e2e.sh)
+  set_tests_properties(fbd_gallery_e2e PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()

@@ -1,0 +1,174 @@
+{
+ "schema": "fbd.v1",
+ "project": "p03_sel_gate",
+ "data_types": [],
+ "global_vars": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "P03_SEL_GATE",
+   "kind": "program",
+   "en_eno": "relaxed",
+   "interface": [],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 1,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 2
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "g",
+       "at": "%IX0.0"
+      },
+      {
+       "id": 2,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 6
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "a",
+       "at": "%IB1"
+      },
+      {
+       "id": 3,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "b",
+       "at": "%IB2"
+      },
+      {
+       "id": 4,
+       "kind": "operator",
+       "type_ref": "SEL",
+       "pos": {
+        "x": 14,
+        "y": 6
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": ""
+      },
+      {
+       "id": 5,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 24,
+        "y": 6
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "out",
+       "at": "%QB0"
+      }
+     ],
+     "wires": [
+      {
+       "id": 40,
+       "src": {
+        "block": 1,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 4,
+         "port": 0
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 41,
+       "src": {
+        "block": 2,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 4,
+         "port": 1
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 42,
+       "src": {
+        "block": 3,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 4,
+         "port": 2
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 43,
+       "src": {
+        "block": 4,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 5,
+         "port": 0
+        }
+       ],
+       "probe": false
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "name": "MAIN",
+   "period_ns": 10000000,
+   "priority": 0,
+   "programs": [
+    "p1"
+   ]
+  }
+ ]
+}

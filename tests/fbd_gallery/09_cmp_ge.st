@@ -1,0 +1,7 @@
+PROGRAM P09_CMP_GE
+VAR
+    x AT %IB1 : BYTE;
+    q AT %QX0.0 : BOOL;
+END_VAR
+q := x >= 100;
+END_PROGRAM

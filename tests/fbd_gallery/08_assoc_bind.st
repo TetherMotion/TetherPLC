@@ -1,0 +1,7 @@
+PROGRAM P08_ASSOC_BIND
+VAR
+    en_in AT %IX0.0 : BOOL;
+    q AT %QX0.0 : BOOL;
+END_VAR
+q := en_in;
+END_PROGRAM

@@ -1,0 +1,118 @@
+{
+ "schema": "fbd.v1",
+ "project": "p05_mux_pick",
+ "data_types": [],
+ "global_vars": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "P05_MUX_PICK",
+   "kind": "program",
+   "en_eno": "relaxed",
+   "interface": [],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 1,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 4
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "k",
+       "at": "%IB1"
+      },
+      {
+       "id": 2,
+       "kind": "operator",
+       "type_ref": "MUX",
+       "pos": {
+        "x": 14,
+        "y": 6
+       },
+       "params": {
+        "IN0": "10",
+        "IN1": "20",
+        "IN2": "30"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": ""
+      },
+      {
+       "id": 3,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 24,
+        "y": 6
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "out",
+       "at": "%QB0"
+      }
+     ],
+     "wires": [
+      {
+       "id": 40,
+       "src": {
+        "block": 1,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 2,
+         "port": 0
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 41,
+       "src": {
+        "block": 2,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 3,
+         "port": 0
+        }
+       ],
+       "probe": false
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "name": "MAIN",
+   "period_ns": 10000000,
+   "priority": 0,
+   "programs": [
+    "p1"
+   ]
+  }
+ ]
+}

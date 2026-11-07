@@ -19,7 +19,8 @@ use tplc_mir::ir::{
 use tplc_mir::ty::{compatible, convertible, literal_fits, unify_num};
 
 use crate::resolve::{
-    builtin_sig, cast_target, op_arity, op_in_index, op_kind, pou_sig, topo_order, Op, Sig,
+    builtin_sig, cast_target, op_arity, op_in_index, op_in_name, op_kind, pou_sig, topo_order, Op,
+    Sig,
 };
 use crate::ty::{parse_at, parse_lit, parse_type, ty_for_width};
 
@@ -50,6 +51,29 @@ pub struct LowerOutput {
     pub module: ir::Module,
     pub io_bindings: Vec<IoBind>,
     pub diags: Vec<Diag>,
+}
+
+/// Natural type of a literal (used when the pin type is unknown —
+/// generic operator pins carry no signature type).
+fn lit_ty(l: &Lit) -> Type {
+    match l {
+        Lit::Bool(_) => Type::Bool,
+        Lit::Int(_) => Type::Int {
+            signed: true,
+            bits: 32,
+        },
+        Lit::UInt(_) => Type::Int {
+            signed: false,
+            bits: 32,
+        },
+        Lit::Real(_) => Type::Real { bits: 64 },
+        Lit::TimeNs(_) => Type::Time,
+        Lit::Str(_) => Type::Str { cap: 81 },
+        Lit::EnumVal { ty, .. } => Type::Enum {
+            name: ty.clone(),
+            values: vec![],
+        },
+    }
 }
 
 pub fn lower(project: &FbdProject) -> LowerOutput {
@@ -1034,8 +1058,8 @@ impl<'a> Cx<'a> {
             let want_ty = self.in_ty(b, want);
             return match parse_lit(p) {
                 Ok(l) => Some(Expr {
-                    kind: ExprKind::Lit(l),
-                    ty: want_ty.unwrap_or(Type::Bool),
+                    kind: ExprKind::Lit(l.clone()),
+                    ty: want_ty.unwrap_or_else(|| lit_ty(&l)),
                     prov: self.prov(b.id, want as u16),
                 }),
                 Err(e) => {
@@ -1084,7 +1108,7 @@ impl<'a> Cx<'a> {
                 .get(&b.id)
                 .and_then(|s| s.ins.get(want as usize))
                 .map(|(n, _)| n.clone()),
-            BlockKind::Operator => Some(format!("IN{want}")),
+            BlockKind::Operator => op_kind(&b.type_ref).map(|op| op_in_name(op, want)),
             _ => None,
         }
     }
@@ -1318,7 +1342,8 @@ impl<'a> Cx<'a> {
                 .map(|e| e.ty.clone())
                 .reduce(|a, t| unify_num(&a, &t))
                 .unwrap_or(Type::Bool),
-            Op::Limit | Op::Abs => exprs[0].ty.clone(),
+            Op::Limit => exprs[1].ty.clone(),
+            Op::Abs => exprs[0].ty.clone(),
             _ => Type::Bool,
         };
         Some((exprs, rty))
@@ -1328,8 +1353,23 @@ impl<'a> Cx<'a> {
     /// operator's class: BOOL ops take BOOL, arith ops take
     /// Int/Real/Time, shifts take Int, SEL.G is BOOL, MUX.K is Int.
     fn check_op_class(&mut self, op: Op, b: &Block, exprs: &[Expr]) {
-        let num = |t: &Type| matches!(t, Type::Int { .. } | Type::Real { .. } | Type::Time);
-        let int = |t: &Type| matches!(t, Type::Int { .. });
+        // literals classify by payload — param literals carry a Bool
+        // placeholder ty until coerced at the pin
+        let num = |e: &Expr| match &e.kind {
+            ExprKind::Lit(Lit::Int(_) | Lit::UInt(_) | Lit::Real(_) | Lit::TimeNs(_)) => true,
+            ExprKind::Lit(_) => false,
+            _ => matches!(e.ty, Type::Int { .. } | Type::Real { .. } | Type::Time),
+        };
+        let int = |e: &Expr| match &e.kind {
+            ExprKind::Lit(Lit::Int(_) | Lit::UInt(_)) => true,
+            ExprKind::Lit(_) => false,
+            _ => matches!(e.ty, Type::Int { .. }),
+        };
+        let boolean = |e: &Expr| match &e.kind {
+            ExprKind::Lit(Lit::Bool(_)) => true,
+            ExprKind::Lit(_) => false,
+            _ => matches!(e.ty, Type::Bool),
+        };
         let mut bad = |cond: bool, pin: usize, want: &str| {
             if cond {
                 self.err(
@@ -1342,29 +1382,29 @@ impl<'a> Cx<'a> {
         match op {
             Op::Fold(BinOp::And | BinOp::Or | BinOp::Xor) | Op::Not => {
                 for (i, e) in exprs.iter().enumerate() {
-                    bad(!matches!(e.ty, Type::Bool), i, "BOOL");
+                    bad(!boolean(e), i, "BOOL");
                 }
             }
             Op::Bin(BinOp::Shl | BinOp::Shr | BinOp::Rol | BinOp::Ror) => {
                 for (i, e) in exprs.iter().enumerate() {
-                    bad(!int(&e.ty), i, "ANY_INT");
+                    bad(!int(e), i, "ANY_INT");
                 }
             }
             Op::Sel => {
                 for (i, e) in exprs.iter().enumerate() {
                     if i == 0 {
-                        bad(!matches!(e.ty, Type::Bool), i, "BOOL");
+                        bad(!boolean(e), i, "BOOL");
                     } else {
-                        bad(!num(&e.ty), i, "ANY_NUM");
+                        bad(!num(e), i, "ANY_NUM");
                     }
                 }
             }
             Op::Mux => {
                 for (i, e) in exprs.iter().enumerate() {
                     if i == 0 {
-                        bad(!int(&e.ty), i, "ANY_INT");
+                        bad(!int(e), i, "ANY_INT");
                     } else {
-                        bad(!num(&e.ty), i, "ANY_NUM");
+                        bad(!num(e), i, "ANY_NUM");
                     }
                 }
             }
@@ -1372,7 +1412,7 @@ impl<'a> Cx<'a> {
             Op::Move | Op::Bin(BinOp::Eq | BinOp::Ne) => {}
             _ => {
                 for (i, e) in exprs.iter().enumerate() {
-                    bad(!num(&e.ty), i, "ANY_NUM");
+                    bad(!num(e), i, "ANY_NUM");
                 }
             }
         }

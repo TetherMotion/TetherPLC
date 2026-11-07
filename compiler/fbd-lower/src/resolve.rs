@@ -173,6 +173,20 @@ pub fn op_in_index(op: Op, name: &str) -> Option<u32> {
     }
 }
 
+/// Operand index → canonical param name (reverse of `op_in_index`).
+pub fn op_in_name(op: Op, i: u32) -> String {
+    match (op, i) {
+        (Op::Sel, 0) => "G".into(),
+        (Op::Limit, 0) => "MN".into(),
+        (Op::Limit, 1) => "IN".into(),
+        (Op::Limit, 2) => "MX".into(),
+        (Op::Mux, 0) => "K".into(),
+        (Op::Mux, n) => format!("IN{}", n - 1),
+        (Op::Not | Op::Move | Op::Abs, _) => "IN".into(),
+        _ => format!("IN{i}"),
+    }
+}
+
 /// Fixed in-pin arity for non-variadic ops (`None` = variadic ≥1).
 pub fn op_arity(op: Op) -> Option<u32> {
     Some(match op {

@@ -1,0 +1,147 @@
+{
+ "schema": "fbd.v1",
+ "project": "p02_ctu_count",
+ "data_types": [],
+ "global_vars": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "P02_CTU_COUNT",
+   "kind": "program",
+   "en_eno": "relaxed",
+   "interface": [],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 1,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 4
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "pulse",
+       "at": "%IX0.0"
+      },
+      {
+       "id": 2,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 8
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "reset",
+       "at": "%IX0.1"
+      },
+      {
+       "id": 3,
+       "kind": "fb",
+       "type_ref": "CTU",
+       "instance": "ctu1",
+       "pos": {
+        "x": 12,
+        "y": 6
+       },
+       "params": {
+        "PV": "3"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": ""
+      },
+      {
+       "id": 4,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 24,
+        "y": 4
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "done",
+       "at": "%QX0.0"
+      }
+     ],
+     "wires": [
+      {
+       "id": 40,
+       "src": {
+        "block": 1,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 3,
+         "port": 0
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 41,
+       "src": {
+        "block": 2,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 3,
+         "port": 1
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 42,
+       "src": {
+        "block": 3,
+        "port": "QU"
+       },
+       "dsts": [
+        {
+         "block": 4,
+         "port": 0
+        }
+       ],
+       "probe": false
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "name": "MAIN",
+   "period_ns": 10000000,
+   "priority": 0,
+   "programs": [
+    "p1"
+   ]
+  }
+ ]
+}

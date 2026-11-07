@@ -1,0 +1,210 @@
+{
+ "schema": "fbd.v1",
+ "project": "p07_two_nets",
+ "data_types": [],
+ "global_vars": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "P07_TWO_NETS",
+   "kind": "program",
+   "en_eno": "relaxed",
+   "interface": [
+    {
+     "name": "gate",
+     "kind": "var",
+     "type": "BOOL"
+    }
+   ],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 1,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 4
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "a",
+       "at": "%IX0.0"
+      },
+      {
+       "id": 2,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 1,
+        "y": 8
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "b",
+       "at": "%IX0.1"
+      },
+      {
+       "id": 3,
+       "kind": "operator",
+       "type_ref": "AND",
+       "pos": {
+        "x": 12,
+        "y": 6
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": ""
+      },
+      {
+       "id": 4,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 20,
+        "y": 6
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "gate",
+       "at": null
+      }
+     ],
+     "wires": [
+      {
+       "id": 40,
+       "src": {
+        "block": 1,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 3,
+         "port": 0
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 41,
+       "src": {
+        "block": 2,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 3,
+         "port": 1
+        }
+       ],
+       "probe": false
+      },
+      {
+       "id": 42,
+       "src": {
+        "block": 3,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 4,
+         "port": 0
+        }
+       ],
+       "probe": false
+      }
+     ]
+    },
+    {
+     "id": "n2",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 10,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 4,
+        "y": 4
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "gate",
+       "at": null
+      },
+      {
+       "id": 11,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 20,
+        "y": 4
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "q",
+       "at": "%QX0.0"
+      }
+     ],
+     "wires": [
+      {
+       "id": 50,
+       "src": {
+        "block": 10,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 11,
+         "port": 0
+        }
+       ],
+       "probe": false
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "tasks": [
+  {
+   "name": "MAIN",
+   "period_ns": 10000000,
+   "priority": 0,
+   "programs": [
+    "p1"
+   ]
+  }
+ ]
+}

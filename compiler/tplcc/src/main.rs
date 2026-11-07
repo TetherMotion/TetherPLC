@@ -636,37 +636,41 @@ fn img_put(img: &mut [u8], b: &IoBind, v: &tplc_mir::interp::Value) {
 
 fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), String> {
     let id = v["id"].as_str().unwrap_or("?");
-    let prog_file = src_dir.join(v["program"].as_str().unwrap());
-    let src =
-        std::fs::read_to_string(&prog_file).map_err(|e| format!("{id}: {prog_file:?}: {e}"))?;
-    let mut out = tplc_st::compile(&[("vec.st", &src)]);
-    let mut diags = tplc_st::sema::check(&mut out.module);
-    diags.extend(out.diags);
-    if diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
-        return Err(format!("{id}: frontend errors"));
-    }
-    let program = out
-        .module
-        .pous
-        .iter()
-        .find(|p| p.kind == tplc_mir::ir::PouKind::Program)
-        .cloned()
-        .ok_or("no PROGRAM")?;
-    let layout = layout_program(&out.module, &program);
-    let ctx = program_ctx(&layout);
-    let mut blob = vec![0u8; layout.total_size as usize];
-    let mut img_in = vec![0u8; 64];
-    let mut img_out = vec![0u8; 64];
-
-    let tplc_mir::ir::Body::Stmts(stmts) = &program.body else {
-        return Err("program body not stmts".into());
+    // "program": one file, or "programs": several sources run against the
+    // same trace — their %Q images are compared cycle-for-cycle so an
+    // .st and an .fbd.json model of the same logic must produce
+    // bit-identical outputs (equivalence corpus).
+    let files: Vec<String> = match &v["programs"] {
+        serde_json::Value::Array(a) => a.iter().map(|p| p.as_str().unwrap().to_string()).collect(),
+        _ => vec![v["program"].as_str().unwrap().to_string()],
     };
-    let mut rt = Rt::new(&mut blob, &layout, &out.module, 0);
+    let mut runs = Vec::new();
+    for f in &files {
+        let prog_file = src_dir.join(f);
+        let src =
+            std::fs::read_to_string(&prog_file).map_err(|e| format!("{id}: {prog_file:?}: {e}"))?;
+        let mut out = compile_srcs(&[(prog_file.to_string_lossy().into(), src)]);
+        let mut diags = std::mem::take(&mut out.diags);
+        diags.extend(tplc_st::sema::check(&mut out.module));
+        if diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
+            return Err(format!("{id} {f}: frontend errors"));
+        }
+        let program = out
+            .module
+            .pous
+            .iter()
+            .find(|p| p.kind == tplc_mir::ir::PouKind::Program)
+            .cloned()
+            .ok_or("no PROGRAM")?;
+        let layout = layout_program(&out.module, &program);
+        let ctx = program_ctx(&layout);
+        let blob = vec![0u8; layout.total_size as usize];
+        runs.push((out, program, layout, ctx, blob));
+    }
+    let mut img_in = vec![0u8; 64];
     let cycles = v["cycles"].as_array().ok_or("no cycles")?;
     for (ci, c) in cycles.iter().enumerate() {
-        rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
-        rt.cycle = ci as u64;
-        // apply image-in bytes through io bindings
+        // apply image-in bytes
         if let Some(ih) = c["i"].as_str() {
             for (i, b) in hex_bytes(ih).iter().enumerate() {
                 if i < img_in.len() {
@@ -674,44 +678,58 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                 }
             }
         }
-        for b in &out.io_bindings {
-            if b.at.region == AtRegion::I {
-                let val = img_get(&img_in, b);
-                let short = b.name.rsplit('.').next().unwrap_or(&b.name);
-                rt.write_field(short, &val);
-            }
-        }
-        rt.exec_all(&ctx, stmts);
-        // check expect_fields
-        if let Some(ef) = c["expect_fields"].as_object() {
-            for (name, exp) in ef {
-                let want = parse_val(exp.as_str().unwrap());
-                let got = if name.contains('.') {
-                    let (inst, mem) = name.split_once('.').unwrap();
-                    rt.read_ref(
-                        &ctx,
-                        &tplc_mir::ir::Ref::Field(
-                            Box::new(tplc_mir::ir::Ref::Var(inst.into())),
-                            mem.into(),
-                        ),
-                    )
-                } else {
-                    rt.read_field(name)
-                };
-                let ok = match (&want, &got) {
-                    (tplc_mir::interp::Value::Bool(a), tplc_mir::interp::Value::Bool(b)) => a == b,
-                    (tplc_mir::interp::Value::Time(a), tplc_mir::interp::Value::Time(b)) => a == b,
-                    _ => want.as_i64() == got.as_i64(),
-                };
-                if !ok {
-                    return Err(format!("{id} cycle {ci}: {name} want {want:?} got {got:?}"));
+        let mut q_imgs: Vec<Vec<u8>> = Vec::new();
+        for (pi, (out, program, layout, ctx, blob)) in runs.iter_mut().enumerate() {
+            let tplc_mir::ir::Body::Stmts(stmts) = &program.body else {
+                return Err("program body not stmts".into());
+            };
+            // state lives in blob; Rt is rebuilt per scan
+            let mut rt = Rt::new(blob, layout, &out.module, 0);
+            rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
+            rt.cycle = ci as u64;
+            for b in &out.io_bindings {
+                if b.at.region == AtRegion::I {
+                    let val = img_get(&img_in, b);
+                    let short = b.name.rsplit('.').next().unwrap_or(&b.name);
+                    rt.write_field(short, &val);
                 }
             }
-        }
-        // check expect_q: read Q-region shadows → image bytes
-        if let Some(qh) = c["expect_q"].as_str() {
-            let want = hex_bytes(qh);
-            img_out.iter_mut().for_each(|b| *b = 0);
+            rt.exec_all(ctx, stmts);
+            // check expect_fields (applied to every program — the corpus
+            // uses identical field names across language variants)
+            if let Some(ef) = c["expect_fields"].as_object() {
+                for (name, exp) in ef {
+                    let want = parse_val(exp.as_str().unwrap());
+                    let got = if name.contains('.') {
+                        let (inst, mem) = name.split_once('.').unwrap();
+                        rt.read_ref(
+                            ctx,
+                            &tplc_mir::ir::Ref::Field(
+                                Box::new(tplc_mir::ir::Ref::Var(inst.into())),
+                                mem.into(),
+                            ),
+                        )
+                    } else {
+                        rt.read_field(name)
+                    };
+                    let ok = match (&want, &got) {
+                        (tplc_mir::interp::Value::Bool(a), tplc_mir::interp::Value::Bool(b)) => {
+                            a == b
+                        }
+                        (tplc_mir::interp::Value::Time(a), tplc_mir::interp::Value::Time(b)) => {
+                            a == b
+                        }
+                        _ => want.as_i64() == got.as_i64(),
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "{id} cycle {ci} {}: {name} want {want:?} got {got:?}",
+                            files[pi]
+                        ));
+                    }
+                }
+            }
+            let mut img_out = vec![0u8; 64];
             for b in &out.io_bindings {
                 if b.at.region == AtRegion::Q {
                     let short = b.name.rsplit('.').next().unwrap_or(&b.name);
@@ -719,19 +737,36 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                     img_put(&mut img_out, b, &val);
                 }
             }
-            if img_out[..want.len()] != want[..] {
+            q_imgs.push(img_out);
+        }
+        // cross-program equivalence + optional expect_q
+        for (pi, o) in q_imgs.iter().enumerate().skip(1) {
+            if *o != q_imgs[0] {
+                return Err(format!(
+                    "{id} cycle {ci}: {} diverges from {}: {} vs {}",
+                    files[pi],
+                    files[0],
+                    hex_str(&o[..4]),
+                    hex_str(&q_imgs[0][..4])
+                ));
+            }
+        }
+        if let Some(qh) = c["expect_q"].as_str() {
+            let want = hex_bytes(qh);
+            if q_imgs[0][..want.len()] != want[..] {
                 return Err(format!(
                     "{id} cycle {ci}: %Q want {} got {}",
                     qh,
-                    img_out[..want.len()]
-                        .iter()
-                        .map(|b| format!("{b:02x}"))
-                        .collect::<String>()
+                    hex_str(&q_imgs[0][..want.len()])
                 ));
             }
         }
     }
     Ok(())
+}
+
+fn hex_str(bs: &[u8]) -> String {
+    bs.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn cmd_vectors(args: &[String]) -> ExitCode {
