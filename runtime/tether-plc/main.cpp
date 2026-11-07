@@ -33,7 +33,7 @@ static uint64_t mono_ns() {
 static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --image <shm_path> --module <so>\n"
-        "          [--ctl <uds_path>] [--wait-ms N] [--poll-ns N]\n"
+        "          [--ctl <uds_path>|none] [--wait-ms N] [--poll-ns N]\n"
         "          [--sim]\n",
         a0);
 }
@@ -65,6 +65,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (ctl_path.empty()) ctl_path = image_path + ".ctl";
+    const bool ctl_enabled = (ctl_path != "none");
 
     /* ---------------- attach image (plc role) ---------------- */
     TplcImage img;
@@ -147,11 +148,13 @@ int main(int argc, char** argv) {
 
     /* ---------------- control channel -------------------------- */
     tplc::CtlServer ctl;
-    tplc::Status cst = ctl.open(ctl_path, 0660);
-    if (!cst.ok())
-        fprintf(stderr, "tether-plc: ctl %s failed: %s\n",
-                ctl_path.c_str(), cst.msg.c_str());
-    /* else: keep running headless — ctl is optional per spec       */
+    if (ctl_enabled) {
+        tplc::Status cst = ctl.open(ctl_path, 0660);
+        if (!cst.ok())
+            fprintf(stderr, "tether-plc: ctl %s failed: %s\n",
+                    ctl_path.c_str(), cst.msg.c_str());
+        /* else: keep running headless — ctl is optional per spec   */
+    }
 
     uint64_t started_ns = mono_ns();
 

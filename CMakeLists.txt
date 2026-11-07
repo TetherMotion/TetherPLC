@@ -116,3 +116,12 @@ target_compile_definitions(pkg_conformance PRIVATE
   PKG_FIXTURE_PATH="${CMAKE_SOURCE_DIR}/tests/pkg/fixtures/sample.tplc")
 add_test(NAME pkg_conformance
   COMMAND pkg_conformance "${CMAKE_SOURCE_DIR}/tests/pkg/fixtures/sample.tplc")
+
+add_executable(fault_injection tests/fault/fault_injection.cpp)
+target_include_directories(fault_injection PRIVATE tests)
+target_link_libraries(fault_injection PRIVATE tplc_host tplc_image)
+target_compile_definitions(fault_injection PRIVATE
+  TETHER_PLC_PATH="$<TARGET_FILE:tether-plc>"
+  STUB_V1_PATH="$<TARGET_FILE:stub_v1>")
+add_dependencies(fault_injection tether-plc stub_v1)
+add_test(NAME fault_injection COMMAND fault_injection)

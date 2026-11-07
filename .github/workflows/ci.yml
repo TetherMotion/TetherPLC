@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure + build (C/C++)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build -j8
+
+      - name: CTest
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Cargo test (compiler crates)
+        run: cargo test --workspace
+        working-directory: compiler
+
+  linux-aarch64-qemu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross toolchain + qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+                                  qemu-user-static
+
+      - name: Configure + build (aarch64)
+        run: |
+          cmake -B build-aarch64 \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build-aarch64 -j8
+
+      # CTest runs each test via qemu-aarch64 (CMAKE_CROSSCOMPILING_EMULATOR);
+      # tests that fork/exec tether-plc rely on binfmt_misc from
+      # qemu-user-static (registered by the package's postinst).
+      - name: CTest (qemu-aarch64)
+        run: ctest --test-dir build-aarch64 --output-on-failure

@@ -75,6 +75,26 @@ for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
   and verifies %I→%Q data flow, ctl ops, stop/start gating (outputs
   freeze and resume), stats, and clean `rt.shutdown`.
 
+## Fault-injection harness (P0-09, `tests/fault/fault_injection.cpp`)
+
+37 checks across three scenarios:
+
+- **Cooperative abort / hang path** — `Program::requestAbort()` while the
+  stub task spins in its checkpoint loop: task returns
+  `TPLC_TASK_E_ABORTED`, the %Q commit is skipped for that cycle
+  (`executeTask` early-returns before `copyOutputsOut`), and clearing
+  the flag resumes cleanly. This is the pattern codegen emits at every
+  loop back-edge (doc 04 §5).
+- **kill -9** — real `tether-plc` child is SIGKILLed mid-run: plc
+  heartbeat freezes, `tplc_image_hb_stale` detects loss inside the
+  bound, image stays consistent for master reads/writes, and a fresh
+  `tether-plc` reattaches and resumes data flow.
+- **seq-odd adversary** — a child process holds `out_seq` odd (a writer
+  dead mid-commit) after scribbling the payload: `read_outputs` exhausts
+  retries bounded (`TPLC_E_IMG_SEQ_EXHAUSTED`, retries counted), the
+  destination never sees torn bytes, kill -9 leaves it consistent, and
+  seq repair restores reads.
+
 ## Not yet
 
 - Force tables (input/output overlay application points are inside
@@ -84,3 +104,5 @@ for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
   snapshot/arm/commit dance is P3/doc 08).
 - ctl ops beyond the P0 subset (deploy.*, retain.*, dbg.*, trace.*,
   map.*, prog.prepare/kill/reset/unload) — declared, pending phases.
+- Non-cooperative task hang (loop with no checkpoints): needs the
+  watchdog/fault-supervisor path — P2.

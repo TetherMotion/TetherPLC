@@ -89,7 +89,9 @@ it — module state and blob are untouched (IEC stop≠reset). A re-initing
 
 `tether-plc` keeps running headless if the ctl socket can't be opened
 (logs a warning) — matches the spec's "control channel is a service
-plane concern; the scan path must not depend on it."
+plane concern; the scan path must not depend on it." Passing
+`--ctl none` skips the socket deliberately (used by the fault harness);
+an empty `--ctl` value falls back to `<image>.ctl` as before.
 
 ## Open items carried forward (not deviations — just not done yet)
 
