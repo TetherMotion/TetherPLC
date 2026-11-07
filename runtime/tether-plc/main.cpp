@@ -18,7 +18,12 @@
 #include <atomic>
 #include <csignal>
 #include <cstdio>
+#include <cstring>
+#include <deque>
 #include <thread>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -39,22 +44,120 @@ static void usage(const char* a0) {
         "usage: %s --image <shm_path> --module <so>\n"
         "          [--ctl <uds_path>|none] [--wait-ms N] [--poll-ns N]\n"
         "          [--retain DIR] [--retain-flush-ms N]\n"
-        "          [--wcet-hard-ns N] [--hang-timeout-ms N] [--sim]\n",
+        "          [--wcet-hard-ns N] [--hang-timeout-ms N]\n"
+        "          [--fault-policy hold|restart|unload] [--restart-max N]\n"
+        "          [--runbook DIR] [--instance NAME] [--sim]\n"
+        "       %s --supervise [--respawn always|on-fault|never]\n"
+        "          [--restart-delay-ms N] -- <tether-plc args>\n",
         a0);
 }
 
 enum ProgState : uint8_t { PS_STOPPED = 0, PS_RUNNING = 1, PS_FAULT = 2 };
 
+/* -------- runbook: per-instance recovery record (doc 04 §7) --------
+   <dir>/<instance>.run — key=value lines, atomic tmp+rename          */
+static void runbook_write(const std::string& dir,
+                          const std::string& instance,
+                          const char* package, const uint8_t uuid[16],
+                          const char* state) {
+    if (dir.empty() || instance.empty()) return;
+    ::mkdir(dir.c_str(), 0755);
+    char hex[33];
+    static const char* H = "0123456789abcdef";
+    for (int i = 0; i < 16; i++) {
+        hex[i*2] = H[uuid[i] >> 4]; hex[i*2+1] = H[uuid[i] & 0xF];
+    }
+    hex[32] = 0;
+    std::string tmp = dir + "/" + instance + ".tmp";
+    std::string dst = dir + "/" + instance + ".run";
+    int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    char buf[512];
+    int n = snprintf(buf, sizeof buf,
+                     "uuid=%s\npackage=%s\nstate=%s\n", hex,
+                     package ? package : "", state);
+    ssize_t w = ::write(fd, buf, (size_t)n);
+    (void)w;
+    ::close(fd);
+    ::rename(tmp.c_str(), dst.c_str());
+}
+
+/* -------- supervisor mode (doc 04 §7 contract) ---------------------
+   tether-plc --supervise --respawn P --restart-delay-ms D -- ARGS…
+   forks+execs real tether-plc with ARGS, respawns per policy with
+   backoff and a 3/60s rate cap. plc_hb staleness is the child's own
+   monitor thread's job (P2-02); the supervisor watches liveness.    */
+static int supervise(char** argv, int sep) {
+    const char* policy = "on-fault";
+    uint64_t delay_ms = 1000;
+    for (int i = 1; i < sep; i++) {
+        std::string a = argv[i];
+        auto next = [&]() -> const char* {
+            return i + 1 < sep ? argv[++i] : "";
+        };
+        if (a == "--respawn") policy = next();
+        else if (a == "--restart-delay-ms")
+            delay_ms = strtoull(next(), 0, 0);
+        else if (a == "--supervise") { /* self */ }
+    }
+    std::deque<uint64_t> restarts;
+    int child_status = 0;
+    for (;;) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            argv[sep] = (char*)"tether-plc";
+            execvp(argv[0], &argv[sep]);
+            _exit(127);
+        }
+        if (pid < 0) return 2;
+        int st;
+        while (waitpid(pid, &st, 0) < 0) { /* EINTR loop */ }
+        child_status = WIFEXITED(st) ? WEXITSTATUS(st)
+                     : WIFSIGNALED(st) ? 128 + WTERMSIG(st) : 1;
+        if (g_stop) break;
+        bool fault = child_status != 0;
+        bool go = !strcmp(policy, "always") ||
+                  (!strcmp(policy, "on-fault") && fault);
+        if (!go || !strcmp(policy, "never")) break;
+        /* rate cap: max 3 restarts per 60 s (doc 04 §7) */
+        uint64_t now = mono_ns();
+        while (!restarts.empty() &&
+               now - restarts.front() > 60ull * 1000 * 1000 * 1000)
+            restarts.pop_front();
+        if (restarts.size() >= 3) {
+            fprintf(stderr,
+                    "tether-plc-supervise: restart rate cap hit\n");
+            return 3;
+        }
+        restarts.push_back(now);
+        fprintf(stderr,
+                "tether-plc-supervise: child exit %d, respawn in %llums\n",
+                child_status, (unsigned long long)delay_ms);
+        struct timespec ts {
+            (time_t)(delay_ms / 1000),
+            (long)((delay_ms % 1000) * 1000000)
+        };
+        nanosleep(&ts, nullptr);
+    }
+    return child_status;
+}
+
 int main(int argc, char** argv) {
     std::string image_path, module_path, package_path, ctl_path;
-    std::string retain_dir;
+    std::string retain_dir, runbook_dir, instance_name;
     uint64_t retain_flush_ms = 1000;
     uint64_t wcet_hard_ns = 0;
     uint64_t hang_timeout_ms = 2000;
+    uint8_t  fault_policy = 0;
+    uint32_t restart_max = 3;
     int wait_ms = 10000;
     uint64_t poll_ns = 1000 * 1000;          /* 1 ms max idle         */
     uint32_t ctx_flags = 0;
 
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--"))
+            return supervise(argv, i);
+    }
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() -> std::string {
@@ -73,6 +176,14 @@ int main(int argc, char** argv) {
             wcet_hard_ns = strtoull(next().c_str(), 0, 0);
         else if (a == "--hang-timeout-ms")
             hang_timeout_ms = strtoull(next().c_str(), 0, 0);
+        else if (a == "--fault-policy") {
+            std::string p = next();
+            fault_policy = p == "restart" ? 1 : p == "unload" ? 2 : 0;
+        }
+        else if (a == "--restart-max")
+            restart_max = (uint32_t)atoi(next().c_str());
+        else if (a == "--runbook") runbook_dir = next();
+        else if (a == "--instance") instance_name = next();
         else if (a == "--sim") ctx_flags |= TPLC_CTXF_SIM;
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -162,6 +273,8 @@ int main(int argc, char** argv) {
     tplc::ProgramConfig pcfg;
     pcfg.ctx_flags = ctx_flags;
     pcfg.wcet_hard_ns = wcet_hard_ns;
+    pcfg.fault_policy = fault_policy;
+    pcfg.restart_max = restart_max;
     auto pres = tplc::Program::create(mod, pcfg);
     if (!pres.ok()) {
         fprintf(stderr, "tether-plc: program create failed %s\n",
@@ -217,18 +330,56 @@ int main(int argc, char** argv) {
         return tplc_image_commit_outputs(&img, p.imageOut(), 0,
                                          p.desc().image_out_bytes);
     };
-    hooks.fault = [&](tplc::Program&, uint32_t, int32_t frc) {
-        /* doc 02 §4.6: program fault → stop scheduling, safe-state
-           is the master's job once it sees plc_status=fault        */
-        prog_state = PS_FAULT;
+    tplc::CtlServer ctl;
+    std::deque<uint64_t> fault_restarts;
+    hooks.fault = [&](tplc::Program& p, uint32_t, int32_t frc) {
+        /* doc 02 §4.6 / doc 04 §6: task fault → program policy.
+           hold = stay faulted; restart = warm reset bounded by
+           restart_max/60s then hold; unload = stop+deschedule.      */
         last_fault = frc;
         tplc_image_set_fault(&img, (uint64_t)-frc);
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
-        fprintf(stderr, "tether-plc: program fault rc=%d\n", frc);
+        if (ctl_enabled)
+            ctl.event(TPLC_EV_FAULT, 1u << (TPLC_EV_FAULT & 0xFF),
+                  &frc, sizeof frc);
+        if (fault_policy == 1) {
+            uint64_t now = mono_ns();
+            while (!fault_restarts.empty() &&
+                   now - fault_restarts.front() >
+                       pcfg.restart_window_ns)
+                fault_restarts.pop_front();
+            if (fault_restarts.size() < pcfg.restart_max) {
+                fault_restarts.push_back(now);
+                tplc::Status rs = p.reset(/*warm=*/true);
+                if (rs.ok()) {
+                    tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
+                    fprintf(stderr,
+                            "tether-plc: fault rc=%d — warm restart\n",
+                            frc);
+                    return;
+                }
+                fprintf(stderr,
+                        "tether-plc: restart failed %s\n",
+                        rs.msg.c_str());
+            }
+            fprintf(stderr,
+                    "tether-plc: fault rc=%d — restart budget out\n",
+                    frc);
+        } else if (fault_policy == 2) {
+            fprintf(stderr,
+                    "tether-plc: fault rc=%d — safe unload\n", frc);
+            p.stop();
+        } else {
+            fprintf(stderr, "tether-plc: program fault rc=%d\n", frc);
+        }
+        prog_state = PS_FAULT;
+        runbook_write(runbook_dir, instance_name,
+                      package_path.empty() ? module_path.c_str()
+                                           : package_path.c_str(),
+                      d.program_uuid, "error");
     };
 
     /* ---------------- control channel -------------------------- */
-    tplc::CtlServer ctl;
     if (ctl_enabled) {
         tplc::Status cst = ctl.open(ctl_path, 0660);
         if (!cst.ok())
@@ -426,6 +577,10 @@ int main(int argc, char** argv) {
     });
 
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
+    runbook_write(runbook_dir, instance_name,
+                  package_path.empty() ? module_path.c_str()
+                                       : package_path.c_str(),
+                  d.program_uuid, "running");
     fprintf(stderr, "tether-plc: running (module=%s image=%s ctl=%s)\n",
             module_path.c_str(), image_path.c_str(), ctl_path.c_str());
 
@@ -473,9 +628,16 @@ int main(int argc, char** argv) {
     fprintf(stderr, "tether-plc: stopping\n");
     mon_running = false;
     if (monitor.joinable()) monitor.join();
+    /* final runbook state: a program that faulted stays "error" —
+       auto-resume restores ERROR not RUNNING (doc 04 §7)           */
+    const char* final_state = prog_state == PS_FAULT ? "error" : "stopped";
     prog_state = PS_STOPPED;
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
     tplc_image_plc_heartbeat(&img, mono_ns());
+    runbook_write(runbook_dir, instance_name,
+                  package_path.empty() ? module_path.c_str()
+                                       : package_path.c_str(),
+                  d.program_uuid, final_state);
     if (retain.attached()) {
         retain.stage(prog.retainRegion());
         retain.flush();               /* final persist on shutdown */

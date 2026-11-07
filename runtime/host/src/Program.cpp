@@ -74,6 +74,16 @@ void Program::stop() {
     running_ = false;
 }
 
+Status Program::reset(bool warm) {
+    stop();
+    if (warm) ctx_.ctx_flags |=  TPLC_CTXF_RETAIN_RESTORED;
+    else      ctx_.ctx_flags &= ~((uint32_t)TPLC_CTXF_RETAIN_RESTORED);
+    int32_t rc = mod_->init(&ctx_);
+    if (rc != 0) return Status::Err(rc, "tplc_init failed (reset)");
+    running_ = true;
+    return Status::Ok();
+}
+
 /* ---- binding copies (doc 02 §2.4 semantics) ----------------------- */
 
 static uint32_t type_size(uint8_t tc) {

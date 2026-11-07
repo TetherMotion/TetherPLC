@@ -23,6 +23,11 @@ struct ProgramConfig {
     bool     retain_restored = false; /* host pre-loaded retain data   */
     /* hard WCET bound for watchdoggled tasks; 0 = 2x task wcet_hint   */
     uint64_t wcet_hard_ns = 0;
+    /* fault policy (doc 04 §6): 0=hold, 1=auto_restart, 2=safe_unload */
+    uint8_t  fault_policy = 0;
+    /* auto_restart bound: at most N restarts inside the window       */
+    uint32_t restart_max = 3;
+    uint64_t restart_window_ns = 60ull * 1000 * 1000 * 1000;
 };
 
 class Program {
@@ -42,6 +47,9 @@ public:
        calling this (see retainLoad()). */
     Status start();
     void   stop();                      /* tplc_shutdown, idempotent   */
+    /* stop + re-init. warm: retain bytes kept (init skips the retain
+       region); cold: whole blob re-zeroed. (doc 04 §4 reset)         */
+    Status reset(bool warm);
     bool   running() const { return running_; }
 
     /* One full task cycle (doc 02 §5 / doc 03 §5.2):
