@@ -67,6 +67,30 @@ Host-only load/lifecycle errors use `-300..` (`TPLC_E_HOST_*` in
 `host/Status.hpp`), disjoint from ABI codes (`-1..-65`), image codes
 (`-100..`), and module-defined (`-999/-1999`).
 
+## D-IMPL-10 — PROG_STOP/PROG_START gate scheduling only (doc 04)
+
+P0 control ops: `prog.stop` halts task scheduling, `prog.start` resumes
+it — module state and blob are untouched (IEC stop≠reset). A re-initing
+`reset` op (cold/warm) is P2. The ctl op surface for `prepare`/`kill`/
+`reset`/`unload`/`deploy.*`/`retain.*`/`dbg.*`/`trace.*` is declared in
+`tplc_ctl.h` but unimplemented until their phases land.
+
+## D-IMPL-11 — ctl wire details (doc 04 App I)
+
+- Error frames: same `msg_type` as the request, flag bit15
+  (`TPLC_CTL_F_ERROR`), payload `{code u32 (positive magnitude),
+  subcode u32, str msg}`.
+- `hello`: built into the server (pre-dispatch gate); `proto_ver`
+  negotiated as `min(client, server)`; `authz` currently always 1
+  (full control) — real authz arrives with P8-03.
+- Strings on the wire: `u16 len + bytes`, no NUL.
+
+## D-IMPL-12 — ctl is optional at runtime
+
+`tether-plc` keeps running headless if the ctl socket can't be opened
+(logs a warning) — matches the spec's "control channel is a service
+plane concern; the scan path must not depend on it."
+
 ## Open items carried forward (not deviations — just not done yet)
 
 - `bad_*` module series (doc 02 §11 fixtures 2): §3.3 prohibition

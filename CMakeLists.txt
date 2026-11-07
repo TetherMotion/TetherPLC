@@ -30,15 +30,28 @@ add_library(tplc_host STATIC
   runtime/host/src/Module.cpp
   runtime/host/src/Program.cpp
   runtime/host/src/Scheduler.cpp
-  runtime/host/src/HostServices.cpp)
+  runtime/host/src/HostServices.cpp
+  runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
+
+# ------------------------------------------------------------------ #
+# Runtime binary
+# ------------------------------------------------------------------ #
+add_executable(tether-plc runtime/tether-plc/main.cpp)
+target_link_libraries(tether-plc PRIVATE tplc_host tplc_image)
+set_target_properties(tether-plc PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ------------------------------------------------------------------ #
 # Tools
 # ------------------------------------------------------------------ #
 add_executable(tplc-image tools/tplc_image_tool.c)
 target_link_libraries(tplc-image PRIVATE tplc_image)
+
+add_executable(tplc-ctl tools/tplc_ctl.c)
+target_link_libraries(tplc-ctl PRIVATE tplc_image)
+target_include_directories(tplc-ctl PRIVATE tools)
 
 # ------------------------------------------------------------------ #
 # Tests: stub modules (hand-written .so fixtures)
@@ -80,3 +93,12 @@ target_compile_definitions(abi_conformance PRIVATE
   STUB_BAD_ABI_PATH="$<TARGET_FILE:stub_bad_abi>")
 add_dependencies(abi_conformance stub_v1 stub_v2 stub_bad_abi)
 add_test(NAME abi_conformance COMMAND abi_conformance)
+
+add_executable(ctl_smoke tests/runtime/ctl_smoke.cpp)
+target_include_directories(ctl_smoke PRIVATE tests tools)
+target_link_libraries(ctl_smoke PRIVATE tplc_host tplc_image)
+target_compile_definitions(ctl_smoke PRIVATE
+  TETHER_PLC_PATH="$<TARGET_FILE:tether-plc>"
+  STUB_V1_PATH="$<TARGET_FILE:stub_v1>")
+add_dependencies(ctl_smoke tether-plc stub_v1)
+add_test(NAME ctl_smoke COMMAND ctl_smoke)
