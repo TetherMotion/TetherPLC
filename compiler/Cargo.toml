@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["tplc-pkg", "tplc-mir", "tplc-st", "tplc-codegen", "tplc-rt", "tplcc"]
+members = ["tplc-pkg", "tplc-mir", "tplc-st", "tplc-codegen", "tplc-rt", "tplcc", "fbd-model"]
 # LLVM-free default build: tplcc needs the 'rusty' frontend + 'llvm'
 # backend; heavy crates are built explicitly (CI light lane skips them).
-default-members = ["tplc-pkg", "tplc-mir", "tplc-st", "tplc-codegen", "tplc-rt"]
+default-members = ["tplc-pkg", "tplc-mir", "tplc-st", "tplc-codegen", "tplc-rt", "fbd-model"]
 # spikes/ are standalone roots (excluded from the workspace — they pull
 # heavy eval-time deps like ruSTy+LLVM-21 that CI must not build).
 exclude = ["spikes/rusty-parse", "spikes/rusty-mir"]

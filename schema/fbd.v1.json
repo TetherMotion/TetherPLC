@@ -1,0 +1,575 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FbdProject",
+  "type": "object",
+  "required": [
+    "project",
+    "schema"
+  ],
+  "properties": {
+    "data_types": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/DataTypeDecl"
+      }
+    },
+    "global_vars": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/IfaceVar"
+      }
+    },
+    "pous": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Pou"
+      }
+    },
+    "project": {
+      "type": "string"
+    },
+    "schema": {
+      "type": "string"
+    },
+    "tasks": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Task"
+      }
+    }
+  },
+  "definitions": {
+    "Assoc": {
+      "description": "wireless association (PLCopen formalParameter+variable form): a named source feeds a pin without a drawn wire.",
+      "type": "object",
+      "required": [
+        "dst",
+        "src_name"
+      ],
+      "properties": {
+        "dst": {
+          "$ref": "#/definitions/PortRef"
+        },
+        "src_name": {
+          "description": "variable/element name resolved against POU interface/GVL.",
+          "type": "string"
+        }
+      }
+    },
+    "Block": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comment": {
+          "type": "string"
+        },
+        "exec_order": {
+          "description": "explicit order override; 0 = auto topo (doc 06 §4.1).",
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "instance": {
+          "description": "required for fb kind; synthesized by lowering when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/BlockKind"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "negated": {
+          "description": "pin indexes carrying IEC negation markers.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        },
+        "params": {
+          "description": "literal/customized parameters keyed by pin name (\"PT\":\"T#200ms\").",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "pos": {
+          "default": {
+            "x": 0,
+            "y": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pos"
+            }
+          ]
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VarRole"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type_ref": {
+          "description": "FB type name | function signature | operator mnemonic. Empty for variable blocks.",
+          "type": "string"
+        }
+      }
+    },
+    "BlockKind": {
+      "type": "string",
+      "enum": [
+        "fb",
+        "function",
+        "operator",
+        "variable",
+        "jump_target"
+      ]
+    },
+    "Comment": {
+      "type": "object",
+      "required": [
+        "id",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "pos": {
+          "default": {
+            "x": 0,
+            "y": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pos"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "DataTypeDecl": {
+      "type": "object",
+      "required": [
+        "name",
+        "ty"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "ty": {
+          "description": "IEC type expression (structured types keep their TC6/JSON sub-form; scalar names pass through)."
+        }
+      }
+    },
+    "IfaceKind": {
+      "type": "string",
+      "enum": [
+        "var",
+        "var_input",
+        "var_output",
+        "var_in_out",
+        "var_external",
+        "var_constant"
+      ]
+    },
+    "IfaceVar": {
+      "type": "object",
+      "required": [
+        "kind",
+        "name",
+        "type"
+      ],
+      "properties": {
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "init": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/IfaceKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "retain": {
+          "default": false,
+          "type": "boolean"
+        },
+        "type": {
+          "description": "IEC type name/expression string (\"INT\", \"TON\", \"ARRAY[0..9] OF BOOL\").",
+          "type": "string"
+        }
+      }
+    },
+    "Jump": {
+      "type": "object",
+      "required": [
+        "id",
+        "target"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "pos": {
+          "default": {
+            "x": 0,
+            "y": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pos"
+            }
+          ]
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    "Label": {
+      "type": "object",
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "name": {
+          "type": "string"
+        },
+        "pos": {
+          "default": {
+            "x": 0,
+            "y": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pos"
+            }
+          ]
+        }
+      }
+    },
+    "Network": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "assocs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Assoc"
+          }
+        },
+        "blocks": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Block"
+          }
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Comment"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "jumps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Jump"
+          }
+        },
+        "kind": {
+          "default": "fbd",
+          "allOf": [
+            {
+              "$ref": "#/definitions/NetworkKind"
+            }
+          ]
+        },
+        "label": {
+          "default": "",
+          "type": "string"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Label"
+          }
+        },
+        "returns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ReturnMarker"
+          }
+        },
+        "wires": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Wire"
+          }
+        }
+      }
+    },
+    "NetworkKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "fbd"
+          ]
+        },
+        {
+          "description": "iter-2 hook (doc 06 §11): schema-reserved, lowering rejects.",
+          "type": "string",
+          "enum": [
+            "ladder"
+          ]
+        }
+      ]
+    },
+    "PortRef": {
+      "type": "object",
+      "required": [
+        "block",
+        "port"
+      ],
+      "properties": {
+        "block": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "port": {
+          "$ref": "#/definitions/PortSel"
+        }
+      }
+    },
+    "PortSel": {
+      "description": "pin selector: signature-order index or FB pin name.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "Pos": {
+      "description": "grid units — positions in the model are integers; canvas floats are render-layer only (doc 06 §4.2 determinism).",
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "y": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "Pou": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "en_eno": {
+          "description": "EN/ENO config: \"relaxed\" (default) | \"strict-iec\" (doc 06 §4.5).",
+          "default": "relaxed",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interface": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IfaceVar"
+          }
+        },
+        "kind": {
+          "$ref": "#/definitions/PouKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networks": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Network"
+          }
+        }
+      }
+    },
+    "PouKind": {
+      "type": "string",
+      "enum": [
+        "program",
+        "function_block",
+        "function"
+      ]
+    },
+    "ReturnMarker": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "pos": {
+          "default": {
+            "x": 0,
+            "y": 0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/Pos"
+            }
+          ]
+        }
+      }
+    },
+    "Task": {
+      "type": "object",
+      "required": [
+        "name",
+        "period_ns"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "period_ns": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "priority": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "programs": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "VarRole": {
+      "type": "string",
+      "enum": [
+        "in",
+        "out",
+        "in_out"
+      ]
+    },
+    "Wire": {
+      "type": "object",
+      "required": [
+        "id",
+        "src"
+      ],
+      "properties": {
+        "dsts": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/PortRef"
+          }
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "probe": {
+          "description": "debug probe marker (doc 06 §4.3) — opt-in blob field + store.",
+          "type": "boolean"
+        },
+        "src": {
+          "$ref": "#/definitions/PortRef"
+        }
+      }
+    }
+  }
+}
