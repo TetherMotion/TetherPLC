@@ -57,9 +57,10 @@ this file.
   extras (AT/init/retain) keep the decl. Elements with no `localId`
   get allocator ids. Non-FBD bodies (`<SFC>/<LD>/<ST>`) report notes,
   not silent drops.
-- Coverage verified vs a Beremiz-shaped hand fixture (inVariable →
-  TON IN/PT literal → outVariable fan-in): all construct classes
-  imported correctly.
+- Coverage: real Beremiz corpus in `tools/oracle-beremiz/corpus`
+  (5 project XMLs, incl. `iec61131_lang_test`) imports at 100% node /
+  98.4% edge coverage — over the §13.2 ≥95% target
+  (`plcopen-io/tests/beremiz_corpus.rs`).
 
 ## `fbd-lower` (doc 06 §4)
 
@@ -121,7 +122,5 @@ undeclared-name errors.
 - `<dataTypes>` round-trip beyond derived-name baseType; `assoc`
   edges exist in the model but XML import of wireless
   `formalParameter` associations is not yet mapped back.
-- Real Beremiz corpus fixtures (P4-06) — coverage is one hand-built
-  doc today, not ≥95% measured.
 - mir-level `Label`/`Goto` for imported jumps (doc 06 §4.4 assumed
   them; they were never in the IR).
