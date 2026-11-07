@@ -11,6 +11,9 @@ use tplc_mir::ir::Type;
 pub struct Sig {
     pub ins: Vec<(String, Type)>,
     pub outs: Vec<(String, Type)>,
+    /// in-pin indexes declared VAR_IN_OUT — their source must be a
+    /// resolvable storage reference, not a computed expression.
+    pub inouts: BTreeSet<u32>,
 }
 
 fn s(n: &str, t: Type) -> (String, Type) {
@@ -54,7 +57,11 @@ pub fn builtin_sig(name: &str) -> Option<Sig> {
         "RS" => (vec![s("S", BOOL), s("R1", BOOL)], vec![s("Q1", BOOL)]),
         _ => return None,
     };
-    Some(Sig { ins, outs })
+    Some(Sig {
+        ins,
+        outs,
+        inouts: BTreeSet::new(),
+    })
 }
 
 /// Signature of a user-declared FB or FUNCTION POU from its interface
@@ -64,8 +71,10 @@ pub fn pou_sig(pou: &Pou, fb_names: &BTreeSet<String>) -> Sig {
     for v in &pou.interface {
         let ty = crate::ty::parse_type(&v.ty, fb_names).unwrap_or(Type::Bool);
         match v.kind {
-            fbd_model::IfaceKind::VarInput | fbd_model::IfaceKind::VarInOut => {
-                sig.ins.push((v.name.clone(), ty))
+            fbd_model::IfaceKind::VarInput => sig.ins.push((v.name.clone(), ty)),
+            fbd_model::IfaceKind::VarInOut => {
+                sig.inouts.insert(sig.ins.len() as u32);
+                sig.ins.push((v.name.clone(), ty));
             }
             fbd_model::IfaceKind::VarOutput => sig.outs.push((v.name.clone(), ty)),
             _ => {}

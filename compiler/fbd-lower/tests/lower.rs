@@ -395,3 +395,153 @@ fn fan_in_errors() {
         out.diags
     );
 }
+
+/// FB POU with one VAR_IN_OUT member — host for FBD005/014 fixtures.
+fn inout_host_project(dst: Block, extra_wire: Option<Wire>) -> FbdProject {
+    let mut p = debounce_project();
+    // user FB: Accum — VAR_IN_OUT total : DINT
+    p.pous.push(Pou {
+        id: "fb_acc".into(),
+        name: "ACCUM".into(),
+        kind: PouKind::FunctionBlock,
+        en_eno: "relaxed".into(),
+        interface: vec![IfaceVar {
+            name: "total".into(),
+            kind: IfaceKind::VarInOut,
+            ty: "DINT".into(),
+            init: None,
+            at: None,
+            retain: false,
+        }],
+        networks: vec![],
+    });
+    // declare a DINT var to serve as legal inout storage
+    p.pous[0].interface.push(IfaceVar {
+        name: "AccTotal".into(),
+        kind: IfaceKind::Var,
+        ty: "DINT".into(),
+        init: None,
+        at: None,
+        retain: false,
+    });
+    let net = &mut p.pous[0].networks[0];
+    net.blocks.retain(|b| b.id != 15);
+    net.wires.retain(|w| w.id != 43);
+    let mut blocks = vec![
+        fb_block(60, "ACCUM", "Acc1", &[], 20, 10),
+        var_block(61, VarRole::Out, "MotorRun", Some("%QX0.0"), 30, 6),
+        dst,
+    ];
+    net.blocks.append(&mut blocks);
+    net.wires.push(wire(
+        62,
+        (60, PortSel::Index(0)),
+        &[(61, PortSel::Index(0))],
+        false,
+    ));
+    if let Some(w) = extra_wire {
+        net.wires.push(w);
+    }
+    p
+}
+
+#[test]
+fn inout_literal_param_errors() {
+    // inout pin fed by param literal → FBD005
+    let mut p = inout_host_project(var_block(70, VarRole::In, "AccTotal", None, 1, 10), None);
+    p.pous[0].networks[0]
+        .blocks
+        .iter_mut()
+        .find(|b| b.id == 60)
+        .unwrap()
+        .params
+        .insert("total".into(), "42".into());
+    let out = lower(&p);
+    assert!(
+        errors(&out).iter().any(|d| d.code == codes::INOUT_STORAGE),
+        "{:?}",
+        out.diags
+    );
+}
+
+#[test]
+fn inout_expr_chain_errors() {
+    // inout pin fed by an operator output → FBD014
+    let mut add = op_block(70, "ADD", 10, 10);
+    add.params.insert("IN0".into(), "1".into());
+    add.params.insert("IN1".into(), "2".into());
+    let p = inout_host_project(
+        add,
+        Some(wire(
+            71,
+            (70, PortSel::Index(0)),
+            &[(60, PortSel::Index(0))],
+            false,
+        )),
+    );
+    let out = lower(&p);
+    assert!(
+        errors(&out).iter().any(|d| d.code == codes::INOUT_EXPR),
+        "{:?}",
+        out.diags
+    );
+}
+
+#[test]
+fn inout_storage_ref_ok() {
+    // inout pin fed by a var block → no FBD005/014
+    let p = inout_host_project(
+        var_block(70, VarRole::In, "AccTotal", None, 1, 10),
+        Some(wire(
+            71,
+            (70, PortSel::Index(0)),
+            &[(60, PortSel::Index(0))],
+            false,
+        )),
+    );
+    let out = lower(&p);
+    let errs = errors(&out);
+    assert!(
+        !errs
+            .iter()
+            .any(|d| d.code == codes::INOUT_STORAGE || d.code == codes::INOUT_EXPR),
+        "{:?}",
+        out.diags
+    );
+}
+
+#[test]
+fn bool_input_to_arith_errors() {
+    // AND is fine; feeding a BOOL var to ADD triggers FBD009
+    let mut p = debounce_project();
+    let net = &mut p.pous[0].networks[0];
+    net.blocks.retain(|b| b.id != 14 && b.id != 15);
+    net.wires.retain(|w| w.id != 42 && w.id != 43);
+    net.blocks.push(op_block(20, "ADD", 20, 6));
+    net.blocks.push(var_block(
+        21,
+        VarRole::Out,
+        "MotorRun",
+        Some("%QX0.0"),
+        30,
+        6,
+    ));
+    net.wires.push(wire(
+        44,
+        (12, PortSel::Name("Q".into())),
+        &[(20, PortSel::Index(0))],
+        false,
+    ));
+    net.wires.push(wire(
+        45,
+        (20, PortSel::Index(0)),
+        &[(21, PortSel::Index(0))],
+        false,
+    ));
+    let out = lower(&p);
+    assert!(
+        errors(&out).iter().any(|d| d.code == codes::ANY_UNRESOLVED),
+        "{:?}",
+        out.diags
+    );
+}

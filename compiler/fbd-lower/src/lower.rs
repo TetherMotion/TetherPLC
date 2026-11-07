@@ -672,6 +672,22 @@ impl<'a> Cx<'a> {
         for (i, (pname, pty)) in sig.ins.iter().enumerate() {
             match self.dst_input(net, b, i as u32, blocks) {
                 Some(e) => {
+                    if sig.inouts.contains(&(i as u32)) {
+                        match &e.kind {
+                            // storage ref — legal inout binding
+                            ExprKind::Ref(_) => {}
+                            ExprKind::Lit(_) => self.err(
+                                codes::INOUT_STORAGE,
+                                format!("inout pin {pname} bound to literal"),
+                                b.id,
+                            ),
+                            _ => self.err(
+                                codes::INOUT_EXPR,
+                                format!("inout pin {pname} fed by expression"),
+                                b.id,
+                            ),
+                        }
+                    }
                     self.check_coerce(&e, pty, b.id);
                     args.push((pname.clone(), e));
                 }
@@ -1198,6 +1214,13 @@ impl<'a> Cx<'a> {
                 Op::Move => self.dst_input(net, b, 0, blocks),
                 Op::Not => {
                     let e = self.dst_input(net, b, 0, blocks)?;
+                    if !matches!(e.ty, Type::Bool) {
+                        self.err(
+                            codes::ANY_UNRESOLVED,
+                            format!("{} input 0 needs BOOL", b.type_ref),
+                            b.id,
+                        );
+                    }
                     Some(Expr {
                         kind: ExprKind::Un(UnOp::Not, Box::new(e)),
                         ty: Type::Bool,
@@ -1226,6 +1249,7 @@ impl<'a> Cx<'a> {
                             );
                         }
                     }
+                    self.check_op_class(op, b, &exprs);
                     let mut it = exprs.into_iter();
                     let mut acc = it.next()?;
                     for e in it {
@@ -1281,6 +1305,7 @@ impl<'a> Cx<'a> {
         if exprs.is_empty() {
             return None;
         }
+        self.check_op_class(op, b, &exprs);
         let rty = match op {
             Op::Sel | Op::Mux => exprs
                 .iter()
@@ -1297,6 +1322,60 @@ impl<'a> Cx<'a> {
             _ => Type::Bool,
         };
         Some((exprs, rty))
+    }
+
+    /// FBD009 — generic `ANY_*` pins must resolve to a type in the
+    /// operator's class: BOOL ops take BOOL, arith ops take
+    /// Int/Real/Time, shifts take Int, SEL.G is BOOL, MUX.K is Int.
+    fn check_op_class(&mut self, op: Op, b: &Block, exprs: &[Expr]) {
+        let num = |t: &Type| matches!(t, Type::Int { .. } | Type::Real { .. } | Type::Time);
+        let int = |t: &Type| matches!(t, Type::Int { .. });
+        let mut bad = |cond: bool, pin: usize, want: &str| {
+            if cond {
+                self.err(
+                    codes::ANY_UNRESOLVED,
+                    format!("{} input {pin} needs {want}", b.type_ref),
+                    b.id,
+                );
+            }
+        };
+        match op {
+            Op::Fold(BinOp::And | BinOp::Or | BinOp::Xor) | Op::Not => {
+                for (i, e) in exprs.iter().enumerate() {
+                    bad(!matches!(e.ty, Type::Bool), i, "BOOL");
+                }
+            }
+            Op::Bin(BinOp::Shl | BinOp::Shr | BinOp::Rol | BinOp::Ror) => {
+                for (i, e) in exprs.iter().enumerate() {
+                    bad(!int(&e.ty), i, "ANY_INT");
+                }
+            }
+            Op::Sel => {
+                for (i, e) in exprs.iter().enumerate() {
+                    if i == 0 {
+                        bad(!matches!(e.ty, Type::Bool), i, "BOOL");
+                    } else {
+                        bad(!num(&e.ty), i, "ANY_NUM");
+                    }
+                }
+            }
+            Op::Mux => {
+                for (i, e) in exprs.iter().enumerate() {
+                    if i == 0 {
+                        bad(!int(&e.ty), i, "ANY_INT");
+                    } else {
+                        bad(!num(&e.ty), i, "ANY_NUM");
+                    }
+                }
+            }
+            // ANY operand ops: EQ/NE accept every same-class pair
+            Op::Move | Op::Bin(BinOp::Eq | BinOp::Ne) => {}
+            _ => {
+                for (i, e) in exprs.iter().enumerate() {
+                    bad(!num(&e.ty), i, "ANY_NUM");
+                }
+            }
+        }
     }
 
     /// `eno` internal var for an fb block (lazily declared).

@@ -86,12 +86,13 @@ diags}`). Shared plumbing lives in `tplc-mir`: `diag::{Diag,Severity}`
   (MUX: `K`-compare chain, out-of-range → first input). `*_TO_*`
   casts → `Conv`. Probed wires → `__probe_<id>` field + store at
   production; consumers read the field.
-- Validation live now: FBD001 (coercion at pin insertion), FBD002,
-  FBD003, FBD004, FBD006, FBD007, FBD008, FBD010 (warn), FBD011,
-  FBD012, FBD013. FBD005/009/014 reserved — InOut pins have no stored
-  member in the runtime today (same gap as ST), generic `ANY_*`
-  resolution is via `unify_num` so unresolved cases surface as
-  FBD001.
+- Validation live now: all of FBD001–FBD014. InOut pins require a
+  storage `Ref` source — literal/param-bound → FBD005, expression
+  (operator/function output) chains → FBD014. Generic `ANY_*` ops
+  check the IEC class before folding: AND/OR/XOR/NOT want BOOL,
+  arith/comparison/SEL-IN/MUX-IN want ANY_NUM, shifts and MUX.K want
+  ANY_INT, SEL.G wants BOOL; EQ/NE accept same-class pairs; out-of-class
+  operands → FBD009.
 - `params` literals parse `T#…`, based ints (`16#FF`), typed prefixes
   (`INT#5`), reals, bools, `'strings'`; bad literals → FBD006/PARSE.
 - Jumps to existing labels report UNSUPPORTED (mir has no goto);
@@ -111,8 +112,8 @@ undeclared-name errors.
 ## Not yet
 
 - TS type generation / editor bindings (TetherWebUI side).
-- FBD005/009/014 (InOut storage, ANY_* candidates, inout chains).
-- `tplcc` driver wiring for `.fbd.json` sources (P4-05).
+- InOut *value* semantics: bindings type-check but writes through the
+  ref aren't propagated back (same gap as ST sema).
 - Equivalence corpus: 10-pattern gallery ST↔FBD oracle diff (P4-06).
 - `en_eno` semantic implementation (field exists, honored by lowering).
 - `data_types`/`global_vars` decode is pass-through (`Value`) until
