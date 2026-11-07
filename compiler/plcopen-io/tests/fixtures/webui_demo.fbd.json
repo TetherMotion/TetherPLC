@@ -1,0 +1,29 @@
+{
+  "schema": "fbd.v1", "project": "webui_demo", "data_types": [], "global_vars": [],
+  "pous": [{
+    "id": "MAIN", "name": "MAIN", "kind": "program", "en_eno": "inherit",
+    "interface": [
+      {"name": "Start", "kind": "var", "type": "BOOL", "at": "%IX0.0"},
+      {"name": "Heat", "kind": "var", "type": "BOOL", "at": "%QX0.0"},
+      {"name": "Limit", "kind": "var_input", "type": "INT", "init": "90"}
+    ],
+    "networks": [{
+      "id": "net1", "kind": "fbd", "label": "heat loop",
+      "comments": [{"id": 50, "pos": {"x":4,"y":4}, "text": "heater control"}],
+      "assocs": [], "labels": [{"id":51,"pos":{"x":0,"y":0},"name":"L1"}],
+      "jumps": [{"id":52,"pos":{"x":9,"y":0},"target":"L1"}], "returns": [{"id":53,"pos":{"x":10,"y":0}}],
+      "blocks": [
+        {"id":1,"kind":"variable","type_ref":"","pos":{"x":0,"y":0},"params":{},"exec_order":0,"negated":[],"comment":"","role":"in","name":"Start","at":"%IX0.0"},
+        {"id":2,"kind":"fb","type_ref":"TON","instance":"T1","pos":{"x":4,"y":0},"params":{"PT":"T#200ms"},"exec_order":1,"negated":[1],"comment":""},
+        {"id":3,"kind":"operator","type_ref":"AND","pos":{"x":7,"y":0},"params":{},"exec_order":2,"negated":[],"comment":""},
+        {"id":4,"kind":"variable","type_ref":"","pos":{"x":11,"y":0},"params":{},"exec_order":0,"negated":[],"comment":"","role":"out","name":"Heat","at":"%QX0.0"}
+      ],
+      "wires": [
+        {"id":20,"src":{"block":1,"port":0},"dsts":[{"block":2,"port":"IN"},{"block":3,"port":0}],"probe":true},
+        {"id":21,"src":{"block":2,"port":"Q"},"dsts":[{"block":3,"port":1}]},
+        {"id":22,"src":{"block":3,"port":0},"dsts":[{"block":4,"port":0}]}
+      ]
+    }]
+  }],
+  "tasks": [{"name":"CYC","period_ns":20000000,"programs":["MAIN"],"priority":3}]
+}
