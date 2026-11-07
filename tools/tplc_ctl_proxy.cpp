@@ -251,6 +251,10 @@ static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build
     }
     resp += "}";
     http_reply(cfd, 200, "OK", (const uint8_t*)resp.data(), resp.size(), "application/json");
+    for (auto& [name, _] : files) unlink((dir + "/" + name).c_str());
+    unlink((dir + "/err.log").c_str());
+    unlink((dir + "/out.tplc").c_str());
+    rmdir(dir.c_str());
 }
 
 static void http_reply(int fd, int code, const char* text,
