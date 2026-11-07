@@ -7,11 +7,11 @@
 //! every legal conversion explicit (`ExprKind::Conv`) — codegen never
 //! guesses (doc 07 §2 invariant).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tplc_mir::ir::*;
 use tplc_mir::layout::builtin_fb_layout;
 
-use crate::diag::{codes, Diag};
+use crate::diag::{codes, wcodes, Diag};
 
 /// POU table for call-shape and FB-member lookups.
 struct Env {
@@ -90,19 +90,33 @@ pub fn check(module: &mut Module) -> Vec<Diag> {
     let mut diags = Vec::new();
     for i in 0..module.pous.len() {
         let scope = Scope::for_pou(&module.pous[i], module);
-            let mut ch = Checker {
+        decl_lints(&module.pous[i], &scope, &mut diags);
+        let mut ch = Checker {
             env: &env,
             scope: &scope,
             diags: &mut diags,
+            used: BTreeSet::new(),
         };
         // take the body out so env/scope (owning clones) coexist with
         // mutation of statements
         if let Body::Stmts(stmts) = &mut module.pous[i].body {
             let mut owned = std::mem::take(stmts);
-            for s in &mut owned {
-                ch.stmt(s);
-            }
+            ch.stmts(&mut owned);
             *stmts = owned;
+        }
+        // unused-var lint: locals never resolved anywhere (skip
+        // AT-bound — those are driven by the image, not the code)
+        for v in &module.pous[i].iface {
+            if v.kind == VarKind::Local
+                && v.at.is_none()
+                && !ch.used.contains(&v.name.to_ascii_uppercase())
+            {
+                ch.diags.push(Diag::warning(
+                    wcodes::UNUSED_VAR,
+                    format!("variable `{}` is never used", v.name),
+                    v.prov.clone(),
+                ));
+            }
         }
     }
     diags
@@ -112,6 +126,34 @@ struct Checker<'e> {
     env: &'e Env,
     scope: &'e Scope,
     diags: &'e mut Vec<Diag>,
+    /// canonical (uppercased) local names resolved during the walk
+    used: BTreeSet<String>,
+}
+
+/// Declaration-level lints: shadowing of a visible outer name, and
+/// `VAR_EXTERNAL` declarations coupling the POU to global state.
+fn decl_lints(pou: &Pou, scope: &Scope, diags: &mut Vec<Diag>) {
+    for v in &pou.iface {
+        if v.kind == VarKind::External {
+            diags.push(Diag::warning(
+                wcodes::EXTERNAL,
+                format!("external variable `{}` couples POU to global state", v.name),
+                v.prov.clone(),
+            ));
+            continue;
+        }
+        let un = v.name.to_ascii_uppercase();
+        if scope.gvls.contains_key(&un) {
+            diags.push(Diag::warning(
+                wcodes::SHADOW,
+                format!(
+                    "`{}` shadows global list {un} — `GVL.` access resolves to the local",
+                    v.name
+                ),
+                v.prov.clone(),
+            ));
+        }
+    }
 }
 
 impl<'e> Checker<'e> {
@@ -146,25 +188,31 @@ impl<'e> Checker<'e> {
     fn ref_ty(&mut self, r: &mut Ref, prov: &Prov) -> Option<Type> {
         match r {
             Ref::Var(name) => {
-                if let Some(decl) =
-                    self.scope.vars.get(&name.to_ascii_uppercase())
-                {
+                if let Some(decl) = self.scope.vars.get(&name.to_ascii_uppercase()) {
                     *name = decl.name.clone(); // canonical case
+                    self.used.insert(name.to_ascii_uppercase());
                     Some(decl.ty.clone())
                 } else if self.scope.gvls.contains_key(&name.to_ascii_uppercase()) {
-                    // bare GVL name — resolves as struct-like pseudo-var
+                    // bare GVL name — resolves as struct-like pseudo-var;
+                    // implicit global access is a lint hit
+                    self.diags.push(Diag::warning(
+                        wcodes::EXTERNAL,
+                        format!("implicit global access `{name}` — declare VAR_EXTERNAL"),
+                        prov.clone(),
+                    ));
                     Some(Type::Struct {
                         name: name.clone(),
-                        fields: self
-                            .scope
-                            .gvls[&name.to_ascii_uppercase()]
+                        fields: self.scope.gvls[&name.to_ascii_uppercase()]
                             .values()
                             .map(|v| (v.name.clone(), v.ty.clone()))
                             .collect(),
                     })
                 } else if self.env.enum_ordinal(name).is_some() {
                     // enum element `GREEN` — expr() rewrites to ordinal
-                    Some(Type::Int { signed: true, bits: 32 })
+                    Some(Type::Int {
+                        signed: true,
+                        bits: 32,
+                    })
                 } else {
                     let mut d = Diag::error(
                         codes::UNKNOWN_NAME,
@@ -182,12 +230,10 @@ impl<'e> Checker<'e> {
                 let bt = self.ref_ty(base, prov)?;
                 match &bt {
                     Type::Fb { name: fbname } => {
-                        if let Some(pou) =
-                            self.env.pous.get(&fbname.to_ascii_uppercase())
-                        {
-                            if let Some(v) = pou.iface.iter().find(|v| {
-                                v.name.eq_ignore_ascii_case(name)
-                            }) {
+                        if let Some(pou) = self.env.pous.get(&fbname.to_ascii_uppercase()) {
+                            if let Some(v) =
+                                pou.iface.iter().find(|v| v.name.eq_ignore_ascii_case(name))
+                            {
                                 *name = v.name.clone();
                                 return Some(v.ty.clone());
                             }
@@ -201,7 +247,7 @@ impl<'e> Checker<'e> {
                         self.err(
                             codes::UNKNOWN_NAME,
                             format!("{fbname} has no member {name}"),
-                            &Prov::None,
+                            prov,
                         );
                         None
                     }
@@ -213,18 +259,14 @@ impl<'e> Checker<'e> {
                             t.clone()
                         })
                         .or_else(|| {
-                            self.err(
-                                codes::UNKNOWN_NAME,
-                                format!("no field {name}"),
-                                &Prov::None,
-                            );
+                            self.err(codes::UNKNOWN_NAME, format!("no field {name}"), prov);
                             None
                         }),
                     _ => {
                         self.err(
                             codes::UNKNOWN_NAME,
-                            format!("field access on non-aggregate {name}"),
-                            &Prov::None,
+                            format!("field access `.{name}` on non-aggregate"),
+                            prov,
                         );
                         None
                     }
@@ -238,7 +280,7 @@ impl<'e> Checker<'e> {
                     let _ = (lo, hi);
                     Some(*elem.clone())
                 } else {
-                    self.err(codes::UNKNOWN_NAME, "index on non-array", &Prov::None);
+                    self.err(codes::UNKNOWN_NAME, "index on non-array", prov);
                     None
                 }
             }
@@ -250,12 +292,23 @@ impl<'e> Checker<'e> {
         e.ty = match &mut e.kind {
             ExprKind::Lit(l) => match l {
                 Lit::Bool(_) => Type::Bool,
-                Lit::Int(_) => Type::Int { signed: true, bits: 32 },
-                Lit::UInt(_) => Type::Int { signed: false, bits: 32 },
+                Lit::Int(_) => Type::Int {
+                    signed: true,
+                    bits: 32,
+                },
+                Lit::UInt(_) => Type::Int {
+                    signed: false,
+                    bits: 32,
+                },
                 Lit::Real(_) => Type::Real { bits: 64 },
                 Lit::TimeNs(_) => Type::Time,
-                Lit::Str(s) => Type::Str { cap: s.len().max(1) as u16 },
-                Lit::EnumVal { .. } => Type::Int { signed: true, bits: 32 },
+                Lit::Str(s) => Type::Str {
+                    cap: s.len().max(1) as u16,
+                },
+                Lit::EnumVal { .. } => Type::Int {
+                    signed: true,
+                    bits: 32,
+                },
             },
             ExprKind::Ref(r) => {
                 // enum element fallback: Var(GREEN) → lit ordinal
@@ -263,7 +316,10 @@ impl<'e> Checker<'e> {
                     if self.var_ty(name).is_none() {
                         if let Some(ord) = self.env.enum_ordinal(name) {
                             e.kind = ExprKind::Lit(Lit::Int(ord));
-                            return Type::Int { signed: true, bits: 32 };
+                            return Type::Int {
+                                signed: true,
+                                bits: 32,
+                            };
                         }
                     }
                 }
@@ -281,7 +337,16 @@ impl<'e> Checker<'e> {
                 let tb = self.expr(b);
                 use BinOp::*;
                 match op {
-                    Add | Sub | Mul | Div | Mod => unify_num(&ta, &tb),
+                    // untyped literal adopts the other operand's type —
+                    // `x + 1` on INT stays INT, no phantom i32 widening
+                    Add | Sub | Mul | Div | Mod => {
+                        let (la, lb) = (is_num_lit(a), is_num_lit(b));
+                        match (la, lb) {
+                            (true, false) if is_numeric(&tb) => tb,
+                            (false, true) if is_numeric(&ta) => ta,
+                            _ => unify_num(&ta, &tb),
+                        }
+                    }
                     Shl | Shr | Rol | Ror => ta,
                     Eq | Ne | Lt | Le | Gt | Ge => Type::Bool,
                     And | Or | Xor | AndThen | OrElse => Type::Bool,
@@ -296,12 +361,7 @@ impl<'e> Checker<'e> {
         e.ty.clone()
     }
 
-    fn fn_ty(
-        &mut self,
-        fun: &mut String,
-        args: &mut [(String, Expr)],
-        prov: &Prov,
-    ) -> Type {
+    fn fn_ty(&mut self, fun: &mut String, args: &mut [(String, Expr)], prov: &Prov) -> Type {
         let Some(pou) = self.env.pous.get(&fun.to_ascii_uppercase()) else {
             self.err(codes::UNKNOWN_NAME, format!("no FUNCTION {fun}"), prov);
             return Type::Bool;
@@ -312,6 +372,7 @@ impl<'e> Checker<'e> {
             .filter(|v| matches!(v.kind, VarKind::Input | VarKind::InOut))
             .cloned()
             .collect();
+        let mut bound: BTreeSet<String> = BTreeSet::new();
         for (i, (pname, pe)) in args.iter_mut().enumerate() {
             let arg_ty = self.expr(pe);
             let target = if pname.is_empty() {
@@ -324,6 +385,7 @@ impl<'e> Checker<'e> {
             };
             match target {
                 Some((n, t)) => {
+                    bound.insert(n.to_ascii_uppercase());
                     *pname = n;
                     self.coerce(pe, &arg_ty, &t);
                 }
@@ -334,16 +396,45 @@ impl<'e> Checker<'e> {
                 ),
             }
         }
+        // call shape: FUNCTION inputs without a default are required
+        let missing: Vec<&str> = inputs
+            .iter()
+            .filter(|v| v.kind == VarKind::Input && v.init.is_none())
+            .filter(|v| !bound.contains(&v.name.to_ascii_uppercase()))
+            .map(|v| v.name.as_str())
+            .collect();
+        if !missing.is_empty() {
+            self.diags.push(
+                Diag::error(
+                    codes::TYPE,
+                    format!(
+                        "{fun} missing required argument{} {}",
+                        if missing.len() > 1 { "s" } else { "" },
+                        missing.join(", ")
+                    ),
+                    prov.clone(),
+                )
+                .with_help("FUNCTION inputs without defaults must be bound"),
+            );
+        }
         pou.ret_ty.clone().unwrap_or(Type::Bool)
     }
 
     /// Insert a Conv node around `e` if the matrix allows implicit
-    /// conversion from→to; error otherwise.
+    /// conversion from→to; narrowing conversions also lint.
     fn coerce(&mut self, e: &mut Expr, from: &Type, to: &Type) {
-        if compatible(from, to) {
+        // untyped literals fold at codegen — legal wherever they fit
+        if compatible(from, to) || literal_fits(e, to) {
             return;
         }
         if convertible(from, to) {
+            if narrows(from, to) {
+                self.diags.push(Diag::warning(
+                    wcodes::IMPLICIT_NARROW,
+                    format!("implicit narrowing {from:?} → {to:?}"),
+                    e.prov.clone(),
+                ));
+            }
             let inner = std::mem::replace(
                 e,
                 Expr {
@@ -353,15 +444,42 @@ impl<'e> Checker<'e> {
                 },
             );
             *e = Expr {
-                kind: ExprKind::Conv { to: to.clone(), e: Box::new(inner) },
+                kind: ExprKind::Conv {
+                    to: to.clone(),
+                    e: Box::new(inner),
+                },
                 ty: to.clone(),
                 prov: Prov::Generated,
             };
         } else {
-            self.err(
-                codes::UNKNOWN_TYPE,
-                format!("cannot convert {from:?} → {to:?}"),
-                &e.prov,
+            self.diags.push(
+                Diag::error(
+                    codes::TYPE,
+                    format!("expected {to:?}, found {from:?}"),
+                    e.prov.clone(),
+                )
+                .with_help("no implicit conversion — cast explicitly or use a matching type"),
+            );
+        }
+    }
+
+    /// Statement list — tracks dead code after unconditional
+    /// Return/Exit/Continue within the list.
+    fn stmts(&mut self, list: &mut [Stmt]) {
+        let mut dead = false;
+        for s in list {
+            if dead {
+                self.diags.push(Diag::warning(
+                    wcodes::DEAD_CODE,
+                    "unreachable statement",
+                    s.prov.clone(),
+                ));
+                // keep checking — more diags inside are still useful
+            }
+            self.stmt(s);
+            dead |= matches!(
+                s.kind,
+                StmtKind::Return(_) | StmtKind::Exit | StmtKind::Continue
             );
         }
     }
@@ -377,38 +495,43 @@ impl<'e> Checker<'e> {
             }
             StmtKind::If { branches, else_ } => {
                 for (c, b) in branches {
-                    self.expr(c);
-                    for st in b {
-                        self.stmt(st);
-                    }
+                    self.cond(c);
+                    self.stmts(b);
                 }
-                for st in else_ {
-                    self.stmt(st);
-                }
+                self.stmts(else_);
             }
             StmtKind::Case { sel, arms, else_ } => {
                 self.expr(sel);
+                let mut covered: Vec<(i64, i64)> = Vec::new();
                 for (sels, b) in arms {
                     for cs in sels.iter_mut() {
                         match cs {
                             CaseSel::Lit(e) => {
                                 self.expr(e);
+                                if let Some(v) = const_int(e) {
+                                    self.case_cover(&mut covered, v, v, &e.prov);
+                                }
                             }
                             CaseSel::Range(a, b) => {
                                 self.expr(a);
                                 self.expr(b);
+                                if let (Some(lo), Some(hi)) = (const_int(a), const_int(b)) {
+                                    self.case_cover(&mut covered, lo, hi, &a.prov);
+                                }
                             }
                         }
                     }
-                    for st in b {
-                        self.stmt(st);
-                    }
+                    self.stmts(b);
                 }
-                for st in else_ {
-                    self.stmt(st);
-                }
+                self.stmts(else_);
             }
-            StmtKind::For { var, start, end, step, body } => {
+            StmtKind::For {
+                var,
+                start,
+                end,
+                step,
+                body,
+            } => {
                 if self.var_ty(var).is_none() {
                     self.err(
                         codes::UNKNOWN_NAME,
@@ -421,15 +544,11 @@ impl<'e> Checker<'e> {
                 if let Some(st) = step {
                     self.expr(st);
                 }
-                for st in body {
-                    self.stmt(st);
-                }
+                self.stmts(body);
             }
             StmtKind::While { cond, body } | StmtKind::Repeat { cond, body } => {
-                self.expr(cond);
-                for st in body {
-                    self.stmt(st);
-                }
+                self.cond(cond);
+                self.stmts(body);
             }
             StmtKind::Call { inst, args } => {
                 let it = self.ref_ty(inst, &s.prov);
@@ -461,9 +580,8 @@ impl<'e> Checker<'e> {
                         .unwrap_or_default();
                     for (pname, pe) in args.iter_mut() {
                         let rt = self.expr(pe);
-                        if let Some((cn, ct)) = members
-                            .iter()
-                            .find(|(n, _)| n.eq_ignore_ascii_case(pname))
+                        if let Some((cn, ct)) =
+                            members.iter().find(|(n, _)| n.eq_ignore_ascii_case(pname))
                         {
                             let (cn, ct) = (cn.clone(), ct.clone());
                             *pname = cn;
@@ -477,11 +595,7 @@ impl<'e> Checker<'e> {
                         }
                     }
                 } else {
-                    self.err(
-                        codes::UNKNOWN_NAME,
-                        "call on non-FB-instance ref",
-                        &s.prov,
-                    );
+                    self.err(codes::UNKNOWN_NAME, "call on non-FB-instance ref", &s.prov);
                 }
             }
             StmtKind::Return(e) => {
@@ -489,8 +603,71 @@ impl<'e> Checker<'e> {
                     self.expr(x);
                 }
             }
-            StmtKind::Exit | StmtKind::Continue => {}
+            StmtKind::Exit | StmtKind::Continue => {
+                self.diags.push(Diag::warning(
+                    wcodes::NO_JUMPS,
+                    "loop jump — prefer structured conditions",
+                    s.prov.clone(),
+                ));
+            }
         }
+    }
+
+    /// Condition position: must be BOOL (IEC strict — no Int→Bool here).
+    fn cond(&mut self, e: &mut Expr) {
+        let t = self.expr(e);
+        if t != Type::Bool {
+            self.diags.push(Diag::error(
+                codes::TYPE,
+                format!("expected Bool condition, found {t:?}"),
+                e.prov.clone(),
+            ));
+        }
+    }
+
+    /// Record a case-selector interval; overlap → unreachable-case lint.
+    fn case_cover(&mut self, covered: &mut Vec<(i64, i64)>, lo: i64, hi: i64, prov: &Prov) {
+        if covered.iter().any(|&(l, h)| lo <= h && l <= hi) {
+            self.diags.push(Diag::warning(
+                wcodes::UNREACHABLE_CASE,
+                format!("case selector {lo}..{hi} overlaps an earlier arm"),
+                prov.clone(),
+            ));
+        }
+        covered.push((lo, hi));
+    }
+}
+
+/// Constant-fold an integer literal expr (post-`expr()` typing).
+fn const_int(e: &Expr) -> Option<i64> {
+    match &e.kind {
+        ExprKind::Lit(Lit::Int(v)) => Some(*v),
+        ExprKind::Lit(Lit::UInt(v)) => Some(*v as i64),
+        _ => None,
+    }
+}
+
+/// Untyped literal exprs (no declared width of their own).
+fn is_num_lit(e: &Expr) -> bool {
+    matches!(
+        e.kind,
+        ExprKind::Lit(Lit::Int(_) | Lit::UInt(_) | Lit::Real(_))
+    )
+}
+
+fn is_numeric(t: &Type) -> bool {
+    matches!(t, Type::Int { .. } | Type::Real { .. } | Type::Time)
+}
+
+/// from→to loses range/precision (implicit-narrow lint, doc 05 §12).
+fn narrows(from: &Type, to: &Type) -> bool {
+    match (from, to) {
+        (Type::Int { bits: f, .. }, Type::Int { bits: t, .. }) => t < f,
+        (Type::Real { bits: f }, Type::Real { bits: t }) => t < f,
+        (Type::Real { .. }, Type::Int { .. }) => true,
+        (Type::Int { .. } | Type::Time, Type::Bool) => true,
+        (Type::Time, Type::Int { bits, .. }) => *bits < 64,
+        _ => false,
     }
 }
 
@@ -510,15 +687,18 @@ fn compatible(a: &Type, b: &Type) -> bool {
     if a == b {
         return true;
     }
-    // int literal (i32) assigns to any int/real/time — literal narrowing
-    // is constant-folded by codegen; sema accepts
-    matches!(
-        (a, b),
-        (Type::Int { signed: true, bits: 32 }, Type::Int { .. })
-            | (Type::Int { signed: true, bits: 32 }, Type::Real { .. })
-            | (Type::Int { signed: true, bits: 32 }, Type::Time)
-            | (Type::Int { signed: true, bits: 32 }, Type::Enum { .. })
-    ) || (matches!(a, Type::Enum { .. }) && matches!(b, Type::Int { .. }))
+    // enum values pass where ints are expected
+    matches!(a, Type::Enum { .. }) && matches!(b, Type::Int { .. })
+}
+
+/// An int literal expr assigns to any numeric/time/enum target — the
+/// literal carries no declared width; codegen folds it into `to`.
+fn literal_fits(e: &Expr, to: &Type) -> bool {
+    matches!(e.kind, ExprKind::Lit(Lit::Int(_) | Lit::UInt(_)))
+        && matches!(
+            to,
+            Type::Int { .. } | Type::Real { .. } | Type::Time | Type::Enum { .. }
+        )
 }
 
 fn convertible(a: &Type, b: &Type) -> bool {
@@ -549,8 +729,16 @@ fn unify_num(a: &Type, b: &Type) -> Type {
     if matches!(a, Type::Time) || matches!(b, Type::Time) {
         return Type::Time;
     }
-    if let (Type::Int { signed: sa, bits: ba }, Type::Int { signed: sb, bits: bb }) =
-        (a, b)
+    if let (
+        Type::Int {
+            signed: sa,
+            bits: ba,
+        },
+        Type::Int {
+            signed: sb,
+            bits: bb,
+        },
+    ) = (a, b)
     {
         return Type::Int {
             signed: *sa && *sb,
@@ -560,7 +748,10 @@ fn unify_num(a: &Type, b: &Type) -> Type {
     if same_class(a, b) {
         return a.clone();
     }
-    Type::Int { signed: true, bits: 32 }
+    Type::Int {
+        signed: true,
+        bits: 32,
+    }
 }
 
 /// classic DP edit distance (did-you-mean)

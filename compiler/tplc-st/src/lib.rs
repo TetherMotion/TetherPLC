@@ -11,7 +11,7 @@ pub mod sema;
 #[cfg(feature = "rusty")]
 mod rusty_lower;
 
-pub use diag::{codes, Diag, Severity};
+pub use diag::{codes, wcodes, Diag, Severity};
 use tplc_mir as mir;
 
 /// An `AT`-bound variable: qualified name + image address + declared

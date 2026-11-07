@@ -37,8 +37,7 @@ fn read_srcs(files: &[String]) -> Vec<(String, String)> {
     files
         .iter()
         .map(|f| {
-            let s = std::fs::read_to_string(f)
-                .unwrap_or_else(|e| panic!("{f}: {e}"));
+            let s = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("{f}: {e}"));
             (f.clone(), s)
         })
         .collect()
@@ -65,8 +64,7 @@ fn print_diags(diags: &[tplc_st::Diag], srcs: &[(String, String)]) -> usize {
 
 fn cmd_check(files: &[String]) -> ExitCode {
     let srcs = read_srcs(files);
-    let refs: Vec<(&str, &str)> =
-        srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
+    let refs: Vec<(&str, &str)> = srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
     let mut out = tplc_st::compile(&refs);
     let mut errs = print_diags(&out.diags, &srcs);
     if errs == 0 {
@@ -100,8 +98,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let srcs = read_srcs(&files);
-    let refs: Vec<(&str, &str)> =
-        srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
+    let refs: Vec<(&str, &str)> = srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
     let mut out = tplc_st::compile(&refs);
     let mut errs = print_diags(&out.diags, &srcs);
     if errs == 0 {
@@ -148,15 +145,22 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut uuid = [0u8; 16];
     uuid.copy_from_slice(&sh[..16]);
 
-    let io_binds: &'static [IoBind] =
-        Box::leak(out.io_bindings.clone().into_boxed_slice());
+    let io_binds: &'static [IoBind] = Box::leak(out.io_bindings.clone().into_boxed_slice());
     let module_ref: &'static _ = Box::leak(Box::new(out.module));
     let layout_ref: &'static _ = Box::leak(Box::new(layout));
     let prog_ref: &'static Pou = Box::leak(Box::new(program));
 
     let lctx = Context::create();
-    let llmod = emit_program(&lctx, module_ref, layout_ref, prog_ref,
-                             io_binds, &prog_name, uuid, layout_hash);
+    let llmod = emit_program(
+        &lctx,
+        module_ref,
+        layout_ref,
+        prog_ref,
+        io_binds,
+        &prog_name,
+        uuid,
+        layout_hash,
+    );
     if let Err(e) = llmod.verify() {
         eprintln!("tplcc: LLVM verify failed: {e}");
         return ExitCode::FAILURE;
@@ -174,31 +178,44 @@ fn cmd_build(args: &[String]) -> ExitCode {
     // The rt source is embedded; rustc produces a lean no_std
     // staticlib (~10KB .so, only `tplc_*` exports + abort).
     // TPLC_RT_LIB overrides for prebuilt archives.
-    let rt_lib = std::env::var("TPLC_RT_LIB").map(PathBuf::from).unwrap_or_else(|_| {
-        const RT_SRC: &str = include_str!("../../tplc-rt/src/lib.rs");
-        let src = tmp.join("tplc_rt.rs");
-        std::fs::write(&src, RT_SRC).unwrap();
-        let a = tmp.join("libtplc_rt.a");
-        let rc = std::process::Command::new("rustc")
-            .args([
-                "--edition", "2021",
-                "--crate-type", "staticlib",
-                "-C", "panic=abort", "-C", "opt-level=2",
-                "--cfg", "feature=\"nostd\"",
-            ])
-            .arg(&src)
-            .arg("-o").arg(&a)
-            .output()
-            .expect("rustc for tplc-rt");
-        if !rc.status.success() {
-            eprintln!("tplcc: rt build: {}", String::from_utf8_lossy(&rc.stderr));
-            std::process::exit(1);
-        }
-        a
-    });
+    let rt_lib = std::env::var("TPLC_RT_LIB")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            const RT_SRC: &str = include_str!("../../tplc-rt/src/lib.rs");
+            let src = tmp.join("tplc_rt.rs");
+            std::fs::write(&src, RT_SRC).unwrap();
+            let a = tmp.join("libtplc_rt.a");
+            let rc = std::process::Command::new("rustc")
+                .args([
+                    "--edition",
+                    "2021",
+                    "--crate-type",
+                    "staticlib",
+                    "-C",
+                    "panic=abort",
+                    "-C",
+                    "opt-level=2",
+                    "--cfg",
+                    "feature=\"nostd\"",
+                ])
+                .arg(&src)
+                .arg("-o")
+                .arg(&a)
+                .output()
+                .expect("rustc for tplc-rt");
+            if !rc.status.success() {
+                eprintln!("tplcc: rt build: {}", String::from_utf8_lossy(&rc.stderr));
+                std::process::exit(1);
+            }
+            a
+        });
     let map = tmp.join("exports.map");
-    std::fs::write(&map, "{ global: tplc_*; local: *; };
-").unwrap();
+    std::fs::write(
+        &map,
+        "{ global: tplc_*; local: *; };
+",
+    )
+    .unwrap();
     let so = tmp.join("prog.so");
     let cc = std::process::Command::new("cc")
         .args(["-shared", "-o"])
@@ -209,7 +226,10 @@ fn cmd_build(args: &[String]) -> ExitCode {
         .output()
         .unwrap();
     if !cc.status.success() {
-        eprintln!("tplcc: link failed: {}", String::from_utf8_lossy(&cc.stderr));
+        eprintln!(
+            "tplcc: link failed: {}",
+            String::from_utf8_lossy(&cc.stderr)
+        );
         return ExitCode::FAILURE;
     }
     let obj_bytes = std::fs::read(&so).unwrap();
@@ -233,7 +253,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
             };
             format!(
                 "{{\"name\":\"{}\",\"region\":\"{}\",\"byte\":{},\"bit\":{}}}",
-                b.name, r, b.at.byte,
+                b.name,
+                r,
+                b.at.byte,
                 b.at.bit.map(|x| x.to_string()).unwrap_or("null".into())
             )
         })
@@ -251,13 +273,26 @@ fn cmd_build(args: &[String]) -> ExitCode {
     w.uuid_str(&uuid_str).unwrap();
     w.add_section(SectionType::Manifest, manifest.into_bytes(), false, 1, 0)
         .unwrap();
-    w.add_section(SectionType::IrBitcode, bc_bytes, true, 1, 0).unwrap();
-    w.add_section(SectionType::TargetObj, obj_bytes, true, 1, 0).unwrap(); // aux=0 → targets[0]
-    w.add_section(SectionType::Symmap, descs.symmap, true, 1, 0).unwrap();
-    w.add_section(SectionType::TypeCatalog, descs.typecat, true, 1, 0).unwrap();
-    w.add_section(SectionType::LayoutDesc, descs.layd.encode(), true, 1, 0).unwrap();
-    w.add_section(SectionType::IoMap, format!("[{io_json}]").into_bytes(), false, 1, 0).unwrap();
-    w.add_section(SectionType::StSources, src_bundle.into_bytes(), false, 1, 0).unwrap();
+    w.add_section(SectionType::IrBitcode, bc_bytes, true, 1, 0)
+        .unwrap();
+    w.add_section(SectionType::TargetObj, obj_bytes, true, 1, 0)
+        .unwrap(); // aux=0 → targets[0]
+    w.add_section(SectionType::Symmap, descs.symmap, true, 1, 0)
+        .unwrap();
+    w.add_section(SectionType::TypeCatalog, descs.typecat, true, 1, 0)
+        .unwrap();
+    w.add_section(SectionType::LayoutDesc, descs.layd.encode(), true, 1, 0)
+        .unwrap();
+    w.add_section(
+        SectionType::IoMap,
+        format!("[{io_json}]").into_bytes(),
+        false,
+        1,
+        0,
+    )
+    .unwrap();
+    w.add_section(SectionType::StSources, src_bundle.into_bytes(), false, 1, 0)
+        .unwrap();
     let pkg = w.build().unwrap();
     std::fs::write(&out_path, pkg).unwrap();
     println!("wrote {}", out_path.display());
@@ -267,8 +302,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
 fn cmd_info(files: &[String]) -> ExitCode {
     for f in files {
         let bytes = std::fs::read(f).unwrap_or_else(|e| panic!("{f}: {e}"));
-        let pkg = tplc_pkg::reader::Package::parse(&bytes)
-            .unwrap_or_else(|e| panic!("{f}: {e}"));
+        let pkg = tplc_pkg::reader::Package::parse(&bytes).unwrap_or_else(|e| panic!("{f}: {e}"));
         println!("{f}: {} section(s)", pkg.toc().len());
         if let Ok(m) = pkg.manifest_json() {
             println!("manifest: {m}");
@@ -345,9 +379,7 @@ fn img_get(img: &[u8], b: &IoBind) -> tplc_mir::interp::Value {
     use tplc_mir::interp::Value;
     let byte = *img.get(b.at.byte as usize).unwrap_or(&0);
     match &b.ty {
-        tplc_mir::ir::Type::Bool => {
-            Value::Bool(byte & (1 << b.at.bit.unwrap_or(0)) != 0)
-        }
+        tplc_mir::ir::Type::Bool => Value::Bool(byte & (1 << b.at.bit.unwrap_or(0)) != 0),
         tplc_mir::ir::Type::Int { signed, bits } => {
             let n = (*bits as usize) / 8;
             let mut v: u64 = 0;
@@ -392,8 +424,8 @@ fn img_put(img: &mut [u8], b: &IoBind, v: &tplc_mir::interp::Value) {
 fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), String> {
     let id = v["id"].as_str().unwrap_or("?");
     let prog_file = src_dir.join(v["program"].as_str().unwrap());
-    let src = std::fs::read_to_string(&prog_file)
-        .map_err(|e| format!("{id}: {prog_file:?}: {e}"))?;
+    let src =
+        std::fs::read_to_string(&prog_file).map_err(|e| format!("{id}: {prog_file:?}: {e}"))?;
     let mut out = tplc_st::compile(&[("vec.st", &src)]);
     let mut diags = tplc_st::sema::check(&mut out.module);
     diags.extend(out.diags);
@@ -443,10 +475,13 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                 let want = parse_val(exp.as_str().unwrap());
                 let got = if name.contains('.') {
                     let (inst, mem) = name.split_once('.').unwrap();
-                    rt.read_ref(&ctx, &tplc_mir::ir::Ref::Field(
-                        Box::new(tplc_mir::ir::Ref::Var(inst.into())),
-                        mem.into(),
-                    ))
+                    rt.read_ref(
+                        &ctx,
+                        &tplc_mir::ir::Ref::Field(
+                            Box::new(tplc_mir::ir::Ref::Var(inst.into())),
+                            mem.into(),
+                        ),
+                    )
                 } else {
                     rt.read_field(name)
                 };
@@ -456,9 +491,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                     _ => want.as_i64() == got.as_i64(),
                 };
                 if !ok {
-                    return Err(format!(
-                        "{id} cycle {ci}: {name} want {want:?} got {got:?}"
-                    ));
+                    return Err(format!("{id} cycle {ci}: {name} want {want:?} got {got:?}"));
                 }
             }
         }

@@ -16,8 +16,6 @@
 //!                CV@12 i32, __cu_last@16 __cd_last@17 u8      (size 24)
 //!   SR/RS      : S@0 R1@1 S1@2 R@3 Q1@4 u8                   (size 8)
 
-
-
 #![cfg_attr(feature = "nostd", no_std)]
 
 #[cfg(feature = "nostd")]
@@ -63,6 +61,9 @@ unsafe fn wi32(p: *mut u8, v: i32) {
 
 /// TON: IN↑ captures start; while IN, ET=min(now-start,PT), Q=(ET>=PT).
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_TON(this: *mut u8, ctx: *mut u8) -> i32 {
     let inn = rb(this);
     let pt = ri(this.add(8));
@@ -85,6 +86,9 @@ pub unsafe extern "C" fn __tplc_rt_TON(this: *mut u8, ctx: *mut u8) -> i32 {
 
 /// TOF: IN → Q=1 immediately, ET=0; IN↓ starts off-timer, Q drops at PT.
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_TOF(this: *mut u8, ctx: *mut u8) -> i32 {
     let inn = rb(this);
     let pt = ri(this.add(8));
@@ -114,6 +118,9 @@ pub unsafe extern "C" fn __tplc_rt_TOF(this: *mut u8, ctx: *mut u8) -> i32 {
 
 /// TP: IN↑ starts a non-retriggerable PT pulse; Q high until ET>=PT.
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_TP(this: *mut u8, ctx: *mut u8) -> i32 {
     let inn = rb(this);
     let pt = ri(this.add(8));
@@ -139,6 +146,9 @@ pub unsafe extern "C" fn __tplc_rt_TP(this: *mut u8, ctx: *mut u8) -> i32 {
 /* ---------------- edge detectors ---------------- */
 
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_R_TRIG(this: *mut u8, _ctx: *mut u8) -> i32 {
     let clk = rb(this);
     let last = rb(this.add(2));
@@ -148,6 +158,9 @@ pub unsafe extern "C" fn __tplc_rt_R_TRIG(this: *mut u8, _ctx: *mut u8) -> i32 {
 }
 
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_F_TRIG(this: *mut u8, _ctx: *mut u8) -> i32 {
     let clk = rb(this);
     let last = rb(this.add(2));
@@ -189,16 +202,25 @@ unsafe fn ctud_step(this: *mut u8) {
 }
 
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_CTU(this: *mut u8, _ctx: *mut u8) -> i32 {
     ctud_step(this);
     0
 }
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_CTD(this: *mut u8, _ctx: *mut u8) -> i32 {
     ctud_step(this);
     0
 }
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_CTUD(this: *mut u8, _ctx: *mut u8) -> i32 {
     ctud_step(this);
     0
@@ -208,21 +230,38 @@ pub unsafe extern "C" fn __tplc_rt_CTUD(this: *mut u8, _ctx: *mut u8) -> i32 {
 
 /// SR: set-dominant (S1 wins over R).
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_SR(this: *mut u8, _ctx: *mut u8) -> i32 {
     let s1 = rb(this.add(2));
     let r = rb(this.add(3));
-    let q1 = if s1 { true } else if r { false } else { rb(this.add(4)) };
+    let q1 = if s1 {
+        true
+    } else if r {
+        false
+    } else {
+        rb(this.add(4))
+    };
     wb(this.add(4), q1);
     0
 }
 
 /// RS: reset-dominant (R1 wins over S).
 #[no_mangle]
+/// # Safety
+/// `this` must point at a valid instance block of the
+/// documented layout; `ctx` at a live `TplcCtx`.
 pub unsafe extern "C" fn __tplc_rt_RS(this: *mut u8, _ctx: *mut u8) -> i32 {
     let s = rb(this);
     let r1 = rb(this.add(1));
-    let q1 = if r1 { false } else if s { true } else { rb(this.add(4)) };
+    let q1 = if r1 {
+        false
+    } else if s {
+        true
+    } else {
+        rb(this.add(4))
+    };
     wb(this.add(4), q1);
     0
 }
-

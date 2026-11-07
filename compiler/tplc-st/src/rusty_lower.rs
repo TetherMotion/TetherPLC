@@ -10,8 +10,8 @@
 //! panics (unlike the spike).
 
 use plc_ast::ast::{
-    AstNode, AstStatement, DataType, DataTypeDeclaration, HardwareAccessType,
-    Operator, PouType, ReferenceAccess, ReferenceExpr, VariableBlockType,
+    AstNode, AstStatement, DataType, DataTypeDeclaration, HardwareAccessType, Operator, PouType,
+    ReferenceAccess, ReferenceExpr, VariableBlockType,
 };
 use plc_ast::control_statements::AstControlStatement;
 use plc_ast::literals::AstLiteral;
@@ -64,10 +64,12 @@ impl Ctx {
     // ---- types ----
     fn ty_of(&mut self, dtd: &DataTypeDeclaration, at: &mir::Prov) -> mir::Type {
         match dtd {
-            DataTypeDeclaration::Reference { referenced_type, .. }
-            | DataTypeDeclaration::Aggregate { referenced_type, .. } => {
-                self.named_ty(referenced_type)
+            DataTypeDeclaration::Reference {
+                referenced_type, ..
             }
+            | DataTypeDeclaration::Aggregate {
+                referenced_type, ..
+            } => self.named_ty(referenced_type),
             DataTypeDeclaration::Definition { data_type, .. } => self.inline_ty(data_type, at),
         }
     }
@@ -75,14 +77,38 @@ impl Ctx {
     fn named_ty(&mut self, name: &str) -> mir::Type {
         match name.to_ascii_uppercase().as_str() {
             "BOOL" => mir::Type::Bool,
-            "SINT" => mir::Type::Int { signed: true, bits: 8 },
-            "INT" => mir::Type::Int { signed: true, bits: 16 },
-            "DINT" => mir::Type::Int { signed: true, bits: 32 },
-            "LINT" => mir::Type::Int { signed: true, bits: 64 },
-            "USINT" | "BYTE" => mir::Type::Int { signed: false, bits: 8 },
-            "UINT" | "WORD" => mir::Type::Int { signed: false, bits: 16 },
-            "UDINT" | "DWORD" => mir::Type::Int { signed: false, bits: 32 },
-            "ULINT" | "LWORD" => mir::Type::Int { signed: false, bits: 64 },
+            "SINT" => mir::Type::Int {
+                signed: true,
+                bits: 8,
+            },
+            "INT" => mir::Type::Int {
+                signed: true,
+                bits: 16,
+            },
+            "DINT" => mir::Type::Int {
+                signed: true,
+                bits: 32,
+            },
+            "LINT" => mir::Type::Int {
+                signed: true,
+                bits: 64,
+            },
+            "USINT" | "BYTE" => mir::Type::Int {
+                signed: false,
+                bits: 8,
+            },
+            "UINT" | "WORD" => mir::Type::Int {
+                signed: false,
+                bits: 16,
+            },
+            "UDINT" | "DWORD" => mir::Type::Int {
+                signed: false,
+                bits: 32,
+            },
+            "ULINT" | "LWORD" => mir::Type::Int {
+                signed: false,
+                bits: 64,
+            },
             "REAL" => mir::Type::Real { bits: 32 },
             "LREAL" => mir::Type::Real { bits: 64 },
             "TIME" | "LTIME" | "DATE" | "TOD" | "DT" => mir::Type::Time,
@@ -94,18 +120,22 @@ impl Ctx {
                 }
                 // FB-type reference — original case preserved (IEC is
                 // case-insensitive; canonicalize in sema, P1-03)
-                mir::Type::Fb { name: name.to_string() }
+                mir::Type::Fb {
+                    name: name.to_string(),
+                }
             }
         }
     }
 
     fn inline_ty(&mut self, dt: &DataType, at: &mir::Prov) -> mir::Type {
         match dt {
-            DataType::ArrayType { bounds, referenced_type, .. } => {
+            DataType::ArrayType {
+                bounds,
+                referenced_type,
+                ..
+            } => {
                 let (lo, hi) = match &bounds.stmt {
-                    AstStatement::RangeStatement(r) => {
-                        (lit_int(&r.start), lit_int(&r.end))
-                    }
+                    AstStatement::RangeStatement(r) => (lit_int(&r.start), lit_int(&r.end)),
                     _ => {
                         self.err_at(codes::UNSUPPORTED, "non-range array bound", at);
                         (0, 0)
@@ -120,7 +150,9 @@ impl Ctx {
             DataType::StringType { size, .. } => mir::Type::Str {
                 cap: size.as_ref().map(|s| lit_int(s) as u16).unwrap_or(80),
             },
-            DataType::SubRangeType { referenced_type, .. } => {
+            DataType::SubRangeType {
+                referenced_type, ..
+            } => {
                 // bounds enforced by sema (P1-03); storage = base type
                 self.named_ty(referenced_type)
             }
@@ -148,10 +180,7 @@ impl Ctx {
             AstStatement::Identifier(name) => mir::Ref::Var(name.clone()),
             AstStatement::ReferenceExpr(ReferenceExpr { access, base }) => match access {
                 ReferenceAccess::Member(inner) | ReferenceAccess::Global(inner) => {
-                    let name = inner
-                        .get_flat_reference_name()
-                        .unwrap_or("?")
-                        .to_string();
+                    let name = inner.get_flat_reference_name().unwrap_or("?").to_string();
                     match base {
                         Some(b) => mir::Ref::Field(Box::new(self.ref_of(b)), name),
                         None => mir::Ref::Var(name),
@@ -160,10 +189,7 @@ impl Ctx {
                 ReferenceAccess::Index(idx) => {
                     let e = self.expr(idx);
                     match base {
-                        Some(b) => mir::Ref::Index(
-                            Box::new(self.ref_of(b)),
-                            Box::new(e),
-                        ),
+                        Some(b) => mir::Ref::Index(Box::new(self.ref_of(b)), Box::new(e)),
                         None => {
                             self.err(codes::UNSUPPORTED, "index without base", n);
                             mir::Ref::Var("?".into())
@@ -187,24 +213,21 @@ impl Ctx {
         let kind = match &n.stmt {
             AstStatement::Literal(l) => match l {
                 AstLiteral::Integer(v) => mir::ExprKind::Lit(mir::Lit::Int(*v as i64)),
-                AstLiteral::Real(s) => {
-                    mir::ExprKind::Lit(mir::Lit::Real(s.parse().unwrap_or(0.0)))
-                }
+                AstLiteral::Real(s) => mir::ExprKind::Lit(mir::Lit::Real(s.parse().unwrap_or(0.0))),
                 AstLiteral::Bool(b) => mir::ExprKind::Lit(mir::Lit::Bool(*b)),
                 AstLiteral::Time(t) => {
                     let ns = t.nanos as i64;
                     mir::ExprKind::Lit(mir::Lit::TimeNs(if t.negative { -ns } else { ns }))
                 }
-                AstLiteral::String(s) => {
-                    mir::ExprKind::Lit(mir::Lit::Str(s.value.clone()))
-                }
+                AstLiteral::String(s) => mir::ExprKind::Lit(mir::Lit::Str(s.value.clone())),
                 _ => {
                     self.err(codes::UNSUPPORTED, "literal kind", n);
                     mir::ExprKind::Lit(mir::Lit::Int(0))
                 }
             },
             AstStatement::ReferenceExpr(ReferenceExpr {
-                access: ReferenceAccess::Cast(inner), ..
+                access: ReferenceAccess::Cast(inner),
+                ..
             }) => {
                 // typed literal `INT#1` — cast is a type annotation;
                 // explicit Conv nodes are inserted by sema (P1-03)
@@ -228,8 +251,15 @@ impl Ctx {
             }
             AstStatement::ParenExpression(p) => return self.expr(p),
             AstStatement::CallStatement(c) => {
-                let fun = c.operator.get_flat_reference_name().unwrap_or("?").to_string();
-                mir::ExprKind::Call { fun, args: self.call_args(c) }
+                let fun = c
+                    .operator
+                    .get_flat_reference_name()
+                    .unwrap_or("?")
+                    .to_string();
+                mir::ExprKind::Call {
+                    fun,
+                    args: self.call_args(c),
+                }
             }
             AstStatement::ExpressionList(v) if v.len() == 1 => return self.expr(&v[0]),
             AstStatement::MultipliedStatement(m) => return self.expr(&m.element),
@@ -246,7 +276,11 @@ impl Ctx {
                 mir::ExprKind::Lit(mir::Lit::Int(0))
             }
         };
-        mir::Expr { kind, ty: mir::Type::Bool, prov: self.prov(n) }
+        mir::Expr {
+            kind,
+            ty: mir::Type::Bool,
+            prov: self.prov(n),
+        }
     }
 
     fn call_args(&mut self, c: &plc_ast::ast::CallStatement) -> Vec<(String, mir::Expr)> {
@@ -259,11 +293,7 @@ impl Ctx {
             for p in list {
                 match &p.stmt {
                     AstStatement::Assignment(a) | AstStatement::OutputAssignment(a) => {
-                        let name = a
-                            .left
-                            .get_flat_reference_name()
-                            .unwrap_or("")
-                            .to_string();
+                        let name = a.left.get_flat_reference_name().unwrap_or("").to_string();
                         out.push((name, self.expr(&a.right)));
                     }
                     _ => out.push((String::new(), self.expr(p))),
@@ -294,7 +324,10 @@ impl Ctx {
                 return None;
             }
         };
-        Some(mir::Stmt { kind, prov: self.prov(n) })
+        Some(mir::Stmt {
+            kind,
+            prov: self.prov(n),
+        })
     }
 
     fn stmts(&mut self, ns: &[AstNode]) -> Vec<mir::Stmt> {
@@ -312,7 +345,11 @@ impl Ctx {
                 else_: self.stmts(&i.else_block),
             },
             AstControlStatement::ForLoop(f) => mir::StmtKind::For {
-                var: f.counter.get_flat_reference_name().unwrap_or("i").to_string(),
+                var: f
+                    .counter
+                    .get_flat_reference_name()
+                    .unwrap_or("i")
+                    .to_string(),
                 start: self.expr(&f.start),
                 end: self.expr(&f.end),
                 step: f.by_step.as_deref().map(|s| self.expr(s)),
@@ -344,9 +381,7 @@ impl Ctx {
             AstStatement::RangeStatement(r) => {
                 vec![mir::CaseSel::Range(self.expr(&r.start), self.expr(&r.end))]
             }
-            AstStatement::ExpressionList(v) => {
-                v.iter().flat_map(|e| self.case_sels(e)).collect()
-            }
+            AstStatement::ExpressionList(v) => v.iter().flat_map(|e| self.case_sels(e)).collect(),
             _ => vec![mir::CaseSel::Lit(self.expr(n))],
         }
     }
@@ -421,7 +456,12 @@ impl Ctx {
             };
             let byte = h.address.first().map(lit_int).unwrap_or(0) as u64;
             let bit = h.address.get(1).map(|b| lit_int(b) as u8);
-            return Some(mir::At { region, byte, bit, width });
+            return Some(mir::At {
+                region,
+                byte,
+                bit,
+                width,
+            });
         }
         self.err(codes::BAD_AT, "malformed AT address", n);
         None
@@ -464,18 +504,18 @@ fn binop(o: Operator) -> mir::BinOp {
 /// `sources`: (filename, source) pairs — file id = index.
 pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
     let mut diags = Vec::new();
-    let mut module = mir::Module { pous: vec![], gvls: vec![], tasks: vec![] };
+    let mut module = mir::Module {
+        pous: vec![],
+        gvls: vec![],
+        tasks: vec![],
+    };
     let mut io_bindings = Vec::new();
 
     for (file_id, (fname, src)) in sources.iter().enumerate() {
         let source = SourceCode::from(*src);
         let factory = SourceLocationFactory::for_source(&source);
         let (unit, pdiags) = plc_compiler::parser::parse(
-            plc_compiler::lexer::lex_with_ids(
-                &source.source,
-                IdProvider::default(),
-                factory,
-            ),
+            plc_compiler::lexer::lex_with_ids(&source.source, IdProvider::default(), factory),
             plc_ast::ast::LinkageType::Internal,
             Box::leak(fname.to_string().into_boxed_str()),
         );
@@ -512,10 +552,7 @@ pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
                         .map(|v| {
                             (
                                 v.name.clone(),
-                                ctx.ty_of(
-                                    &v.data_type_declaration,
-                                    &ctx.sloc(&v.location),
-                                ),
+                                ctx.ty_of(&v.data_type_declaration, &ctx.sloc(&v.location)),
                             )
                         })
                         .collect();
@@ -534,10 +571,17 @@ pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
                     ctx.enum_ordinals.insert(n.clone(), ords);
                     ctx.user_types.insert(
                         n.clone(),
-                        mir::Type::Enum { name: n, values: names },
+                        mir::Type::Enum {
+                            name: n,
+                            values: names,
+                        },
                     );
                 }
-                _ => ctx.err_at(codes::UNSUPPORTED, "user type form", &ctx.sloc(&ut.location)),
+                _ => ctx.err_at(
+                    codes::UNSUPPORTED,
+                    "user type form",
+                    &ctx.sloc(&ut.location),
+                ),
             }
         }
 
@@ -624,5 +668,9 @@ pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
         io_bindings.extend(ctx.io_bindings);
     }
 
-    FrontendOutput { module, io_bindings, diags }
+    FrontendOutput {
+        module,
+        io_bindings,
+        diags,
+    }
 }
