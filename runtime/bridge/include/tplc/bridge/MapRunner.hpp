@@ -23,14 +23,45 @@ struct MapChannel {
     uint32_t    image_off = 0;
     uint32_t    size = 0;
     std::string key;                  /* sim transport: file name   */
+    std::string type;                 /* image view type (bool/u8…) */
     SafePolicy  safe = SAFE_ZERO;
     uint64_t    safe_value = 0;       /* SAFE_DEFINED byte pattern  */
+    bool        has_safe = false;     /* explicit safe= seen        */
+};
+
+/* bind <at> <key> — program AT binding: fixed at_name (%IX/%QX/etc)
+   must land inside a channel; key may be a channel key or '*'      */
+struct MapBinding {
+    std::string at_name;
+    std::string key;
 };
 
 struct IoMap {
     uint32_t in_size = 0, out_size = 0;
     std::vector<MapChannel> channels;
+    std::vector<MapBinding> bindings;
+    std::vector<std::string> safety_keys;  /* safety-classified eps */
 };
+
+/* map validation (doc 09 §2.2): each violation is reported with its
+   stable code — a map is deployable only when the list is empty    */
+struct MapViolation {
+    int         code;                 /* TPLC_E_MAP_*               */
+    std::string rule;                 /* MAP_RANGE/OWNER/…          */
+    std::string detail;
+};
+constexpr int TPLC_E_MAP_OWNER  = -500;
+constexpr int TPLC_E_MAP_DIR    = -501;
+constexpr int TPLC_E_MAP_RANGE  = -502;
+constexpr int TPLC_E_MAP_TYPE   = -503;
+constexpr int TPLC_E_MAP_PDO    = -504;
+constexpr int TPLC_E_MAP_SAFETY = -505;
+constexpr int TPLC_E_MAP_AT     = -506;
+constexpr int TPLC_E_MAP_BIND   = -507;
+constexpr int TPLC_E_MAP_SAFE   = -508;
+constexpr int TPLC_E_MAP_EPOCH  = -509;
+
+std::vector<MapViolation> validate_map(const IoMap& m);
 
 /* line format (v1 dev map):
      image in <in_size> out <out_size>

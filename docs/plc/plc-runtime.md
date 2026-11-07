@@ -112,6 +112,19 @@ driver process:
 - L1 = `tplcc vectors` (interp, same canonical IR). L3 lives in the
   Tether app's simulated-plant fleet — not this repo.
 
+## Map validator (doc 09 §2.2)
+
+- Map schema v1: `image`/`in`/`out` channels + `type=` (bool/u8…f64),
+  `safe=` policy, `bind <at> <key|*>` program bindings, and `safety
+  <key>` endpoint classification.
+- `validate_map` reports every violation with a stable
+  `TPLC_E_MAP_*` code: RANGE (channel outside image), OWNER (%Q
+  overlap), TYPE (view wider than range), SAFE (missing policy on a
+  %Q channel), SAFETY (classified endpoint bound to %Q), AT (fixed
+  AT outside any channel), BIND (missing channel key). The bridge
+  refuses to start on any violation; parse is permissive so all
+  violations surface in one pass.
+
 ## Not yet
 
 - `PROG_PREPARE/KILL/RESET/UNLOAD` (P2/P3 lifecycle).

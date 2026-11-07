@@ -141,6 +141,13 @@ int main(int argc, char** argv) {
         return 1;
     }
     tplc::IoMap map = std::move(mres.value);
+    auto viol = tplc::validate_map(map);
+    if (!viol.empty()) {
+        for (auto& x : viol)
+            fprintf(stderr, "map: %s (%d): %s\n",
+                    x.rule.c_str(), x.code, x.detail.c_str());
+        return 1;
+    }
 
     tplc::ImageServer img;
     tplc::Status ist = img.open(image_path, map.in_size, map.out_size);
