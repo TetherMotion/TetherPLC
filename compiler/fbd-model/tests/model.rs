@@ -82,9 +82,10 @@ fn round_trip_lossless() {
 fn canonical_byte_stability() {
     // two parses of the same doc serialize identically; field order
     // in output is declaration order regardless of input order
-    let scrambled = FILL_STATION
-        .replace("\"id\": \"pou_fill\", \"name\": \"FILL_CTL\", \"kind\": \"program\"",
-                 "\"kind\": \"program\", \"id\": \"pou_fill\", \"name\": \"FILL_CTL\"");
+    let scrambled = FILL_STATION.replace(
+        "\"id\": \"pou_fill\", \"name\": \"FILL_CTL\", \"kind\": \"program\"",
+        "\"kind\": \"program\", \"id\": \"pou_fill\", \"name\": \"FILL_CTL\"",
+    );
     let a = to_canonical_json(&from_json(FILL_STATION).unwrap());
     let b = to_canonical_json(&from_json(&scrambled).unwrap());
     assert_eq!(a, b);
@@ -93,8 +94,10 @@ fn canonical_byte_stability() {
 
 #[test]
 fn forward_compat_unknown_keys() {
-    let with_extra = FILL_STATION
-        .replace("\"kind\": \"fbd\"", "\"kind\": \"fbd\", \"future_field\": [1,2,3]");
+    let with_extra = FILL_STATION.replace(
+        "\"kind\": \"fbd\"",
+        "\"kind\": \"fbd\", \"future_field\": [1,2,3]",
+    );
     let p = from_json(&with_extra).expect("unknown keys must be ignored");
     assert_eq!(p.pous[0].networks[0].kind, NetworkKind::Fbd);
 }
