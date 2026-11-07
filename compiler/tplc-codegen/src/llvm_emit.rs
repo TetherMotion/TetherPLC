@@ -1,0 +1,849 @@
+//! `tplc-mir` → LLVM IR lowering (doc 07 §4).
+//!
+//! Memory model: every access is `i8* + const-offset` into ctx fields
+//! and the state blob — identical addressing to the interpreter
+//! (interp.rs), so oracle/sim parity is structural, not aspirational.
+//!
+//! Ctx layout (tplc_abi.h): state_blob@8, now_ns@48, abort_flag@88,
+//! budget_deadline_ns@96. TplcTaskCtx: prog@0, task_index@8.
+//!
+//! Generated pou fns: `__tplc_pou_<NAME>(u8* ctx, u8* this) -> i32`
+//! rc<0 = abort/fault propagation. Program `this` = state_blob base;
+//! FB `this` = instance sub-object; FUNCTION `this` = caller alloca.
+
+use inkwell::basic_block::BasicBlock;
+use inkwell::builder::Builder;
+use inkwell::context::Context;
+use inkwell::module::{Linkage, Module as LlvmModule};
+use inkwell::types::BasicTypeEnum;
+use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::{FloatPredicate, IntPredicate};
+use std::collections::BTreeMap;
+use tplc_mir::ir::*;
+use tplc_mir::interp::{fb_ctx, program_ctx, Ctx};
+use tplc_mir::layout::{builtin_fb_layout, Layout};
+
+const CTX_STATE_BLOB: u64 = 8;
+const CTX_NOW_NS: u64 = 48;
+const CTX_ABORT: u64 = 88;
+const TCTX_PROG: u64 = 0;
+
+pub struct Gen<'ctx> {
+    pub ctx: &'ctx Context,
+    pub module: LlvmModule<'ctx>,
+    pub b: Builder<'ctx>,
+    layout: &'static Layout,
+    mir: &'static Module,
+    abort_bb: Option<BasicBlock<'ctx>>,
+    loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>, // (cond, exit)
+    ctx_ptr: PointerValue<'ctx>,
+    this_ptr: PointerValue<'ctx>,
+}
+
+fn llty<'c>(ctx: &'c Context, t: &Type) -> BasicTypeEnum<'c> {
+    match t {
+        Type::Bool => ctx.bool_type().into(),
+        Type::Int { signed: _, bits } => ctx.custom_width_int_type(std::num::NonZeroU32::new(*bits as u32).unwrap()).unwrap().into(),
+        Type::Real { bits: 32 } => ctx.f32_type().into(),
+        Type::Real { .. } => ctx.f64_type().into(),
+        Type::Time | Type::Enum { .. } => ctx.i64_type().into(),
+        Type::Str { cap } => ctx.i8_type().array_type(1 + *cap as u32).into(),
+        _ => ctx.i8_type().into(), // aggregates addressed, not valued
+    }
+}
+
+/// integer-ish values used for bool storage
+fn is_bool(t: &Type) -> bool {
+    matches!(t, Type::Bool)
+}
+
+impl<'ctx> Gen<'ctx> {
+    fn i8p(&self) -> inkwell::types::PointerType<'ctx> {
+        self.ctx.ptr_type(inkwell::AddressSpace::default())
+    }
+    fn c32(&self, v: u64) -> IntValue<'ctx> {
+        self.ctx.i64_type().const_int(v, false)
+    }
+
+    /// gep on an i8* base by constant offset
+    fn off_ptr(&self, base: PointerValue<'ctx>, off: u64) -> PointerValue<'ctx> {
+        unsafe {
+            self.b
+                .build_in_bounds_gep(
+                    self.ctx.i8_type(),
+                    base,
+                    &[self.ctx.i64_type().const_int(off, false)],
+                    "p",
+                )
+                .unwrap()
+        }
+    }
+
+    /// ctx field load: i8* ctx + off → typed load
+    fn ctx_load(&self, off: u64, ty: BasicTypeEnum<'ctx>, n: &str) -> BasicValueEnum<'ctx> {
+        let p = self.off_ptr(self.ctx_ptr, off);
+        self.b.build_load(ty, p, n).unwrap()
+    }
+
+    fn blob_ptr(&self) -> PointerValue<'ctx> {
+        self.this_ptr
+    }
+
+    // ---- ref resolution → (ptr, Type) ----
+    fn member_of(&self, fbname: &str) -> tplc_mir::layout::FbLayout {
+        self.layout
+            .fb_types
+            .get(fbname)
+            .cloned()
+            .or_else(|| builtin_fb_layout(fbname))
+            .unwrap_or_else(|| panic!("no FB layout {fbname}"))
+    }
+
+    fn resolve(&mut self, ctx: &Ctx, r: &Ref) -> (PointerValue<'ctx>, Type) {
+        match r {
+            Ref::Var(name) => {
+                let (o, t) = ctx
+                    .get(name.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| panic!("unresolved var {name}"));
+                (self.off_ptr(self.blob_ptr(), o), t)
+            }
+            Ref::Field(inner, name) => {
+                let (p, ty) = self.resolve(ctx, inner);
+                match &ty {
+                    Type::Fb { name: fb } => {
+                        let fbl = self.member_of(fb);
+                        let (moff, mty) = fbl.members[name.as_str()].clone();
+                        (self.off_ptr(p, moff), mty)
+                    }
+                    Type::Struct { fields, .. } => {
+                        let mut o = 0u64;
+                        for (n, t) in fields {
+                            o = (o + t.align() - 1) & !(t.align() - 1);
+                            if n == name {
+                                return (self.off_ptr(p, o), t.clone());
+                            }
+                            o += t.size();
+                        }
+                        panic!("no field {name}");
+                    }
+                    _ => panic!("field on non-aggregate"),
+                }
+            }
+            Ref::Index(inner, idx) => {
+                let (p, ty) = self.resolve(ctx, inner);
+                if let Type::Array { elem, lo, .. } = ty {
+                    let iv = self.expr(ctx, idx);
+                    let iv = self.b.build_int_sub(
+                        iv.into_int_value(),
+                        self.ctx.i64_type().const_int(lo as u64, true),
+                        "idx",
+                    ).unwrap();
+                    let esz = self.ctx.i64_type().const_int(elem.size(), false);
+                    let bo = self.b.build_int_mul(iv, esz, "bo").unwrap();
+                    unsafe {
+                        let q = self
+                            .b
+                            .build_gep(self.ctx.i8_type(), p, &[bo], "ai")
+                            .unwrap();
+                        (q, *elem)
+                    }
+                } else {
+                    panic!("index on non-array")
+                }
+            }
+        }
+    }
+
+    fn read(&mut self, ctx: &Ctx, r: &Ref) -> BasicValueEnum<'ctx> {
+        let (p, ty) = self.resolve(ctx, r);
+        if is_bool(&ty) {
+            let v = self.b.build_load(self.ctx.i8_type(), p, "lb").unwrap();
+            self.b
+                .build_int_compare(
+                    IntPredicate::NE,
+                    v.into_int_value(),
+                    self.ctx.i8_type().const_zero(),
+                    "lb1",
+                )
+                .unwrap()
+                .into()
+        } else {
+            self.b.build_load(llty(self.ctx, &ty), p, "l").unwrap()
+        }
+    }
+
+    fn write(&mut self, ctx: &Ctx, r: &Ref, v: BasicValueEnum<'ctx>) {
+        let (p, ty) = self.resolve(ctx, r);
+        let v = if is_bool(&ty) {
+            self.b
+                .build_int_z_extend(
+                    v.into_int_value(),
+                    self.ctx.i8_type(),
+                    "z",
+                )
+                .unwrap()
+                .into()
+        } else {
+            v
+        };
+        self.b.build_store(p, v).unwrap();
+    }
+
+    // ---- expressions ----
+    fn expr(&mut self, ctx: &Ctx, e: &Expr) -> BasicValueEnum<'ctx> {
+        match &e.kind {
+            // literals materialize at the expr's declared type — sema
+            // already fixed the type, codegen never re-guesses
+            ExprKind::Lit(l) => {
+                let lt = llty(self.ctx, &e.ty);
+                match l {
+                    Lit::Bool(v) => self.ctx.bool_type().const_int(*v as u64, false).into(),
+                    Lit::Int(v) => lt.into_int_type().const_int(*v as u64, true).into(),
+                    Lit::UInt(v) => lt.into_int_type().const_int(*v, false).into(),
+                    Lit::Real(v) => lt.into_float_type().const_float(*v).into(),
+                    Lit::TimeNs(v) => lt.into_int_type().const_int(*v as u64, true).into(),
+                    Lit::EnumVal { .. } => lt.into_int_type().const_zero().into(),
+                    Lit::Str(_) => self.ctx.i8_type().const_zero().into(),
+                }
+            }
+            ExprKind::Ref(r) => self.read(ctx, r),
+            ExprKind::Un(op, a) => {
+                let v = self.expr(ctx, a);
+                match op {
+                    UnOp::Neg => {
+                        if v.is_float_value() {
+                            self.b.build_float_neg(v.into_float_value(), "n").unwrap().into()
+                        } else {
+                            self.b.build_int_neg(v.into_int_value(), "n").unwrap().into()
+                        }
+                    }
+                    UnOp::Not => self.b.build_not(v.into_int_value(), "not").unwrap().into(),
+                }
+            }
+            ExprKind::Bin(op, a, b) => self.bin(ctx, *op, a, b),
+            ExprKind::Conv { to, e } => {
+                let v = self.expr(ctx, e);
+                self.conv(v, &e.ty, to)
+            }
+            ExprKind::Call { fun, args } => self.fn_call(ctx, fun, args),
+        }
+    }
+
+    fn conv(
+        &mut self,
+        v: BasicValueEnum<'ctx>,
+        from: &Type,
+        to: &Type,
+    ) -> BasicValueEnum<'ctx> {
+        match (from, to) {
+            (Type::Bool, Type::Int { .. }) => self
+                .b
+                .build_int_z_extend(v.into_int_value(), llty(self.ctx, to).into_int_type(), "c")
+                .unwrap()
+                .into(),
+            (Type::Int { .. }, Type::Bool) => self
+                .b
+                .build_int_compare(
+                    IntPredicate::NE,
+                    v.into_int_value(),
+                    llty(self.ctx, from).into_int_type().const_zero(),
+                    "c",
+                )
+                .unwrap()
+                .into(),
+            (Type::Int { signed: s, .. }, Type::Real { .. }) => {
+                if *s {
+                    self.b
+                        .build_signed_int_to_float(v.into_int_value(), llty(self.ctx, to).into_float_type(), "c")
+                        .unwrap()
+                        .into()
+                } else {
+                    self.b
+                        .build_unsigned_int_to_float(v.into_int_value(), llty(self.ctx, to).into_float_type(), "c")
+                        .unwrap()
+                        .into()
+                }
+            }
+            (Type::Real { .. }, Type::Int { .. }) => self
+                .b
+                .build_float_to_signed_int(v.into_float_value(), llty(self.ctx, to).into_int_type(), "c")
+                .unwrap()
+                .into(),
+            (Type::Int { signed: s, .. }, Type::Int { bits: _, .. }) => {
+                let dt = llty(self.ctx, to).into_int_type();
+                let iv = v.into_int_value();
+                let sw = iv.get_type().get_bit_width();
+                let dw = dt.get_bit_width();
+                if dw > sw {
+                    if *s {
+                        self.b.build_int_s_extend(iv, dt, "c").unwrap().into()
+                    } else {
+                        self.b.build_int_z_extend(iv, dt, "c").unwrap().into()
+                    }
+                } else if dw < sw {
+                    self.b.build_int_truncate(iv, dt, "c").unwrap().into()
+                } else {
+                    v
+                }
+            }
+            (Type::Real { .. }, Type::Real { bits }) => {
+                let dt = llty(self.ctx, to).into_float_type();
+                if *bits == 32 {
+                    self.b.build_float_trunc(v.into_float_value(), dt, "c").unwrap().into()
+                } else {
+                    self.b.build_float_ext(v.into_float_value(), dt, "c").unwrap().into()
+                }
+            }
+            _ => v,
+        }
+    }
+
+    fn bin(&mut self, ctx: &Ctx, op: BinOp, a: &Expr, b: &Expr) -> BasicValueEnum<'ctx> {
+        use BinOp::*;
+        match op {
+            AndThen | OrElse => {
+                // short-circuit via blocks
+                let l_bb = self.b.get_insert_block().unwrap();
+                let f = l_bb.get_parent().unwrap();
+                let l = self.expr(ctx, a).into_int_value();
+                let l_bb = self.b.get_insert_block().unwrap();
+                let rhs_bb = self.ctx.append_basic_block(f, "sc.rhs");
+                let done_bb = self.ctx.append_basic_block(f, "sc.done");
+                if op == AndThen {
+                    self.b.build_conditional_branch(l, rhs_bb, done_bb).unwrap();
+                } else {
+                    self.b.build_conditional_branch(l, done_bb, rhs_bb).unwrap();
+                }
+                self.b.position_at_end(rhs_bb);
+                let r = self.expr(ctx, b).into_int_value();
+                self.b.build_unconditional_branch(done_bb).unwrap();
+                self.b.position_at_end(done_bb);
+                let phi = self.b.build_phi(self.ctx.bool_type(), "sc").unwrap();
+                phi.add_incoming(&[(&l, l_bb), (&r, rhs_bb)]);
+                return phi.as_basic_value();
+            }
+            _ => {}
+        }
+        let l = self.expr(ctx, a);
+        let r = self.expr(ctx, b);
+        let isf = l.is_float_value();
+        if isf {
+            let (l, r) = (l.into_float_value(), r.into_float_value());
+            return match op {
+                Add => self.b.build_float_add(l, r, "f").unwrap().into(),
+                Sub => self.b.build_float_sub(l, r, "f").unwrap().into(),
+                Mul => self.b.build_float_mul(l, r, "f").unwrap().into(),
+                Div => self.b.build_float_div(l, r, "f").unwrap().into(),
+                Mod => self.b.build_float_rem(l, r, "f").unwrap().into(),
+                Eq => self.fcmp(FloatPredicate::OEQ, l, r),
+                Ne => self.fcmp(FloatPredicate::ONE, l, r),
+                Lt => self.fcmp(FloatPredicate::OLT, l, r),
+                Le => self.fcmp(FloatPredicate::OLE, l, r),
+                Gt => self.fcmp(FloatPredicate::OGT, l, r),
+                Ge => self.fcmp(FloatPredicate::OGE, l, r),
+                _ => self.b.build_float_add(l, r, "f").unwrap().into(),
+            };
+        }
+        let (l, r) = (l.into_int_value(), r.into_int_value());
+        match op {
+            Add => self.b.build_int_add(l, r, "i").unwrap().into(),
+            Sub => self.b.build_int_sub(l, r, "i").unwrap().into(),
+            Mul => self.b.build_int_mul(l, r, "i").unwrap().into(),
+            Div | Mod => {
+                // div-zero guard → 0 (deterministic fault model is P2)
+                let zero = r.get_type().const_zero();
+                let dz = self
+                    .b
+                    .build_int_compare(IntPredicate::EQ, r, zero, "dz")
+                    .unwrap();
+                let q = if op == Div {
+                    self.b.build_int_signed_div(l, r, "d").unwrap()
+                } else {
+                    self.b.build_int_signed_rem(l, r, "m").unwrap()
+                };
+                self.b
+                    .build_select(dz, zero, q, "sel")
+                    .unwrap()
+                    .into_int_value()
+                    .into()
+            }
+            Eq => self.icmp(IntPredicate::EQ, l, r),
+            Ne => self.icmp(IntPredicate::NE, l, r),
+            Lt => self.icmp(IntPredicate::SLT, l, r),
+            Le => self.icmp(IntPredicate::SLE, l, r),
+            Gt => self.icmp(IntPredicate::SGT, l, r),
+            Ge => self.icmp(IntPredicate::SGE, l, r),
+            And => self.b.build_and(l, r, "a").unwrap().into(),
+            Or => self.b.build_or(l, r, "o").unwrap().into(),
+            Xor => self.b.build_xor(l, r, "x").unwrap().into(),
+            Shl => self.b.build_left_shift(l, r, "s").unwrap().into(),
+            Shr => self.b.build_right_shift(l, r, true, "s").unwrap().into(),
+            Rol | Ror => l.into(),
+            AndThen | OrElse => unreachable!(),
+        }
+    }
+
+    fn icmp(&mut self, p: IntPredicate, l: IntValue<'ctx>, r: IntValue<'ctx>) -> BasicValueEnum<'ctx> {
+        self.b.build_int_compare(p, l, r, "c").unwrap().into()
+    }
+    fn fcmp(&mut self, p: FloatPredicate, l: inkwell::values::FloatValue<'ctx>, r: inkwell::values::FloatValue<'ctx>) -> BasicValueEnum<'ctx> {
+        self.b.build_float_compare(p, l, r, "c").unwrap().into()
+    }
+
+    // ---- calls ----
+    fn pou_fn(&mut self, name: &str) -> FunctionValue<'ctx> {
+        let fname = format!("__tplc_pou_{name}");
+        if let Some(f) = self.module.get_function(&fname) {
+            return f;
+        }
+        let i8p = self.i8p();
+        let ft = self
+            .ctx
+            .i32_type()
+            .fn_type(&[i8p.into(), i8p.into()], false);
+        self.module.add_function(&fname, ft, Some(Linkage::External))
+    }
+
+    fn rt_fn(&mut self, name: &str) -> FunctionValue<'ctx> {
+        let fname = format!("__tplc_rt_{name}");
+        if let Some(f) = self.module.get_function(&fname) {
+            return f;
+        }
+        let i8p = self.i8p();
+        let ft = self
+            .ctx
+            .i32_type()
+            .fn_type(&[i8p.into(), i8p.into()], false);
+        self.module.add_function(&fname, ft, Some(Linkage::External))
+    }
+
+    /// check rc after call → propagate nonzero to abort_bb
+    fn rc_check(&mut self, cs: inkwell::values::CallSiteValue<'ctx>) {
+        let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+        let cont = self.ctx.append_basic_block(f, "rc.cont");
+        let rc = cs.try_as_basic_value().expect_basic("rc").into_int_value();
+        let bad = self
+            .b
+            .build_int_compare(IntPredicate::NE, rc, self.ctx.i32_type().const_zero(), "rc")
+            .unwrap();
+        self.b
+            .build_conditional_branch(bad, self.abort_bb.unwrap(), cont)
+            .unwrap();
+        self.b.position_at_end(cont);
+    }
+
+    fn fb_call(&mut self, ctx: &Ctx, inst: &Ref, args: &[(String, Expr)]) {
+        let (instp, ty) = self.resolve(ctx, inst);
+        let fbname = match &ty {
+            Type::Fb { name } => name.clone(),
+            _ => panic!("call on non-FB"),
+        };
+        let fbl = self.member_of(&fbname);
+        // bind args into instance fields
+        for (pname, pe) in args {
+            if let Some((moff, mty)) = fbl.members.get(pname.as_str()).cloned() {
+                let v = self.expr(ctx, pe);
+                let p = self.off_ptr(instp, moff);
+                let v = if is_bool(&mty) {
+                    self.b
+                        .build_int_z_extend(v.into_int_value(), self.ctx.i8_type(), "z")
+                        .unwrap()
+                        .into()
+                } else {
+                    v
+                };
+                self.b.build_store(p, v).unwrap();
+            }
+        }
+        // rt builtins take (this, ctx); generated pou fns take (ctx, this)
+        let (callee, a0, a1) = if builtin_fb_layout(&fbname).is_some() {
+            (self.rt_fn(&fbname), instp, self.ctx_ptr)
+        } else {
+            (self.pou_fn(&fbname), self.ctx_ptr, instp)
+        };
+        let cs = self
+            .b
+            .build_call(callee, &[a0.into(), a1.into()], "c")
+            .unwrap();
+        self.rc_check(cs);
+    }
+
+    /// FUNCTION call: caller-side scratch alloca, bind inputs, invoke,
+    /// read the name-var back.
+    fn fn_call(
+        &mut self,
+        ctx: &Ctx,
+        fun: &str,
+        args: &[(String, Expr)],
+    ) -> BasicValueEnum<'ctx> {
+        let pou = self
+            .mir
+            .pous
+            .iter()
+            .find(|p| p.name == fun && p.kind == PouKind::Function)
+            .unwrap_or_else(|| panic!("no FUNCTION {fun}"));
+        let fbl = tplc_mir::layout::layout_members(&pou.iface, BTreeMap::new());
+        let scratch = self
+            .b
+            .build_alloca(self.ctx.i8_type().array_type(fbl.size as u32), "fs")
+            .unwrap();
+        let inputs: Vec<&VarDecl> = pou
+            .iface
+            .iter()
+            .filter(|v| matches!(v.kind, VarKind::Input | VarKind::InOut))
+            .collect();
+        for (i, (pname, pe)) in args.iter().enumerate() {
+            let name = if pname.is_empty() {
+                inputs.get(i).map(|v| v.name.as_str()).unwrap_or("")
+            } else {
+                pname.as_str()
+            };
+            if let Some((moff, _mty)) = fbl.members.get(name).cloned() {
+                let v = self.expr(ctx, pe);
+                let p = self.off_ptr(scratch, moff);
+                self.b.build_store(p, v).unwrap();
+            }
+        }
+        let callee = self.pou_fn(fun);
+        let cs = self
+            .b
+            .build_call(callee, &[self.ctx_ptr.into(), scratch.into()], "fc")
+            .unwrap();
+        self.rc_check(cs);
+        // return var = member named pou.name
+        let (roff, rty) = fbl.members[&pou.name].clone();
+        let rp = self.off_ptr(scratch, roff);
+        self.b.build_load(llty(self.ctx, &rty), rp, "ret").unwrap()
+    }
+
+    // ---- statements ----
+    fn abort_check(&mut self) {
+        let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+        let cont = self.ctx.append_basic_block(f, "ck.cont");
+        let af = self
+            .ctx_load(CTX_ABORT, self.ctx.i32_type().into(), "af")
+            .into_int_value();
+        let bad = self
+            .b
+            .build_int_compare(IntPredicate::NE, af, self.ctx.i32_type().const_zero(), "ck")
+            .unwrap();
+        self.b
+            .build_conditional_branch(bad, self.abort_bb.unwrap(), cont)
+            .unwrap();
+        self.b.position_at_end(cont);
+    }
+
+    fn stmt(&mut self, ctx: &Ctx, s: &Stmt) {
+        match &s.kind {
+            StmtKind::Assign { lhs, rhs } => {
+                let v = self.expr(ctx, rhs);
+                self.write(ctx, lhs, v);
+            }
+            StmtKind::If { branches, else_ } => {
+                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                let end_bb = self.ctx.append_basic_block(f, "if.end");
+                let mut next_bb = end_bb;
+                for (cond, body) in branches.iter().rev() {
+                    let then_bb = self.ctx.append_basic_block(f, "if.then");
+                    let cv = self.expr(ctx, cond).into_int_value();
+                    self.b.build_conditional_branch(cv, then_bb, next_bb).unwrap();
+                    self.b.position_at_end(then_bb);
+                    for st in body {
+                        self.stmt(ctx, st);
+                    }
+                    self.b.build_unconditional_branch(end_bb).unwrap();
+                    next_bb = then_bb;
+                    self.b.position_at_end(next_bb);
+                }
+                // else block
+                for st in else_ {
+                    self.stmt(ctx, st);
+                }
+                self.b.build_unconditional_branch(end_bb).unwrap();
+                self.b.position_at_end(end_bb);
+            }
+            StmtKind::While { cond, body } => {
+                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                let cond_bb = self.ctx.append_basic_block(f, "w.cond");
+                let body_bb = self.ctx.append_basic_block(f, "w.body");
+                let end_bb = self.ctx.append_basic_block(f, "w.end");
+                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.b.position_at_end(cond_bb);
+                self.abort_check();
+                let cv = self.expr(ctx, cond).into_int_value();
+                self.b.build_conditional_branch(cv, body_bb, end_bb).unwrap();
+                self.b.position_at_end(body_bb);
+                self.loop_stack.push((cond_bb, end_bb));
+                for st in body {
+                    self.stmt(ctx, st);
+                }
+                self.loop_stack.pop();
+                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.b.position_at_end(end_bb);
+            }
+            StmtKind::Repeat { cond, body } => {
+                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                let body_bb = self.ctx.append_basic_block(f, "r.body");
+                let cond_bb = self.ctx.append_basic_block(f, "r.cond");
+                let end_bb = self.ctx.append_basic_block(f, "r.end");
+                self.b.build_unconditional_branch(body_bb).unwrap();
+                self.b.position_at_end(body_bb);
+                self.loop_stack.push((cond_bb, end_bb));
+                for st in body {
+                    self.stmt(ctx, st);
+                }
+                self.loop_stack.pop();
+                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.b.position_at_end(cond_bb);
+                self.abort_check();
+                let cv = self.expr(ctx, cond).into_int_value();
+                self.b.build_conditional_branch(cv, end_bb, body_bb).unwrap();
+                self.b.position_at_end(end_bb);
+            }
+            StmtKind::For { var, start, end, step, body } => {
+                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                let vr = Ref::Var(var.clone());
+                let sv = self.expr(ctx, start);
+                self.write(ctx, &vr, sv);
+                let cond_bb = self.ctx.append_basic_block(f, "f.cond");
+                let body_bb = self.ctx.append_basic_block(f, "f.body");
+                let step_bb = self.ctx.append_basic_block(f, "f.step");
+                let end_bb = self.ctx.append_basic_block(f, "f.end");
+                let step_e = step
+                    .as_ref()
+                    .map(|e| self.expr(ctx, e).into_int_value())
+                    .unwrap_or(self.ctx.i64_type().const_int(1, true));
+                let end_v = self.expr(ctx, end).into_int_value();
+                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.b.position_at_end(cond_bb);
+                self.abort_check();
+                let cur = self.read(ctx, &vr).into_int_value();
+                // v1: positive step → i <= end
+                let cmp = self
+                    .b
+                    .build_int_compare(IntPredicate::SLE, cur, end_v, "fc")
+                    .unwrap();
+                self.b.build_conditional_branch(cmp, body_bb, end_bb).unwrap();
+                self.b.position_at_end(body_bb);
+                self.loop_stack.push((step_bb, end_bb));
+                for st in body {
+                    self.stmt(ctx, st);
+                }
+                self.loop_stack.pop();
+                self.b.build_unconditional_branch(step_bb).unwrap();
+                self.b.position_at_end(step_bb);
+                let cur = self.read(ctx, &vr).into_int_value();
+                let nxt = self.b.build_int_add(cur, step_e, "fn").unwrap();
+                let (p, _) = self.resolve(ctx, &vr);
+                self.b.build_store(p, nxt).unwrap();
+                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.b.position_at_end(end_bb);
+            }
+            StmtKind::Case { sel, arms, else_ } => {
+                // desugar to if-chain (v1)
+                let sv = self.expr(ctx, sel);
+                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                let end_bb = self.ctx.append_basic_block(f, "c.end");
+                for (sels, body) in arms {
+                    let then_bb = self.ctx.append_basic_block(f, "c.arm");
+                    let next_bb = self.ctx.append_basic_block(f, "c.next");
+                    let mut acc: Option<IntValue> = None;
+                    for cs in sels {
+                        let hit = match cs {
+                            CaseSel::Lit(e) => {
+                                let lv = self.expr(ctx, e);
+                                self.b
+                                    .build_int_compare(
+                                        IntPredicate::EQ,
+                                        sv.into_int_value(),
+                                        lv.into_int_value(),
+                                        "cm",
+                                    )
+                                    .unwrap()
+                            }
+                            CaseSel::Range(a, b) => {
+                                let lo = self.expr(ctx, a).into_int_value();
+                                let hi = self.expr(ctx, b).into_int_value();
+                                let s = sv.into_int_value();
+                                let ge = self
+                                    .b
+                                    .build_int_compare(IntPredicate::SGE, s, lo, "g")
+                                    .unwrap();
+                                let le = self
+                                    .b
+                                    .build_int_compare(IntPredicate::SLE, s, hi, "l")
+                                    .unwrap();
+                                self.b.build_and(ge, le, "r").unwrap()
+                            }
+                        };
+                        acc = Some(match acc {
+                            None => hit,
+                            Some(a) => self.b.build_or(a, hit, "co").unwrap(),
+                        });
+                    }
+                    self.b
+                        .build_conditional_branch(acc.unwrap(), then_bb, next_bb)
+                        .unwrap();
+                    self.b.position_at_end(then_bb);
+                    for st in body {
+                        self.stmt(ctx, st);
+                    }
+                    self.b.build_unconditional_branch(end_bb).unwrap();
+                    self.b.position_at_end(next_bb);
+                }
+                for st in else_ {
+                    self.stmt(ctx, st);
+                }
+                self.b.build_unconditional_branch(end_bb).unwrap();
+                self.b.position_at_end(end_bb);
+            }
+            StmtKind::Call { inst, args } => self.fb_call(ctx, inst, args),
+            StmtKind::Return(_) => {
+                self.b.build_unconditional_branch(self.abort_bb.unwrap_or_else(|| {
+                    panic!("return outside fn")
+                }))
+                .unwrap();
+            }
+            StmtKind::Exit => {
+                let (_, end) = *self.loop_stack.last().expect("EXIT outside loop");
+                self.b.build_unconditional_branch(end).unwrap();
+            }
+            StmtKind::Continue => {
+                let (cond, _) = *self.loop_stack.last().expect("CONTINUE outside loop");
+                self.b.build_unconditional_branch(cond).unwrap();
+            }
+        }
+    }
+
+    fn stmts(&mut self, ctx: &Ctx, ss: &[Stmt]) {
+        for s in ss {
+            self.stmt(ctx, s);
+        }
+    }
+
+    /// one generated POU fn: (ctx, this) → i32 rc
+    fn emit_pou(&mut self, pou: &Pou, scope: &Ctx) {
+        let f = self.pou_fn(&pou.name);
+        let entry = self.ctx.append_basic_block(f, "entry");
+        self.b.position_at_end(entry);
+        self.ctx_ptr = f.get_nth_param(0).unwrap().into_pointer_value();
+        self.this_ptr = f.get_nth_param(1).unwrap().into_pointer_value();
+        // abort exit block: return -1
+        let ab = self.ctx.append_basic_block(f, "abort");
+        self.abort_bb = Some(ab);
+        self.b.position_at_end(ab);
+        self.b
+            .build_return(Some(&self.ctx.i32_type().const_int((-1i64) as u64, true)))
+            .unwrap();
+        self.b.position_at_end(entry);
+        self.abort_check();
+        if let Body::Stmts(ss) = &pou.body {
+            self.stmts(scope, ss);
+        }
+        self.b
+            .build_return(Some(&self.ctx.i32_type().const_zero()))
+            .unwrap();
+    }
+}
+
+/// Emit the module: abi_version, init, shutdown, task_run + per-POU fns.
+pub fn emit_program<'ctx>(
+    lctx: &'ctx Context,
+    mir: &'static Module,
+    layout: &'static Layout,
+    program: &'static Pou,
+) -> LlvmModule<'ctx> {
+    let module = lctx.create_module("tplc_program");
+    let mut g = Gen {
+        ctx: lctx,
+        module,
+        b: lctx.create_builder(),
+        layout,
+        mir,
+        abort_bb: None,
+        loop_stack: Vec::new(),
+        ctx_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
+        this_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
+    };
+
+    let i8p = g.i8p();
+    // tplc_abi_version
+    let ft = lctx.i32_type().fn_type(&[], false);
+    let f = g.module.add_function("tplc_abi_version", ft, Some(Linkage::External));
+    let bb = lctx.append_basic_block(f, "e");
+    g.b.position_at_end(bb);
+    g.b.build_return(Some(&lctx.i32_type().const_int(1, false))).unwrap();
+
+    // tplc_init(ctx): memset blob + zero-init (literal inits: P1-07)
+    let ft = lctx.i32_type().fn_type(&[i8p.into()], false);
+    let f = g.module.add_function("tplc_init", ft, Some(Linkage::External));
+    let bb = lctx.append_basic_block(f, "e");
+    g.b.position_at_end(bb);
+    g.ctx_ptr = f.get_nth_param(0).unwrap().into_pointer_value();
+    let blob = g
+        .ctx_load(CTX_STATE_BLOB, i8p.into(), "blob")
+        .into_pointer_value();
+    g.b
+        .build_memset(
+            blob,
+            1,
+            lctx.i8_type().const_zero(),
+            lctx.i64_type().const_int(layout.total_size, false),
+        )
+        .unwrap();
+    g.b.build_return(Some(&lctx.i32_type().const_zero())).unwrap();
+
+    // tplc_shutdown(ctx)
+    let ft = lctx.void_type().fn_type(&[i8p.into()], false);
+    let f = g.module.add_function("tplc_shutdown", ft, Some(Linkage::External));
+    let bb = lctx.append_basic_block(f, "e");
+    g.b.position_at_end(bb);
+    g.b.build_return(None).unwrap();
+
+    // per-POU fns (program first so its fn exists for task_run)
+    let scope = program_ctx(layout);
+    for pou in &mir.pous {
+        let sc: Ctx = match pou.kind {
+            PouKind::Program => scope.clone(),
+            PouKind::FunctionBlock => {
+                let fbl = layout
+                    .fb_types
+                    .get(&pou.name)
+                    .cloned()
+                    .or_else(|| builtin_fb_layout(&pou.name))
+                    .unwrap();
+                fb_ctx(&fbl)
+            }
+            PouKind::Function => {
+                let fbl = tplc_mir::layout::layout_members(&pou.iface, BTreeMap::new());
+                fb_ctx(&fbl)
+            }
+        };
+        g.emit_pou(pou, &sc);
+    }
+
+    // tplc_task_run(tctx) -> i32 : ctx=tctx->prog; call program pou
+    let ft = lctx.i32_type().fn_type(&[i8p.into()], false);
+    let f = g.module.add_function("tplc_task_run", ft, Some(Linkage::External));
+    let bb = lctx.append_basic_block(f, "e");
+    g.b.position_at_end(bb);
+    let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
+    g.ctx_ptr = tctx;
+    let prog = g
+        .ctx_load(TCTX_PROG, i8p.into(), "prog")
+        .into_pointer_value();
+    g.ctx_ptr = prog;
+    let blob = g
+        .ctx_load(CTX_STATE_BLOB, i8p.into(), "blob")
+        .into_pointer_value();
+    let pf = g.pou_fn(&program.name);
+    let cs = g
+        .b
+        .build_call(pf, &[prog.into(), blob.into()], "run")
+        .unwrap();
+    let rc = cs.try_as_basic_value().expect_basic("rc");
+    g.b.build_return(Some(&rc)).unwrap();
+
+    g.module
+}

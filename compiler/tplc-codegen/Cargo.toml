@@ -1,0 +1,15 @@
+[package]
+name = "tplc-codegen"
+description = "tplc-mir → LLVM IR lowering per doc 07 §4 (P1-05)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+llvm = ["dep:inkwell"]
+
+[dependencies]
+tplc-mir = { path = "../tplc-mir" }
+tplc-pkg = { path = "../tplc-pkg" }
+inkwell = { version = "0.9", features = ["llvm21-1"], optional = true }

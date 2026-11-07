@@ -204,3 +204,9 @@ pull LLVM-21. Local builds need an LLVM-21 prefix (this machine uses
       distribution ever appears, split the parse step into a separate
       process or replace the parser. Attribution file required.
       Clean-room FB lib unaffected (ruSTy stdlib not consumed).
+
+## D-IMPL-14 — LLVM binding: inkwell 0.9 (feature-gated), LLVM-21
+
+P1-05 chose **inkwell 0.9 + `llvm21-1`** over textual-IR/`llc` subprocess: (a) ruSTy's dep tree already proves it builds against our LLVM-21 prefix; (b) JIT via `create_execution_engine` gives in-process verification (the e2e test executes `tplc_init`/`tplc_task_run` against a fake ABI ctx — no subprocess, no .so round-trip); (c) bitcode emission for the package comes free. Gated behind `tplc-codegen`'s `llvm` cargo feature — default workspace stays LLVM-free for CI. Dev-env: `LLVM_SYS_211_PREFIX` + `PATH` pointing at an extracted `llvm-21` prefix.
+
+Litmus in `tests/llvm_e2e.rs`: WHILE-loop execution, extern `__tplc_rt_TON` host-mapping (the tplc-rt link seam), TON.Q at 500 ms via `ctx->now_ns`, `abort_flag` → rc −1, and an `inttoptr`-free guarantee (all program state addressed `blob+const_off`).
