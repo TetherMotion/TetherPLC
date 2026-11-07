@@ -1,0 +1,8 @@
+[package]
+name = "tplc-rt"
+description = "tplc-rt — clean-room IEC 61131-3 standard FB/function bitcode lib (P1-06, doc 07 §C)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -65,6 +65,7 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ET", Type::Time);
             push(&mut off, "__in_last", Type::Bool);
             push(&mut off, "__start", Type::Time);
+            push(&mut off, "__run", Type::Bool);
         }
         "R_TRIG" | "F_TRIG" => {
             push(&mut off, "CLK", Type::Bool);

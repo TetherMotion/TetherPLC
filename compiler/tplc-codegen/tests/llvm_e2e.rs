@@ -113,28 +113,6 @@ struct FakeTCtx {
     sn: u64, dl: u64, dt: u64,
 }
 
-/// host TON: IN@0 i8, PT@8 i64, Q@16 i8, ET@24 i64, run@32 i8, t0@40 i64
-/// — must match builtin_fb_layout("TON") member offsets.
-unsafe extern "C" fn host_ton(this: *mut u8, ctx: *mut u8) -> i32 {
-    let now = (ctx.add(48) as *const u64).read();
-    let inn = this.add(0).read();
-    let pt = (this.add(8) as *const i64).read();
-    let run = this.add(32);
-    if inn != 0 {
-        if run.read() == 0 {
-            run.write(1);
-            (this.add(40) as *mut u64).write(now);
-        }
-        let el = now.saturating_sub((this.add(40) as *const u64).read()) as i64;
-        (this.add(24) as *mut i64).write(el.min(pt));
-        this.add(16).write((el >= pt) as u8);
-    } else {
-        run.write(0);
-        (this.add(24) as *mut i64).write(0);
-        this.add(16).write(0);
-    }
-    0
-}
 
 #[test]
 fn llvm_lowering_executes_through_jit() {
@@ -157,7 +135,7 @@ fn llvm_lowering_executes_through_jit() {
     Target::initialize_native(&InitializationConfig::default()).unwrap();
     let ee = module.create_execution_engine().unwrap();
     let ton = module.get_function("__tplc_rt_TON").unwrap();
-    ee.add_global_mapping(&ton, host_ton as *const () as usize);
+    ee.add_global_mapping(&ton, tplc_rt::__tplc_rt_TON as *const () as usize);
 
     let scope = program_ctx(l);
     let mut blob = vec![0u8; l.total_size as usize];
