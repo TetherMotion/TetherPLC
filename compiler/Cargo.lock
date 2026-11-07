@@ -145,6 +145,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-oid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
 name = "core_detect"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -196,6 +202,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
+ "const-oid",
  "crypto-common",
 ]
 
@@ -971,6 +978,19 @@ dependencies = [
  "plc_source",
  "tplc-mir",
  "tplc-pkg",
+]
+
+[[package]]
+name = "tplcc"
+version = "0.1.0"
+dependencies = [
+ "inkwell",
+ "sha2",
+ "tplc-codegen",
+ "tplc-mir",
+ "tplc-pkg",
+ "tplc-rt",
+ "tplc-st",
 ]
 
 [[package]]

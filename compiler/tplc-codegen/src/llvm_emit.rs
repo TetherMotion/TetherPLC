@@ -255,7 +255,7 @@ impl<'ctx> Gen<'ctx> {
                     UnOp::Not => self.b.build_not(v.into_int_value(), "not").unwrap().into(),
                 }
             }
-            ExprKind::Bin(op, a, b) => self.bin(ctx, *op, a, b),
+            ExprKind::Bin(op, a, b) => self.bin(ctx, *op, a, b, &e.ty),
             ExprKind::Conv { to, e } => {
                 let v = self.expr(ctx, e);
                 self.conv(v, &e.ty, to)
@@ -333,7 +333,64 @@ impl<'ctx> Gen<'ctx> {
         }
     }
 
-    fn bin(&mut self, ctx: &Ctx, op: BinOp, a: &Expr, b: &Expr) -> BasicValueEnum<'ctx> {
+    /// numeric coercion for operand-width plumbing (sema owns semantic
+    /// conversions; LLVM just needs equal-width operands)
+    fn coerce(
+        &mut self,
+        v: BasicValueEnum<'ctx>,
+        from: &Type,
+        to: &Type,
+    ) -> BasicValueEnum<'ctx> {
+        if v.is_int_value() && matches!(to, Type::Int { .. } | Type::Time | Type::Enum { .. }) {
+            let dt = llty(self.ctx, to).into_int_type();
+            let iv = v.into_int_value();
+            let (sw, dw) = (iv.get_type().get_bit_width(), dt.get_bit_width());
+            if dw > sw {
+                let sext = matches!(from, Type::Int { signed: true, .. });
+                return if sext {
+                    self.b.build_int_s_extend(iv, dt, "w").unwrap().into()
+                } else {
+                    self.b.build_int_z_extend(iv, dt, "w").unwrap().into()
+                };
+            }
+            if dw < sw {
+                return self.b.build_int_truncate(iv, dt, "w").unwrap().into();
+            }
+        }
+        if v.is_float_value() && matches!(to, Type::Real { .. }) {
+            let dt = llty(self.ctx, to).into_float_type();
+            let fv = v.into_float_value();
+            if fv.get_type() != dt {
+                return self.b.build_float_ext(fv, dt, "w").unwrap().into();
+            }
+        }
+        v
+    }
+
+    /// common numeric type for comparisons (wider wins; signed wins ties)
+    fn cmp_ty(a: &Type, b: &Type) -> Type {
+        let bits = |t: &Type| match t {
+            Type::Int { bits, .. } => *bits,
+            Type::Real { bits } => *bits,
+            Type::Bool => 1,
+            _ => 64,
+        };
+        if matches!(a, Type::Real { .. }) || matches!(b, Type::Real { .. }) {
+            return Type::Real { bits: bits(a).max(bits(b)).max(32) };
+        }
+        let (ba, bb) = (bits(a), bits(b));
+        let w = ba.max(bb);
+        let signed = matches!(a, Type::Int { signed: true, .. })
+            || matches!(b, Type::Int { signed: true, .. })
+            || matches!(a, Type::Time)
+            || matches!(b, Type::Time);
+        if matches!(a, Type::Time) || matches!(b, Type::Time) {
+            return Type::Time;
+        }
+        Type::Int { signed, bits: w }
+    }
+
+    fn bin(&mut self, ctx: &Ctx, op: BinOp, a: &Expr, b: &Expr, e_ty: &Type) -> BasicValueEnum<'ctx> {
         use BinOp::*;
         match op {
             AndThen | OrElse => {
@@ -359,8 +416,15 @@ impl<'ctx> Gen<'ctx> {
             }
             _ => {}
         }
-        let l = self.expr(ctx, a);
-        let r = self.expr(ctx, b);
+        let target = if matches!(op, Eq | Ne | Lt | Le | Gt | Ge) {
+            Self::cmp_ty(&a.ty, &b.ty)
+        } else {
+            e_ty.clone()
+        };
+        let lv = self.expr(ctx, a);
+        let l = self.coerce(lv, &a.ty, &target);
+        let rv = self.expr(ctx, b);
+        let r = self.coerce(rv, &b.ty, &target);
         let isf = l.is_float_value();
         if isf {
             let (l, r) = (l.into_float_value(), r.into_float_value());
@@ -809,8 +873,8 @@ impl<'ctx> Gen<'ctx> {
                 lctx.i8_type().const_int(1, false).into(), // ENABLED_AT_START
                 lctx.i8_type().const_int(10, false).into(),
                 lctx.i8_type().const_zero().into(),
-                lctx.i64_type().const_zero().into(),
-                lctx.i64_type().const_zero().into(),
+                lctx.i64_type().const_int(10_000_000, false).into(), // 10ms
+                lctx.i64_type().const_zero().into(), // wcet_hint
                 lctx.i32_type().const_zero().into(), // entry 0
                 lctx.i32_type().const_zero().into(),
             ],
