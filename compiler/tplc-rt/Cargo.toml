@@ -5,4 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+nostd = []
+
 [dependencies]

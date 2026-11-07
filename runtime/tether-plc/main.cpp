@@ -8,6 +8,7 @@
 #include <tplc/tplc_image.h>
 #include <tplc/tplc_ctl.h>
 #include <tplc/host/Module.hpp>
+#include <tplc/pkg/Package.hpp>
 #include <tplc/host/Program.hpp>
 #include <tplc/host/Scheduler.hpp>
 #include <tplc/host/CtlServer.hpp>
@@ -41,7 +42,7 @@ static void usage(const char* a0) {
 enum ProgState : uint8_t { PS_STOPPED = 0, PS_RUNNING = 1, PS_FAULT = 2 };
 
 int main(int argc, char** argv) {
-    std::string image_path, module_path, ctl_path;
+    std::string image_path, module_path, package_path, ctl_path;
     int wait_ms = 10000;
     uint64_t poll_ns = 1000 * 1000;          /* 1 ms max idle         */
     uint32_t ctx_flags = 0;
@@ -53,6 +54,7 @@ int main(int argc, char** argv) {
         };
         if (a == "--image") image_path = next();
         else if (a == "--module") module_path = next();
+        else if (a == "--package") package_path = next();
         else if (a == "--ctl") ctl_path = next();
         else if (a == "--wait-ms") wait_ms = atoi(next().c_str());
         else if (a == "--poll-ns") poll_ns = strtoull(next().c_str(), 0, 0);
@@ -60,7 +62,7 @@ int main(int argc, char** argv) {
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
     }
-    if (image_path.empty() || module_path.empty()) {
+    if (image_path.empty() || (module_path.empty() && package_path.empty())) {
         usage(argv[0]);
         return 2;
     }
@@ -76,6 +78,47 @@ int main(int argc, char** argv) {
         return 1;
     }
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_OPEN);
+
+    /* ---------------- package → extracted module -------------- */
+    std::string extracted_so;
+    if (!package_path.empty()) {
+        auto pres = tplc::Package::open(package_path);
+        if (!pres.ok()) {
+            fprintf(stderr, "tether-plc: package %s unreadable (%d) %s\n",
+                    package_path.c_str(), pres.st.code, pres.st.msg.c_str());
+            tplc_image_close(&img);
+            return 1;
+        }
+        tplc::Package pkg = std::move(pres.value);
+        auto vst = pkg.validateForLoad(false);
+        if (!vst.ok()) {
+            fprintf(stderr, "tether-plc: package not loadable (%d) %s\n",
+                    vst.code, vst.msg.c_str());
+            tplc_image_close(&img);
+            return 1;
+        }
+        tplc::PkgSection obj{};
+        /* v1: first target_obj (multi-target selection comes with
+           manifest.targets[] parsing) */
+        if (!pkg.section(TPLC_SEC_TARGET_OBJ, obj)) {
+            fprintf(stderr, "tether-plc: no target_obj section\n");
+            tplc_image_close(&img);
+            return 1;
+        }
+        char tpath[] = "/tmp/tplc_pkg_XXXXXX";
+        int fd = mkstemp(tpath);
+        if (fd < 0 || write(fd, obj.data, obj.size) != (ssize_t)obj.size) {
+            fprintf(stderr, "tether-plc: extract target_obj failed\n");
+            if (fd >= 0) close(fd);
+            tplc_image_close(&img);
+            return 1;
+        }
+        close(fd);
+        extracted_so = tpath;
+        module_path = extracted_so;
+        fprintf(stderr, "tether-plc: package %s → %s\n",
+                package_path.c_str(), extracted_so.c_str());
+    }
 
     /* ---------------- load module ----------------------------- */
     auto mres = tplc::Module::open(module_path, /*host_caps*/ 0);

@@ -160,7 +160,50 @@ fn cmd_build(args: &[String]) -> ExitCode {
     emit_bitcode(&llmod, &bc).unwrap();
     emit_object(&llmod, &obj).unwrap();
     let bc_bytes = std::fs::read(&bc).unwrap();
-    let obj_bytes = std::fs::read(&obj).unwrap();
+
+    // link .o + tplc-rt → deployable .so (doc 01 §5: shared object).
+    // The rt source is embedded; rustc produces a lean no_std
+    // staticlib (~10KB .so, only `tplc_*` exports + abort).
+    // TPLC_RT_LIB overrides for prebuilt archives.
+    let rt_lib = std::env::var("TPLC_RT_LIB").map(PathBuf::from).unwrap_or_else(|_| {
+        const RT_SRC: &str = include_str!("../../tplc-rt/src/lib.rs");
+        let src = tmp.join("tplc_rt.rs");
+        std::fs::write(&src, RT_SRC).unwrap();
+        let a = tmp.join("libtplc_rt.a");
+        let rc = std::process::Command::new("rustc")
+            .args([
+                "--edition", "2021",
+                "--crate-type", "staticlib",
+                "-C", "panic=abort", "-C", "opt-level=2",
+                "--cfg", "feature=\"nostd\"",
+            ])
+            .arg(&src)
+            .arg("-o").arg(&a)
+            .output()
+            .expect("rustc for tplc-rt");
+        if !rc.status.success() {
+            eprintln!("tplcc: rt build: {}", String::from_utf8_lossy(&rc.stderr));
+            std::process::exit(1);
+        }
+        a
+    });
+    let map = tmp.join("exports.map");
+    std::fs::write(&map, "{ global: tplc_*; local: *; };
+").unwrap();
+    let so = tmp.join("prog.so");
+    let cc = std::process::Command::new("cc")
+        .args(["-shared", "-o"])
+        .arg(&so)
+        .arg(&obj)
+        .arg(&rt_lib)
+        .arg(format!("-Wl,--version-script={}", map.display()))
+        .output()
+        .unwrap();
+    if !cc.status.success() {
+        eprintln!("tplcc: link failed: {}", String::from_utf8_lossy(&cc.stderr));
+        return ExitCode::FAILURE;
+    }
+    let obj_bytes = std::fs::read(&so).unwrap();
 
     // retain hash → hex for manifest
     let lh_hex: String = layout_hash.iter().map(|b| format!("{b:02x}")).collect();
@@ -200,7 +243,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     w.add_section(SectionType::Manifest, manifest.into_bytes(), false, 1, 0)
         .unwrap();
     w.add_section(SectionType::IrBitcode, bc_bytes, true, 1, 0).unwrap();
-    w.add_section(SectionType::TargetObj, obj_bytes, true, 1, 0).unwrap();
+    w.add_section(SectionType::TargetObj, obj_bytes, true, 1, 0).unwrap(); // aux=0 → targets[0]
     w.add_section(SectionType::Symmap, descs.symmap, true, 1, 0).unwrap();
     w.add_section(SectionType::TypeCatalog, descs.typecat, true, 1, 0).unwrap();
     w.add_section(SectionType::LayoutDesc, descs.layd.encode(), true, 1, 0).unwrap();

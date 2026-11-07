@@ -46,7 +46,7 @@ target_include_directories(tplc_pkg PUBLIC
 # Runtime binary
 # ------------------------------------------------------------------ #
 add_executable(tether-plc runtime/tether-plc/main.cpp)
-target_link_libraries(tether-plc PRIVATE tplc_host tplc_image)
+target_link_libraries(tether-plc PRIVATE tplc_host tplc_image tplc_pkg)
 set_target_properties(tether-plc PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 

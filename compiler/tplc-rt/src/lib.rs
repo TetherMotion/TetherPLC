@@ -16,8 +16,18 @@
 //!                CV@12 i32, __cu_last@16 __cd_last@17 u8      (size 24)
 //!   SR/RS      : S@0 R1@1 S1@2 R@3 Q1@4 u8                   (size 8)
 
-#![no_std]
 
+
+#![cfg_attr(feature = "nostd", no_std)]
+
+#[cfg(feature = "nostd")]
+#[panic_handler]
+fn __tplc_rt_panic(_: &core::panic::PanicInfo) -> ! {
+    unsafe extern "C" {
+        fn abort() -> !;
+    }
+    unsafe { abort() }
+}
 const CTX_NOW_NS: usize = 48;
 
 #[inline]
@@ -215,3 +225,4 @@ pub unsafe extern "C" fn __tplc_rt_RS(this: *mut u8, _ctx: *mut u8) -> i32 {
     wb(this.add(4), q1);
     0
 }
+
