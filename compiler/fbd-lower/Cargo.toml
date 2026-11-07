@@ -1,0 +1,10 @@
+[package]
+name = "fbd-lower"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "fbd-model → tplc-mir lowering (topo order, cycles, probes, EN/ENO)"
+
+[dependencies]
+fbd-model = { path = "../fbd-model" }
+tplc-mir = { path = "../tplc-mir" }

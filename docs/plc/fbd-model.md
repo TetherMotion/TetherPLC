@@ -61,11 +61,59 @@ this file.
   TON IN/PT literal → outVariable fan-in): all construct classes
   imported correctly.
 
+## `fbd-lower` (doc 06 §4)
+
+`fbd-lower` translates `fbd.v1` models into `tplc-mir` modules plus
+`io_bindings` and diagnostics (`LowerOutput{module, io_bindings,
+diags}`). Shared plumbing lives in `tplc-mir`: `diag::{Diag,Severity}`
+(both frontends emit one surface; `tplc-st` re-exports it) and
+`ty::{compatible, convertible, narrows, literal_fits, unify_num}`
+(single coercion matrix for sema and the lowerer's FBD001 check).
+
+- Per POU: `interface` → `VarDecl`s (kind/type/init/`at` + io binding);
+  `fb` blocks → instance `VarDecl{Type::Fb}` (name synthesized
+  `__fb_<id>` when absent); variable blocks with `at` and no matching
+  decl → located shadow vars (`__io_*` unnamed, named when given);
+  `project.global_vars` → one `GVL`.
+- Per network (declared order): deterministic topo sort — frontier key
+  `(exec_order==0, exec_order, y, x, id)`. Cycles release only through
+  edges into `fb` blocks (feedback reads previous-cycle state);
+  anything else in a cycle is FBD004 with the node-id list.
+- Emission: `fb` → `Call` stmt (EN input wraps it in `If`; ENO feeds
+  an `__eno_<id>` flag), `variable` out/inout → `Assign`, operators →
+  folded `Bin`/`Un` expressions at consumers except `SEL/MIN/MAX/
+  LIMIT/ABS/MUX` which materialize `__op_<id>` temps via `If` stmts
+  (MUX: `K`-compare chain, out-of-range → first input). `*_TO_*`
+  casts → `Conv`. Probed wires → `__probe_<id>` field + store at
+  production; consumers read the field.
+- Validation live now: FBD001 (coercion at pin insertion), FBD002,
+  FBD003, FBD004, FBD006, FBD007, FBD008, FBD010 (warn), FBD011,
+  FBD012, FBD013. FBD005/009/014 reserved — InOut pins have no stored
+  member in the runtime today (same gap as ST), generic `ANY_*`
+  resolution is via `unify_num` so unresolved cases surface as
+  FBD001.
+- `params` literals parse `T#…`, based ints (`16#FF`), typed prefixes
+  (`INT#5`), reals, bools, `'strings'`; bad literals → FBD006/PARSE.
+- Jumps to existing labels report UNSUPPORTED (mir has no goto);
+  nonexistent labels → FBD011. `return` markers emit `Return` after
+  their network's work. Ladder networks reject (schema-reserved).
+
+Interp coverage: `Rt::fb_call` now covers every builtin in
+`builtin_fb_layout` — TON/TOF/TP, R_TRIG/F_TRIG, CTU/CTD/CTUD
+(full `ctud_step` semantics incl. CD/LD/QD), SR/RS — matching the
+`tplc-rt` reference bodies so L1 interp and native paths agree.
+
+Verified: the doc §8 debounce example end-to-end through `Rt`
+(TON timing, negated pin, probe field, %Q store), SEL → `If`,
+algebraic-cycle rejection vs legal FB feedback, fan-in/exec-order/
+undeclared-name errors.
+
 ## Not yet
 
 - TS type generation / editor bindings (TetherWebUI side).
-- Validation rules FBD001–14 — model stores everything needed; the
-  checks land with `fbd-lower` (P4-03/P4-04).
+- FBD005/009/014 (InOut storage, ANY_* candidates, inout chains).
+- `tplcc` driver wiring for `.fbd.json` sources (P4-05).
+- Equivalence corpus: 10-pattern gallery ST↔FBD oracle diff (P4-06).
 - `en_eno` semantic implementation (field exists, honored by lowering).
 - `data_types`/`global_vars` decode is pass-through (`Value`) until
   struct decls are modeled.
@@ -74,3 +122,5 @@ this file.
   `formalParameter` associations is not yet mapped back.
 - Real Beremiz corpus fixtures (P4-06) — coverage is one hand-built
   doc today, not ≥95% measured.
+- mir-level `Label`/`Goto` for imported jumps (doc 06 §4.4 assumed
+  them; they were never in the IR).

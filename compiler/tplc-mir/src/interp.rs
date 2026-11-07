@@ -611,33 +611,144 @@ impl<'a> Rt<'a> {
                 self.blob[get("__in_last")] = in_v as u8;
                 Flow::Normal
             }
-            "R_TRIG" => {
+            "TOF" => {
+                // IN → Q=1 immediately, ET=0; IN↓ starts off-timer
+                let m = &fbl.members;
+                let get = |n: &str| (off + m[n].0) as usize;
+                let inn = self.blob[get("IN")] != 0;
+                let pt =
+                    i64::from_le_bytes(self.blob[get("PT")..get("PT") + 8].try_into().unwrap());
+                let last = self.blob[get("__in_last")] != 0;
+                let now = self.now_ns as i64;
+                if inn {
+                    self.blob[get("Q")] = 1;
+                    self.blob[get("ET")..get("ET") + 8].copy_from_slice(&0i64.to_le_bytes());
+                    self.blob[get("__run")] = 0;
+                } else {
+                    if last {
+                        self.blob[get("__start")..get("__start") + 8]
+                            .copy_from_slice(&now.to_le_bytes());
+                        self.blob[get("__run")] = 1;
+                    }
+                    if self.blob[get("__run")] != 0 {
+                        let start = i64::from_le_bytes(
+                            self.blob[get("__start")..get("__start") + 8]
+                                .try_into()
+                                .unwrap(),
+                        );
+                        let et = (now - start).min(pt);
+                        self.blob[get("ET")..get("ET") + 8].copy_from_slice(&et.to_le_bytes());
+                        if et >= pt {
+                            self.blob[get("Q")] = 0;
+                            self.blob[get("__run")] = 0;
+                        }
+                    }
+                }
+                self.blob[get("__in_last")] = inn as u8;
+                Flow::Normal
+            }
+            "TP" => {
+                // IN↑ starts a non-retriggerable PT pulse
+                let m = &fbl.members;
+                let get = |n: &str| (off + m[n].0) as usize;
+                let inn = self.blob[get("IN")] != 0;
+                let pt =
+                    i64::from_le_bytes(self.blob[get("PT")..get("PT") + 8].try_into().unwrap());
+                let last = self.blob[get("__in_last")] != 0;
+                let now = self.now_ns as i64;
+                if inn && !last && self.blob[get("__run")] == 0 {
+                    self.blob[get("__run")] = 1;
+                    self.blob[get("__start")..get("__start") + 8]
+                        .copy_from_slice(&now.to_le_bytes());
+                    self.blob[get("Q")] = 1;
+                }
+                if self.blob[get("__run")] != 0 {
+                    let start = i64::from_le_bytes(
+                        self.blob[get("__start")..get("__start") + 8]
+                            .try_into()
+                            .unwrap(),
+                    );
+                    let et = (now - start).min(pt);
+                    self.blob[get("ET")..get("ET") + 8].copy_from_slice(&et.to_le_bytes());
+                    if et >= pt {
+                        self.blob[get("Q")] = 0;
+                        self.blob[get("__run")] = 0;
+                    }
+                }
+                self.blob[get("__in_last")] = inn as u8;
+                Flow::Normal
+            }
+            "R_TRIG" | "F_TRIG" => {
                 let m = &fbl.members;
                 let get = |n: &str| (off + m[n].0) as usize;
                 let clk = self.blob[get("CLK")] != 0;
                 let last = self.blob[get("__clk_last")] != 0;
-                self.blob[get("Q")] = (clk && !last) as u8;
+                self.blob[get("Q")] = if fbname == "R_TRIG" {
+                    clk && !last
+                } else {
+                    !clk && last
+                } as u8;
                 self.blob[get("__clk_last")] = clk as u8;
                 Flow::Normal
             }
-            "CTU" => {
+            "CTU" | "CTD" | "CTUD" => {
                 let m = &fbl.members;
                 let get = |n: &str| (off + m[n].0) as usize;
                 let cu = self.blob[get("CU")] != 0;
+                let cd = self.blob[get("CD")] != 0;
                 let r = self.blob[get("R")] != 0;
-                let last = self.blob[get("__cu_last")] != 0;
+                let ld = self.blob[get("LD")] != 0;
+                let cu_last = self.blob[get("__cu_last")] != 0;
+                let cd_last = self.blob[get("__cd_last")] != 0;
                 let pv =
                     i32::from_le_bytes(self.blob[get("PV")..get("PV") + 4].try_into().unwrap());
                 let mut cv =
                     i32::from_le_bytes(self.blob[get("CV")..get("CV") + 4].try_into().unwrap());
+                if ld {
+                    cv = pv;
+                }
                 if r {
                     cv = 0;
-                } else if cu && !last {
-                    cv = cv.wrapping_add(1);
+                }
+                if !r && !ld {
+                    if cu && !cu_last {
+                        cv = cv.saturating_add(1);
+                    }
+                    if cd && !cd_last {
+                        cv = cv.saturating_sub(1);
+                    }
                 }
                 self.blob[get("CV")..get("CV") + 4].copy_from_slice(&cv.to_le_bytes());
                 self.blob[get("QU")] = (cv >= pv) as u8;
+                self.blob[get("QD")] = (cv <= 0) as u8;
                 self.blob[get("__cu_last")] = cu as u8;
+                self.blob[get("__cd_last")] = cd as u8;
+                Flow::Normal
+            }
+            "SR" | "RS" => {
+                // SR set-dominant (S1 wins), RS reset-dominant (R1 wins)
+                let m = &fbl.members;
+                let get = |n: &str| (off + m[n].0) as usize;
+                let s = self.blob[get("S")] != 0;
+                let r1 = self.blob[get("R1")] != 0;
+                let s1 = self.blob[get("S1")] != 0;
+                let r = self.blob[get("R")] != 0;
+                let q1 = if fbname == "SR" {
+                    if s1 {
+                        true
+                    } else if r {
+                        false
+                    } else {
+                        self.blob[get("Q1")] != 0
+                    }
+                } else if r1 {
+                    false
+                } else if s {
+                    true
+                } else {
+                    self.blob[get("Q1")] != 0
+                };
+                self.blob[get("Q1")] = q1 as u8;
                 Flow::Normal
             }
             _ => {
