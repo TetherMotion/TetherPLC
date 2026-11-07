@@ -1,0 +1,26 @@
+[package]
+name = "tplc-st"
+description = "IEC ST frontend: parse (ruSTy adapter) → tplc-mir lowering (P1-02)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# The ruSTy parser adapter is heavy (LLVM-21 via plc-compiler) and LGPL:
+# it is an opt-in feature so the default workspace build/CI stays light.
+# Default build offers the MIR-side API surface only.
+default = []
+rusty = [
+    "dep:plc_compiler", "dep:plc_ast", "dep:plc_source",
+    "dep:plc_diagnostics", "dep:plc_index",
+]
+
+[dependencies]
+tplc-mir = { path = "../tplc-mir" }
+tplc-pkg = { path = "../tplc-pkg" }
+
+plc_compiler    = { package = "plc-compiler",    git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8", optional = true }
+plc_ast         = { package = "plc_ast",         git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8", optional = true }
+plc_source      = { package = "plc_source",      git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8", optional = true }
+plc_diagnostics = { package = "plc_diagnostics", git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8", optional = true }
+plc_index       = { package = "plc_index",       git = "https://github.com/PLC-lang/rusty", rev = "11e8107e96749c3d68cc36377af5e32c9abea2b8", optional = true }
