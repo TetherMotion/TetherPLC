@@ -97,7 +97,7 @@ typedef struct TplcTaskDesc {
     uint64_t wcet_hint_ns;             /* budget for jitter monitor; 0 = unspecified */
     uint32_t entry_index;              /* index into task fn table     */
     uint32_t task_local_size;          /* bytes of task-local blob region */
-} TplcTaskDesc; /* 56 B */
+} TplcTaskDesc; /* 64 B */
 ```
 
 ### 2.3 `TplcProgramDescriptor` — the module's identity
@@ -606,9 +606,18 @@ enum {
     TPLC_E_MIGRATE_DESCINVAL = -34,  /* migrate_desc malformed         */
     TPLC_E_MIGRATE_BLOBRANGE = -35,  /* blob access outside declared   */
 
+    /* loader/host surface (never returned by module code itself) */
+    TPLC_E_ABI_MISMATCH      = -64,  /* abi_version != host's          */
+    TPLC_E_ABI_EXT_UNMET     = -65,  /* required caps not in host caps */
+
     /* reserved */
     TPLC_E_MODULE_MIN        = -999,
     TPLC_E_MODULE_MAX        = -1999 /* module-defined range           */
+};
+
+/* Event/alarm codes (non-negative; never a return value) */
+enum {
+    TPLC_PROG_FAULT = 16             /* program faulted; §4.6          */
 };
 
 /* TplcMigrateStatus — written into TplcMigrateCtx.out_status */
@@ -713,7 +722,7 @@ typedef struct TplcTaskDesc {
     uint32_t entry_index;   /* into task_fns[]                         */
     uint32_t task_local_size;
 } TplcTaskDesc;
-_Static_assert(sizeof(TplcTaskDesc) == 56, "TplcTaskDesc layout");
+_Static_assert(sizeof(TplcTaskDesc) == 64, "TplcTaskDesc layout");
 
 /* forward decls */
 typedef struct TplcCtx       TplcCtx;
@@ -868,13 +877,17 @@ Notes on the listing vs the earlier prose:
 ## Appendix B — `tplc_image.h` (SHM header, normative)
 
 ```c
-/* tplc_image.h — SHM process-image header (doc 03) */
-#define TPLC_IMAGE_MAGIC   0x54494D47u  /* 'TIMG' LE                  */
+/* tplc_image.h — SHM process-image header (doc 03 §3 layout).
+ * Fields are plain integers; all access goes through the tplc_img_*
+ * accessors which apply __atomic_* builtins with explicit memory
+ * orders — portable across C and C++ with identical semantics to
+ * _Atomic fields (recorded in docs/plc/DECISIONS.md). */
+#define TPLC_IMAGE_MAGIC   0x47414D49434C5054ull /* 'TPLCIMAG' LE     */
 #define TPLC_IMAGE_VERSION 1u
 #define TPLC_IMAGE_HDRSIZE 256u
 
-typedef struct TplcImageHeader {        /* all fields _Atomic uN      */
-    uint64_t magic;                     /* TPLC_IMAGE_MAGIC | ver<<32 */
+typedef struct TplcImageHeader {
+    uint64_t magic;                     /* TPLC_IMAGE_MAGIC           */
     uint32_t version;
     uint32_t header_size;
     uint32_t layout_flags;

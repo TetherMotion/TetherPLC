@@ -1,0 +1,73 @@
+/* HostServices.cpp — SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
+
+#include <tplc/host/HostServices.hpp>
+
+#include <cstdio>
+#include <ctime>
+
+namespace tplc {
+
+static uint64_t mono_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static HostServices* self(void* p) { return static_cast<HostServices*>(p); }
+
+HostServices::HostServices(uint32_t caps) {
+    svc_.struct_size  = sizeof(TplcServices);
+    svc_.caps         = caps | TPLC_EXT_MOVABLE_BETWEEN;
+    svc_.host         = this;
+    svc_.log = [](void* h, uint8_t lvl, uint32_t code,
+                  const void* args, uint32_t len) {
+        self(h)->log(lvl, code, args, len);
+    };
+    svc_.diag_counter = [](void* h, uint32_t id, int64_t delta) {
+        self(h)->diagCounter(id, delta);
+    };
+    svc_.steady_ns = [](void* h) { return self(h)->steadyNs(); };
+    svc_.retain_dirty = [](void* h, uint64_t off, uint64_t len) {
+        self(h)->retainDirty(off, len);
+    };
+    svc_.raise_event = [](void* h, uint32_t mask) {
+        return self(h)->raiseEvent(mask);
+    };
+    svc_.get_service = [](void* h, const char* name, uint32_t len) {
+        return self(h)->getService(name, len);
+    };
+}
+
+void HostServices::log(uint8_t level, uint32_t code, const void* args,
+                       uint32_t len) {
+    log_count_++;
+    if (log_fn_) { log_fn_(level, code, args, len); return; }
+    fprintf(stderr, "[tplc log lvl=%u code=%u]", level, code);
+    if (args && len) {
+        const uint8_t* b = static_cast<const uint8_t*>(args);
+        fprintf(stderr, " args=");
+        for (uint32_t i = 0; i < len && i < 24; i++)
+            fprintf(stderr, "%02x", b[i]);
+    }
+    fputc('\n', stderr);
+}
+
+void HostServices::diagCounter(uint32_t id, int64_t delta) {
+    diag_[id] += delta;
+}
+
+uint64_t HostServices::steadyNs() const { return mono_ns(); }
+
+void HostServices::retainDirty(uint64_t off, uint64_t len) {
+    retain_dirty_.emplace_back(off, len);
+}
+
+int32_t HostServices::raiseEvent(uint32_t) {
+    return -1;  /* EVENT tasks unimplemented in v1 */
+}
+
+void* HostServices::getService(const char*, uint32_t) {
+    return nullptr;  /* named services: none yet (trace.* later) */
+}
+
+} /* namespace tplc */

@@ -1,0 +1,1 @@
+TPLC_MODULE_1 { global: tplc_*; local: *; };
