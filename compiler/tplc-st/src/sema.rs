@@ -119,6 +119,21 @@ impl<'e> Checker<'e> {
         self.diags.push(Diag::error(code, msg, p.clone()));
     }
 
+    /// closest declared name within edit-distance 2 (case-insensitive)
+    fn did_you_mean(&self, name: &str) -> Option<String> {
+        let cand = |n: &str| -> Option<usize> {
+            let d = levenshtein(&name.to_ascii_lowercase(), &n.to_ascii_lowercase());
+            (d <= 2).then_some(d)
+        };
+        self.scope
+            .vars
+            .keys()
+            .chain(self.scope.gvls.keys())
+            .filter_map(|n| cand(n).map(|d| (d, n.clone())))
+            .min_by_key(|(d, _)| *d)
+            .map(|(_, n)| n)
+    }
+
     /// Type of a declared var name (case-insensitive).
     fn var_ty(&self, name: &str) -> Option<Type> {
         self.scope
@@ -128,7 +143,7 @@ impl<'e> Checker<'e> {
     }
 
     /// Resolve a Ref chain → its type; canonicalizes Var case in place.
-    fn ref_ty(&mut self, r: &mut Ref) -> Option<Type> {
+    fn ref_ty(&mut self, r: &mut Ref, prov: &Prov) -> Option<Type> {
         match r {
             Ref::Var(name) => {
                 if let Some(decl) =
@@ -151,16 +166,20 @@ impl<'e> Checker<'e> {
                     // enum element `GREEN` — expr() rewrites to ordinal
                     Some(Type::Int { signed: true, bits: 32 })
                 } else {
-                    self.err(
+                    let mut d = Diag::error(
                         codes::UNKNOWN_NAME,
                         format!("undeclared name {name}"),
-                        &Prov::None,
+                        prov.clone(),
                     );
+                    if let Some(sug) = self.did_you_mean(name) {
+                        d = d.with_help(format!("did you mean `{sug}`?"));
+                    }
+                    self.diags.push(d);
                     None
                 }
             }
             Ref::Field(base, name) => {
-                let bt = self.ref_ty(base)?;
+                let bt = self.ref_ty(base, prov)?;
                 match &bt {
                     Type::Fb { name: fbname } => {
                         if let Some(pou) =
@@ -212,7 +231,7 @@ impl<'e> Checker<'e> {
                 }
             }
             Ref::Index(base, idx) => {
-                let bt = self.ref_ty(base)?;
+                let bt = self.ref_ty(base, prov)?;
                 self.expr(idx);
                 if let Type::Array { elem, lo, hi } = &bt {
                     let (lo, hi) = (*lo, *hi);
@@ -248,7 +267,7 @@ impl<'e> Checker<'e> {
                         }
                     }
                 }
-                self.ref_ty(r).unwrap_or(Type::Bool)
+                self.ref_ty(r, &e.prov).unwrap_or(Type::Bool)
             }
             ExprKind::Un(op, a) => {
                 let t = self.expr(a);
@@ -350,7 +369,7 @@ impl<'e> Checker<'e> {
     fn stmt(&mut self, s: &mut Stmt) {
         match &mut s.kind {
             StmtKind::Assign { lhs, rhs } => {
-                let lt = self.ref_ty(lhs);
+                let lt = self.ref_ty(lhs, &s.prov);
                 let rt = self.expr(rhs);
                 if let Some(lt) = lt {
                     self.coerce(rhs, &rt, &lt);
@@ -413,7 +432,7 @@ impl<'e> Checker<'e> {
                 }
             }
             StmtKind::Call { inst, args } => {
-                let it = self.ref_ty(inst);
+                let it = self.ref_ty(inst, &s.prov);
                 let fbname = match &it {
                     Some(Type::Fb { name }) => Some(name.clone()),
                     _ => None,
@@ -542,4 +561,22 @@ fn unify_num(a: &Type, b: &Type) -> Type {
         return a.clone();
     }
     Type::Int { signed: true, bits: 32 }
+}
+
+/// classic DP edit distance (did-you-mean)
+fn levenshtein(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            cur.push(
+                (prev[j] + usize::from(ca != cb))
+                    .min(prev[j + 1] + 1)
+                    .min(cur[j] + 1),
+            );
+        }
+        prev = cur;
+    }
+    prev[b.len()]
 }

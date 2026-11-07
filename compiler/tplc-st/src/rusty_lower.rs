@@ -485,6 +485,7 @@ pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
                 severity: Severity::Error,
                 message: d.get_message().to_string(),
                 help: None,
+                notes: Vec::new(),
                 span: mir::Prov::St {
                     file: file_id as u32,
                     offset: 0,

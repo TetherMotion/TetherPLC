@@ -44,10 +44,18 @@ fn read_srcs(files: &[String]) -> Vec<(String, String)> {
         .collect()
 }
 
-fn print_diags(diags: &[tplc_st::Diag]) -> usize {
+fn print_diags(diags: &[tplc_st::Diag], srcs: &[(String, String)]) -> usize {
     let mut errs = 0;
     for d in diags {
-        eprintln!("{:?} [{}] {}", d.severity, d.code, d.message);
+        // resolve Prov::St{file} → (name,text); unknown file → first
+        let (name, text) = match d.span {
+            tplc_mir::ir::Prov::St { file, .. } => srcs
+                .get(file as usize)
+                .map(|(n, t)| (n.as_str(), t.as_str()))
+                .unwrap_or(("<src>", "")),
+            _ => ("<src>", ""),
+        };
+        eprintln!("{}", d.render(name, text));
         if d.severity == tplc_st::Severity::Error {
             errs += 1;
         }
@@ -60,9 +68,9 @@ fn cmd_check(files: &[String]) -> ExitCode {
     let refs: Vec<(&str, &str)> =
         srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
     let mut out = tplc_st::compile(&refs);
-    let mut errs = print_diags(&out.diags);
+    let mut errs = print_diags(&out.diags, &srcs);
     if errs == 0 {
-        errs += print_diags(&tplc_st::sema::check(&mut out.module));
+        errs += print_diags(&tplc_st::sema::check(&mut out.module), &srcs);
     }
     if errs > 0 {
         eprintln!("{errs} error(s)");
@@ -95,9 +103,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let refs: Vec<(&str, &str)> =
         srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
     let mut out = tplc_st::compile(&refs);
-    let mut errs = print_diags(&out.diags);
+    let mut errs = print_diags(&out.diags, &srcs);
     if errs == 0 {
-        errs += print_diags(&tplc_st::sema::check(&mut out.module));
+        errs += print_diags(&tplc_st::sema::check(&mut out.module), &srcs);
     }
     if errs > 0 {
         eprintln!("{errs} error(s)");
