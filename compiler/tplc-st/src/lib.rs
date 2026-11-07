@@ -6,6 +6,7 @@
 //! escape this crate.
 
 pub mod diag;
+pub mod sema;
 
 #[cfg(feature = "rusty")]
 mod rusty_lower;

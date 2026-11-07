@@ -33,6 +33,11 @@ fn st_to_mir_to_blob_execution() {
     assert!(!out.has_errors(), "diags: {:?}", out.diags);
     assert_eq!(out.module.pous.len(), 2);
 
+    // P1-03 sema: names/types/conversions/call-shape on mutable module
+    let mut module = out.module;
+    let sdiags = tplc_st::sema::check(&mut module);
+    assert!(sdiags.is_empty(), "sema diags: {sdiags:?}");
+
     // io_bindings: sensor→%IW0.0, running→%QX0.0
     assert_eq!(out.io_bindings.len(), 2);
     let sensor = out.io_bindings.iter().find(|b| b.name == "MAIN.sensor").unwrap();
@@ -42,10 +47,10 @@ fn st_to_mir_to_blob_execution() {
     assert_eq!(running.at.region, mir::AtRegion::Q);
 
     // layout + execute 20 cycles @ 10ms: TON fires at 100ms
-    let program = out.module.pous.iter().find(|p| p.name == "MAIN").unwrap();
-    let layout = mir::layout_program(&out.module, program);
+    let program = module.pous.iter().find(|p| p.name == "MAIN").unwrap();
+    let layout = mir::layout_program(&module, program);
     let mut blob = vec![0u8; layout.total_size as usize];
-    let mut rt = mir::Rt::new(&mut blob, &layout, &out.module, 0);
+    let mut rt = mir::Rt::new(&mut blob, &layout, &module, 0);
     let ctx = mir::interp::program_ctx(&layout);
     rt.write_field("sensor", &mir::Value::I(7));
     let stmts = match &program.body {
@@ -63,4 +68,22 @@ fn st_to_mir_to_blob_execution() {
     assert_eq!(rt.read_ref(&ctx, &ton_q), mir::Value::Bool(true));
     assert_eq!(rt.read_field("running"), mir::Value::Bool(true));
     assert_eq!(rt.read_field("ticks"), mir::Value::U(20));
+}
+
+#[test]
+fn sema_catches_undeclared_and_bad_args() {
+    let bad = r#"
+PROGRAM P
+VAR x : INT; END_VAR
+    y := x + 1;
+END_PROGRAM
+"#;
+    let out = compile(&[("bad.st", bad)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        diags.iter().any(|d| d.code == tplc_st::codes::UNKNOWN_NAME
+            && d.message.contains('y')),
+        "expected undeclared-name diag, got {diags:?}"
+    );
 }
