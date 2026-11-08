@@ -200,4 +200,15 @@ if(NOT CMAKE_CROSSCOMPILING)
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/sanitizers.sh)
   set_tests_properties(sanitizers PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 600)
+
+  # differential fuzz vs the matiec oracle (doc 14 §3): downloads and
+  # builds iec2c into a cache outside the repo on first run (subprocess
+  # oracle only — never linked or vendored)
+  add_test(NAME matiec_fuzz
+    COMMAND bash -c
+      "bash ${CMAKE_SOURCE_DIR}/tools/oracle-matiec/ensure_matiec.sh >/dev/null \
+       || exit 77; \
+       python3 ${CMAKE_SOURCE_DIR}/tools/oracle-matiec/diff_fuzz.py")
+  set_tests_properties(matiec_fuzz PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 900)
 endif()

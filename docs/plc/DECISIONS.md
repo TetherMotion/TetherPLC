@@ -210,3 +210,30 @@ pull LLVM-21. Local builds need an LLVM-21 prefix (this machine uses
 P1-05 chose **inkwell 0.9 + `llvm21-1`** over textual-IR/`llc` subprocess: (a) ruSTy's dep tree already proves it builds against our LLVM-21 prefix; (b) JIT via `create_execution_engine` gives in-process verification (the e2e test executes `tplc_init`/`tplc_task_run` against a fake ABI ctx — no subprocess, no .so round-trip); (c) bitcode emission for the package comes free. Gated behind `tplc-codegen`'s `llvm` cargo feature — default workspace stays LLVM-free for CI. Dev-env: `LLVM_SYS_211_PREFIX` + `PATH` pointing at an extracted `llvm-21` prefix.
 
 Litmus in `tests/llvm_e2e.rs`: WHILE-loop execution, extern `__tplc_rt_TON` host-mapping (the tplc-rt link seam), TON.Q at 500 ms via `ctx->now_ns`, `abort_flag` → rc −1, and an `inttoptr`-free guarantee (all program state addressed `blob+const_off`).
+
+## D-IMPL-17 — builtin-FB semantics vs matiec oracle: two recorded deltas
+
+The oracle-matiec differential fuzz (`tools/oracle-matiec/diff_fuzz.py`)
+found two systematic deltas between our builtin FB semantics and
+matiec's (which follows the IEC 61131-3 reference bodies literally):
+
+1. **F_TRIG initial state.** matiec's body is `Q := NOT CLK AND NOT M;
+   M := NOT CLK` with `M` init `FALSE` — so the first scan with
+   `CLK=FALSE` reports a falling edge (assumed-prior `CLK=TRUE`). Ours
+   stores `__clk_last := CLK` (init `FALSE`) and reports no edge.
+   Ours is kept: a phantom edge pulse on a quiet input at startup is the
+   worse default for machine control. R_TRIG inits agree in both.
+2. **Counter CV clamp.** matiec clamps `CV` to `[0, PV]` on CTU/CTD/CTUD
+   (increment guarded by `CV<PV`, decrement by `CV>0`, `ELSE`-chained);
+   ours applies both edges with `saturating_add/sub` against INT range
+   only, so `CV` can exceed `PV` or go below 0. `QU`/`QD` read-outs are
+   identical within `[0,PV]`; `CV` itself and `QD`-at-boundary traces
+   can differ. Recorded as a known delta; aligning our clamp to the IEC
+   reference body is an open option, not done here.
+
+Status: documented known divergences (`known_divergences.txt`), not
+defects of record. Everything else in the fuzz subset — bool/int
+expressions, IF/ELSIF/ELSE, SR/RS dominance, R_TRIG/F_TRIG steady
+state, TON/TOF/TP under injected `__CURRENT_TIME`, located-I/O byte
+semantics — agreed on all generated cases (seeds 0–1, 42 cases,
+~30 cycles each).

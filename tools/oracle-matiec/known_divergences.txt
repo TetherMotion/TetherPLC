@@ -1,0 +1,19 @@
+# known_divergences.txt — triaged semantic deltas between the L1
+# interpreter and the matiec oracle. One vector id per line; the comment
+# names the understood reason (see docs/plc/DECISIONS.md D-IMPL-17).
+# Unknown ids fail diff_fuzz.
+#
+# Two delta classes found so far:
+#
+#   F_TRIG init   matiec stores M := NOT CLK (init FALSE), so at the
+#                 first scan with CLK=FALSE it reports a falling edge
+#                 from an assumed-prior-TRUE. Ours stores __clk_last =
+#                 CLK (init FALSE) and reports none. R_TRIG inits agree.
+#   counter clamp matiec CTU/CTD/CTUD clamp CV to [0,PV]; ours lets CV
+#                 run past PV / below 0 (saturation only at INT range).
+#
+mfuzz.s0.c0   # F_TRIG init: Q on first scan with CLK=false
+mfuzz.s0.c3   # F_TRIG init pulse feeding CTUD.CD (same root cause)
+mfuzz.s1.c2   # CTD clamp: CV floored at 0 vs ours below-zero count
+mfuzz.s1.c8   # F_TRIG init
+mfuzz.s1.c22  # F_TRIG init
