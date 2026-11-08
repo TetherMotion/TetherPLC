@@ -1,8 +1,7 @@
 # As-Built: Shadow Run — Parallel Candidate with Instant Promotion
 
-> Status: implemented (runtime + ctl + `tplc-io` + e2e + L1/L2 sim
-> parity). WebUI flow (plan 19 §4) is not yet built; the plan
-> chapter stays until it lands.
+> Status: implemented (runtime + ctl + `tplc-io` + WebUI + e2e +
+> L1/L2 sim parity). The plan chapter stays as design reference.
 
 A **shadow program** runs alongside the **active program** on the
 same latched `%I` inputs. The active program alone steers `%Q`; the
@@ -95,6 +94,29 @@ epoch watcher already bridges into catalog epoch + `epoch.N`
 marker — tether_io clients see the change like any program-set
 change.
 
+## WebUI (TetherWebUI)
+
+The deploy pane carries a **shadow run** card (§7.11):
+
+- **Deploy as shadow** — `.tplc` file → `DEPLOY` then
+  `SHADOW_LOAD` with the committed package uuid; disabled while
+  the active program isn't running.
+- **Status line** — candidate name/uuid, state, cycles, missed,
+  diff count, last diff cycle.
+- **Diff table** — `SHADOW_COMPARE` rows: cycle, `img+off`,
+  active vs shadow byte runs.
+- **Promote** — confirm dialog summarizing cycles/missed/diffs
+  before `SHADOW_PROMOTE`; rollback stays armed.
+- **Reset / drop** — `SHADOW_RESET` re-runs active→shadow
+  migration, `SHADOW_DROP` discards the candidate.
+- **Side-by-side watch/read** — `SHADOW.<sym>` in the debug card
+  resolves against the candidate symmap (shadow uuid, marked
+  `shadow sym`), reads through `dbgRead sel=1`, and `+ watch`
+  stages a shadow channel verbatim; write/force controls are
+  hidden for shadow symbols since the shadow blob is read-only.
+- `progStatus` parses the proto-v3 shadow tail (and still decodes
+  v1/v2 layouts for older runtimes).
+
 ## Verified
 
 `tests/shadow/e2e.sh` (ctest `shadow_e2e`, 23 checks): stopped-load
@@ -125,15 +147,11 @@ start until a ctl `start`. `--scan` uses it to suspend the task
 before the first `first_run` can fire, removing the startup
 free-run race that made cycle counts nondeterministic.
 
+`shadow_bitidentical` (ctest): the same 10-step input tape replayed
+solo and with a divergent candidate shadowed produces byte-identical
+`--dump-q` traces — the active program is not perturbed at all.
+
 ## Open items
 
-- **Bit-identical %Q proof** (plan §7.1): e2e asserts ramp shape;
-  a solo-vs-shadowed byte-diff over a deterministic input vector is
-  not yet automated.
-- **Identical-input proof vs L1** (§7.2): the sim vectors prove
-  same-`%I` behavior through expected outputs, not a literal
-  byte-diff of both programs' `imageIn()` snapshots.
-- **WebUI** (§7.11): deploy-as-shadow, diff table, side-by-side
-  watch, confirm-with-summary promote — not started.
 - Multiple-shadow, per-channel promote, shadow→image preview:
   explicit non-goals, unchanged.

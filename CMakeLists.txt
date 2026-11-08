@@ -415,6 +415,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(sim_shadow PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
+  # doc 19 §7.1: a shadowed active produces byte-identical %Q to a
+  # solo run on the same tape
+  add_test(NAME shadow_bitidentical
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/shadow/bitidentical.sh)
+  set_tests_properties(shadow_bitidentical PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # no-alloc property (doc 14 §5): LD_PRELOAD counter — steady-state
   # scans must not hit the heap
   add_test(NAME no_alloc

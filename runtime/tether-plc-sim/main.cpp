@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -136,7 +137,7 @@ static bool parse_steps(const std::string& path,
 
 int main(int argc, char** argv) {
     std::string image_path, pkg_path, steps_path, plc_bin;
-    std::string shadow_pkg, ctl_path = "none";
+    std::string shadow_pkg, dump_q_path, ctl_path = "none";
     uint32_t in_size = 64, out_size = 64;
     int wait_running_ms = 5000;
     int hold_ms = 0;
@@ -150,6 +151,7 @@ int main(int argc, char** argv) {
         else if (a == "--plc")    plc_bin     = argv[++i];
         else if (a == "--ctl")    ctl_path    = argv[++i];
         else if (a == "--shadow") shadow_pkg  = argv[++i];
+        else if (a == "--dump-q") dump_q_path = argv[++i];
         else if (a == "--hold-ms") hold_ms    = atoi(argv[++i]);
         else if (a == "--settle-ms") settle_ms = atoi(argv[++i]);
         else if (a == "--scan")   scan_mode  = 1;
@@ -159,7 +161,7 @@ int main(int argc, char** argv) {
             fprintf(stderr,
                 "usage: %s --image X --package P --steps F "
                 "[--plc PATH] [--ctl PATH] [--shadow PKG] "
-                "[--in N] [--out N] "
+                "[--in N] [--out N] [--dump-q FILE] "
                 "[--scan] [--settle-ms N] [--hold-ms N]\n",
                 argv[0]);
             return 0;
@@ -258,6 +260,15 @@ int main(int argc, char** argv) {
            so ctl clients can arm watches/traces before the scenario
            runs                                                    */
         if (settle_ms > 0) usleep((useconds_t)settle_ms * 1000);
+        std::ofstream dump_q;
+        if (!dump_q_path.empty()) {
+            dump_q.open(dump_q_path);
+            if (!dump_q) {
+                fprintf(stderr, "sim: cannot open %s\n",
+                        dump_q_path.c_str());
+                goto out;
+            }
+        }
         std::vector<uint8_t> obuf(out_size);
         for (auto& s : steps) {
             if (g_stop) break;
@@ -328,6 +339,13 @@ int main(int argc, char** argv) {
                         s.idx, rc2);
                 divergent++;
                 continue;
+            }
+            if (dump_q) {
+                dump_q << "step " << s.idx << " ";
+                for (uint32_t j = 0; j < out_size; j++)
+                    dump_q << std::hex << std::setw(2)
+                           << std::setfill('0') << (int)obuf[j];
+                dump_q << "\n";
             }
             for (auto& [off, exp] : s.expect) {
                 if (off + exp.size() > out_size) continue;

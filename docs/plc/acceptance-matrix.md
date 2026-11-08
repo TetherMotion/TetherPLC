@@ -69,9 +69,9 @@ swap injects no measurable pause, watchdog trip+escalation verified.
 | epoch/events on promote | `shadow_e2e` (epoch reply) + `tplc_io_attach` (catalog epoch follows mgmt epoch) | green |
 | gating: observer 401 on mutating ops | `shadow_e2e` observer section | green |
 | lifecycle: stop/swap/unload/prepare drops; stopped-load → -501 | `shadow_e2e` (swap drop, stopped refusal, drop journal) | green |
-| bit-identical `%Q` vs solo run (§7.1) | not automated | gap |
+| bit-identical `%Q` vs solo run (§7.1) | `shadow_bitidentical` (solo vs shadowed `--dump-q` traces, 10 steps byte-identical) | green |
 | sim parity L1/L2 (§7.10) | `sim_shadow` (L1 `shadow` vector key + L2 `--shadow`/directives; deterministic via `--stopped`) | green |
-| UI flow (§7.11) | not implemented | gap |
+| UI flow (§7.11) | TetherWebUI shadow card: deploy-as-shadow, diff table, `SHADOW.` watch/read, confirm-with-summary promote, drop/reset | green |
 
 ## Pending chapters (not yet implemented — spec exists)
 
