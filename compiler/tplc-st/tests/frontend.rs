@@ -135,6 +135,57 @@ END_PROGRAM
                 && d.message.contains("STRING comparison")),
         "expected ordered-string diag, got {diags:?}"
     );
+
+    // WSTRING is its own type: wide literals assign, mixed narrow/wide
+    // does not, and ordered compares are rejected the same way
+    let wok = r#"
+PROGRAM P
+VAR w : WSTRING[16]; w2 : WSTRING[16]; eq : BOOL; END_VAR
+    w := "abc";
+    w2 := w;
+    eq := (w = "abc");
+END_PROGRAM
+"#;
+    let out = compile(&[("wok.st", wok)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        !diags.iter().any(|d| d.severity == tplc_st::Severity::Error),
+        "WSTRING sema errors: {diags:?}"
+    );
+
+    let wmix = r#"
+PROGRAM P
+VAR w : WSTRING[16]; s : STRING[16]; END_VAR
+    s := "abc";
+END_PROGRAM
+"#;
+    let out = compile(&[("wmix.st", wmix)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == tplc_st::codes::TYPE),
+        "expected wide→narrow mismatch, got {diags:?}"
+    );
+
+    let wlt = r#"
+PROGRAM P
+VAR w : WSTRING[16]; lt : BOOL; END_VAR
+    lt := (w < "b");
+END_PROGRAM
+"#;
+    let out = compile(&[("wlt.st", wlt)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == tplc_st::codes::TYPE
+                && d.message.contains("STRING comparison")),
+        "expected ordered-wide diag, got {diags:?}"
+    );
 }
 
 #[test]

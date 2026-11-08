@@ -113,7 +113,7 @@ impl Ctx {
             "LREAL" => mir::Type::Real { bits: 64 },
             "TIME" | "LTIME" | "DATE" | "TOD" | "DT" => mir::Type::Time,
             "STRING" => mir::Type::Str { cap: 80 },
-            "WSTRING" => mir::Type::Str { cap: 160 },
+            "WSTRING" => mir::Type::WStr { cap: 160 },
             _ => {
                 if let Some(t) = self.user_types.get(name) {
                     return t.clone();
@@ -147,9 +147,15 @@ impl Ctx {
                     hi,
                 }
             }
-            DataType::StringType { size, .. } => mir::Type::Str {
-                cap: size.as_ref().map(|s| lit_int(s) as u16).unwrap_or(80),
-            },
+            DataType::StringType { is_wide, size, .. } => {
+                let cap = size.as_ref().map(|s| lit_int(s) as u16)
+                    .unwrap_or(if *is_wide { 160 } else { 80 });
+                if *is_wide {
+                    mir::Type::WStr { cap }
+                } else {
+                    mir::Type::Str { cap }
+                }
+            }
             DataType::SubRangeType {
                 referenced_type, ..
             } => {
@@ -218,6 +224,9 @@ impl Ctx {
                 AstLiteral::Time(t) => {
                     let ns = t.nanos as i64;
                     mir::ExprKind::Lit(mir::Lit::TimeNs(if t.negative { -ns } else { ns }))
+                }
+                AstLiteral::String(s) if s.is_wide => {
+                    mir::ExprKind::Lit(mir::Lit::WStr(s.value.clone()))
                 }
                 AstLiteral::String(s) => mir::ExprKind::Lit(mir::Lit::Str(s.value.clone())),
                 _ => {

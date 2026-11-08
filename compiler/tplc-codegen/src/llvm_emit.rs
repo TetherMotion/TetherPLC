@@ -113,6 +113,7 @@ fn llty<'c>(ctx: &'c Context, t: &Type) -> BasicTypeEnum<'c> {
         Type::Real { .. } => ctx.f64_type().into(),
         Type::Time | Type::Enum { .. } => ctx.i64_type().into(),
         Type::Str { cap } => ctx.i8_type().array_type(1 + *cap as u32).into(),
+        Type::WStr { cap } => ctx.i16_type().array_type(1 + *cap as u32).into(),
         _ => ctx.i8_type().into(), // aggregates addressed, not valued
     }
 }
@@ -248,6 +249,8 @@ impl<'ctx> Gen<'ctx> {
             // source array may differ in width (literal cap vs target
             // cap): rebuild to the target width, zero-padding/truncating
             self.str_fit(v, 1 + *cap as u32)
+        } else if let Type::WStr { cap } = &ty {
+            self.str_fit(v, 1 + *cap as u32)
         } else {
             v
         };
@@ -265,10 +268,10 @@ impl<'ctx> Gen<'ctx> {
         if have == want {
             return av.into();
         }
-        let i8t = self.ctx.i8_type();
+        let elem = av.get_type().get_element_type().into_int_type();
         let zeros: Vec<inkwell::values::IntValue<'ctx>> =
-            vec![i8t.const_zero(); want as usize];
-        let mut acc = i8t.const_array(&zeros);
+            vec![elem.const_zero(); want as usize];
+        let mut acc = elem.const_array(&zeros);
         for i in 0..want.min(have) {
             let el = self.b.build_extract_value(av, i, "se").unwrap();
             acc = self
@@ -313,6 +316,26 @@ impl<'ctx> Gen<'ctx> {
                             els.push(i8t.const_zero());
                         }
                         i8t.const_array(&els).into()
+                    }
+                    Lit::WStr(s) => {
+                        // WSTRING literal → [1+cap x i16] {len, units, 0…}
+                        let cap = match &e.ty {
+                            Type::WStr { cap } => *cap as usize,
+                            _ => s.encode_utf16().count(),
+                        };
+                        let i16t = self.ctx.i16_type();
+                        let units: Vec<u16> = s.encode_utf16().collect();
+                        let n = units.len().min(cap);
+                        let mut els: Vec<inkwell::values::IntValue<'ctx>> =
+                            Vec::with_capacity(1 + cap);
+                        els.push(i16t.const_int(n as u64, false));
+                        for u in units.iter().take(n) {
+                            els.push(i16t.const_int(*u as u64, false));
+                        }
+                        while els.len() < 1 + cap {
+                            els.push(i16t.const_zero());
+                        }
+                        i16t.const_array(&els).into()
                     }
                 }
             }
@@ -518,12 +541,13 @@ impl<'ctx> Gen<'ctx> {
         // shorter string (sema rejects ordered compares). Unrolled —
         // caps are small and this keeps the scan path libc-free.
         if matches!(op, Eq | Ne)
-            && (matches!(a.ty, Type::Str { .. }) || matches!(b.ty, Type::Str { .. }))
+            && (matches!(a.ty, Type::Str { .. } | Type::WStr { .. })
+                || matches!(b.ty, Type::Str { .. } | Type::WStr { .. }))
         {
             let av = self.expr(ctx, a).into_array_value();
             let bv = self.expr(ctx, b).into_array_value();
             let cap = av.get_type().len().min(bv.get_type().len()) as usize;
-            let i8t = self.ctx.i8_type();
+            let elem = av.get_type().get_element_type().into_int_type();
             let la = self.b.build_extract_value(av, 0, "la").unwrap().into_int_value();
             let lb = self.b.build_extract_value(bv, 0, "lb").unwrap().into_int_value();
             let mut neq = self
@@ -534,7 +558,7 @@ impl<'ctx> Gen<'ctx> {
                 let ca = self.b.build_extract_value(av, i as u32, "ca").unwrap().into_int_value();
                 let cb = self.b.build_extract_value(bv, i as u32, "cb").unwrap().into_int_value();
                 let d = self.b.build_int_compare(IntPredicate::NE, ca, cb, "cd").unwrap();
-                let idx = i8t.const_int((i - 1) as u64, false);
+                let idx = elem.const_int((i - 1) as u64, false);
                 let ina = self.b.build_int_compare(IntPredicate::ULT, idx, la, "ia").unwrap();
                 let inb = self.b.build_int_compare(IntPredicate::ULT, idx, lb, "ib").unwrap();
                 let act = self.b.build_and(ina, inb, "act").unwrap();

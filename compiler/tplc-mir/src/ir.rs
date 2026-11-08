@@ -29,6 +29,11 @@ pub enum Type {
     Str {
         cap: u16,
     },
+    /// WSTRING(cap): blob = u16 len + u16 data[cap] (UTF-16 code
+    /// units), 2 + 2*cap rounded to 2
+    WStr {
+        cap: u16,
+    },
     Array {
         elem: Box<Type>,
         lo: i64,
@@ -57,6 +62,7 @@ impl Type {
             Type::Real { bits } => (*bits as u64) / 8,
             Type::Time => 8,
             Type::Str { cap } => align2(1 + *cap as u64),
+            Type::WStr { cap } => align2(2 + 2 * *cap as u64),
             Type::Array { elem, lo, hi } => elem.size() * (*hi - *lo + 1).max(0) as u64,
             Type::Struct { fields, .. } => {
                 let mut sz = 0u64;
@@ -74,7 +80,7 @@ impl Type {
             Type::Bool => 1,
             Type::Int { bits, .. } | Type::Real { bits } => ((*bits as u64) / 8).min(8),
             Type::Time => 8,
-            Type::Str { .. } => 2,
+            Type::Str { .. } | Type::WStr { .. } => 2,
             Type::Array { elem, .. } => elem.align(),
             Type::Struct { fields, .. } => fields.iter().map(|(_, t)| t.align()).max().unwrap_or(1),
             Type::Enum { .. } => 4,
@@ -258,6 +264,9 @@ pub enum Lit {
     Real(f64),
     TimeNs(i64),
     Str(String),
+    /// wide string literal — encoded to UTF-16 code units at
+    /// interp/codegen (never stored as narrow bytes)
+    WStr(String),
     EnumVal { ty: String, val: String },
 }
 

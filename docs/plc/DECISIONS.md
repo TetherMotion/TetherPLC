@@ -317,3 +317,24 @@ fail. Covered by `str.compare` (oracle vector: L1 + sim parity) and
 
 **Still open:** `WSTRING` remains a narrow `STRING(160)`; true UTF-16
 (`u16` len + `u16[cap]`) is the iteration-2 dialect item.
+
+## D-IMPL-23 — `WSTRING` is a real UTF-16 type (iteration-2 dialect item)
+
+**Before:** `WSTRING` lowered to a narrow `Str { cap: 160 }`, so wide
+literals and code units were silently reinterpreted as bytes.
+**Implemented:** `Type::WStr { cap }` — blob = `u16 len` + `u16[cap]`
+UTF-16 code units (surrogate pairs preserved), TYPC tag 16; wide
+literals (`AstLiteral::String.is_wide`) become `Lit::WStr`; sema types
+them `WStr { cap: code-unit count }`, keeps `=`/`<>`-only compares,
+and rejects narrow↔wide assignment (`TPLC_E_ST_TYPE`). Codegen
+materializes i16 arrays and reuses the shared array-fit/compare paths;
+the L1 interpreter stores `Value::WStr(Vec<u16>)` and compares
+lexicographically.
+
+Coverage: `wstr.compare` (L1 + sim parity) and
+`wide_string_is_utf16_through_jit` (non-ASCII `aä€` encoding, cross-cap
+store, equality).
+
+**Deliberately not done:** string functions (`LEN`/`CONCAT`/…) and
+`STRING`↔`WSTRING` explicit casts — no builtin string op exists yet in
+either engine; the type system is ready for them.

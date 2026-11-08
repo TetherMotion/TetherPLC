@@ -58,6 +58,7 @@ pub fn convertible(a: &Type, b: &Type) -> bool {
             | (Type::Enum { .. }, Type::Int { .. })
             | (Type::Int { .. }, Type::Enum { .. })
             | (Type::Str { .. }, Type::Str { .. })
+            | (Type::WStr { .. }, Type::WStr { .. })
     )
 }
 

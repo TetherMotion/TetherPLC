@@ -21,6 +21,8 @@ pub enum Value {
     F(f64),
     Time(i64), // ns
     Str(Vec<u8>),
+    /// wide string: UTF-16 code units
+    WStr(Vec<u16>),
 }
 
 impl Value {
@@ -34,7 +36,7 @@ impl Value {
             Value::F(v) => *v as i64,
             Value::Time(v) => *v,
             Value::Bool(v) => *v as i64,
-            Value::Str(_) => 0,
+            Value::Str(_) | Value::WStr(_) => 0,
         }
     }
     pub fn as_f64(&self) -> f64 {
@@ -147,6 +149,16 @@ impl<'a> Rt<'a> {
                 let len = (b[0] as usize).min(*cap as usize);
                 Value::Str(b[1..1 + len].to_vec())
             }
+            Type::WStr { cap } => {
+                let len = (u16::from_le_bytes([b[0], b[1]]) as usize)
+                    .min(*cap as usize);
+                let mut v = Vec::with_capacity(len);
+                for i in 0..len {
+                    let o = 2 + i * 2;
+                    v.push(u16::from_le_bytes([b[o], b[o + 1]]));
+                }
+                Value::WStr(v)
+            }
             Type::Enum { .. } => Value::I(i32::from_le_bytes(b[..4].try_into().unwrap()) as i64),
             _ => Value::I(0), // aggregates accessed fieldwise
         }
@@ -215,6 +227,18 @@ impl<'a> Rt<'a> {
                 let n = (*cap as usize).min(s.len());
                 b[0] = n as u8;
                 b[1..1 + n].copy_from_slice(&s[..n]);
+            }
+            (Type::WStr { cap }, Value::WStr(s)) => {
+                let n = (*cap as usize).min(s.len());
+                b[..2].copy_from_slice(&(n as u16).to_le_bytes());
+                for i in 0..n {
+                    let o = 2 + i * 2;
+                    b[o..o + 2].copy_from_slice(&s[i].to_le_bytes());
+                }
+                for i in n..*cap as usize {
+                    let o = 2 + i * 2;
+                    b[o..o + 2].copy_from_slice(&0u16.to_le_bytes());
+                }
             }
             (Type::Enum { .. }, Value::I(x)) => b[..4].copy_from_slice(&(*x as i32).to_le_bytes()),
             _ => {}
@@ -314,6 +338,7 @@ impl<'a> Rt<'a> {
                 Lit::Real(v) => Value::F(*v),
                 Lit::TimeNs(v) => Value::Time(*v),
                 Lit::Str(s) => Value::Str(s.as_bytes().to_vec()),
+                Lit::WStr(s) => Value::WStr(s.encode_utf16().collect()),
                 Lit::EnumVal { val, .. } => Value::I(val.parse().unwrap_or(0)),
             },
             ExprKind::Ref(r) => self.read_ref(ctx, r),
@@ -794,6 +819,11 @@ fn cmp(l: &Value, r: &Value) -> i8 {
     }
     match (l, r) {
         (Value::Bool(a), Value::Bool(b)) => (*a as i8) - (*b as i8),
+        (Value::WStr(a), Value::WStr(b)) => match a.cmp(b) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
+        },
         (Value::Str(a), Value::Str(b)) => {
             // lexicographic over bytes (IEC defines =/<> only; the
             // ordering is what a memcmp-style engine would produce)

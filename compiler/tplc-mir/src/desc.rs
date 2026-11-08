@@ -97,6 +97,7 @@ fn tag_of(ty: &Type) -> u8 {
         Type::Real { bits: 64 } => 10,
         Type::Time => 11,
         Type::Str { .. } => 15,
+        Type::WStr { .. } => 16, /* UTF-16 wide string */
         Type::Array { .. } => 18,
         Type::Struct { .. } => 19,
         Type::Enum { .. } => 20,

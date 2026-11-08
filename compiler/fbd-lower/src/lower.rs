@@ -69,6 +69,7 @@ fn lit_ty(l: &Lit) -> Type {
         Lit::Real(_) => Type::Real { bits: 64 },
         Lit::TimeNs(_) => Type::Time,
         Lit::Str(_) => Type::Str { cap: 81 },
+        Lit::WStr(_) => Type::WStr { cap: 160 },
         Lit::EnumVal { ty, .. } => Type::Enum {
             name: ty.clone(),
             values: vec![],

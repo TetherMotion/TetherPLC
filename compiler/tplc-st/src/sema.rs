@@ -306,6 +306,9 @@ impl<'e> Checker<'e> {
                 Lit::Str(s) => Type::Str {
                     cap: s.len().max(1) as u16,
                 },
+                Lit::WStr(s) => Type::WStr {
+                    cap: s.encode_utf16().count().max(1) as u16,
+                },
                 Lit::EnumVal { .. } => Type::Int {
                     signed: true,
                     bits: 32,
@@ -353,8 +356,14 @@ impl<'e> Checker<'e> {
                         // STRING supports =/<> only (IEC 61131-3); an
                         // ordered compare or a mixed-type compare is a
                         // type error rather than a codegen surprise
-                        let str_l = matches!(ta, Type::Str { .. });
-                        let str_r = matches!(tb, Type::Str { .. });
+                        let str_l = matches!(
+                            ta,
+                            Type::Str { .. } | Type::WStr { .. }
+                        );
+                        let str_r = matches!(
+                            tb,
+                            Type::Str { .. } | Type::WStr { .. }
+                        );
                         if str_l || str_r {
                             if !(str_l && str_r) || !matches!(op, Eq | Ne) {
                                 self.err(

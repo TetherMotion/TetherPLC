@@ -31,9 +31,11 @@ Status: as-built for `compiler/tplc-st`.
 - `STRING`: comparisons are `=`/`<>` only — an ordered compare (or a
   STRING↔non-STRING compare) errors `TPLC_E_ST_TYPE`. Literals assign
   to any target cap (zero-padded; longer literals truncate with the
-  usual `implicit-narrow` lint). `WSTRING` currently lowers to a
-  narrow `STRING(160)` — true UTF-16 remains an iteration-2 dialect
-  item.
+  usual `implicit-narrow` lint).
+- `WSTRING`: a distinct UTF-16 type — blob layout is `u16 len` +
+  `u16[cap]` code units (surrogate pairs preserved), wide literals
+  (`"…"`) carry `is_wide`, and narrow↔wide assignment is a type error
+  rather than a silent re-encode. Same `=`/`<>`-only comparison rule.
 - `FUNCTION` inputs without defaults are required; missing bindings
   error `TPLC_E_ST_TYPE`. FB-call args are checked against the FB
   iface (or builtin member layout); all FB inputs optional.
