@@ -526,11 +526,34 @@ pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
     for (file_id, (fname, src)) in sources.iter().enumerate() {
         let source = SourceCode::from(*src);
         let factory = SourceLocationFactory::for_source(&source);
-        let (unit, pdiags) = plc_compiler::parser::parse(
-            plc_compiler::lexer::lex_with_ids(&source.source, IdProvider::default(), factory),
-            plc_ast::ast::LinkageType::Internal,
-            Box::leak(fname.to_string().into_boxed_str()),
-        );
+        // the upstream parser panics on some malformed inputs (e.g. a
+        // truncated `%QX0.` location); a panic must surface as a
+        // diagnostic, never crash the frontend
+        let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            plc_compiler::parser::parse(
+                plc_compiler::lexer::lex_with_ids(&source.source, IdProvider::default(), factory),
+                plc_ast::ast::LinkageType::Internal,
+                Box::leak(fname.to_string().into_boxed_str()),
+            )
+        }));
+        let (unit, pdiags) = match parsed {
+            Ok(x) => x,
+            Err(_) => {
+                diags.push(Diag {
+                    code: codes::PARSE,
+                    severity: Severity::Error,
+                    message: "parser rejected the input (internal panic)".to_string(),
+                    help: None,
+                    notes: Vec::new(),
+                    span: mir::Prov::St {
+                        file: file_id as u32,
+                        offset: 0,
+                        len: 0,
+                    },
+                });
+                continue;
+            }
+        };
         for d in &pdiags {
             diags.push(Diag {
                 code: codes::PARSE,

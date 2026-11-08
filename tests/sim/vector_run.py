@@ -18,8 +18,13 @@ expected bytes are encoded per the field's TYPC tag (i64 ns for
 TIME, little-endian ints for the rest). Exit 77 skips when the
 build tree, tplcc, or LLVM is unavailable.
 
-usage: vector_run.py [--vectors FILE] [--build DIR]
+usage: vector_run.py [--vectors FILE] [--build DIR] [--repeat N]
 env:   BUILD (default ./build), TPLCC, LLVM_SYS_211_PREFIX
+
+--repeat N re-runs both legs N times and requires the normalized
+result (per-case rc + full stderr/stdout text, which carries every
+produced byte on a mismatch) to be identical across repeats — the
+same-input-twice determinism property of the doc-14 contract.
 """
 import json
 import os
@@ -135,10 +140,13 @@ def llvm_env():
 
 def main():
     vec_path = VECTORS
+    repeat = 1
     args = sys.argv[1:]
     for i, a in enumerate(args):
         if a == "--vectors" and i + 1 < len(args):
             vec_path = args[i + 1]
+        elif a == "--repeat" and i + 1 < len(args):
+            repeat = int(args[i + 1])
 
     tplcc = os.environ.get("TPLCC") or os.path.join(
         ROOT, "compiler", "target", "debug", "tplcc")
@@ -156,14 +164,19 @@ def main():
     work = tempfile.mkdtemp(prefix="tplc_vec_")
 
     # L1 leg: the same vectors through the MIR interpreter
-    l1 = subprocess.run([tplcc, "vectors", "run", vec_path],
-                        env=env, capture_output=True, text=True)
-    l1_line = [l for l in l1.stdout.splitlines()
+    l1_sigs = []
+    for rep in range(repeat):
+        l1 = subprocess.run([tplcc, "vectors", "run", vec_path],
+                            env=env, capture_output=True, text=True)
+        l1_sigs.append((l1.returncode, l1.stdout))
+    l1_det = len(set(l1_sigs)) == 1
+    l1_line = [l for l in l1_sigs[0][1].splitlines()
                if l.endswith(" fail")][-1:]
-    l1_fail = l1.returncode != 0
+    l1_fail = l1_sigs[0][0] != 0 or not l1_det
     print(("PASS" if not l1_fail else "FAIL") +
           " L1 interp: " + (l1_line[0] if l1_line else
-                            f"rc={l1.returncode}"))
+                            f"rc={l1_sigs[0][0]}")
+          + ("" if l1_det else " (nondeterministic across repeats)"))
 
     npass = nfail = 0
     for v in vectors:
@@ -212,19 +225,35 @@ def main():
 
         steps = os.path.join(work, vid.replace(".", "_") + ".steps")
         open(steps, "w").write("\n".join(lines) + "\n")
-        img = f"/tplc_vec_{os.getpid()}_{nfail + npass}"
-        ctl = f"/tmp/tplc_vec_{os.getpid()}_{npass + nfail}.ctl"
-        r = subprocess.run(
-            [SIM, "--image", img, "--package", pkg, "--steps", steps,
-             "--plc", PLC, "--ctl", ctl, "--settle-ms", "800",
-             "--scan"],
-            env=env, capture_output=True, text=True, timeout=120)
-        if r.returncode == 0:
+        sigs = []
+        for rep in range(repeat):
+            img = f"/tplc_vec_{os.getpid()}_{nfail + npass}_{rep}"
+            ctl = f"/tmp/tplc_vec_{os.getpid()}_{npass + nfail}_{rep}.ctl"
+            r = subprocess.run(
+                [SIM, "--image", img, "--package", pkg, "--steps", steps,
+                 "--plc", PLC, "--ctl", ctl, "--settle-ms", "800",
+                 "--scan"],
+                env=env, capture_output=True, text=True, timeout=120)
+            # normalize: keep only trace-meaningful lines (divergence
+            # lines carry the produced bytes; audit lines carry the
+            # ctl ops) — drop banners/paths so the signature is the
+            # pure trace
+            keep = lambda l: (l.startswith(("step ", "audit ")) or
+                              "matched" in l or "DIVERGENT" in l or
+                              "divergent" in l)
+            sig = "\n".join(re.sub(r"^audit \S+ \S+: ", "audit ", l)
+                            for l in r.stderr.splitlines() if keep(l))
+            sigs.append((r.returncode, sig))
+        det = len(set(sigs)) == 1
+        if det and sigs[0][0] == 0:
             print(f"PASS {vid}")
             npass += 1
+        elif not det:
+            print(f"FAIL {vid}: nondeterministic across {repeat} repeats")
+            nfail += 1
         else:
             tail = "\n     ".join(
-                [l for l in r.stderr.splitlines() if l][-6:])
+                [l for l in sigs[0][1].splitlines() if l][-6:])
             print(f"FAIL {vid}:\n     {tail}")
             nfail += 1
 

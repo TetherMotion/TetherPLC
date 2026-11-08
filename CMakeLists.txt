@@ -211,4 +211,26 @@ if(NOT CMAKE_CROSSCOMPILING)
        python3 ${CMAKE_SOURCE_DIR}/tools/oracle-matiec/diff_fuzz.py")
   set_tests_properties(matiec_fuzz PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 900)
+
+  # determinism contract (doc 14 §2): same input sequence twice must
+  # give identical traces at both legs
+  add_test(NAME sim_determinism
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      python3 ${CMAKE_SOURCE_DIR}/tests/sim/vector_run.py --repeat 2)
+  set_tests_properties(sim_determinism PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 300)
+
+  # GPL quarantine scan (doc 14 §3/§4): no oracle coupling may reach
+  # shipped paths
+  add_test(NAME gpl_hygiene
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/gpl_hygiene.sh)
+  set_tests_properties(gpl_hygiene PROPERTIES TIMEOUT 60)
+
+  # ST frontend robustness fuzz (doc 14 §4/§5): mutated corpus must
+  # produce diagnostics, never crashers
+  add_test(NAME st_fuzz
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/frontend/st_fuzz.py)
+  set_tests_properties(st_fuzz PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
