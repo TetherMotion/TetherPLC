@@ -193,4 +193,11 @@ if(NOT CMAKE_CROSSCOMPILING)
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/runtime/no_alloc.sh)
   set_tests_properties(no_alloc PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 60)
+
+  # sanitizer passes (doc 14 §5): ASan+UBSan conformance, TSan on the
+  # seqlock image protocol — builds dedicated build-san-* trees
+  add_test(NAME sanitizers
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/sanitizers.sh)
+  set_tests_properties(sanitizers PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 600)
 endif()
