@@ -24,6 +24,7 @@ Status AuditLog::open(const std::string& path) {
         return Status::Err(TPLC_E_HOST_DLOPEN,
                            "audit log open: " + std::string(strerror(errno)));
     fd_ = fd;
+    path_ = path;
     return Status::Ok();
 }
 
@@ -62,6 +63,30 @@ void AuditLog::record(uint32_t pid, uint32_t uid, uint32_t gid,
     ssize_t w = write(fd_, buf, (size_t)n);
     (void)w;
     fsync(fd_);
+}
+
+std::vector<std::string> AuditLog::tail(uint32_t n) const {
+    std::vector<std::string> out;
+    if (n == 0 || path_.empty()) return out;
+    FILE* f = fopen(path_.c_str(), "r");
+    if (!f) return out;
+    /* read all lines into a bounded ring — the file is append-only so
+       the last N lines are well-defined                            */
+    std::vector<std::string> ring(n);
+    uint64_t i = 0;
+    char buf[2048];
+    while (fgets(buf, sizeof buf, f)) {
+        std::string line = buf;
+        while (!line.empty() && line.back() == '\n') line.pop_back();
+        ring[(size_t)(i % n)] = line;
+        i++;
+    }
+    fclose(f);
+    uint64_t count = i < n ? i : n;
+    uint64_t start = i < n ? 0 : i % n;
+    for (uint64_t k = 0; k < count; k++)
+        out.push_back(ring[(size_t)((start + k) % n)]);
+    return out;
 }
 
 } /* namespace tplc */

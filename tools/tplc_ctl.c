@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <poll.h>
 
 static void print_prog_status(const uint8_t* p, uint32_t len) {
     if (len < sizeof(TplcCtlProgStatus)) { puts("(short payload)"); return; }
@@ -22,6 +24,27 @@ static void print_prog_status(const uint8_t* p, uint32_t len) {
            "forces %u\n",
            (unsigned long)ps->cycles, ps->last_fault_code,
            ps->task_count, ps->force_count);
+    /* proto v2 tail (doc 16 §3.3): provenance + lineage + swap */
+    printf("version    %s  epoch %lu  pkg %02x%02x%02x%02x…  "
+           "layout %02x%02x%02x%02x…\n",
+           ps->version, (unsigned long)ps->epoch,
+           ps->package_hash[0], ps->package_hash[1],
+           ps->package_hash[2], ps->package_hash[3],
+           ps->layout_hash[0], ps->layout_hash[1],
+           ps->layout_hash[2], ps->layout_hash[3]);
+    printf("deployed   by uid %u  pred %02x%02x%02x%02x…  "
+           "swap_stage %u quarantine %u\n",
+           ps->deployed_by_uid,
+           ps->predecessor_uuid[0], ps->predecessor_uuid[1],
+           ps->predecessor_uuid[2], ps->predecessor_uuid[3],
+           ps->swap_stage, ps->quarantine_left);
+    if (ps->last_fault_code)
+        printf("fault      task %u  cycle %lu\n", ps->fault_task,
+               (unsigned long)ps->fault_cycle);
+    printf("retain     restored %u  dirty %lu B  last_flush %lu ns\n",
+           ps->retain_restored,
+           (unsigned long)ps->retain_dirty_bytes,
+           (unsigned long)ps->retain_last_flush_ns);
     const TplcCtlTaskStat* t =
         (const TplcCtlTaskStat*)(p + sizeof(TplcCtlProgStatus));
     uint32_t n = ps->task_count;
@@ -39,6 +62,10 @@ static void print_prog_status(const uint8_t* p, uint32_t len) {
                (unsigned long)t[i].late,
                t[i].last_late_ns,
                (unsigned long)t[i].faults);
+        printf("         overruns %lu  exec max %lu ns  avg %lu ns\n",
+               (unsigned long)t[i].overruns,
+               (unsigned long)t[i].exec_max_ns,
+               (unsigned long)t[i].exec_avg_ns);
     }
 }
 
@@ -215,7 +242,8 @@ int main(int argc, char** argv) {
             "|trace [nofreeze] OFF:LEN..|trace-status"
             "|trace-read [SEQ [N]]|trace-clear"
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
-            "|watch-rm [H|all]|watch-list\n", argv[0]);
+            "|watch-rm [H|all]|watch-list|events [SEC]"
+            "|map-get|journal-tail [N]\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -563,6 +591,21 @@ int main(int argc, char** argv) {
         pre_len = 4;
     }
     else if (!strcmp(cmd, "watch-list")) op = TPLC_OP_DBG_WATCH_LIST;
+    else if (!strcmp(cmd, "map-get")) op = TPLC_OP_MAP_GET;
+    else if (!strcmp(cmd, "journal-tail")) {
+        op = TPLC_OP_JOURNAL_TAIL;
+        uint32_t n = arg ? (uint32_t)strtoul(arg, NULL, 0) : 20;
+        memcpy(pre, &n, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "events")) {
+        /* events [SEC]: subscribe to all event cats and dump frames
+           for N seconds (default 5) — doc 16 §4 state-machine feed  */
+        op = TPLC_OP_SET_NOTIFY;
+        uint32_t m = 0xFFFFFFFFu;
+        memcpy(pre, &m, 4);
+        pre_len = 4;
+    }
     else { fprintf(stderr, "unknown cmd %s\n", cmd); return 2; }
 
     int fd = ctl_connect(sock, 3000);
@@ -577,6 +620,44 @@ int main(int argc, char** argv) {
     int t = ctl_recv(fd, pl, &len, &fl, &req);
     if (t < 0) { fprintf(stderr, "recv failed\n"); return 1; }
     if (check_err(fl, pl, len)) { close(fd); return 1; }
+
+    if (op == TPLC_OP_SET_NOTIFY) {
+        /* subscription armed — dump event frames until the deadline */
+        int secs = arg ? atoi(arg) : 5;
+        time_t end_s = time(NULL) + secs;
+        static const char* evnames[] = {"?", "TRANSITION", "FAULT",
+                                        "DBG_BREAK", "DBG_WATCH"};
+        for (;;) {
+            struct pollfd pfd = {fd, POLLIN, 0};
+            if (poll(&pfd, 1, 500) <= 0) {
+                if (time(NULL) >= end_s) break;
+                continue;
+            }
+            len = sizeof pl;
+            t = ctl_recv(fd, pl, &len, &fl, &req);
+            if (t < 0) break;
+            const char* nm =
+                (t >= TPLC_EV_PROG_TRANSITION &&
+                 t <= TPLC_EV_DBG_WATCH)
+                    ? evnames[t - TPLC_EV_PROG_TRANSITION + 1]
+                    : "?";
+            printf("ev 0x%04x %-11s len=%u", t, nm, len);
+            if (t == TPLC_EV_PROG_TRANSITION &&
+                len >= sizeof(TplcCtlEvTransition)) {
+                const TplcCtlEvTransition* ev =
+                    (const TplcCtlEvTransition*)pl;
+                printf(" %u->%u reason=%u epoch=%lu uuid=%02x%02x…",
+                       ev->from_state, ev->to_state, ev->reason,
+                       (unsigned long)ev->epoch,
+                       ev->program_uuid[0], ev->program_uuid[1]);
+            }
+            printf("\n");
+            fflush(stdout);
+            if (time(NULL) >= end_s) break;
+        }
+        close(fd);
+        return 0;
+    }
 
     if (op == TPLC_OP_PROG_STATUS || op == TPLC_OP_TASK_STATS)
         print_prog_status(pl, len);
@@ -945,6 +1026,24 @@ int main(int argc, char** argv) {
                 printf("  h%u  items %u  %u B  stream %u Hz%s\n",
                        h, ni, tl, hz,
                        nst ? "  STALE" : "");
+            }
+        }
+    }
+    else if (op == TPLC_OP_MAP_GET) {
+        if (len == 0) puts("(no deploy map)");
+        else printf("%.*s", (int)len, (const char*)pl);
+    }
+    else if (op == TPLC_OP_JOURNAL_TAIL) {
+        if (len < 4) { puts("(short payload)"); }
+        else {
+            const uint8_t* q = pl;
+            uint32_t n; memcpy(&n, q, 4); q += 4;
+            for (uint32_t i = 0; i < n; i++) {
+                if ((size_t)(pl + len - q) < 2) break;
+                uint16_t sl = q[0] | (q[1] << 8); q += 2;
+                if ((size_t)(pl + len - q) < sl) break;
+                printf("%.*s\n", sl, (const char*)q);
+                q += sl;
             }
         }
     }

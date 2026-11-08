@@ -638,6 +638,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut allow_retain_loss = false;
     let mut json_mode = false;
     let mut task_period_ns: u64 = 10_000_000;
+    let mut prog_version = String::from("0");
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
@@ -652,6 +653,10 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 i += 1;
             }
             "--allow-retain-loss" => allow_retain_loss = true,
+            "--prog-version" => {
+                prog_version = args[i + 1].clone();
+                i += 1;
+            }
             "--json" => json_mode = true,
             "--task-period-ns" => {
                 task_period_ns = args[i + 1].parse().unwrap_or_else(|_| {
@@ -1034,7 +1039,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         .collect::<Vec<_>>()
         .join(",");
     let manifest = format!(
-        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\"}}"
+        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\"}}"
     );
     let src_bundle: String = srcs
         .iter()

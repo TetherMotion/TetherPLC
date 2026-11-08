@@ -51,6 +51,23 @@ static uint64_t mono_ns() {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
+static uint64_t realtime_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+/* flat manifest field extractor — manifests are compiler-generated
+   flat JSON objects; a bounded substring pull is adequate here      */
+static std::string manifest_str(const std::string& j, const char* key) {
+    std::string k = std::string("\"") + key + "\":\"";
+    auto i = j.find(k);
+    if (i == std::string::npos) return "";
+    auto e = j.find('"', i + k.size());
+    return e == std::string::npos ? "" : j.substr(i + k.size(),
+                                                 e - i - k.size());
+}
+
 static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --image <shm_path> --module <so>\n"
@@ -88,7 +105,8 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_DBG_WATCH_LIST: case TPLC_OP_RETAIN_STATUS:
     case TPLC_OP_RETAIN_DUMP:    case TPLC_OP_IMAGE_STATS:
     case TPLC_OP_RT_STATUS:      case TPLC_OP_PKG_LIST:
-    case TPLC_OP_PKG_INFO:
+    case TPLC_OP_PKG_INFO:       case TPLC_OP_MAP_GET:
+    case TPLC_OP_JOURNAL_TAIL:
         return tplc::TPLC_ROLE_OBSERVER;
     case TPLC_OP_DBG_WATCH_ADD:
     case TPLC_OP_DBG_WATCH_STREAM:
@@ -470,6 +488,8 @@ int main(int argc, char** argv) {
     std::string extracted_so;
     std::vector<uint8_t> boot_layd, boot_smap,
                         boot_iomap;             /* sections from --package */
+    uint8_t  boot_hash[32] = {};
+    char     boot_ver[32] = {};
     if (!package_path.empty()) {
         auto pres = tplc::Package::open(package_path);
         if (!pres.ok()) {
@@ -517,6 +537,9 @@ int main(int argc, char** argv) {
         if (pkg.section(TPLC_SEC_DEPLOY_MAP, b_iomap) && b_iomap.data)
             boot_iomap.assign(b_iomap.data,
                               b_iomap.data + b_iomap.size);
+        memcpy(boot_hash, pkg.header().content_hash, 32);
+        std::string bv = manifest_str(pkg.manifestJson(), "version");
+        snprintf(boot_ver, sizeof boot_ver, "%s", bv.c_str());
         char tpath[] = "/tmp/tplc_pkg_XXXXXX";
         int fd = mkstemp(tpath);
         if (fd < 0 || write(fd, obj.data, obj.size) != (ssize_t)obj.size) {
@@ -540,6 +563,19 @@ int main(int argc, char** argv) {
     tplc::Scheduler sched;
     ProgState prog_state = PS_EMPTY;
     int32_t last_fault = 0;
+    /* management lineage (doc 16 §3.3): package identity + who put it
+       here; epoch bumps on every program-set change (prepare, swap,
+       unload, rollback) so bridge catalogs can invalidate stale views */
+    uint8_t  pkg_hash[32] = {};
+    char     pkg_version[32] = {};
+    uint64_t lin_deployed_at_ns = 0;
+    uint32_t lin_deployed_by = 0;
+    uint8_t  lin_predecessor[16] = {};
+    uint32_t fault_task = 0;
+    uint64_t fault_cycle = 0;
+    uint64_t mgmt_epoch = 0;
+    uint8_t  retain_restored = 0;
+    uint64_t retain_last_flush_ns = 0;
     bool     prog_started = false;
 
     tplc::ProgramConfig pcfg;
@@ -693,6 +729,8 @@ int main(int argc, char** argv) {
         std::optional<tplc::Program> prog;
         std::vector<uint8_t>         layd;
         std::vector<uint8_t>         smap;
+        uint8_t                      hash[32] = {};
+        char                         ver[32] = {};
         int                          cycles_left = 0;
     } quar;
 
@@ -721,6 +759,9 @@ int main(int argc, char** argv) {
         next_watch_h = 1;
         d = TplcProgramDescriptor{};
         prog_started = false;
+        memset(pkg_hash, 0, 32); pkg_version[0] = 0;
+        memset(lin_predecessor, 0, 16);
+        retain_restored = 0;
     };
 
     auto load_program = [&](const std::string& mpath) -> tplc::Status {
@@ -748,6 +789,7 @@ int main(int argc, char** argv) {
             if (!rst.ok()) { unload_program(); return rst; }
             if (retain->load(prog->retainRegion())) {
                 prog->setRetainRestored();
+                retain_restored = 1;
                 fprintf(stderr, "tether-plc: retain restored (%s)\n",
                         retain->path().c_str());
             }
@@ -787,6 +829,13 @@ int main(int argc, char** argv) {
         if (reresolve_subs) reresolve_subs();
         sched.addProgram(*prog);
         d = mod->descriptor();
+        /* lineage restore (doc 16 §3.3): the rolled-back program
+           reclaims its package identity; the failed program becomes
+           the predecessor                                            */
+        std::swap(pkg_hash, quar.hash);
+        std::swap(pkg_version, quar.ver);
+        memcpy(lin_predecessor, quar.prog->desc().program_uuid, 16);
+        mgmt_epoch++;
         if (retain) {
             retain->close();
             if (!retain_dir.empty()) {
@@ -864,6 +913,12 @@ int main(int argc, char** argv) {
     pkg_layd = std::move(boot_layd);
     pkg_smap = std::move(boot_smap);
     pkg_iomap = std::move(boot_iomap);
+    memcpy(pkg_hash, boot_hash, 32);
+    snprintf(pkg_version, sizeof pkg_version, "%s", boot_ver);
+    lin_deployed_at_ns = realtime_ns();
+    lin_deployed_by = (uint32_t)getuid();   /* boot deploy = self */
+    memset(lin_predecessor, 0, 16);
+    mgmt_epoch++;
     tplc::Status st = prog->start();
     if (!st.ok()) {
         fprintf(stderr, "tether-plc: init failed (%d) %s\n",
@@ -890,11 +945,27 @@ int main(int argc, char** argv) {
                                          p.desc().image_out_bytes);
     };
     tplc::CtlServer ctl;
-    hooks.fault = [&](tplc::Program& p, uint32_t, int32_t frc) {
+    /* doc 16 §4: every program-set transition emits a state event a
+       subscriber can drive a §2 state machine from — uuid + from/to +
+       reason + epoch, no polling needed                             */
+    auto emit_transition = [&](uint8_t from, uint8_t to,
+                               uint8_t reason) {
+        if (!ctl_enabled) return;
+        TplcCtlEvTransition ev{};
+        memcpy(ev.program_uuid, d.program_uuid, 16);
+        ev.from_state = from; ev.to_state = to; ev.reason = reason;
+        ev.ts_ns = realtime_ns(); ev.epoch = mgmt_epoch;
+        ctl.event(TPLC_EV_PROG_TRANSITION,
+                  1u << (TPLC_EV_PROG_TRANSITION & 0xFF),
+                  &ev, sizeof ev);
+    };
+    hooks.fault = [&](tplc::Program& p, uint32_t ftask, int32_t frc) {
             /* doc 02 §4.6 / doc 04 §6: task fault → program policy.
            hold = stay faulted; restart = warm reset bounded by
            restart_max/60s then hold; unload = stop+deschedule.      */
         last_fault = frc;
+        fault_task = ftask;
+        fault_cycle = p.ctx().cycle_no;
         /* flight recorder (doc 12 §6): faults freeze the ring by
            default — the last pre-fault scans are the post-mortem  */
         if (!trace_ch.empty() &&
@@ -909,6 +980,8 @@ int main(int argc, char** argv) {
                     "tether-plc: new program faulted rc=%d within "
                     "quarantine — auto-rollback\n", frc);
             do_rollback();
+            emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_RUNNING,
+                            2);
             tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
             runbook_write(runbook_dir, instance_name,
                           package_path.empty() ? module_path.c_str()
@@ -950,6 +1023,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "tether-plc: program fault rc=%d\n", frc);
         }
         prog_state = PS_FAULT;
+        emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_FAULT, 1);
         runbook_write(runbook_dir, instance_name,
                       package_path.empty() ? module_path.c_str()
                                            : package_path.c_str(),
@@ -1354,6 +1428,23 @@ int main(int argc, char** argv) {
         ps.cycles = prog ? prog->ctx().cycle_no : 0;
         ps.last_fault_code = last_fault;
         ps.force_count = (uint32_t)forces.size();
+        /* v2 (doc 16 §3.3): provenance + lineage + retain + swap */
+        memcpy(ps.package_hash, pkg_hash, 32);
+        memcpy(ps.layout_hash, d.layout_hash, 32);
+        memcpy(ps.version, pkg_version, sizeof ps.version);
+        ps.fault_task = fault_task;
+        ps.fault_cycle = fault_cycle;
+        ps.retain_restored = retain_restored;
+        ps.retain_dirty_bytes =
+            (prog && retain && retain->attached() && retain->dirty())
+                ? (uint64_t)prog->retainSize() : 0;
+        ps.retain_last_flush_ns = retain_last_flush_ns;
+        ps.deployed_at_ns = lin_deployed_at_ns;
+        ps.deployed_by_uid = lin_deployed_by;
+        memcpy(ps.predecessor_uuid, lin_predecessor, 16);
+        ps.swap_stage = quar.prog ? 1 : 0;
+        ps.quarantine_left = quar.prog ? (uint32_t)quar.cycles_left : 0;
+        ps.epoch = mgmt_epoch;
         w.bytes(&ps, sizeof ps);
         for (uint32_t i = 0; i < d.task_count; i++) {
             const TplcTaskDesc& td = d.tasks[i];
@@ -1366,6 +1457,9 @@ int main(int argc, char** argv) {
             if (prog) if (const auto* s = sched.stats(*prog, i)) {
                 ts.runs = s->runs; ts.late = s->late;
                 ts.faults = s->faults;
+                ts.overruns = s->overruns;
+                ts.exec_max_ns = s->exec_max_ns;
+                ts.exec_avg_ns = s->execAvgNs();
                 ts.last_late_ns = (int32_t)s->max_late_ns;
             }
             w.bytes(&ts, sizeof ts);
@@ -1409,13 +1503,21 @@ int main(int argc, char** argv) {
         /* STOP halts scheduling only — state is kept (doc 04 §4);
            forces drop on stop (doc 12 §8 force_on_stop default:
            a hidden force surviving a stop is a safety hazard)      */
-        TplcCtlProgStateChange sc{(uint8_t)prog_state, PS_STOPPED, 0};
-        if (prog_state == PS_RUNNING) {
-            prog_state = PS_STOPPED;
-            forces.clear();
-            tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
+        /* doc 16 §2: illegal transitions error with current+requested
+           — no silent no-ops                                        */
+        if (prog_state != PS_RUNNING) {
+            char m[64];
+            snprintf(m, sizeof m, "current=%u requested=stop",
+                     prog_state);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, m, req);
+            return;
         }
+        prog_state = PS_STOPPED;
+        forces.clear();
+        tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         audit(fd, "prog.stop", "");
+        emit_transition(PS_RUNNING, PS_STOPPED, 0);
+        TplcCtlProgStateChange sc{PS_RUNNING, PS_STOPPED, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
     });
     ctl.on(TPLC_OP_PROG_START, [&](int fd, uint16_t t,
@@ -1426,24 +1528,29 @@ int main(int argc, char** argv) {
                            "no program", req);
             return;
         }
-        uint8_t prev = prog_state;
-        if (prog_state == PS_STOPPED) {
-            prog->clearAbort();
-            if (!prog_started) {
-                tplc::Status sst = prog->start();
-                if (!sst.ok()) {
-                    ctl.errorReply(fd, t, sst.code, sst.msg.c_str(),
-                                   req);
-                    return;
-                }
-                prog_started = true;
-            }
-            prog_state = PS_RUNNING;
-            arm_default_trace();
-            tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
+        if (prog_state != PS_STOPPED) {
+            char m[64];
+            snprintf(m, sizeof m, "current=%u requested=start",
+                     prog_state);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, m, req);
+            return;
         }
+        prog->clearAbort();
+        if (!prog_started) {
+            tplc::Status sst = prog->start();
+            if (!sst.ok()) {
+                ctl.errorReply(fd, t, sst.code, sst.msg.c_str(),
+                               req);
+                return;
+            }
+            prog_started = true;
+        }
+        prog_state = PS_RUNNING;
+        arm_default_trace();
+        tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
         audit(fd, "prog.start", "");
-        TplcCtlProgStateChange sc{prev, (uint8_t)prog_state, 0};
+        emit_transition(PS_STOPPED, PS_RUNNING, 0);
+        TplcCtlProgStateChange sc{PS_STOPPED, PS_RUNNING, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
     });
     /* kill: set the abort flag and deschedule immediately — ctl ops
@@ -1452,8 +1559,10 @@ int main(int argc, char** argv) {
                                   const uint8_t*, uint32_t,
                                   uint64_t req) {
         if (!prog || prog_state != PS_RUNNING) {
-            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
-                           "not running", req);
+            char m[64];
+            snprintf(m, sizeof m, "current=%u requested=kill",
+                     prog_state);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, m, req);
             return;
         }
         /* ctl ops run between ticks, so no task is in-flight: set the
@@ -1462,6 +1571,7 @@ int main(int argc, char** argv) {
         prog->requestAbort();
         prog_state = PS_STOPPED;
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
+        emit_transition(PS_RUNNING, PS_STOPPED, 0);
         TplcCtlProgStateChange sc{PS_RUNNING, PS_STOPPED, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
     });
@@ -1471,8 +1581,10 @@ int main(int argc, char** argv) {
                                    const uint8_t* payload, uint32_t len,
                                    uint64_t req) {
         if (!prog || prog_state != PS_STOPPED) {
-            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
-                           "requires stopped", req);
+            char m[64];
+            snprintf(m, sizeof m, "current=%u requested=reset",
+                     prog_state);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, m, req);
             return;
         }
         bool warm = len >= 1 ? payload[0] != 0 : true;
@@ -1495,11 +1607,13 @@ int main(int argc, char** argv) {
             return;
         }
         if (prog_state == PS_RUNNING) {
-            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
-                           "stop first", req);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE,
+                           "current=running requested=unload", req);
             return;
         }
         unload_program();
+        mgmt_epoch++;
+        emit_transition(PS_STOPPED, PS_EMPTY, 0);
         TplcCtlProgStateChange sc{PS_STOPPED, PS_EMPTY, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
     });
@@ -1509,8 +1623,8 @@ int main(int argc, char** argv) {
                                      const uint8_t* payload,
                                      uint32_t len, uint64_t req) {
         if (prog_state == PS_RUNNING) {
-            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
-                           "stop first", req);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE,
+                           "current=running requested=prepare", req);
             return;
         }
         std::string path;
@@ -1534,6 +1648,8 @@ int main(int argc, char** argv) {
         std::string mpath = path;
         std::string tmp_so;
         std::vector<uint8_t> layd_b, smap_b, iomap_b; /* sections borrow pk */
+        uint8_t new_hash[32] = {};
+        std::string new_ver;
         /* .tplc → extract target_obj; .so → load directly */
         if (path.size() >= 5 &&
             path.compare(path.size() - 5, 5, ".tplc") == 0) {
@@ -1556,6 +1672,8 @@ int main(int argc, char** argv) {
                 smap_b.assign(sec.data, sec.data + sec.size);
             if (pk.section(TPLC_SEC_DEPLOY_MAP, sec))
                 iomap_b.assign(sec.data, sec.data + sec.size);
+            memcpy(new_hash, pk.header().content_hash, 32);
+            new_ver = manifest_str(pk.manifestJson(), "version");
             tplc::PkgSection obj{};
             if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
                 ctl.errorReply(fd, t, TPLC_E_PKG_TOC,
@@ -1574,6 +1692,10 @@ int main(int argc, char** argv) {
             close(tfd);
             tmp_so = tp; mpath = tmp_so;
         }
+        /* the program being replaced (if any) is the predecessor —
+           load_program destroys it, so capture its uuid first       */
+        uint8_t old_uuid[16] = {};
+        if (prog) memcpy(old_uuid, prog->desc().program_uuid, 16);
         tplc::Status lst = load_program(mpath);
         if (!lst.ok()) {
             ctl.errorReply(fd, t, lst.code, lst.msg.c_str(), req);
@@ -1584,6 +1706,16 @@ int main(int argc, char** argv) {
         pkg_layd = std::move(layd_b);
         pkg_smap = std::move(smap_b);
         pkg_iomap = std::move(iomap_b);
+        /* management lineage (doc 16 §3.3): deployer is the
+           kernel-attested uid of the requesting client              */
+        memcpy(lin_predecessor, old_uuid, 16);
+        memcpy(pkg_hash, new_hash, 32);
+        snprintf(pkg_version, sizeof pkg_version, "%s", new_ver.c_str());
+        lin_deployed_at_ns = realtime_ns();
+        uint32_t _p, _g;
+        ctl.peerCred(fd, &_p, &lin_deployed_by, &_g);
+        mgmt_epoch++;
+        emit_transition(PS_EMPTY, PS_STOPPED, 0);
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         TplcCtlProgStateChange sc{PS_EMPTY, PS_STOPPED, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
@@ -1619,6 +1751,7 @@ int main(int argc, char** argv) {
             return;
         }
         do_rollback();
+        emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_RUNNING, 2);
         fprintf(stderr, "tether-plc: rollback restored prior program\n");
         ctl.replyEmpty(fd, t, req);
     });
@@ -1627,8 +1760,10 @@ int main(int argc, char** argv) {
                                   const uint8_t* payload,
                                   uint32_t len, uint64_t req) {
         if (prog_state != PS_RUNNING || !prog) {
-            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
-                           "program not running", req);
+            char m[64];
+            snprintf(m, sizeof m, "current=%u requested=swap",
+                     prog_state);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, m, req);
             return;
         }
         /* resolve the staged package — 16B uuid or {len,path} */
@@ -1823,12 +1958,48 @@ int main(int argc, char** argv) {
                 "quarantine %d scans)\n",
                 same_layout ? "module-swap" : "migrated",
                 quarantine_cycles);
-        if (ctl_enabled)
-            ctl.event(TPLC_EV_PROG_TRANSITION, 2, nullptr, 0);
+        /* lineage (doc 16 §3.3): quarantined program is the
+           predecessor; deployer is the requesting client's uid      */
+        memcpy(lin_predecessor, quar.prog->desc().program_uuid, 16);
+        /* quarantined side keeps the prior package identity so
+           rollback restores lineage, not just code                  */
+        memcpy(quar.hash, pkg_hash, 32);
+        snprintf(quar.ver, sizeof quar.ver, "%s", pkg_version);
+        memcpy(pkg_hash, pk.header().content_hash, 32);
+        snprintf(pkg_version, sizeof pkg_version, "%s",
+                 manifest_str(pk.manifestJson(), "version").c_str());
+        lin_deployed_at_ns = realtime_ns();
+        {
+            uint32_t _p, _g;
+            ctl.peerCred(fd, &_p, &lin_deployed_by, &_g);
+        }
+        mgmt_epoch++;
+        emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_RUNNING, 0);
         uint8_t rep[8];
         memcpy(rep, &mo.out_status, 4);
         memcpy(rep + 4, &mo.out_first_error, 4);
         ctl.reply(fd, t, rep, sizeof rep, req);
+    });
+
+    /* map.get / journal.tail (doc 16 §3.2): the deploy map and the
+       durable audit tail, read-only at observer role               */
+    ctl.on(TPLC_OP_MAP_GET, [&](int fd, uint16_t t,
+                                const uint8_t*, uint32_t,
+                                uint64_t req) {
+        ctl.reply(fd, t, pkg_iomap.empty() ? nullptr : pkg_iomap.data(),
+                  (uint32_t)pkg_iomap.size(), req);
+    });
+    ctl.on(TPLC_OP_JOURNAL_TAIL, [&](int fd, uint16_t t,
+                                     const uint8_t* payload,
+                                     uint32_t len, uint64_t req) {
+        uint32_t n = 20;
+        if (len >= 4) memcpy(&n, payload, 4);
+        if (n > 256) n = 256;
+        tplc::CtlServer::W w;
+        auto lines = audit_log.tail(n);
+        w.u32((uint32_t)lines.size());
+        for (auto& l : lines) w.str(l.c_str(), (uint32_t)l.size());
+        ctl.reply(fd, t, w.data(), w.size(), req);
     });
 
     ctl.on(TPLC_OP_IMAGE_STATS, [&](int fd, uint16_t t,
@@ -3236,6 +3407,9 @@ int main(int argc, char** argv) {
        for supervisor respawn */
     std::atomic<uint64_t> progress{0};
     std::atomic<bool>     mon_running{true};
+    /* ctl.event isn't thread-safe from the monitor — it flags the
+       fault transition and the scan loop emits it (doc 16 §4)      */
+    std::atomic<bool>     stall_fault_ev{false};
     std::thread monitor([&] {
         uint64_t last_seen = 0;
         uint64_t stale_since = mono_ns();
@@ -3250,6 +3424,7 @@ int main(int argc, char** argv) {
                 if (prog_state == PS_RUNNING && prog) {
                     prog->requestAbort();
                     prog_state = PS_FAULT;
+                    stall_fault_ev = true;
                     tplc_image_set_fault(&img, (uint64_t)-TPLC_TASK_E_FAULT);
                     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
                     fprintf(stderr,
@@ -3407,8 +3582,13 @@ int main(int argc, char** argv) {
                 retain->stage(prog->retainRegion());
                 retain->flush();
                 last_flush_ns = now;
+                retain_last_flush_ns = realtime_ns();
             }
         }
+
+        /* deferred monitor-thread fault event (doc 16 §4)          */
+        if (stall_fault_ev.exchange(false))
+            emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_FAULT, 1);
 
         tplc_image_plc_heartbeat(&img, now);
 

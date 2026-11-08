@@ -238,6 +238,11 @@ add_test(NAME safety_boundary COMMAND bash
   ${CMAKE_SOURCE_DIR}/tests/scan/safety_boundary.sh)
 set_tests_properties(safety_boundary PROPERTIES SKIP_RETURN_CODE 77)
 
+# doc 16 §9: v2 status object, strict transitions, events, epoch
+add_test(NAME mgmt_surface COMMAND bash
+  ${CMAKE_SOURCE_DIR}/tests/scan/mgmt_surface.sh)
+set_tests_properties(mgmt_surface PROPERTIES SKIP_RETURN_CODE 77)
+
 # doc 15 §6: license manifest gate (skips when cargo metadata unusable)
 add_test(NAME license_manifest COMMAND python3
   ${CMAKE_SOURCE_DIR}/tools/license_manifest.py --check

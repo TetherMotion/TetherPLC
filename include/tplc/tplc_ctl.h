@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define TPLC_CTL_PROTO_VER   1u
+#define TPLC_CTL_PROTO_VER   2u
 #define TPLC_CTL_HDR_SIZE    16u
 #define TPLC_CTL_MAX_PAYLOAD (8u * 1024u * 1024u)
 
@@ -154,6 +154,10 @@ enum TplcCtlOp {
     /* runtime 0x0900 */
     TPLC_OP_RT_STATUS      = 0x0901,  /* P0 */
     TPLC_OP_RT_SHUTDOWN    = 0x0905,  /* P0 {u8 mode}                */
+    /* map 0x0C00 */
+    TPLC_OP_MAP_GET        = 0x0C01,  /* → deploy-map section bytes   */
+    /* journal 0x0D00 */
+    TPLC_OP_JOURNAL_TAIL   = 0x0D01,  /* {u32 n} → u32 n, str lines[] */
     /* events 0x0E00 */
     TPLC_EV_PROG_TRANSITION = 0x0E01,
     TPLC_EV_FAULT           = 0x0E02,
@@ -203,6 +207,10 @@ typedef struct TplcCtlTaskStat {
     uint64_t faults;
     int32_t  last_rc;
     int32_t  last_late_ns;             /* clamped                    */
+    /* proto v2 tail */
+    uint64_t overruns;
+    uint64_t exec_max_ns;
+    uint64_t exec_avg_ns;
 } TplcCtlTaskStat;
 
 typedef struct TplcCtlProgStatus {
@@ -215,6 +223,26 @@ typedef struct TplcCtlProgStatus {
     uint64_t cycles;                   /* program cycle_no            */
     int32_t  last_fault_code;
     uint32_t force_count;              /* doc 12 §8: globally visible */
+    /* proto v2 — doc 16 §3.3 "405 answer" */
+    uint8_t  package_hash[32];         /* pkg content_hash            */
+    uint8_t  layout_hash[32];
+    uint8_t  version[32];              /* manifest version string     */
+    uint32_t fault_task;
+    uint32_t _pad2;
+    uint64_t fault_cycle;
+    uint8_t  retain_restored;
+    uint8_t  _pad3[7];
+    uint64_t retain_dirty_bytes;
+    uint64_t retain_last_flush_ns;
+    uint64_t deployed_at_ns;           /* realtime                    */
+    uint32_t deployed_by_uid;
+    uint32_t _pad4;
+    uint8_t  predecessor_uuid[16];
+    uint8_t  swap_stage;               /* 0 none 1 quarantine         */
+    uint8_t  _pad5[7];
+    uint32_t quarantine_left;
+    uint32_t _pad6;
+    uint64_t epoch;                    /* bumps on program-set change */
     /* TplcCtlTaskStat tasks[task_count] follows */
 } TplcCtlProgStatus;
 
@@ -261,8 +289,29 @@ enum {
     TPLC_E_FORCE_DENIED = -414,
     TPLC_E_DBG_ACCESS   = -415,
     TPLC_E_DBG_STATE    = -416,
-    TPLC_E_TRACE_CONFIG = -417
+    TPLC_E_TRACE_CONFIG = -417,
+    /* management plane (doc 16 §8) */
+    TPLC_E_MGMT_OP      = -500,
+    TPLC_E_MGMT_STATE   = -501,   /* illegal transition; msg carries
+                                   current+requested states         */
+    TPLC_E_MGMT_AUTHZ   = -502,
+    TPLC_E_MGMT_SCHEMA  = -503
 };
+
+/* TPLC_EV_PROG_TRANSITION payload (proto v2): enough for a client to
+   run the §2 state machine purely from events (doc 16 §4).         */
+#pragma pack(push, 1)
+typedef struct TplcCtlEvTransition {
+    uint8_t  program_uuid[16];
+    uint8_t  from_state;
+    uint8_t  to_state;
+    uint8_t  reason;                /* 0 op, 1 fault, 2 rollback     */
+    uint8_t  _pad;
+    uint32_t _pad2;
+    uint64_t ts_ns;                 /* realtime                      */
+    uint64_t epoch;
+} TplcCtlEvTransition;
+#pragma pack(pop)
 
 /* TLV string helper: u16 len + bytes (no NUL on the wire) */
 static inline uint32_t tplc_ctl_str_len(const char* s) {

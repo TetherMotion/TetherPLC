@@ -8,6 +8,7 @@
 #include <tplc/host/Status.hpp>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace tplc {
 
@@ -33,8 +34,13 @@ public:
        reference for the journal, not a crypto commitment. */
     static uint64_t argsHash(const std::string& s);
 
+    /* Last `n` records (whole lines), oldest first — doc 16 §3.2
+       journal.tail. Empty when not open or fewer than n records. */
+    std::vector<std::string> tail(uint32_t n) const;
+
 private:
-    int fd_ = -1;
+    int         fd_ = -1;
+    std::string path_;
 };
 
 } /* namespace tplc */
