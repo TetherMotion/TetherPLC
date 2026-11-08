@@ -56,7 +56,14 @@ enum TplcCtlOp {
     TPLC_OP_PROG_ROLLBACK  = 0x030B,  /* P3 */
     /* task 0x0400 */
     TPLC_OP_TASK_STATS     = 0x0401,  /* P0 */
-    /* debug 0x0500 — P6 */
+    TPLC_OP_TASK_SUSPEND   = 0x0402,  /* P6 {u32 task_idx}          */
+    TPLC_OP_TASK_RESUME    = 0x0403,  /* P6 {u32 task_idx}          */
+    TPLC_OP_TASK_STEP      = 0x0404,  /* P6 {u32 task_idx, u32 n}   */
+    /* debug 0x0500 */
+    TPLC_OP_DBG_RESOLVE    = 0x0501,  /* P6 {u16 nlen,name}         */
+    TPLC_OP_DBG_READ       = 0x0502,  /* P6 {u64 off, u32 len}      */
+    TPLC_OP_DBG_WRITE      = 0x0503,  /* P6 {u64 off, u32 len,bytes}*/
+    TPLC_OP_DBG_STATE      = 0x0504,  /* P6 → blob/retain extents   */
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,
@@ -162,7 +169,16 @@ enum {
     TPLC_E_CTL_AUTHZ    = -401,
     TPLC_E_CTL_UNKNOWN_OP = -402,
     TPLC_E_CTL_PROTO    = -403,
-    TPLC_E_CTL_PAYLOAD  = -404
+    TPLC_E_CTL_PAYLOAD  = -404,
+    /* debug plane (doc 12 §9) */
+    TPLC_E_DBG_RESOLVE  = -410,
+    TPLC_E_DBG_STALE    = -411,
+    TPLC_E_DBG_OVERLOAD = -412,
+    TPLC_E_DBG_RATE     = -413,
+    TPLC_E_FORCE_DENIED = -414,
+    TPLC_E_DBG_ACCESS   = -415,
+    TPLC_E_DBG_STATE    = -416,
+    TPLC_E_TRACE_CONFIG = -417
 };
 
 /* TLV string helper: u16 len + bytes (no NUL on the wire) */

@@ -107,6 +107,93 @@ int main(void) {
         CHECK(t[0].runs > 0);
     }
 
+    /* debug plane (doc 12): suspend freezes task 0 while task 1 keeps
+       running; step adds exactly N; resume re-arms the schedule    */
+    uint64_t runs0 = 0, runs1 = 0;
+    {
+        uint32_t ti = 0;
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_TASK_SUSPEND, &ti, 4,
+                        resp, &rlen, &fl), TPLC_OP_TASK_SUSPEND);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+    }
+    usleep(60 * 1000);
+    rlen = sizeof resp;
+    ctl_op(fd, TPLC_OP_TASK_STATS, nullptr, 0, resp, &rlen, &fl);
+    {
+        const TplcCtlTaskStat* t =
+            (const TplcCtlTaskStat*)(resp + sizeof(TplcCtlProgStatus));
+        CHECK_EQ(t[0].state, 2u);           /* suspended */
+        runs0 = t[0].runs;
+        runs1 = t[1].runs;
+    }
+    usleep(60 * 1000);
+    rlen = sizeof resp;
+    ctl_op(fd, TPLC_OP_TASK_STATS, nullptr, 0, resp, &rlen, &fl);
+    {
+        const TplcCtlTaskStat* t =
+            (const TplcCtlTaskStat*)(resp + sizeof(TplcCtlProgStatus));
+        CHECK_EQ(t[0].runs, runs0);         /* frozen    */
+        CHECK(t[1].runs > runs1);           /* unaffected */
+        runs1 = t[1].runs;
+    }
+    {
+        uint32_t sr[2] = {0, 2};            /* task 0, 2 steps */
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_TASK_STEP, sr, 8,
+                        resp, &rlen, &fl), TPLC_OP_TASK_STEP);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+    }
+    usleep(60 * 1000);
+    rlen = sizeof resp;
+    ctl_op(fd, TPLC_OP_TASK_STATS, nullptr, 0, resp, &rlen, &fl);
+    {
+        const TplcCtlTaskStat* t =
+            (const TplcCtlTaskStat*)(resp + sizeof(TplcCtlProgStatus));
+        CHECK_EQ(t[0].runs, runs0 + 2);     /* exactly 2  */
+        CHECK(t[1].runs > runs1);
+    }
+    /* step on a non-suspended task is a state error */
+    {
+        uint32_t sr[2] = {1, 1};
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TASK_STEP, sr, 8, resp, &rlen, &fl);
+        CHECK(fl & TPLC_CTL_F_ERROR);
+    }
+    {
+        uint32_t ti = 0;
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_TASK_RESUME, &ti, 4,
+                        resp, &rlen, &fl), TPLC_OP_TASK_RESUME);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+    }
+    usleep(60 * 1000);
+    rlen = sizeof resp;
+    ctl_op(fd, TPLC_OP_TASK_STATS, nullptr, 0, resp, &rlen, &fl);
+    {
+        const TplcCtlTaskStat* t =
+            (const TplcCtlTaskStat*)(resp + sizeof(TplcCtlProgStatus));
+        CHECK(t[0].runs > runs0 + 2);
+        CHECK_EQ(t[0].state, 1u);           /* sched again */
+    }
+    /* stub module loads without a package: no SMAP → resolve fails
+       with DBG_STATE, but blob extents still answer               */
+    {
+        uint8_t nm[8]; uint16_t nl = 4;
+        memcpy(nm, &nl, 2); memcpy(nm + 2, "stub", 4);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_DBG_RESOLVE, nm, 6, resp, &rlen, &fl);
+        CHECK(fl & TPLC_CTL_F_ERROR);
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_DBG_STATE, nullptr, 0,
+                        resp, &rlen, &fl), TPLC_OP_DBG_STATE);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        CHECK_EQ(rlen, 44u);
+        uint32_t sc;
+        memcpy(&sc, resp + 40, 4);
+        CHECK_EQ(sc, 0u);                   /* no symbols */
+    }
+
     /* heartbeats: plc side is ticking */
     CHECK(tplc_image_plc_hb_ns(&master) > 0);
 

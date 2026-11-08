@@ -38,6 +38,14 @@ public:
     uint64_t nextDueNs() const;
     size_t   taskCount() const { return tasks_.size(); }
 
+    /* Debug-plane task control (doc 12 §5): suspend deschedules at the
+       next boundary; step grants n due-runs while suspended. All apply
+       only when the caller is on the scan thread between ticks. */
+    bool suspend(Program& prog, uint32_t task_idx);
+    bool resume(Program& prog, uint32_t task_idx);
+    bool step(Program& prog, uint32_t task_idx, uint32_t n);
+    bool suspended(Program& prog, uint32_t task_idx) const;
+
     /* Stats for the service plane */
     struct TaskStats {
         uint64_t runs = 0, late = 0, faults = 0, overruns = 0;
@@ -58,6 +66,8 @@ private:
         uint64_t next_due = 0;
         uint64_t last_run = 0;
         bool     first_run = true;
+        bool     suspended = false;
+        uint32_t step_budget = 0;
         TaskStats stats;
     };
     std::vector<Entry> tasks_;

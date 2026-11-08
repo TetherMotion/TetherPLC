@@ -32,9 +32,12 @@ size_t Scheduler::tick(uint64_t now_ns, const TickHooks& hooks) {
     std::vector<Entry*> due;
     for (auto& e : tasks_) {
         if (e.first_run) e.next_due = now_ns;      /* due immediately */
-        bool is_due = (e.desc->kind == TPLC_TASK_FREEWHEELING)
-                          ? true
-                          : now_ns >= e.next_due;
+        if (e.suspended && e.step_budget == 0) continue;
+        /* a step budget overrides the release clock: the op means
+           "run this task once more", regardless of next_due        */
+        bool is_due = (e.suspended && e.step_budget > 0) ||
+                      e.desc->kind == TPLC_TASK_FREEWHEELING ||
+                      now_ns >= e.next_due;
         if (is_due) due.push_back(&e);
     }
     std::sort(due.begin(), due.end(),
@@ -54,7 +57,9 @@ size_t Scheduler::tick(uint64_t now_ns, const TickHooks& hooks) {
         if (exec > e->stats.exec_max_ns) e->stats.exec_max_ns = exec;
         e->stats.runs++;
         if (e->first_run) e->first_run = false;
-        if (late > 0) {
+        /* stepped runs are not releases: a stale next_due must not
+           pollute the late stats                                   */
+        if (!e->suspended && late > 0) {
             e->stats.late++;
             if (late > e->stats.max_late_ns) e->stats.max_late_ns = late;
         }
@@ -63,22 +68,66 @@ size_t Scheduler::tick(uint64_t now_ns, const TickHooks& hooks) {
             if (hooks.fault) hooks.fault(p, e->task_idx, rc);
         }
         e->last_run = now_ns;
-        if (e->desc->kind == TPLC_TASK_CYCLIC) {
+        if (e->step_budget > 0) e->step_budget--;
+        /* stepped runs leave next_due untouched — they are not real
+           releases; resume() re-arms the schedule                  */
+        if (!e->suspended && e->desc->kind == TPLC_TASK_CYCLIC) {
             e->next_due += e->desc->period_ns;     /* phase-stable */
             /* overrun: finished past the next release — skip policy
                is start-immediately, never catch up (doc 04 §3.2)  */
             if (now_ns >= e->next_due) e->stats.overruns++;
-        } else {
+        } else if (!e->suspended) {
             e->next_due = now_ns;
         }
     }
     return due.size();
 }
 
+bool Scheduler::suspend(Program& prog, uint32_t task_idx) {
+    for (auto& e : tasks_)
+        if (e.prog == &prog && e.task_idx == task_idx) {
+            e.suspended = true;
+            return true;
+        }
+    return false;
+}
+
+bool Scheduler::resume(Program& prog, uint32_t task_idx) {
+    for (auto& e : tasks_)
+        if (e.prog == &prog && e.task_idx == task_idx) {
+            e.suspended = false;
+            e.step_budget = 0;
+            /* re-arm schedule (doc 12 §5): next release is one full
+               period out — no catch-up of releases missed while
+               suspended */
+            e.next_due = 0;
+            e.first_run = true;
+            return true;
+        }
+    return false;
+}
+
+bool Scheduler::step(Program& prog, uint32_t task_idx, uint32_t n) {
+    for (auto& e : tasks_)
+        if (e.prog == &prog && e.task_idx == task_idx) {
+            if (!e.suspended) return false;   /* step only while held */
+            e.step_budget += n;
+            return true;
+        }
+    return false;
+}
+
+bool Scheduler::suspended(Program& prog, uint32_t task_idx) const {
+    for (const auto& e : tasks_)
+        if (e.prog == &prog && e.task_idx == task_idx) return e.suspended;
+    return false;
+}
+
 uint64_t Scheduler::nextDueNs() const {
     uint64_t best = UINT64_MAX;
     for (const auto& e : tasks_)
-        if (e.desc->kind == TPLC_TASK_CYCLIC && e.next_due < best)
+        if (!(e.suspended && e.step_budget == 0) &&
+            e.desc->kind == TPLC_TASK_CYCLIC && e.next_due < best)
             best = e.next_due;
     return best;
 }

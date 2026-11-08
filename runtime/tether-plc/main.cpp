@@ -53,7 +53,7 @@ static void usage(const char* a0) {
         "          [--sim]\n"
         "       %s --supervise [--respawn always|on-fault|never]\n"
         "          [--restart-delay-ms N] -- <tether-plc args>\n",
-        a0);
+        a0, a0);
 }
 
 enum ProgState : uint8_t { PS_STOPPED = 0, PS_RUNNING = 1, PS_FAULT = 2,
@@ -347,6 +347,7 @@ int main(int argc, char** argv) {
 
     /* ---------------- package → extracted module -------------- */
     std::string extracted_so;
+    std::vector<uint8_t> boot_layd, boot_smap;   /* sections from --package */
     if (!package_path.empty()) {
         auto pres = tplc::Package::open(package_path);
         if (!pres.ok()) {
@@ -363,7 +364,7 @@ int main(int argc, char** argv) {
             tplc_image_close(&img);
             return 1;
         }
-        tplc::PkgSection obj{};
+        tplc::PkgSection obj{}, b_layd{}, b_smap{};
         /* v1: first target_obj (multi-target selection comes with
            manifest.targets[] parsing) */
         if (!pkg.section(TPLC_SEC_TARGET_OBJ, obj)) {
@@ -371,6 +372,12 @@ int main(int argc, char** argv) {
             tplc_image_close(&img);
             return 1;
         }
+        /* copy section bytes: PkgSection points into `pkg`, which dies
+           at the end of this block */
+        if (pkg.section(TPLC_SEC_LAYOUT_DESC, b_layd) && b_layd.data)
+            boot_layd.assign(b_layd.data, b_layd.data + b_layd.size);
+        if (pkg.section(TPLC_SEC_SYMMAP, b_smap) && b_smap.data)
+            boot_smap.assign(b_smap.data, b_smap.data + b_smap.size);
         char tpath[] = "/tmp/tplc_pkg_XXXXXX";
         int fd = mkstemp(tpath);
         if (fd < 0 || write(fd, obj.data, obj.size) != (ssize_t)obj.size) {
@@ -410,6 +417,7 @@ int main(int argc, char** argv) {
     std::optional<tplc::RetainStore> retain;
     TplcProgramDescriptor            d{};
     std::vector<uint8_t>             pkg_layd;   /* for OP_PROG_LAYOUT */
+    std::vector<uint8_t>             pkg_smap;   /* for OP_DBG_RESOLVE   */
     /* online-change quarantine (doc 08 §7): the swapped-out program
        + module stay live for quarantine_cycles scans so rollback is
        a pointer swap back to untouched pre-swap state              */
@@ -417,6 +425,7 @@ int main(int argc, char** argv) {
         std::unique_ptr<tplc::Module> mod;
         std::optional<tplc::Program> prog;
         std::vector<uint8_t>         layd;
+        std::vector<uint8_t>         smap;
         int                          cycles_left = 0;
     } quar;
 
@@ -429,6 +438,7 @@ int main(int argc, char** argv) {
         if (retain) retain->close();
         quar = Quarantine{};
         pkg_layd.clear();
+        pkg_smap.clear();
         d = TplcProgramDescriptor{};
         prog_started = false;
     };
@@ -487,6 +497,7 @@ int main(int argc, char** argv) {
         prog.emplace(std::move(oldp));
         std::swap(mod, quar.mod);
         std::swap(pkg_layd, quar.layd);
+        std::swap(pkg_smap, quar.smap);
         sched.addProgram(*prog);
         d = mod->descriptor();
         if (retain) {
@@ -513,6 +524,10 @@ int main(int argc, char** argv) {
         tplc_image_close(&img);
         return 1;
     }
+    /* descriptors captured at --package extraction outlive the load's
+       internal unload (which clears pkg_* for swap-time use) */
+    pkg_layd = std::move(boot_layd);
+    pkg_smap = std::move(boot_smap);
     tplc::Status st = prog->start();
     if (!st.ok()) {
         fprintf(stderr, "tether-plc: init failed (%d) %s\n",
@@ -629,6 +644,7 @@ int main(int argc, char** argv) {
             memcpy(ts.name, td.name, TPLC_TASK_NAME_MAX);
             ts.kind = td.kind;
             ts.state = prog_state == PS_RUNNING ? 1 : 0;
+            if (prog && sched.suspended(*prog, i)) ts.state = 2;
             ts.period_ns = td.period_ns;
             if (prog) if (const auto* s = sched.stats(*prog, i)) {
                 ts.runs = s->runs; ts.late = s->late;
@@ -900,7 +916,7 @@ int main(int argc, char** argv) {
             return;
         }
         tplc::Package pk = std::move(pres.value);
-        tplc::PkgSection obj{}, migd{}, layd{};
+        tplc::PkgSection obj{}, migd{}, layd{}, smap{};
         if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
             ctl.errorReply(fd, t, TPLC_E_PKG_TOC, "no target_obj",
                            req);
@@ -908,6 +924,7 @@ int main(int argc, char** argv) {
         }
         bool has_migd = pk.section(TPLC_SEC_MIGRATE_DESC, migd);
         pk.section(TPLC_SEC_LAYOUT_DESC, layd);
+        pk.section(TPLC_SEC_SYMMAP, smap);
         char tp[] = "/tmp/tplc_swap_XXXXXX";
         int tfd = mkstemp(tp);
         if (tfd < 0 ||
@@ -1002,6 +1019,7 @@ int main(int argc, char** argv) {
         quar.mod = std::move(mod);
         mod.reset();
         quar.layd = std::move(pkg_layd);
+        quar.smap = std::move(pkg_smap);
         quar.cycles_left = quarantine_cycles;
         mod = std::make_unique<tplc::Module>(std::move(nmod));
         /* rebind: Program::create captured &nmod — retarget the new
@@ -1014,6 +1032,10 @@ int main(int argc, char** argv) {
             pkg_layd.assign(layd.data, layd.data + layd.size);
         else
             pkg_layd.clear();
+        if (smap.data && smap.size)
+            pkg_smap.assign(smap.data, smap.data + smap.size);
+        else
+            pkg_smap.clear();
         if (!retain_dir.empty()) {
             if (!retain) retain.emplace();
             retain->close();
@@ -1104,6 +1126,230 @@ int main(int argc, char** argv) {
         }
         ctl.reply(fd, t, prog->retainRegion(),
                   (uint32_t)prog->retainSize(), req);
+    });
+
+    /* ---------------- debug plane (doc 12) ---------------------- */
+    /* every op lands at the ctl drain point between scheduler
+       ticks, so reads/writes see a task-boundary-consistent blob   */
+    ctl.on(TPLC_OP_TASK_SUSPEND, [&](int fd, uint16_t t,
+                                     const uint8_t* p, uint32_t n,
+                                     uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 task_idx}", req);
+            return;
+        }
+        uint32_t idx; memcpy(&idx, p, 4);
+        if (!sched.suspend(*prog, idx)) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                           "no such task", req);
+            return;
+        }
+        ctl.replyEmpty(fd, t, req);
+    });
+    ctl.on(TPLC_OP_TASK_RESUME, [&](int fd, uint16_t t,
+                                    const uint8_t* p, uint32_t n,
+                                    uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 task_idx}", req);
+            return;
+        }
+        uint32_t idx; memcpy(&idx, p, 4);
+        if (!sched.resume(*prog, idx)) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                           "no such task", req);
+            return;
+        }
+        ctl.replyEmpty(fd, t, req);
+    });
+    ctl.on(TPLC_OP_TASK_STEP, [&](int fd, uint16_t t,
+                                  const uint8_t* p, uint32_t n,
+                                  uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n != 8) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 task_idx, u32 n}", req);
+            return;
+        }
+        uint32_t idx, count;
+        memcpy(&idx, p, 4); memcpy(&count, p + 4, 4);
+        if (count == 0) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD, "n=0", req);
+            return;
+        }
+        if (idx >= d.task_count) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                           "no such task", req);
+            return;
+        }
+        if (!sched.step(*prog, idx, count)) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "task not suspended", req);
+            return;
+        }
+        ctl.replyEmpty(fd, t, req);
+    });
+
+    /* resolve: qualified symbol name → identity + placement
+       reply {u8 uuid[16], u32 sym_idx, u8 kind, u8 flags, u8 region,
+              u8 access, u32 type_ref, u64 offset, u32 size}         */
+    ctl.on(TPLC_OP_DBG_RESOLVE, [&](int fd, uint16_t t,
+                                    const uint8_t* p, uint32_t n,
+                                    uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        const uint8_t* sm = pkg_smap.data();
+        if (pkg_smap.size() < 32 || memcmp(sm, "SMAP", 4) != 0) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "no symbol map", req);
+            return;
+        }
+        if (n < 2) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u16 nlen, name}", req);
+            return;
+        }
+        uint16_t nl; memcpy(&nl, p, 2);
+        if ((uint32_t)nl + 2 > n) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "name overruns payload", req);
+            return;
+        }
+        std::string_view want((const char*)p + 2, nl);
+        uint32_t count, stroff, strln;
+        memcpy(&count, sm + 8, 4);
+        memcpy(&stroff, sm + 12, 4);
+        memcpy(&strln, sm + 16, 4);
+        if ((uint64_t)stroff + strln > pkg_smap.size() ||
+            32ull + (uint64_t)count * 64 > pkg_smap.size()) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "corrupt symbol map", req);
+            return;
+        }
+        const uint8_t* strs = sm + stroff;
+        for (uint32_t i = 0; i < count; i++) {
+            const uint8_t* e = sm + 32 + (size_t)i * 64;
+            uint32_t noff; memcpy(&noff, e, 4);
+            if (noff >= strln) continue;
+            const char* nm = (const char*)strs + noff;
+            if (!memchr(nm, 0, strln - noff)) continue;
+            if (want != nm) continue;
+            tplc::CtlServer::W w;
+            w.bytes(d.program_uuid, 16);
+            w.u32(i);
+            w.bytes(e + 4, 4);   /* kind flags region access */
+            w.bytes(e + 8, 4);   /* type_ref  */
+            w.bytes(e + 12, 8);  /* offset    */
+            w.bytes(e + 20, 4);  /* size      */
+            ctl.reply(fd, t, w.data(), w.size(), req);
+            return;
+        }
+        ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                       "symbol not found", req);
+    });
+
+    ctl.on(TPLC_OP_DBG_READ, [&](int fd, uint16_t t,
+                                 const uint8_t* p, uint32_t n,
+                                 uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n != 12) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u64 off, u32 len}", req);
+            return;
+        }
+        uint64_t off; uint32_t rl;
+        memcpy(&off, p, 8); memcpy(&rl, p + 8, 4);
+        if (off > prog->blobSize() || rl > prog->blobSize() - off) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "range outside blob", req);
+            return;
+        }
+        ctl.reply(fd, t, prog->blob() + off, rl, req);
+    });
+
+    ctl.on(TPLC_OP_DBG_WRITE, [&](int fd, uint16_t t,
+                                  const uint8_t* p, uint32_t n,
+                                  uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n < 12) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u64 off, u32 len, bytes}", req);
+            return;
+        }
+        uint64_t off; uint32_t wl;
+        memcpy(&off, p, 8); memcpy(&wl, p + 8, 4);
+        if ((uint64_t)wl + 12 != n) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "len/byte count mismatch", req);
+            return;
+        }
+        if (off > prog->blobSize() || wl > prog->blobSize() - off) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "range outside blob", req);
+            return;
+        }
+        memcpy(prog->blob() + off, p + 12, wl);
+        /* writes into the retain region must reach the store */
+        if (retain && retain->attached() && prog->retainSize() > 0) {
+            uint64_t roff =
+                (uint64_t)(prog->retainRegion() - prog->blob());
+            uint64_t rlen = prog->retainSize();
+            if (off < roff + rlen && off + wl > roff)
+                retain->noteDirty();
+        }
+        ctl.replyEmpty(fd, t, req);
+    });
+
+    /* reply {u8 uuid[16], u64 blob_size, u64 retain_off,
+              u64 retain_len, u32 sym_count}                        */
+    ctl.on(TPLC_OP_DBG_STATE, [&](int fd, uint16_t t,
+                                  const uint8_t*, uint32_t,
+                                  uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        uint64_t roff = 0;
+        if (prog->retainSize() > 0)
+            roff = (uint64_t)(prog->retainRegion() - prog->blob());
+        uint32_t scount = 0;
+        if (pkg_smap.size() >= 32 &&
+            memcmp(pkg_smap.data(), "SMAP", 4) == 0)
+            memcpy(&scount, pkg_smap.data() + 8, 4);
+        tplc::CtlServer::W w;
+        w.bytes(d.program_uuid, 16);
+        w.u64(prog->blobSize());
+        w.u64(roff);
+        w.u64(prog->retainSize());
+        w.u32(scount);
+        ctl.reply(fd, t, w.data(), w.size(), req);
     });
 
     /* ---------------- deploy group (doc 04 §I.1 0x0200) ---------- */

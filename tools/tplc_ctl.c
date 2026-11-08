@@ -26,10 +26,13 @@ static void print_prog_status(const uint8_t* p, uint32_t len) {
     uint32_t n = ps->task_count;
     if (sizeof(TplcCtlProgStatus) + n * sizeof(TplcCtlTaskStat) > len)
         n = (len - sizeof(TplcCtlProgStatus)) / sizeof(TplcCtlTaskStat);
+    static const char* tstates[] = {"idle", "sched", "susp"};
     for (uint32_t i = 0; i < n; i++) {
-        printf("  task %-8s kind %u period %lu ns  runs %lu  "
+        printf("  task %-8s kind %u state %-5s period %lu ns  "
+               "runs %lu  "
                "late %lu (max %d ns)  faults %lu\n",
                t[i].name, t[i].kind,
+               tstates[t[i].state <= 2 ? t[i].state : 0],
                (unsigned long)t[i].period_ns,
                (unsigned long)t[i].runs,
                (unsigned long)t[i].late,
@@ -200,7 +203,9 @@ int main(int argc, char** argv) {
         fprintf(stderr,
             "usage: %s <sock> ping|status|prog|list|start|stop|image"
             "|shutdown|kill|reset [warm|cold]|unload|prepare X"
-            "|pkg|deploy F\n", argv[0]);
+            "|pkg|deploy F|suspend N|resume N|step N [M]"
+            "|resolve NAME|dbg-state|dbg-read OFF LEN"
+            "|dbg-write OFF HEX\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -270,6 +275,65 @@ int main(int argc, char** argv) {
             memcpy(pre + 2, arg, al);
             pre_len = 2 + pl;
         }
+    }
+    else if (!strcmp(cmd, "suspend") || !strcmp(cmd, "resume")) {
+        if (!arg) { fprintf(stderr, "%s <task_idx>\n", cmd); return 2; }
+        op = cmd[0] == 's' ? TPLC_OP_TASK_SUSPEND : TPLC_OP_TASK_RESUME;
+        uint32_t ti = (uint32_t)strtoul(arg, NULL, 0);
+        memcpy(pre, &ti, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "step")) {
+        if (!arg) { fprintf(stderr, "step <task_idx> [n]\n"); return 2; }
+        op = TPLC_OP_TASK_STEP;
+        uint32_t ti = (uint32_t)strtoul(arg, NULL, 0);
+        uint32_t nn = argc > 4 ? (uint32_t)strtoul(argv[4], NULL, 0) : 1;
+        memcpy(pre, &ti, 4);
+        memcpy(pre + 4, &nn, 4);
+        pre_len = 8;
+    }
+    else if (!strcmp(cmd, "resolve")) {
+        if (!arg) { fprintf(stderr, "resolve <name>\n"); return 2; }
+        op = TPLC_OP_DBG_RESOLVE;
+        uint16_t nl = (uint16_t)strlen(arg);
+        memcpy(pre, &nl, 2);
+        memcpy(pre + 2, arg, nl);
+        pre_len = 2 + nl;
+    }
+    else if (!strcmp(cmd, "dbg-state")) op = TPLC_OP_DBG_STATE;
+    else if (!strcmp(cmd, "dbg-read")) {
+        if (!arg || argc < 5) {
+            fprintf(stderr, "dbg-read <off> <len>\n"); return 2;
+        }
+        op = TPLC_OP_DBG_READ;
+        uint64_t off = strtoull(arg, NULL, 0);
+        uint32_t rl = (uint32_t)strtoul(argv[4], NULL, 0);
+        memcpy(pre, &off, 8);
+        memcpy(pre + 8, &rl, 4);
+        pre_len = 12;
+    }
+    else if (!strcmp(cmd, "dbg-write")) {
+        if (!arg || argc < 5) {
+            fprintf(stderr, "dbg-write <off> <hex>\n"); return 2;
+        }
+        op = TPLC_OP_DBG_WRITE;
+        uint64_t off = strtoull(arg, NULL, 0);
+        const char* hex = argv[4];
+        size_t hl = strlen(hex) / 2;
+        if (strlen(hex) % 2 || hl > sizeof(pre) - 12) {
+            fprintf(stderr, "bad hex\n"); return 2;
+        }
+        memcpy(pre, &off, 8);
+        uint32_t wl = (uint32_t)hl;
+        memcpy(pre + 8, &wl, 4);
+        for (uint32_t i = 0; i < wl; i++) {
+            int v; char t[3] = {hex[i*2], hex[i*2+1], 0};
+            if (sscanf(t, "%02x", &v) != 1) {
+                fprintf(stderr, "bad hex\n"); return 2;
+            }
+            pre[12 + i] = (uint8_t)v;
+        }
+        pre_len = 12 + wl;
     }
     else { fprintf(stderr, "unknown cmd %s\n", cmd); return 2; }
 
@@ -367,6 +431,45 @@ int main(int argc, char** argv) {
             uint16_t nl; memcpy(&nl, q, 2); q += 2;
             printf("%.*s state %u\n", nl, (const char*)q, q[nl + 3]);
             q += nl + 4;
+        }
+    }
+    else if (op == TPLC_OP_DBG_RESOLVE) {
+        if (len < 40) { puts("(short payload)"); }
+        else {
+            uint32_t si, tr, sz; uint64_t off;
+            memcpy(&si, pl + 16, 4);
+            printf("uuid  ");
+            for (int i = 0; i < 16; i++) printf("%02x", pl[i]);
+            printf("\nsym %u  kind %u flags %02x region %u "
+                   "access %02x\n", si, pl[20], pl[21], pl[22],
+                   pl[23]);
+            memcpy(&tr, pl + 24, 4);
+            memcpy(&off, pl + 28, 8);
+            memcpy(&sz, pl + 36, 4);
+            printf("type %u  off %lu  size %u\n", tr,
+                   (unsigned long)off, sz);
+        }
+    }
+    else if (op == TPLC_OP_DBG_STATE) {
+        if (len < 44) { puts("(short payload)"); }
+        else {
+            uint64_t bs, ro, rl; uint32_t sc;
+            memcpy(&bs, pl + 16, 8);
+            memcpy(&ro, pl + 24, 8);
+            memcpy(&rl, pl + 32, 8);
+            memcpy(&sc, pl + 40, 4);
+            printf("uuid  ");
+            for (int i = 0; i < 16; i++) printf("%02x", pl[i]);
+            printf("\nblob %lu B  retain off %lu len %lu  "
+                   "symbols %u\n", (unsigned long)bs,
+                   (unsigned long)ro, (unsigned long)rl, sc);
+        }
+    }
+    else if (op == TPLC_OP_DBG_READ) {
+        for (uint32_t i = 0; i < len; i++) {
+            if (i % 16 == 0) printf("%08x  ", i);
+            printf("%02x%s", pl[i],
+                   i % 16 == 15 || i == len - 1 ? "\n" : " ");
         }
     }
     else if (op == TPLC_OP_PING && len >= 8) {
