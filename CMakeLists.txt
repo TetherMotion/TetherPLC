@@ -109,6 +109,75 @@ target_include_directories(tplc-ctl PRIVATE tools)
 add_executable(tplc-ctl-proxy tools/tplc_ctl_proxy.cpp)
 
 # ------------------------------------------------------------------ #
+# tplc-io: tether_io server exposing the ctl.sock surface.
+# Compiles a sliced tether_io_protocol from a sibling Tether checkout
+# (server + TCP + schema + streaming; no client/ws/serial). Skipped
+# silently when Tether is not checked out next to this repo.
+# ------------------------------------------------------------------ #
+set(TETHER_DIR "" CACHE PATH "Tether source checkout (for tether_io)")
+if(NOT TETHER_DIR)
+  foreach(cand "${CMAKE_SOURCE_DIR}/../Tether" "$ENV{TETHER_DIR}")
+    if(EXISTS "${cand}/include/tether/io/Server.hpp")
+      set(TETHER_DIR "${cand}")
+      break()
+    endif()
+  endforeach()
+endif()
+
+if(EXISTS "${TETHER_DIR}/include/tether/io/Server.hpp" AND
+   EXISTS "${TETHER_DIR}/dependencies/libSLIPspeed/include" AND
+   EXISTS "${TETHER_DIR}/dependencies/blake3/c/blake3.c")
+  set(_io ${TETHER_DIR}/src/io)
+  set(_slip ${TETHER_DIR}/dependencies/libSLIPspeed)
+  set(_b3 ${TETHER_DIR}/dependencies/blake3/c)
+  add_library(tplc_tether_io STATIC
+    ${_io}/Protocol.cpp
+    ${_io}/Registry.cpp
+    ${_io}/SlipTransport.cpp
+    ${_io}/SchemaDigest.cpp
+    ${_io}/ThresholdFilter.cpp
+    ${_io}/Datalogging.cpp
+    ${_io}/Session.cpp
+    ${_io}/Session_handlers.cpp
+    ${_io}/Session_peer.cpp
+    ${_io}/Session_streaming.cpp
+    ${_io}/Server.cpp
+    ${_io}/TcpTransport.cpp
+    ${_io}/TetherIOClient.cpp
+    ${TETHER_DIR}/src/logging/Logger.cpp
+    ${TETHER_DIR}/src/logging/DeduplicatingLogger.cpp
+    ${_b3}/blake3.c ${_b3}/blake3_dispatch.c ${_b3}/blake3_portable.c
+    ${_slip}/src/Buffer.cpp ${_slip}/src/Decoder.cpp ${_slip}/src/Encoder.cpp)
+  target_include_directories(tplc_tether_io PUBLIC
+    ${TETHER_DIR}/include ${TETHER_DIR}/include/tether
+    ${_b3} ${_slip}/include)
+  target_include_directories(tplc_tether_io PRIVATE ${TETHER_DIR}/src)
+  target_compile_definitions(tplc_tether_io PUBLIC
+    TETHER_IO_TRANSPORT_WS=0 TETHER_IO_TRANSPORT_SERIAL=0)
+  target_compile_definitions(tplc_tether_io PRIVATE
+    BLAKE3_NO_SSE2 BLAKE3_NO_SSE41 BLAKE3_NO_AVX2 BLAKE3_NO_AVX512)
+  set_target_properties(tplc_tether_io PROPERTIES
+    CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(tplc-io runtime/tplc-io/main.cpp)
+  target_link_libraries(tplc-io PRIVATE tplc_tether_io)
+  target_include_directories(tplc-io PRIVATE runtime/tplc-io)
+  set_target_properties(tplc-io PROPERTIES
+    CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+  # probe client: drives a live tplc-io for the ctest acceptance
+  add_executable(tplc-io-probe runtime/tplc-io/probe.cpp)
+  target_link_libraries(tplc-io-probe PRIVATE tplc_tether_io)
+  set_target_properties(tplc-io-probe PROPERTIES
+    CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+  message(STATUS "tplc-io: tether_io provider enabled (TETHER_DIR=${TETHER_DIR})")
+else()
+  message(STATUS "tplc-io: skipped (set TETHER_DIR to a Tether checkout)")
+endif()
+
+# ------------------------------------------------------------------ #
 # Tests: stub modules (hand-written .so fixtures)
 # ------------------------------------------------------------------ #
 set(STUB_VERSION_SCRIPT ${CMAKE_SOURCE_DIR}/tests/abi/exports.map)
@@ -242,6 +311,13 @@ set_tests_properties(safety_boundary PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME mgmt_surface COMMAND bash
   ${CMAKE_SOURCE_DIR}/tests/scan/mgmt_surface.sh)
 set_tests_properties(mgmt_surface PROPERTIES SKIP_RETURN_CODE 77)
+
+# live attach over tether_io: tplc-io TCP bridge + probe client
+if(TARGET tplc-io-probe)
+  add_test(NAME tplc_io_attach COMMAND bash
+    ${CMAKE_SOURCE_DIR}/tests/scan/tplc_io_attach.sh)
+  set_tests_properties(tplc_io_attach PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 # doc 15 §6: license manifest gate (skips when cargo metadata unusable)
 add_test(NAME license_manifest COMMAND python3

@@ -1,9 +1,10 @@
 # As-Built: CiA-405-style Program Management Surface
 
-> Status: implemented over the ctl.sock control channel. Bridge
-> proxying into `tether_io` catalog and a CANopen object-dictionary
-> endpoint are declared iteration-2 (doc 16 §7) — the state model and
-> op surface below are what those adapters must expose.
+> Status: implemented over the ctl.sock control channel, and exposed
+> to tether_io clients by the standalone `tplc-io` provider
+> (`docs/plc/tether-io-attach.md`). A CANopen object-dictionary
+> endpoint remains declared iteration-2 (doc 16 §7) — the state model
+> and op surface below are what those adapters must expose.
 
 ## State model (doc 16 §2 mapping)
 

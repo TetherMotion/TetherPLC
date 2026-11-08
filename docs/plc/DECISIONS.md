@@ -237,3 +237,26 @@ expressions, IF/ELSIF/ELSE, SR/RS dominance, R_TRIG/F_TRIG steady
 state, TON/TOF/TP under injected `__CURRENT_TIME`, located-I/O byte
 semantics — agreed on all generated cases (seeds 0–1, 42 cases,
 ~30 cycles each).
+
+## D-IMPL-18 — Live attach: standalone `tplc-io` TCP provider (doc 16 §7)
+
+**Plan:** iteration-2 bridges the management/debug surface into
+`tether_io` (adapter unspecified: in-process vs sidecar vs bridge).
+**Implemented:** a separate `tplc-io` process inside TetherPLC that
+compiles Tether's `tether_io` server sources (`Registry`, `Session`,
+`Server`, `TcpTransportServer`, schema catalog) into a local static
+lib and connects to a running `tether-plc` over `ctl.sock` — TCP
+listener on `127.0.0.1` by default, SLIP framing, V6 schema slots on
+every entry.
+
+Why separate process: the runtime keeps a clean single-threaded ctl
+loop and its seccomp profile stays AF_UNIX-only — no network code or
+sockets ever execute inside the sandboxed scan process. AuthZ stays
+kernel-attested (the provider's own uid is what `SO_PEERCRED` sees),
+and a provider crash cannot stall the scan loop.
+
+Consequences recorded in `docs/plc/tether-io-attach.md`: remote
+client identity can't reach `SO_PEERCRED` (provider role applies),
+the catalog epoch is static per instance, and complex replies use
+JSON strings rather than per-shape schema structs (keeps the schema
+catalog small and version-tolerant; typed structs remain an option).
