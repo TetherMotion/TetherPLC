@@ -137,8 +137,12 @@ enum TplcCtlOp {
     /* blob layout browser (doc 12 §7): per-field rows from LAYD +
        SMAP. Replies {u32 n, rows*} — each row {u64 off, u64 size,
        u32 type_ref, u8 kind, u8 flags, u8 region, u8 access,
-       u8 name_len, u8 name[name_len]}. Errors DBG_STATE when the
-       loaded program carries no layout descriptors.              */
+       u8 name_len, u8 name[name_len]}.
+       LAYD field flags: bit0 retain, bit1 const (read-only: writes
+       and forces on the field are denied). SMAP access: 0 rw,
+       1 ro (VAR_CONSTANT), 2 wo marker (%Q channel entries).
+       Errors DBG_STATE when the loaded program carries no layout
+       descriptors.                                                */
     TPLC_OP_DBG_FIELDS       = 0x0518,
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,

@@ -1878,6 +1878,32 @@ int main(int argc, char** argv) {
         ctl.reply(fd, t, prog->blob() + off, rl, req);
     });
 
+    /* read-only ranges: LAYD field flags bit1 marks VAR_CONSTANT
+       fields; writes and forces intersecting one are denied. A
+       program without layout descriptors has no annotation, so
+       nothing is ro by default                                    */
+    auto layd_ro_range = [&](uint64_t off, uint64_t len) {
+        const uint8_t* b = pkg_layd.data();
+        size_t n = pkg_layd.size();
+        auto r32 = [](const uint8_t* p) {
+            uint32_t v; memcpy(&v, p, 4); return v; };
+        auto r64 = [](const uint8_t* p) {
+            uint64_t v; memcpy(&v, p, 8); return v; };
+        if (!b || n < 24 || memcmp(b, "LAYD", 4)) return false;
+        uint32_t nreg = r32(b + 8);
+        size_t at = 24 + (size_t)nreg * 24;
+        if (at + 4 > n) return false;
+        uint32_t nf = r32(b + at); at += 4;
+        if (at + (uint64_t)nf * 32 > n) return false;
+        for (uint32_t i = 0; i < nf; i++) {
+            const uint8_t* f = b + at + (size_t)i * 32;
+            uint64_t fo = r64(f + 8), fs = r64(f + 16);
+            if ((f[5] & 2) && off < fo + fs && off + len > fo)
+                return true;
+        }
+        return false;
+    };
+
     ctl.on(TPLC_OP_DBG_WRITE, [&](int fd, uint16_t t,
                                   const uint8_t* p, uint32_t n,
                                   uint64_t req) {
@@ -1901,6 +1927,11 @@ int main(int argc, char** argv) {
         if (off > prog->blobSize() || wl > prog->blobSize() - off) {
             ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
                            "range outside blob", req);
+            return;
+        }
+        if (layd_ro_range(off, wl)) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "range intersects a read-only field", req);
             return;
         }
         memcpy(prog->blob() + off, p + 12, wl);
@@ -2007,6 +2038,11 @@ int main(int argc, char** argv) {
                                "binding not forceable", req);
                 return;
             }
+        }
+        if (layd_ro_range(off, wl)) {
+            ctl.errorReply(fd, t, TPLC_E_FORCE_DENIED,
+                           "constant fields are not forceable", req);
+            return;
         }
         bool masked = n == 12 + 2 * (uint64_t)wl;
         forces.push_back({next_force_h++, off,

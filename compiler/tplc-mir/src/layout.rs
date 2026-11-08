@@ -21,6 +21,7 @@ pub struct FieldInfo {
     pub size: u64,
     pub ty: Type,
     pub retain: bool,
+    pub is_const: bool,
     pub field_kind: u8, // 0 var, 1 fb_inst, 4 retain_wrapper
 }
 
@@ -229,6 +230,7 @@ pub fn layout_program(module: &Module, program: &Pou) -> Layout {
             };
             region_align = region_align.max(a);
             off = (off + a - 1) & !(a - 1);
+            let is_const = v.kind == VarKind::Constant;
             fields.insert(
                 qname.clone(),
                 FieldInfo {
@@ -236,13 +238,16 @@ pub fn layout_program(module: &Module, program: &Pou) -> Layout {
                     size,
                     ty: v.ty.clone(),
                     retain: v.retain,
+                    is_const,
                     field_kind: if is_fb { 1 } else { 0 },
                 },
             );
             layd_fields.push(LaydField {
                 sym_entry: u32::MAX,
                 field_kind: if is_fb { 1 } else { 0 },
-                flags: if v.retain { 1 } else { 0 },
+                // bit0 retain, bit1 const (read-only, not writeable
+                // or forceable through the debug plane)
+                flags: (v.retain as u8) | ((is_const as u8) << 1),
                 gen: 0,
                 offset: off,
                 size,

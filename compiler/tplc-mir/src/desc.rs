@@ -364,7 +364,9 @@ pub fn emit(
             kind: if is_fb { SK_FB_INSTANCE } else { SK_VAR },
             flags: (f.retain as u8) | ((is_fb as u8) << 4),
             region: if f.retain { REGION_RETAIN } else { 0 },
-            access: 0,
+            // access: 0 rw, 1 ro (VAR_CONSTANT), 2 wo marker (%Q
+            // channel entries only)
+            access: if f.is_const { 1 } else { 0 },
             type_ref: tref,
             offset: f.offset,
             size: f.size as u32,
@@ -396,7 +398,7 @@ pub fn emit(
                         kind: SK_VAR,
                         flags: (f.retain as u8) | 2, // forced-capable leaf
                         region: if f.retain { REGION_RETAIN } else { 0 },
-                        access: 0,
+                        access: if f.is_const { 1 } else { 0 },
                         type_ref: cat.index_of(mty),
                         offset: f.offset + *moff,
                         size: mty.size() as u32,

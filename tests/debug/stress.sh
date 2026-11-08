@@ -181,5 +181,49 @@ wait $simpid
 grep -q 'all matched' $WORK/sim.log && ok "sim expect out=0x33" \
     || bad "sim expect mismatch ($(tail -2 $WORK/sim.log))"
 
+# read-only fields (doc 12 §8): VAR_CONSTANT fields carry LAYD flag
+# bit1 / SMAP access ro; dbg-write and force on them must be denied,
+# and the fields browser must show the ro marker.
+cat > $WORK/const.st <<'ST'
+PROGRAM P
+VAR CONSTANT
+    k_max : INT := 5;
+END_VAR
+VAR
+    i : INT := 0;
+END_VAR
+i := i + 1;
+END_PROGRAM
+ST
+
+$TPLCC build $WORK/const.st -o $WORK/const.tplc >/dev/null \
+    || bad "const build"
+
+$BUILD/tplc-ctl $CTL stop >/dev/null
+$BUILD/tplc-ctl $CTL unload >/dev/null
+$BUILD/tplc-ctl $CTL prepare $WORK/const.tplc >/dev/null
+$BUILD/tplc-ctl $CTL start >/dev/null
+sleep 0.3
+
+koff=$($BUILD/tplc-ctl $CTL resolve k_max | awk '/^type/{print $4}')
+ioff=$($BUILD/tplc-ctl $CTL resolve i | awk '/^type/{print $4}')
+kacc=$($BUILD/tplc-ctl $CTL resolve k_max | awk '/access/{print $NF}')
+[ "$kacc" = "01" ] && ok "resolve marks k_max access ro" \
+    || bad "k_max access ($kacc)"
+
+$BUILD/tplc-ctl $CTL dbg-write $koff "0700" 2>/dev/null \
+    && bad "dbg-write on constant was not denied" \
+    || ok "dbg-write denied on constant"
+$BUILD/tplc-ctl $CTL force $koff "0700" 2>/dev/null \
+    && bad "force on constant was not denied" \
+    || ok "force denied on constant"
+$BUILD/tplc-ctl $CTL dbg-write $ioff "2a00" >/dev/null \
+    && ok "dbg-write allowed on plain var" \
+    || bad "dbg-write on plain var"
+$BUILD/tplc-ctl $CTL force $ioff "2a00" >/dev/null \
+    && { $BUILD/tplc-ctl $CTL force-clear all >/dev/null; \
+         ok "force allowed on plain var"; } \
+    || bad "force on plain var"
+
 echo "== $pass pass, $fail fail"
 [ "$fail" -eq 0 ]
