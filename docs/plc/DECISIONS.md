@@ -278,3 +278,22 @@ Consequence recorded in `docs/plc/shadow-run.md`: scheduling is
 budget-bounded slack (`--shadow-budget-ns`, default 200 µs) checked
 after the active `%Q` commit — a shadow can never delay the scan,
 it can only be skipped (`missed`).
+
+## D-IMPL-20 — `TPLC_E_DBG_STALE` (-411) distinguishes vanished vs unknown symbols (retired doc 12)
+
+**Plan:** staleness is marker state (len-0 reads, `n_stale` counts);
+`TPLC_E_DBG_STALE` was declared without an emit site.
+**Implemented:** `DBG_RESOLVE`/`DBG_WATCH_ADD` now emit -411 when the
+requested name misses the live symmap but resolves in the last
+committed swap's predecessor map (`sdiff.old_smap`); a never-seen
+name keeps -410. The marker behavior for offset-only subscriptions
+is unchanged. Covered by `online_change_e2e`.
+
+## D-IMPL-21 — `TPLC_E_MAP_*` moved to -600..-609
+
+**Plan/legacy:** bridge map-validation codes aliased the -500 block
+shared with wire-side `TPLC_E_MGMT_*` (different domains, same
+numbers — `map: MAP_RANGE (-502)` printed an MGMT code's value).
+**Implemented:** MAP codes renumbered to -600..-609 in
+`runtime/bridge/include/tplc/bridge/MapRunner.hpp`; they remain
+report-domain codes, never wire errors. `error-codes.md` updated.

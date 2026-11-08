@@ -1,5 +1,9 @@
 # As-Built: `.tplc` Package Format
 
+> `doc 15`/`doc 14` section references below are provenance to the
+> retired plan chapters; this document is authoritative (see
+> `architecture.md` §7).
+
 > Status: partial — the container, LAYD and MIGD codecs are implemented
 > and conformance-tested on both implementations. SMAP/TCAT section
 > readers, signature, zstd compression, manifest schema validation, and

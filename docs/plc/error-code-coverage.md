@@ -8,8 +8,10 @@ runtime emits and which the tests exercise. Regenerate with
 ## Method and caveats
 
 - Codes are enumerated from `include/tplc/tplc_abi.h`,
-  `tplc_ctl.h`, `tplc_image.h`, `tplc_pkg.h`, and
-  `runtime/host/include/tplc/host/Status.hpp`.
+  `tplc_ctl.h`, `tplc_image.h`, `tplc_pkg.h`,
+  `runtime/host/include/tplc/host/Status.hpp`, and
+  `runtime/bridge/include/tplc/bridge/MapRunner.hpp` (the `MAP_*`
+  report-domain block at `-600..-609`).
 - *Emit sites* are exact-symbol references in `runtime/`, `tools/`,
   `compiler/` — authoritative for the C side. The Rust package
   reader reports `PkgError` variants by name rather than the C
@@ -27,7 +29,7 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-65 declared codes | 46 emitted by runtime/tools | 54 test-hit (~83%)
+75 declared codes | 53 emitted by runtime/tools | 62 test-hit (~83%)
 
 Every code that has a host/tool emit site is covered except
 `IMG_EPOCH`; the remainder are declared-but-unemitted reservations.
@@ -50,6 +52,8 @@ or the wire reply:
   `pkgmut.py` helper repatches `content_hash`/`header_hash` so
   surgical corruptions survive the integrity checks)
 - image: `IMG_VERSION`, `IMG_TOO_SMALL` via crafted shm headers
+- map validator: `MAP_RANGE`/`TYPE`/`SAFE`/`OWNER`/`SAFETY`/`AT`/`BIND`
+  via a map file hitting every implemented violation rule
 
 ## Remaining gaps and why they stay
 
@@ -68,10 +72,12 @@ or the wire reply:
   bounds-check aborts today; reserved for checked-code modes.
 - `TPLC_E_MGMT_OP`, `MGMT_AUTHZ`, `MGMT_SCHEMA` (-500/-502/-503) —
   reserved for the CiA-405 management surface; ctl authz denials
-  use `CTL_AUTHZ` (-401) uniformly today. Note the -500 range also
-  hosts `TPLC_E_MAP_*` in the bridge validator — see
-  `error-codes.md` for the collision caveat.
+  use `CTL_AUTHZ` (-401) uniformly today. (The former `-500` alias
+  with `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`.)
 - `TPLC_E_PKG_HIDDEN_STATE`, `SYMMAP_RANGE`, `PKG_ABI_MISMATCH`,
   `REQUIRES_UNMET` (-210/-211/-213/-214) — declared in
   `tplc-pkg`'s `PkgError` but no site returns them yet (manifest
   validation depth not implemented).
+- `TPLC_E_MAP_DIR`, `MAP_PDO`, `MAP_EPOCH` (-601/-604/-609) —
+  declared in the bridge validator's block for map checks v1 does
+  not implement (direction/PDO/epoch rules).

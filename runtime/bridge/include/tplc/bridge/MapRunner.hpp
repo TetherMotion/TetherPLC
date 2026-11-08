@@ -44,22 +44,24 @@ struct IoMap {
 };
 
 /* map validation (doc 09 §2.2): each violation is reported with its
-   stable code — a map is deployable only when the list is empty    */
+   stable code — a map is deployable only when the list is empty.
+   Codes live at -600..: the -500 block belongs to wire-side
+   TPLC_E_MGMT_* (tplc_ctl.h) and MAP codes must not alias it.      */
 struct MapViolation {
     int         code;                 /* TPLC_E_MAP_*               */
     std::string rule;                 /* MAP_RANGE/OWNER/…          */
     std::string detail;
 };
-constexpr int TPLC_E_MAP_OWNER  = -500;
-constexpr int TPLC_E_MAP_DIR    = -501;
-constexpr int TPLC_E_MAP_RANGE  = -502;
-constexpr int TPLC_E_MAP_TYPE   = -503;
-constexpr int TPLC_E_MAP_PDO    = -504;
-constexpr int TPLC_E_MAP_SAFETY = -505;
-constexpr int TPLC_E_MAP_AT     = -506;
-constexpr int TPLC_E_MAP_BIND   = -507;
-constexpr int TPLC_E_MAP_SAFE   = -508;
-constexpr int TPLC_E_MAP_EPOCH  = -509;
+constexpr int TPLC_E_MAP_OWNER  = -600;
+constexpr int TPLC_E_MAP_DIR    = -601;
+constexpr int TPLC_E_MAP_RANGE  = -602;
+constexpr int TPLC_E_MAP_TYPE   = -603;
+constexpr int TPLC_E_MAP_PDO    = -604;
+constexpr int TPLC_E_MAP_SAFETY = -605;
+constexpr int TPLC_E_MAP_AT     = -606;
+constexpr int TPLC_E_MAP_BIND   = -607;
+constexpr int TPLC_E_MAP_SAFE   = -608;
+constexpr int TPLC_E_MAP_EPOCH  = -609;
 
 std::vector<MapViolation> validate_map(const IoMap& m);
 

@@ -24,15 +24,14 @@ Coverage status (which codes are emitted and test-exercised):
 | `-400..-404` | `include/tplc/tplc_ctl.h` | `TPLC_E_CTL_*` | ctl plumbing: wrong state, authz denied (`-401`), unknown op, protocol version, malformed payload |
 | `-410..-417` | `tplc_ctl.h` | `TPLC_E_DBG_*`, `TPLC_E_FORCE_DENIED`, `TPLC_E_TRACE_CONFIG` | debug plane: resolve, stale, overload, rate, force denied (`-414`), access (`-415`), state, trace config |
 | `-500..-503` | `tplc_ctl.h` | `TPLC_E_MGMT_*` | management surface: op failed, illegal state transition (`-501`), authz (`-502`), schema (`-503`) |
-| `-500..-509` | `runtime/bridge/include/tplc/bridge/MapRunner.hpp` | `TPLC_E_MAP_*` | io-map validation: owner, dir, range, type, PDO, safety, AT, bind, safe, epoch — see note below |
+| `-600..-609` | `runtime/bridge/include/tplc/bridge/MapRunner.hpp` | `TPLC_E_MAP_*` | io-map validation: owner, dir, range, type, PDO, safety, AT, bind, safe, epoch — see note below |
 | `-999..-1999` | `tplc_abi.h` | module-defined | reserved for generated/module codes |
 
-> **Range note.** `TPLC_E_MAP_*` (-500s) and `TPLC_E_MGMT_*` (-500s)
-> occupy the same numeric range but different domains: MAP codes are
-> returned inside map-validation reports (`MAP_GET`/deploy-map
-> checks) and never appear as a ctl wire error code; MGMT codes are
-> wire errors. Context disambiguates, but a future range split is
-> the clean fix.
+> **Range note.** `TPLC_E_MAP_*` lives at `-600..-609`, disjoint from
+> wire-side `TPLC_E_MGMT_*` (`-500..-503`): MAP codes are returned
+> inside map-validation reports (`MAP_GET`/deploy-map checks) and
+> never appear as a ctl wire error. (They originally aliased the
+> `-500` block; split for clarity.)
 
 ## String codes (compiler / diagnostic domain)
 

@@ -218,6 +218,33 @@ echo "$out" | grep -q '(-102)' \
 # leaves it attachable; `create` reclaims a stale one anyway)
 "$BUILD"/tplc-image create "$IMG" 256 256 >/dev/null 2>&1
 
+# ============ map-validator errors (bridge; -600..-609 domain) ============
+# every violation a bad map can hit: RANGE, TYPE, SAFE, OWNER, SAFETY,
+# AT, BIND (MAP_DIR/PDO/EPOCH are declared but have no emit site)
+cat > "$WORK/bad.map" <<'EOF'
+image in 64 out 64
+in  off=0 size=4 key=sensor1
+in  off=200 size=8 key=sensor_far
+out off=0 size=2 key=v1 type=u32
+out off=1 size=4 key=v2 safe=zero
+safety v2
+bind %QD100 v1
+bind %QD4 ghost
+EOF
+if [ -x "$BUILD/tether-plc-bridge" ]; then
+    out=$("$BUILD"/tether-plc-bridge --image "$IMG" --map "$WORK/bad.map" \
+          --no-plc 2>&1)
+    # rule → numeric (MapRunner.hpp); full literals so the coverage
+    # report's test-hit heuristic counts them
+    for rc in "RANGE -602" "TYPE -603" "SAFE -608" "OWNER -600" \
+              "SAFETY -605" "AT -606" "BIND -607"; do
+        set -- $rc
+        echo "$out" | grep -q "MAP_$1 ($2)" \
+            && ok "TPLC_E_MAP_$1 validation finding" \
+            || bad "MAP_$1: $out"
+    done
+fi
+
 # ============ module loader errors ============
 mkmod nosyms -DSTUB_ABI_EXT=0 -DSTUB_BLOB=64 -DSTUB_RET_SZ=0 \
      -DSTUB_RET_OFF=0 -DSTUB_IO_B=0 -DSTUB_IO_N=0

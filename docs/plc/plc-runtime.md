@@ -2,6 +2,10 @@
 
 Status: as-built.
 
+> `doc NN` section references below are provenance to the retired
+> plan chapters; this document is authoritative (see
+> `architecture.md` §7).
+
 ## Process
 
 `tether-plc --image <shm> --module <so> | --package <.tplc>

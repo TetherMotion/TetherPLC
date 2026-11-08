@@ -43,11 +43,12 @@ Still open (acceptance-matrix "Known acceptance gaps"):
 2. ~~Flight-recorder induced-fault trace~~ — closed: `flight_recorder`
    induces a hang→abort freeze and reads pre-fault samples.
 3. ~~Error-code coverage~~ — closed: `error_paths` induces every
-   reachable code; 54/65 test-hit, all emitted codes covered except
+   reachable code; 62/75 test-hit, all emitted codes covered except
    race-only `IMG_EPOCH`; reservations documented.
 4. Multi-tenant/cross-instance interference — not load-tested;
    marked v1 non-goal in the threat-model signoff.
-5. **v1 tag** — 1–3 closed; ready to cut unless #4 is re-scoped.
+5. **v1 tag** — 1–3 closed; owner directive: the v1 tag will not be
+   cut explicitly. P10 is complete; further work is iteration-2.
 
 ## 3. Definition of done
 

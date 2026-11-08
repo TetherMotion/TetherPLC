@@ -1,5 +1,9 @@
 # As-Built: Live Attach over `tether_io` (`tplc-io`)
 
+> `doc 16` section references below are provenance to the retired
+> plan chapter; this document is authoritative (see
+> `architecture.md` §7).
+
 > Status: implemented (doc 16 §7 iteration-2, partial). A standalone
 > `tplc-io` process bridges a live `tether-plc` `ctl.sock` into a
 > `tether_io` server over TCP. WebSocket/browser transport is not

@@ -27,7 +27,7 @@ this matrix plus the as-built specs are the v1 acceptance surface.
 | all §4 suites in CI with green criteria | ctest registry (25 tests), `.github/workflows/ci.yml` | green |
 | kill -9 + hang + seq-odd fault injection | `fault_injection`, `watchdog_escalation` | green |
 | perf/jitter numbers vs DESIGN-GOALS §6 | `docs/plc/perf-evidence.md` + `tests/perf/evidence.sh` | green |
-| coverage gates + zero uncovered error codes | `error_paths` (induced codes), `docs/plc/error-code-coverage.md` (54/65 test-hit; every emitted code covered except race-only `IMG_EPOCH`) | green — emitted-code coverage complete; declared-not-emitted reservations documented |
+| coverage gates + zero uncovered error codes | `error_paths` (induced codes), `docs/plc/error-code-coverage.md` (62/75 test-hit; every emitted code covered except race-only `IMG_EPOCH`) | green — emitted-code coverage complete; declared-not-emitted reservations documented |
 
 ## Doc 15 — Safety & security
 

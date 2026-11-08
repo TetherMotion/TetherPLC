@@ -24,13 +24,14 @@ CODE_HEADERS = [
     "include/tplc/tplc_image.h",
     "include/tplc/tplc_pkg.h",
     "runtime/host/include/tplc/host/Status.hpp",
+    "runtime/bridge/include/tplc/bridge/MapRunner.hpp",
 ]
 
 # NAME = VALUE   or   #define NAME (VALUE)   or   #define NAME VALUE
 # Only TPLC_E_*/TPLC_TASK_E_* are error codes — TPLC_IMAGE_*,
 # TPLC_SEC_* etc. are constants that happen to contain "E_".
 DECL_RE = re.compile(
-    r"(?:^\s*(TPLC_(?:TASK_)?E_\w+)\s*=\s*(-?\d+)|"
+    r"(?:^\s*(?:constexpr\s+int\s+)?(TPLC_(?:TASK_)?E_\w+)\s*=\s*(-?\d+)|"
     r"^\s*#\s*define\s+(TPLC_(?:TASK_)?E_\w+)\s*\(?(-?\d+)\)?)",
     re.M)
 

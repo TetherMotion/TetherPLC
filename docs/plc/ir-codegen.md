@@ -1,3 +1,8 @@
+# IR & codegen — as-built notes
+
+> `doc NN`/`doc 14` section references below are provenance to the
+> retired plan chapters; this document is authoritative (see
+> `architecture.md` §7).
 
 ## Online-change emission (online-change.md)
 

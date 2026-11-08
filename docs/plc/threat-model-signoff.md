@@ -1,5 +1,9 @@
 # Threat-model signoff
 
+> `doc 15` section references below are provenance to the retired
+> plan chapter; this document is authoritative (see
+> `architecture.md` §7).
+
 Maps the doc-15 §1 threat table's "primary control" column to the
 concrete tests that exercise each control. This is the acceptance
 record for the safety/security chapter; keep it in sync with ctest.

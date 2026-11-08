@@ -1,6 +1,10 @@
 # Runtime ABI & host library (as built)
 Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
 
+> `doc NN` section references below are provenance to the retired
+> plan chapters; this document is authoritative (see
+> `architecture.md` §7).
+
 ## What exists
 
 - `include/tplc/tplc_abi.h` — the ABI itself, verbatim from the normative
