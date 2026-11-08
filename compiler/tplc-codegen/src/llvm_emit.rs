@@ -280,6 +280,30 @@ impl<'ctx> Gen<'ctx> {
                 .unwrap()
                 .into_array_value();
         }
+        if have > want {
+            /* truncating store: the len element must not claim data
+               that no longer fits (a len > cap is a malformed string) */
+            let len = self
+                .b
+                .build_extract_value(acc, 0, "tl")
+                .unwrap()
+                .into_int_value();
+            let max = elem.const_int((want - 1) as u64, false);
+            let over = self
+                .b
+                .build_int_compare(IntPredicate::UGT, len, max, "tov")
+                .unwrap();
+            let clamped = self
+                .b
+                .build_select(over, max, len, "tc")
+                .unwrap()
+                .into_int_value();
+            acc = self
+                .b
+                .build_insert_value(acc, clamped, 0, "tsi")
+                .unwrap()
+                .into_array_value();
+        }
         acc.into()
     }
 
@@ -364,7 +388,7 @@ impl<'ctx> Gen<'ctx> {
                 let v = self.expr(ctx, e);
                 self.conv(v, &e.ty, to)
             }
-            ExprKind::Call { fun, args } => self.fn_call(ctx, fun, args),
+            ExprKind::Call { fun, args } => self.fn_call(ctx, fun, args, &e.ty),
         }
     }
 
@@ -736,7 +760,136 @@ impl<'ctx> Gen<'ctx> {
 
     /// FUNCTION call: caller-side scratch alloca, bind inputs, invoke,
     /// read the name-var back.
-    fn fn_call(&mut self, ctx: &Ctx, fun: &str, args: &[(String, Expr)]) -> BasicValueEnum<'ctx> {
+    /// byte-indexed element pointer over a typed array pointer
+    fn elem_ptr(&mut self, base: PointerValue<'ctx>,
+                idx: inkwell::values::IntValue<'ctx>, esz: u64) -> PointerValue<'ctx> {
+        let i64t = self.ctx.i64_type();
+        let idx64 = if idx.get_type().get_bit_width() < 64 {
+            self.b.build_int_z_extend(idx, i64t, "i64").unwrap()
+        } else {
+            idx
+        };
+        let bo = self
+            .b
+            .build_int_mul(idx64, i64t.const_int(esz, false), "bo")
+            .unwrap();
+        let base8 = self.b.build_pointer_cast(base, self.i8p(), "b8").unwrap();
+        unsafe {
+            self.b
+                .build_gep(self.ctx.i8_type(), base8, &[bo], "ep")
+                .unwrap()
+        }
+    }
+
+    /// LEN/CONCAT over narrow and wide strings (IEC string functions)
+    fn builtin_call(&mut self, ctx: &Ctx, b: tplc_mir::ty::BuiltinFn,
+                    args: &[(String, Expr)], ret_ty: &Type) -> BasicValueEnum<'ctx> {
+        use tplc_mir::ty::BuiltinFn;
+        match b {
+            BuiltinFn::Len => {
+                let av = self.expr(ctx, &args[0].1).into_array_value();
+                let len = self
+                    .b
+                    .build_extract_value(av, 0, "len")
+                    .unwrap()
+                    .into_int_value();
+                let want = llty(self.ctx, ret_ty).into_int_type();
+                let (lb, wb) = (len.get_type().get_bit_width(), want.get_bit_width());
+                if lb < wb {
+                    self.b.build_int_z_extend(len, want, "lenz").unwrap().into()
+                } else if lb > wb {
+                    self.b.build_int_truncate(len, want, "lent").unwrap().into()
+                } else {
+                    len.into()
+                }
+            }
+            BuiltinFn::Concat => {
+                let av = self.expr(ctx, &args[0].1).into_array_value();
+                let bv = self.expr(ctx, &args[1].1).into_array_value();
+                let elem = av.get_type().get_element_type().into_int_type();
+                let esz = (elem.get_bit_width() / 8) as u64;
+                let cap = match ret_ty {
+                    Type::Str { cap } | Type::WStr { cap } => *cap,
+                    _ => 0,
+                } as u32;
+                let want = 1 + cap;
+                let aty = av.get_type();
+                let bty = bv.get_type();
+                let pa = self.b.build_alloca(aty, "pa").unwrap();
+                self.b.build_store(pa, av).unwrap();
+                let pb = self.b.build_alloca(bty, "pb").unwrap();
+                self.b.build_store(pb, bv).unwrap();
+                let pr = self.b.build_alloca(elem.array_type(want), "pr").unwrap();
+
+                /* a's whole array (len byte + data) lands first — fixed
+                   size — then b's units shift in after a's live length */
+                let bytes = aty.len() as u64 * esz;
+                let dst8 = self.b.build_pointer_cast(pr, self.i8p(), "d8").unwrap();
+                let src8 = self.b.build_pointer_cast(pa, self.i8p(), "s8").unwrap();
+                self.b
+                    .build_memcpy(dst8, 1, src8, 1,
+                                  self.ctx.i64_type().const_int(bytes, false))
+                    .unwrap();
+
+                let la = self.b.build_load(elem, pa, "la").unwrap().into_int_value();
+                let lb = self.b.build_load(elem, pb, "lb").unwrap().into_int_value();
+                let sum = self.b.build_int_add(la, lb, "sum").unwrap();
+                let capv = elem.const_int(cap as u64, false);
+                let over = self
+                    .b
+                    .build_int_compare(IntPredicate::UGT, sum, capv, "ov")
+                    .unwrap();
+                let total = self
+                    .b
+                    .build_select(over, capv, sum, "tot")
+                    .unwrap()
+                    .into_int_value();
+
+                /* copy b[1..=lb] to pr[la+1 ..] */
+                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                let pre = self.b.get_insert_block().unwrap();
+                let cond_bb = self.ctx.append_basic_block(f, "cc.cond");
+                let body_bb = self.ctx.append_basic_block(f, "cc.body");
+                let end_bb = self.ctx.append_basic_block(f, "cc.end");
+                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.b.position_at_end(cond_bb);
+                let j = self.b.build_phi(elem, "j").unwrap();
+                j.add_incoming(&[(&elem.const_int(1, false), pre)]);
+                let jv = j.as_basic_value().into_int_value();
+                let jc = self
+                    .b
+                    .build_int_compare(IntPredicate::ULE, jv, lb, "jc")
+                    .unwrap();
+                self.b.build_conditional_branch(jc, body_bb, end_bb).unwrap();
+                self.b.position_at_end(body_bb);
+                let di = self.b.build_int_add(la, jv, "di").unwrap();
+                let dp = self.elem_ptr(pr, di, esz);
+                let sp = self.elem_ptr(pb, jv, esz);
+                let v = self.b.build_load(elem, sp, "v").unwrap();
+                self.b.build_store(dp, v).unwrap();
+                let jn = self
+                    .b
+                    .build_int_add(jv, elem.const_int(1, false), "jn")
+                    .unwrap();
+                j.add_incoming(&[(&jn, body_bb)]);
+                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.b.position_at_end(end_bb);
+
+                let p0 = self.b.build_pointer_cast(pr, self.i8p(), "p0").unwrap();
+                self.b.build_store(p0, total).unwrap();
+                self.b
+                    .build_load(elem.array_type(want), pr, "cat")
+                    .unwrap()
+                    .into()
+            }
+        }
+    }
+
+    fn fn_call(&mut self, ctx: &Ctx, fun: &str, args: &[(String, Expr)],
+               ret_ty: &Type) -> BasicValueEnum<'ctx> {
+        if let Some(b) = tplc_mir::ty::builtin_fn(fun) {
+            return self.builtin_call(ctx, b, args, ret_ty);
+        }
         let pou = self
             .mir
             .pous

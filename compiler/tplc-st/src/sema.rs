@@ -10,7 +10,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use tplc_mir::ir::*;
 use tplc_mir::layout::builtin_fb_layout;
-use tplc_mir::ty::{compatible, convertible, literal_fits, narrows, unify_num};
+use tplc_mir::ty::{builtin_fn, compatible, convertible, literal_fits, narrows,
+                   unify_num, BuiltinFn};
 
 use crate::diag::{codes, wcodes, Diag};
 
@@ -387,7 +388,57 @@ impl<'e> Checker<'e> {
         e.ty.clone()
     }
 
+    /// builtin function typing (LEN/CONCAT — IEC string functions)
+    fn builtin_ty(&mut self, b: BuiltinFn, args: &mut [(String, Expr)],
+                  prov: &Prov) -> Type {
+        match b {
+            BuiltinFn::Len => {
+                if args.len() != 1 {
+                    self.err(codes::TYPE, "LEN takes exactly one string", prov);
+                    return Type::Int { signed: true, bits: 16 };
+                }
+                let t = self.expr(&mut args[0].1);
+                match t {
+                    Type::Str { .. } | Type::WStr { .. } => {
+                        Type::Int { signed: true, bits: 16 }
+                    }
+                    _ => {
+                        self.err(codes::TYPE,
+                                 "LEN expects STRING or WSTRING", prov);
+                        Type::Int { signed: true, bits: 16 }
+                    }
+                }
+            }
+            BuiltinFn::Concat => {
+                if args.len() != 2 {
+                    self.err(codes::TYPE,
+                             "CONCAT takes exactly two strings", prov);
+                    return Type::Str { cap: 0 };
+                }
+                let t1 = self.expr(&mut args[0].1);
+                let t2 = self.expr(&mut args[1].1);
+                match (t1, t2) {
+                    (Type::Str { cap: c1 }, Type::Str { cap: c2 }) => Type::Str {
+                        cap: c1.saturating_add(c2),
+                    },
+                    (Type::WStr { cap: c1 }, Type::WStr { cap: c2 }) => Type::WStr {
+                        cap: c1.saturating_add(c2),
+                    },
+                    _ => {
+                        self.err(codes::TYPE,
+                                 "CONCAT expects two strings of the same kind",
+                                 prov);
+                        Type::Str { cap: 0 }
+                    }
+                }
+            }
+        }
+    }
+
     fn fn_ty(&mut self, fun: &mut String, args: &mut [(String, Expr)], prov: &Prov) -> Type {
+        if let Some(b) = builtin_fn(fun) {
+            return self.builtin_ty(b, args, prov);
+        }
         let Some(pou) = self.env.pous.get(&fun.to_ascii_uppercase()) else {
             self.err(codes::UNKNOWN_NAME, format!("no FUNCTION {fun}"), prov);
             return Type::Bool;

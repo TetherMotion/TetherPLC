@@ -72,13 +72,25 @@ struct Step {
                                                           expect_shadow;
 };
 
+/* hex bytes, with or without separators: "0600" and "06,00" both
+   mean two bytes (the comma form is what expectf emits) */
 static bool hex_bytes(const std::string& s, std::vector<uint8_t>& out) {
-    for (size_t i = 0; i + 1 < s.size(); i += 3) {
-        unsigned v;
-        if (sscanf(s.c_str() + i, "%02x", &v) != 1) return false;
-        out.push_back((uint8_t)v);
+    int hi = -1;
+    for (char c : s) {
+        if (c == ',' || c == ' ' || c == ':') continue;
+        int v;
+        if (c >= '0' && c <= '9') v = c - '0';
+        else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+        else return false;
+        if (hi < 0) {
+            hi = v;
+        } else {
+            out.push_back((uint8_t)((hi << 4) | v));
+            hi = -1;
+        }
     }
-    return true;
+    return hi < 0;
 }
 
 static bool parse_steps(const std::string& path,
@@ -273,14 +285,10 @@ int main(int argc, char** argv) {
         for (auto& s : steps) {
             if (g_stop) break;
             uint64_t seq0 = tplc_img_load_u64(&img.hdr->out_seq);
-            tplc_image_sim_set_now(&img, s.time_ns);
-            tplc_image_master_heartbeat(&img, mono_ns());
-            for (auto& [off, bytes] : s.in)
-                tplc_image_write_inputs(&img, bytes.data(), off,
-                                        (uint32_t)bytes.size());
-            /* shadow ops run on the step boundary: load/promote
-               before the step's scan so the candidate sees this
-               step's inputs / owns this step's %Q                */
+            /* shadow ops run on the step boundary BEFORE the clock
+               advances: the plc loop is free-running, so publishing
+               the new instant first would let it scan the shadow at
+               that instant ahead of a promote meant for it        */
             if (s.shadow_load) {
                 if (shadow_pkg.empty() || ctl_ensure() < 0) {
                     fprintf(stderr, "step %u: shadow_load needs "
@@ -314,6 +322,11 @@ int main(int argc, char** argv) {
                 /* adoption carries the suspended-task set across —
                    the next TASK_STEP stays exactly one cycle       */
             }
+            tplc_image_sim_set_now(&img, s.time_ns);
+            tplc_image_master_heartbeat(&img, mono_ns());
+            for (auto& [off, bytes] : s.in)
+                tplc_image_write_inputs(&img, bytes.data(), off,
+                                        (uint32_t)bytes.size());
             if (scan_mode) {
                 uint8_t rq[8], rb[64];
                 uint32_t zero = 0, one = 1;

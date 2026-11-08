@@ -371,7 +371,16 @@ fn read_srcs(files: &[String]) -> Vec<(String, String)> {
     files
         .iter()
         .map(|f| {
-            let s = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("{f}: {e}"));
+            // a source file that is not UTF-8 (or unreadable) is a
+            // diagnostic, not a crash — the fuzzer feeds raw bytes
+            let bytes = std::fs::read(f).unwrap_or_else(|e| {
+                eprintln!("error: {f}: {e}");
+                std::process::exit(1);
+            });
+            let s = String::from_utf8(bytes).unwrap_or_else(|e| {
+                eprintln!("error[TPLC_E_ST_PARSE] {f}: not valid UTF-8 ({e})");
+                std::process::exit(1);
+            });
             (f.clone(), s)
         })
         .collect()

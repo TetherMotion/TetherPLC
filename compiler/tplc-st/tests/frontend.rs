@@ -189,6 +189,49 @@ END_PROGRAM
 }
 
 #[test]
+fn string_builtins_are_typed() {
+    // LEN/CONCAT over both string kinds; misuse is a type error
+    let ok = r#"
+PROGRAM P
+VAR s : STRING[16]; c : STRING[32]; w : WSTRING[16];
+    wc : WSTRING[32]; n : INT; eq : BOOL; END_VAR
+    s := 'abc';
+    c := CONCAT(s, s);
+    w := "aä";
+    wc := CONCAT(w, w);
+    n := LEN(c);
+    eq := (n = 6);
+END_PROGRAM
+"#;
+    let out = compile(&[("ok.st", ok)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        !diags.iter().any(|d| d.severity == tplc_st::Severity::Error),
+        "builtin sema errors: {diags:?}"
+    );
+
+    for (name, src) in [
+        (
+            "len_bad",
+            "PROGRAM P\nVAR x : INT; n : INT; END_VAR\n n := LEN(x);\nEND_PROGRAM\n",
+        ),
+        (
+            "concat_mixed",
+            "PROGRAM P\nVAR s : STRING[16]; w : WSTRING[16];\n c : STRING[32]; END_VAR\n c := CONCAT(s, w);\nEND_PROGRAM\n",
+        ),
+    ] {
+        let out = compile(&[(name, src)]);
+        let mut module = out.module;
+        let diags = tplc_st::sema::check(&mut module);
+        assert!(
+            diags.iter().any(|d| d.code == tplc_st::codes::TYPE),
+            "{name}: expected TYPE diag, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn lints_fire_and_render() {
     let src = r#"
 PROGRAM P

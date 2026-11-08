@@ -729,3 +729,212 @@ fn wide_string_is_utf16_through_jit() {
         assert_eq!(blob[scope["eq2"].0 as usize], 1, "aä€ = aä€ is true");
     }
 }
+
+/// LEN/CONCAT builtins: narrow and wide, cross-cap store, truncation
+/// clamping the len element.
+#[test]
+fn string_builtins_through_jit() {
+    fn sl(s: &str) -> Expr {
+        Expr {
+            ty: Type::Str {
+                cap: s.len() as u16,
+            },
+            kind: ExprKind::Lit(Lit::Str(s.into())),
+            prov: Prov::None,
+        }
+    }
+    fn wl(s: &str) -> Expr {
+        Expr {
+            ty: Type::WStr {
+                cap: s.encode_utf16().count() as u16,
+            },
+            kind: ExprKind::Lit(Lit::WStr(s.into())),
+            prov: Prov::None,
+        }
+    }
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+    };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "F".into(),
+        iface: vec![
+            vd("c", Type::Str { cap: 32 }, None),
+            vd("wc", Type::WStr { cap: 32 }, None),
+            vd("small", Type::Str { cap: 8 }, None),
+            vd(
+                "n1",
+                Type::Int {
+                    signed: true,
+                    bits: 32,
+                },
+                None,
+            ),
+            vd(
+                "n2",
+                Type::Int {
+                    signed: true,
+                    bits: 32,
+                },
+                None,
+            ),
+            vd("eq", Type::Bool, None),
+        ],
+        body: Body::Stmts(vec![
+            assign(
+                Ref::Var("c".into()),
+                Expr {
+                    ty: Type::Str { cap: 32 },
+                    kind: ExprKind::Call {
+                        fun: "CONCAT".into(),
+                        args: vec![
+                            (String::new(), sl("abc")),
+                            (String::new(), sl("xyz")),
+                        ],
+                    },
+                    prov: Prov::None,
+                },
+            ),
+            assign(
+                Ref::Var("wc".into()),
+                Expr {
+                    ty: Type::WStr { cap: 32 },
+                    kind: ExprKind::Call {
+                        fun: "CONCAT".into(),
+                        args: vec![
+                            (String::new(), wl("aä")),
+                            (String::new(), wl("aä")),
+                        ],
+                    },
+                    prov: Prov::None,
+                },
+            ),
+            // truncating store: len must clamp to the target cap
+            assign(Ref::Var("small".into()), sl("abcdefghij")),
+            assign(
+                Ref::Var("n1".into()),
+                Expr {
+                    ty: Type::Int {
+                        signed: true,
+                        bits: 32,
+                    },
+                    kind: ExprKind::Call {
+                        fun: "LEN".into(),
+                        args: vec![(String::new(), sl("abcd"))],
+                    },
+                    prov: Prov::None,
+                },
+            ),
+            assign(
+                Ref::Var("n2".into()),
+                Expr {
+                    ty: Type::Int {
+                        signed: true,
+                        bits: 32,
+                    },
+                    kind: ExprKind::Call {
+                        fun: "LEN".into(),
+                        args: vec![(
+                            String::new(),
+                            Expr {
+                                ty: Type::WStr { cap: 32 },
+                                kind: ExprKind::Ref(Ref::Var("wc".into())),
+                                prov: Prov::None,
+                            },
+                        )],
+                    },
+                    prov: Prov::None,
+                },
+            ),
+            assign(
+                Ref::Var("eq".into()),
+                bin(
+                    BinOp::Eq,
+                    Expr {
+                        ty: Type::Str { cap: 32 },
+                        kind: ExprKind::Ref(Ref::Var("c".into())),
+                        prov: Prov::None,
+                    },
+                    sl("abcxyz"),
+                    Type::Bool,
+                ),
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx, m, l, program, &[], "fns", [0x46; 16], [0xDD; 32], None, 10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        assert_eq!(run(&mut tctx), 0);
+
+        let c = scope["c"].0 as usize;
+        assert_eq!(blob[c], 6);
+        assert_eq!(&blob[c + 1..c + 7], b"abcxyz");
+        let wc = scope["wc"].0 as usize;
+        assert_eq!(u16::from_le_bytes([blob[wc], blob[wc + 1]]), 4);
+        let u = |i: usize| u16::from_le_bytes([blob[wc + 2 + i * 2], blob[wc + 3 + i * 2]]);
+        assert_eq!(&[u(0), u(1), u(2), u(3)], &[0x61, 0xE4, 0x61, 0xE4]);
+        let small = scope["small"].0 as usize;
+        assert_eq!(blob[small], 8, "truncating store clamps len");
+        assert_eq!(&blob[small + 1..small + 9], b"abcdefgh");
+        assert_eq!(
+            (blob.as_ptr().add(scope["n1"].0 as usize) as *const i32).read(),
+            4
+        );
+        assert_eq!(
+            (blob.as_ptr().add(scope["n2"].0 as usize) as *const i32).read(),
+            4
+        );
+        assert_eq!(blob[scope["eq"].0 as usize], 1, "c = 'abcxyz'");
+    }
+}

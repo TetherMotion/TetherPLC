@@ -127,7 +127,7 @@ bool Scheduler::step(Program& prog, uint32_t task_idx, uint32_t n) {
     return false;
 }
 
-bool Scheduler::suspended(Program& prog, uint32_t task_idx) const {
+bool Scheduler::suspended(const Program& prog, uint32_t task_idx) const {
     for (const auto& e : tasks_)
         if (e.prog == &prog && e.task_idx == task_idx) return e.suspended;
     return false;

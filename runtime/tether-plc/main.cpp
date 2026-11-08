@@ -805,6 +805,9 @@ int main(int argc, char** argv) {
     static const size_t SHADOW_DIFF_CAP = 256;
     std::optional<Shadow> shadow;
     bool     shadow_faulted = false;      /* set by shooks.fault  */
+    uint64_t shadow_last_now = UINT64_MAX; /* one shadow cycle per
+                                             scan instant — the loop
+                                             spins between releases */
 
     auto drop_shadow = [&](const char* why) {
         if (!shadow) return;
@@ -902,12 +905,29 @@ int main(int argc, char** argv) {
        back in — its blob is untouched since the snapshot, so the
        restore is a pure pointer swap (retain file is re-opened under
        the old identity but not re-loaded: the blob already holds it) */
+    /* a swap/promote/rollback rebuilds scheduler entries, so the
+       debug-plane hold state must travel with the program: a task
+       that was suspended (or mid single-step) must not start
+       free-running under its replacement                      */
+    auto snapshot_suspension = [&](const tplc::Program& p) {
+        std::vector<bool> v(p.desc().task_count);
+        for (uint32_t i = 0; i < v.size(); i++)
+            v[i] = sched.suspended(p, i);
+        return v;
+    };
+    auto apply_suspension = [&](tplc::Program& p,
+                                const std::vector<bool>& v) {
+        for (uint32_t i = 0; i < p.desc().task_count && i < v.size(); i++)
+            if (v[i]) sched.suspend(p, i);
+    };
+
     auto do_rollback = [&]() -> bool {
         if (!quar.prog) return false;
         /* same storage-address rule as commit: the scheduler keeps
            Program* — move objects between homes explicitly, then
            register the final address (heap Modules never move)     */
         adopt_begin();
+        std::vector<bool> susp = snapshot_suspension(*prog);
         sched.removeProgram(*prog);
         tplc::Program oldp = std::move(*quar.prog);
         quar.prog.reset();
@@ -927,6 +947,7 @@ int main(int argc, char** argv) {
         trace_frozen = false;
         if (reresolve_subs) reresolve_subs();
         sched.addProgram(*prog);
+        apply_suspension(*prog, susp);
         adopt_end();
         d = mod->descriptor();
         /* lineage restore (doc 16 §3.3): the rolled-back program
@@ -2016,6 +2037,7 @@ int main(int argc, char** argv) {
            every object rests at its final storage address (heap
            Modules move owners freely — their address never does)   */
         adopt_begin();
+        std::vector<bool> susp = snapshot_suspension(*prog);
         sched.removeProgram(*prog);
         tplc::Program oldp = std::move(*prog);
         prog.reset();
@@ -2049,6 +2071,7 @@ int main(int argc, char** argv) {
         prog.emplace(std::move(nprog));
         prog->rebindModule(*mod);
         sched.addProgram(*prog);
+        apply_suspension(*prog, susp);
         adopt_end();
         d = mod->descriptor();
         if (layd.data && layd.size)
@@ -2382,6 +2405,7 @@ int main(int argc, char** argv) {
         }
         sdiff.old_blob = prog->snapshotBlob();
         adopt_begin();
+        std::vector<bool> susp = snapshot_suspension(*prog);
         sched.removeProgram(*prog);
         quar.prog.emplace(std::move(*prog));
         prog.reset();
@@ -2401,6 +2425,7 @@ int main(int argc, char** argv) {
         prog.emplace(std::move(*shadow->prog));
         prog->rebindModule(*mod);
         sched.addProgram(*prog);
+        apply_suspension(*prog, susp);
         adopt_end();
         d = mod->descriptor();
         pkg_layd = std::move(shadow->layd);
@@ -4153,7 +4178,13 @@ int main(int argc, char** argv) {
                     /* join boundary: the first shadow cycle waits
                        for an active scan so its latch copies this
                        scan's %I, never stale pre-load inputs     */
-                } else if (slack >= (int64_t)shadow_budget_ns) {
+                } else if (slack >= (int64_t)shadow_budget_ns &&
+                           now != shadow_last_now) {
+                    /* one shadow cycle per scan instant: the main loop
+                       spins while sim time is frozen, and a catch-up
+                       tick would consume the same latched %I twice
+                       and desynchronise the candidate from the active */
+                    shadow_last_now = now;
                     size_t sran = shadow->sched.tick(now, shooks);
                     if (shadow_faulted) {
                         shadow_faulted = false;

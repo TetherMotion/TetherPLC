@@ -62,9 +62,9 @@ SFC language + editor; LD view/editor; multi-program IDE flows;
 CiA-405 OD endpoint; MCU loader path (`18-mcu-path.md` — the
 static-link ABI shim criterion landed as ctest `mcu_shim`; a
 cross-compiled Cortex-M loader remains open);
-WSTRING/LTIME/REF dialect extensions (WSTRING is now a real UTF-16
-type and LTIME already rides the i64-ns Time representation; REF and
-the string builtins remain); collaborative editing; visual
+WSTRING/LTIME/REF dialect extensions (WSTRING is a real UTF-16 type
+and LTIME rides the i64-ns Time representation; `LEN`/`CONCAT` landed,
+remaining string functions + REF still open); collaborative editing; visual
 diff; OPC-UA adapter; safety FB subset (certification program).
 Shadow-run extension candidates (all currently non-goals):
 multiple simultaneous shadows, per-channel promote, shadow→image

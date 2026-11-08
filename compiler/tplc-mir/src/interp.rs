@@ -7,6 +7,7 @@
 
 use crate::ir::*;
 use crate::layout::{builtin_fb_layout, layout_members, FbLayout, Layout};
+use crate::ty::{builtin_fn, BuiltinFn};
 use std::collections::BTreeMap;
 
 /// Offsets at or above this base index into `scratch` instead of `blob`
@@ -415,7 +416,41 @@ impl<'a> Rt<'a> {
 
     /// FUNCTION invocation: inputs bind into scratch, body runs with
     /// call-scoped ctx, return value read from the name-var.
+    /// LEN/CONCAT over narrow and wide strings (IEC string functions)
+    fn builtin_call(&mut self, caller: &Ctx, b: BuiltinFn,
+                    args: &[(String, Expr)]) -> Value {
+        match b {
+            BuiltinFn::Len => {
+                let v = args.first()
+                    .map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                let n = match v {
+                    Value::Str(s) => s.len(),
+                    Value::WStr(s) => s.len(),
+                    _ => 0,
+                };
+                Value::I(n as i64)
+            }
+            BuiltinFn::Concat => {
+                let a = args.first().map(|(_, e)| self.eval(caller, e));
+                let b2 = args.get(1).map(|(_, e)| self.eval(caller, e));
+                match (a, b2) {
+                    (Some(Value::Str(x)), Some(Value::Str(y))) => {
+                        Value::Str([x, y].concat())
+                    }
+                    (Some(Value::WStr(x)), Some(Value::WStr(y))) => {
+                        Value::WStr([x, y].concat())
+                    }
+                    _ => Value::Str(Vec::new()),
+                }
+            }
+        }
+    }
+
     fn fn_call(&mut self, caller: &Ctx, fun: &str, args: &[(String, Expr)]) -> Value {
+        if let Some(b) = builtin_fn(fun) {
+            return self.builtin_call(caller, b, args);
+        }
         let pou = self
             .module
             .pous

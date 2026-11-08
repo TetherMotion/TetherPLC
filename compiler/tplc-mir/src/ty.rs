@@ -27,6 +27,23 @@ pub fn same_class(a: &Type, b: &Type) -> bool {
     )
 }
 
+/// Builtin functions the frontend, interpreter and codegen all know.
+/// IEC 61131-3 §2.5.1.5 string functions; scalar builtins (ABS/MIN/
+/// SEL) still resolve as user FUNCTIONs only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinFn {
+    Len,
+    Concat,
+}
+
+pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
+    match name.to_ascii_uppercase().as_str() {
+        "LEN" => Some(BuiltinFn::Len),
+        "CONCAT" => Some(BuiltinFn::Concat),
+        _ => None,
+    }
+}
+
 pub fn compatible(a: &Type, b: &Type) -> bool {
     if a == b {
         return true;

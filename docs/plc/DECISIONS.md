@@ -338,3 +338,25 @@ store, equality).
 **Deliberately not done:** string functions (`LEN`/`CONCAT`/…) and
 `STRING`↔`WSTRING` explicit casts — no builtin string op exists yet in
 either engine; the type system is ready for them.
+
+## D-IMPL-24 — string builtins `LEN`/`CONCAT` (IEC 61131-3 §2.5.1.5)
+
+**Before:** sema resolved calls against FUNCTION POUs only, so the
+standard string functions were unavailable (`no FUNCTION LEN`).
+**Implemented:** `tplc_mir::ty::builtin_fn` is the single dispatch
+table; `LEN(IN)` returns `INT` (code units: bytes for STRING, UTF-16
+units for WSTRING); `CONCAT(IN1, IN2)` returns the same string kind
+with `cap = cap1 + cap2` (saturating), so a concatenation never
+truncates unless the target is narrower. Codegen lowers LEN to a len
+element extract and CONCAT to a fixed-size copy of the first array
+plus a runtime-bound unit loop for the shifted tail; the truncating
+store clamps the len element so a narrowed string never claims data
+that no longer fits. Mixed narrow/wide or non-string args are
+`TPLC_E_ST_TYPE`.
+
+Coverage: `str.builtins` (L1 + sim parity), `string_builtins_through_
+jit` (narrow+wide, truncation clamp) and `string_builtins_are_typed`.
+
+**Still open:** the remaining string functions (`LEFT`/`RIGHT`/`MID`/
+`INSERT`/`DELETE`/`REPLACE`/`FIND`) and scalar builtins
+(`ABS`/`MIN`/`SEL`) — the dispatch table makes each a small addition.

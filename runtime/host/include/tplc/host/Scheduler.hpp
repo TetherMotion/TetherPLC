@@ -44,7 +44,7 @@ public:
     bool suspend(Program& prog, uint32_t task_idx);
     bool resume(Program& prog, uint32_t task_idx);
     bool step(Program& prog, uint32_t task_idx, uint32_t n);
-    bool suspended(Program& prog, uint32_t task_idx) const;
+    bool suspended(const Program& prog, uint32_t task_idx) const;
 
     /* Stats for the service plane */
     struct TaskStats {
