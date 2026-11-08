@@ -859,11 +859,13 @@ int main(int argc, char** argv) {
                 return true;
             }
             bool emit(uint8_t op) {
-                if (X->code.size() >= 128) { err = "expr too long";
+                if (ops >= 64) { err = "expr too long";
                     return false; }
+                ops++;
                 X->code.push_back(op);
                 return true;
             }
+            int ops = 0;
             bool lit(int64_t v) {
                 if (X->lits.size() >= 32) { err = "too many literals";
                     return false; }
@@ -2062,6 +2064,19 @@ int main(int argc, char** argv) {
                                : TPLC_E_CTL_PAYLOAD,
                            err.c_str(), req);
             return;
+        }
+        /* seed slot history at arm time so changed/rising/falling
+           start from the current value, not zero                  */
+        for (size_t i = 0; i < X.slots.size(); i++) {
+            uint64_t u = 0;
+            memcpy(&u, prog->blob() + X.slots[i].off,
+                   X.slots[i].len);
+            switch (X.slots[i].len) {
+                case 1: X.prev[i] = (int8_t)u; break;
+                case 2: X.prev[i] = (int16_t)u; break;
+                case 4: X.prev[i] = (int32_t)u; break;
+                default: X.prev[i] = (int64_t)u; break;
+            }
         }
         Break b{next_break_h++, task_idx, 0, 0, 0xFF, 0, 0,
                 t == TPLC_OP_DBG_CAPTURE_EXPR, std::move(X)};
