@@ -1,0 +1,8 @@
+# c++ side dependency inventory (name|version|license|note)
+# versions: "system" = whatever the deploy image provides; pinned deps
+# belong in toolchain records. licenses are SPDX ids.
+libc|system|LGPL-2.1-or-later|glibc — dynamic link, system component
+libm|system|LGPL-2.1-or-later|part of glibc
+librt|system|LGPL-2.1-or-later|part of glibc
+libsodium|system|ISC|optional — signature verify backend (TPLC_HAVE_SODIUM)
+libseccomp|system|LGPL-2.1-only|optional — sandbox (TPLC_HAVE_SECCOMP)

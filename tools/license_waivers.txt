@@ -1,0 +1,15 @@
+# license waivers (name|license-substring|justification)
+# LGPL crates statically linked into tplcc — engineering-host compiler
+# tool, not part of the device runtime image. LGPL-3.0 relink clause is
+# satisfied by source availability (the workspace is the upstream).
+plc_parser|lgpl|ruSTy ST parser frontend (DEC-2026-01) — tplcc-only, source-open
+plc_ast|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_lexer|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_index|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_diagnostics|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_literals|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_source|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_util|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_derive|lgpl|ruSTy frontend — tplcc-only, source-open
+plc_llvm|lgpl|ruSTy LLVM glue — tplcc-only, source-open
+plc-compiler|lgpl|ruSTy facade — tplcc-only, source-open

@@ -233,6 +233,17 @@ add_test(NAME authz_audit COMMAND bash
   $<TARGET_FILE:tplc-ctl> $<TARGET_FILE:stub_v1>)
 set_tests_properties(authz_audit PROPERTIES SKIP_RETURN_CODE 77)
 
+# doc 15 §2 acceptance: safety channels deny force/write, reads stay open
+add_test(NAME safety_boundary COMMAND bash
+  ${CMAKE_SOURCE_DIR}/tests/scan/safety_boundary.sh)
+set_tests_properties(safety_boundary PROPERTIES SKIP_RETURN_CODE 77)
+
+# doc 15 §6: license manifest gate (skips when cargo metadata unusable)
+add_test(NAME license_manifest COMMAND python3
+  ${CMAKE_SOURCE_DIR}/tools/license_manifest.py --check
+  --manifest /dev/null)
+set_tests_properties(license_manifest PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(pkg_conformance tests/pkg/pkg_conformance.cpp)
 target_link_libraries(pkg_conformance PRIVATE tplc_pkg)
 target_compile_definitions(pkg_conformance PRIVATE

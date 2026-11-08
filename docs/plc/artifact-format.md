@@ -70,6 +70,15 @@ Wire constants + error codes shared by both implementations:
   (`<dir>/<hex-keyid>.pub`, 32 raw bytes); `tether-plc
   --sig-policy open|require|require-trusted --trust-dir D` enforces
   policy at every package load path (errors `TPLC_E_SIG_*`).
+- `DEPLOY_MAP` (0x31) carries the bridge-format deploy map text
+  (`in|out|safety` lines) injected at deploy time via
+  `tplcc pkg add-section`; `tether-plc` parses its `safety` lines to
+  deny `DBG_WRITE`/`DBG_FORCE` on safety-backed blob ranges (doc 15 §2).
+  Distinct from `IO_MAP` (0x30), which is the compiler-emitted JSON
+  binding table.
+- `TOOLCHAIN` (0x70) is emitted by `tplcc build`: JSON
+  `{tplcc, rustc, llvm, host}` baked at compiler build time — supply-
+  chain provenance per doc 15 §6.
 - `zstd` (SECF_COMPRESSED) is declared but no compressor/decompressor
   is linked yet; readers reject nothing about it today.
 - `validate_for_load` is format-level only. Semantic load checks —

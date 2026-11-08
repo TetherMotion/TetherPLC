@@ -468,7 +468,8 @@ int main(int argc, char** argv) {
 
     /* ---------------- package → extracted module -------------- */
     std::string extracted_so;
-    std::vector<uint8_t> boot_layd, boot_smap;   /* sections from --package */
+    std::vector<uint8_t> boot_layd, boot_smap,
+                        boot_iomap;             /* sections from --package */
     if (!package_path.empty()) {
         auto pres = tplc::Package::open(package_path);
         if (!pres.ok()) {
@@ -499,7 +500,7 @@ int main(int argc, char** argv) {
             tplc_image_close(&img);
             return 1;
         }
-        tplc::PkgSection obj{}, b_layd{}, b_smap{};
+        tplc::PkgSection obj{}, b_layd{}, b_smap{}, b_iomap{};
         /* v1: first target_obj (multi-target selection comes with
            manifest.targets[] parsing) */
         if (!pkg.section(TPLC_SEC_TARGET_OBJ, obj)) {
@@ -513,6 +514,9 @@ int main(int argc, char** argv) {
             boot_layd.assign(b_layd.data, b_layd.data + b_layd.size);
         if (pkg.section(TPLC_SEC_SYMMAP, b_smap) && b_smap.data)
             boot_smap.assign(b_smap.data, b_smap.data + b_smap.size);
+        if (pkg.section(TPLC_SEC_DEPLOY_MAP, b_iomap) && b_iomap.data)
+            boot_iomap.assign(b_iomap.data,
+                              b_iomap.data + b_iomap.size);
         char tpath[] = "/tmp/tplc_pkg_XXXXXX";
         int fd = mkstemp(tpath);
         if (fd < 0 || write(fd, obj.data, obj.size) != (ssize_t)obj.size) {
@@ -553,6 +557,7 @@ int main(int argc, char** argv) {
     TplcProgramDescriptor            d{};
     std::vector<uint8_t>             pkg_layd;   /* for OP_PROG_LAYOUT */
     std::vector<uint8_t>             pkg_smap;   /* for OP_DBG_RESOLVE   */
+    std::vector<uint8_t>             pkg_iomap;  /* for safety-boundary  */
     /* what the last committed swap's migrate rules did: MIGD bytes
        (rule table + embedded predecessor LAYD), the frozen pre-swap
        blob snapshot, and the old symmap for name lookups           */
@@ -701,6 +706,7 @@ int main(int argc, char** argv) {
         quar = Quarantine{};
         pkg_layd.clear();
         pkg_smap.clear();
+        pkg_iomap.clear();
         sdiff = StateDiff{};
         forces.clear();
         next_force_h = 1;
@@ -857,6 +863,7 @@ int main(int argc, char** argv) {
        internal unload (which clears pkg_* for swap-time use) */
     pkg_layd = std::move(boot_layd);
     pkg_smap = std::move(boot_smap);
+    pkg_iomap = std::move(boot_iomap);
     tplc::Status st = prog->start();
     if (!st.ok()) {
         fprintf(stderr, "tether-plc: init failed (%d) %s\n",
@@ -1526,7 +1533,7 @@ int main(int argc, char** argv) {
         }
         std::string mpath = path;
         std::string tmp_so;
-        std::vector<uint8_t> layd_b, smap_b;   /* sections borrow pk */
+        std::vector<uint8_t> layd_b, smap_b, iomap_b; /* sections borrow pk */
         /* .tplc → extract target_obj; .so → load directly */
         if (path.size() >= 5 &&
             path.compare(path.size() - 5, 5, ".tplc") == 0) {
@@ -1547,6 +1554,8 @@ int main(int argc, char** argv) {
                 layd_b.assign(sec.data, sec.data + sec.size);
             if (pk.section(TPLC_SEC_SYMMAP, sec))
                 smap_b.assign(sec.data, sec.data + sec.size);
+            if (pk.section(TPLC_SEC_DEPLOY_MAP, sec))
+                iomap_b.assign(sec.data, sec.data + sec.size);
             tplc::PkgSection obj{};
             if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
                 ctl.errorReply(fd, t, TPLC_E_PKG_TOC,
@@ -1574,6 +1583,7 @@ int main(int argc, char** argv) {
            expr ops see symbols for prepare-loaded programs too */
         pkg_layd = std::move(layd_b);
         pkg_smap = std::move(smap_b);
+        pkg_iomap = std::move(iomap_b);
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         TplcCtlProgStateChange sc{PS_EMPTY, PS_STOPPED, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
@@ -1652,7 +1662,7 @@ int main(int argc, char** argv) {
             ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
             return;
         }
-        tplc::PkgSection obj{}, migd{}, layd{}, smap{};
+        tplc::PkgSection obj{}, migd{}, layd{}, smap{}, imap{};
         if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
             ctl.errorReply(fd, t, TPLC_E_PKG_TOC, "no target_obj",
                            req);
@@ -1661,6 +1671,7 @@ int main(int argc, char** argv) {
         bool has_migd = pk.section(TPLC_SEC_MIGRATE_DESC, migd);
         pk.section(TPLC_SEC_LAYOUT_DESC, layd);
         pk.section(TPLC_SEC_SYMMAP, smap);
+        pk.section(TPLC_SEC_DEPLOY_MAP, imap);
         char tp[] = "/tmp/tplc_swap_XXXXXX";
         int tfd = mkstemp(tp);
         if (tfd < 0 ||
@@ -1789,6 +1800,10 @@ int main(int argc, char** argv) {
             pkg_smap.assign(smap.data, smap.data + smap.size);
         else
             pkg_smap.clear();
+        if (imap.data && imap.size)
+            pkg_iomap.assign(imap.data, imap.data + imap.size);
+        else
+            pkg_iomap.clear();
         if (!retain_dir.empty()) {
             if (!retain) retain.emplace();
             retain->close();
@@ -2074,6 +2089,62 @@ int main(int argc, char** argv) {
         return false;
     };
 
+    /* safety boundary (doc 15 §2): channels whose endpoint key is
+       listed in a `safety` line of the package's DEPLOY_MAP section
+       (bridge-format deploy map) are read-only for user logic. A
+       force/write whose blob range backs a binding intersecting a
+       safety channel's image range is denied at the resolver.
+       Parsed lazily — the section swaps with the program.        */
+    auto safety_denied = [&](uint64_t off, uint64_t len) {
+        if (pkg_iomap.empty() || !prog) return false;
+        std::unordered_map<std::string, bool> skeys;
+        struct Ch { bool in; std::string key; uint64_t off, size; };
+        std::vector<Ch> chs;
+        std::istringstream is(
+            std::string(pkg_iomap.begin(), pkg_iomap.end()));
+        std::string line;
+        while (std::getline(is, line)) {
+            std::istringstream ls(line);
+            std::string t0;
+            if (!(ls >> t0) || t0[0] == '#') continue;
+            if (t0 == "safety") {
+                std::string k;
+                if (ls >> k) skeys[k] = true;
+                continue;
+            }
+            if (t0 != "in" && t0 != "out") continue;
+            Ch c{t0 == "in", "", 0, 0};
+            std::string tk;
+            while (ls >> tk) {
+                auto eq = tk.find('=');
+                if (eq == std::string::npos) continue;
+                std::string k = tk.substr(0, eq),
+                            v = tk.substr(eq + 1);
+                if      (k == "key")  c.key = v;
+                else if (k == "off")  c.off = strtoull(v.c_str(), 0, 0);
+                else if (k == "size") c.size = strtoull(v.c_str(), 0, 0);
+            }
+            chs.push_back(c);
+        }
+        const TplcProgramDescriptor& dd = prog->desc();
+        for (uint32_t i = 0; i < dd.io_binding_count; i++) {
+            const TplcIoBinding& b = dd.io_bindings[i];
+            bool in = b.region == TPLC_REGION_IMAGE_IN;
+            if (!in && b.region != TPLC_REGION_IMAGE_OUT) continue;
+            for (auto& c : chs) {
+                if (c.in != in || !c.size || !skeys.count(c.key))
+                    continue;
+                uint32_t bs = b.size ? b.size : 1;
+                if ((uint64_t)b.image_offset < c.off + c.size &&
+                    (uint64_t)b.image_offset + bs > c.off &&
+                    off < (uint64_t)b.blob_offset + bs &&
+                    off + len > b.blob_offset)
+                    return true;
+            }
+        }
+        return false;
+    };
+
     ctl.on(TPLC_OP_DBG_WRITE, [&](int fd, uint16_t t,
                                   const uint8_t* p, uint32_t n,
                                   uint64_t req) {
@@ -2102,6 +2173,11 @@ int main(int argc, char** argv) {
         if (layd_ro_range(off, wl)) {
             ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
                            "range intersects a read-only field", req);
+            return;
+        }
+        if (safety_denied(off, wl)) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "safety channel is read-only", req);
             return;
         }
         memcpy(prog->blob() + off, p + 12, wl);
@@ -2212,6 +2288,11 @@ int main(int argc, char** argv) {
         if (layd_ro_range(off, wl)) {
             ctl.errorReply(fd, t, TPLC_E_FORCE_DENIED,
                            "constant fields are not forceable", req);
+            return;
+        }
+        if (safety_denied(off, wl)) {
+            ctl.errorReply(fd, t, TPLC_E_FORCE_DENIED,
+                           "safety channel is read-only", req);
             return;
         }
         bool masked = n == 12 + 2 * (uint64_t)wl;

@@ -24,6 +24,10 @@ jobs:
         run: cargo test --workspace
         working-directory: compiler
 
+      # doc 15 §6: license gate — GPL-family in shipped deps fails CI
+      - name: License manifest gate
+        run: python3 tools/license_manifest.py --check --manifest /dev/null
+
   linux-aarch64-qemu:
     runs-on: ubuntu-latest
     steps:
