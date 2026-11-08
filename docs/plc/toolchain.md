@@ -17,7 +17,9 @@ One binary, five subcommands:
 
 `check` and `build` take `--json`: instead of the human renderer they
 emit one JSON line `{ok, errors, diags:[…]}` on stdout (build adds
-`"package"` on success). St spans carry `file/offset/len/line/col`;
+`"package"` on success). `build` also takes `--task-period-ns <ns>` to
+override the cyclic MAIN task period (default 10 ms). St spans carry
+`file/offset/len/line/col`;
 Fbd spans carry `sheet/node/pin`; non-frontend failures (LLVM verify,
 link, change-deny) are normalized into a uniform `TPLC_E_DRIVER` diag
 so the envelope stays parseable. This is the contract the web IDE and

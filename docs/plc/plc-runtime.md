@@ -111,11 +111,20 @@ driver process:
   time is virtual while heartbeats stay real.
 - `tether-plc-sim` = L2 process-sim: creates the image, spawns the
   real binary with `--sim`, runs a step file
-  (`step N time=<ns> [in off=hex..] [expect off=hex..]`), waits for
-  the next committed scan per step, diffs %Q — verified with a TON
-  vector at 200/600/700 ms crossings; divergence prints step+offset.
-- L1 = `tplcc vectors` (interp, same canonical IR). L3 lives in the
-  Tether app's simulated-plant fleet — not this repo.
+  (`step N time=<ns> [in off=hex..] [expect off=hex..]
+  [expectf off=hex..]`), waits for the next committed scan per step,
+  diffs %Q — verified with a TON vector at 200/600/700 ms crossings;
+  divergence prints step+offset. `expect` compares process-image %Q
+  bytes, `expectf` reads program-blob bytes through the ctl channel
+  (`DBG_READ`, needs `--ctl`). `--scan` suspends the task and runs
+  exactly one ctl `TASK_STEP` per step, so step files get the same
+  cycle-per-step semantics as the L1 interpreter.
+- L1 = `tplcc vectors` (interp, same canonical IR).
+  `tests/sim/vector_run.py` replays the oracle corpus
+  (`tools/oracle/corpus/vectors.jsonl`) at both levels: L1 direct,
+  L2 by compiling each program, resolving `expect_fields` names to
+  blob offsets via SMAP/TYPC, and driving `tether-plc-sim --scan`.
+  L3 lives in the Tether app's simulated-plant fleet — not this repo.
 
 ## Map validator (io-mapping.md §2.2)
 
@@ -158,5 +167,4 @@ driver process:
 - ControlProxy curated ctl client in the bridge (ops work via
   `tplc-ctl` meanwhile), real EtherCAT/Modbus transports (sim only),
   overrun-policy config (skip is hardcoded), freewheel guard/slice
-  enforcement, sim-parity harness across L1/L2 (same vectors on both
-  levels — the formats differ today).
+  enforcement.
