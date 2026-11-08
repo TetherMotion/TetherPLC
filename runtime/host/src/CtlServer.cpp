@@ -142,6 +142,16 @@ void CtlServer::dispatch(Client& c, uint16_t type, uint16_t flags,
         const TplcCtlHello* h = (const TplcCtlHello*)payload;
         c.greeted = true;
         c.session_id = next_session_++;
+        /* trailing `str client_name` identifies the session in audit
+           lines (doc 12 §8)                                        */
+        if (len >= sizeof(TplcCtlHello) + 2) {
+            const uint8_t* np = payload + sizeof(TplcCtlHello);
+            uint16_t nl = (uint16_t)(np[0] | (np[1] << 8));
+            if (nl > 0 && sizeof(TplcCtlHello) + 2 + nl <= len) {
+                c.name.assign((const char*)np + 2, nl);
+                if (c.name.size() > 48) c.name.resize(48);
+            }
+        }
         TplcCtlHelloAck ack{};
         ack.proto_ver = h->proto_ver < TPLC_CTL_PROTO_VER
                           ? h->proto_ver : TPLC_CTL_PROTO_VER;
@@ -171,37 +181,72 @@ void CtlServer::dispatch(Client& c, uint16_t type, uint16_t flags,
     errorReply(c.fd, type, TPLC_E_CTL_UNKNOWN_OP, "unknown op", req_id);
 }
 
-void CtlServer::feed(Client& c) {
+void CtlServer::fill(Client& c) {
     uint8_t buf[8192];
     ssize_t n = recv(c.fd, buf, sizeof buf, 0);
     if (n <= 0) return;                    /* poll() handles close     */
     c.inbuf.insert(c.inbuf.end(), buf, buf + n);
-
-    /* consume complete frames */
-    for (;;) {
-        if (c.inbuf.size() < TPLC_CTL_HDR_SIZE) return;
-        const uint8_t* h = c.inbuf.data();
-        uint16_t type  = h[0] | (h[1] << 8);
-        uint16_t flags = h[2] | (h[3] << 8);
-        uint32_t len   = h[4] | (h[5] << 8) | (h[6] << 16) | (h[7] << 24);
-        uint64_t req   = 0;
-        for (int i = 0; i < 8; i++) req |= (uint64_t)h[8 + i] << (8 * i);
-        if (len > TPLC_CTL_MAX_PAYLOAD) {
-            errorReply(c.fd, type, TPLC_E_CTL_PAYLOAD,
-                       "payload too large", req);
-            c.inbuf.clear();
-            return;
-        }
-        if (c.inbuf.size() < TPLC_CTL_HDR_SIZE + len) return;
-        dispatch(c, type, flags, h + TPLC_CTL_HDR_SIZE, len, req);
-        c.inbuf.erase(c.inbuf.begin(),
-                      c.inbuf.begin() + TPLC_CTL_HDR_SIZE + len);
-    }
 }
+
+bool CtlServer::hasFrame(const Client& c) const {
+    if (c.inbuf.size() < TPLC_CTL_HDR_SIZE) return false;
+    const uint8_t* h = c.inbuf.data();
+    uint32_t len = h[4] | (h[5] << 8) | (h[6] << 16) | (h[7] << 24);
+    if (len > TPLC_CTL_MAX_PAYLOAD) return true;   /* error drains too */
+    return c.inbuf.size() >= TPLC_CTL_HDR_SIZE + len;
+}
+
+bool CtlServer::drainOne(Client& c) {
+    if (c.inbuf.size() < TPLC_CTL_HDR_SIZE) return false;
+    const uint8_t* h = c.inbuf.data();
+    uint16_t type  = h[0] | (h[1] << 8);
+    uint16_t flags = h[2] | (h[3] << 8);
+    uint32_t len   = h[4] | (h[5] << 8) | (h[6] << 16) | (h[7] << 24);
+    uint64_t req   = 0;
+    for (int i = 0; i < 8; i++) req |= (uint64_t)h[8 + i] << (8 * i);
+    if (len > TPLC_CTL_MAX_PAYLOAD) {
+        errorReply(c.fd, type, TPLC_E_CTL_PAYLOAD,
+                   "payload too large", req);
+        c.inbuf.clear();
+        return true;
+    }
+    if (c.inbuf.size() < TPLC_CTL_HDR_SIZE + len) return false;
+    dispatch(c, type, flags, h + TPLC_CTL_HDR_SIZE, len, req);
+    c.inbuf.erase(c.inbuf.begin(),
+                  c.inbuf.begin() + TPLC_CTL_HDR_SIZE + len);
+    return true;
+}
+
+bool CtlServer::clientInfo(int fd, uint64_t* session,
+                           std::string* name) const {
+    for (auto& c : clients_)
+        if (c.fd == fd) {
+            if (session) *session = c.session_id;
+            if (name)    *name    = c.name;
+            return true;
+        }
+    return false;
+}
+
+/* Bounded op drain (doc 12 §1): at most OPS_PER_POLL dispatches per
+   poll() call so a flooding client cannot stall a task release.
+   Leftover frames stay buffered and drain on later polls; the socket
+   itself is the watermark queue (full → the sender blocks).       */
+static const int OPS_PER_POLL = 32;
 
 int CtlServer::poll(int timeout_ms) {
     if (listen_fd_ < 0) return -1;
     acceptAll();
+
+    /* first drain previously buffered frames, bounded */
+    int budget = OPS_PER_POLL;
+    for (auto& c : clients_)
+        while (budget > 0 && drainOne(c)) budget--;
+    /* buffered-but-undispatched frames must not sleep — they are
+       already received and must drain on the next iteration        */
+    bool pending = false;
+    for (auto& c : clients_)
+        if (hasFrame(c)) { pending = true; break; }
 
     /* snapshot client fds — acceptAll/dropClient mutate clients_ */
     std::vector<pollfd> fds;
@@ -213,7 +258,8 @@ int CtlServer::poll(int timeout_ms) {
         if (!c.outbuf.empty()) ev |= POLLOUT;
         fds.push_back({c.fd, ev, 0});
     }
-    int r = ::poll(fds.data(), (nfds_t)fds.size(), timeout_ms);
+    int r = ::poll(fds.data(), (nfds_t)fds.size(),
+                   pending ? 0 : timeout_ms);
     if (r < 0) return -1;
     acceptAll();   /* new arrivals aren't in the snapshot — next poll */
 
@@ -226,7 +272,20 @@ int CtlServer::poll(int timeout_ms) {
         Client& c = clients_[ci];
         if (re & (POLLERR | POLLHUP | POLLNVAL)) { dropClient(ci); continue; }
         if (re & POLLOUT) flush(c);
-        if (re & POLLIN)  feed(c);
+        if (re & POLLIN)  fill(c);
+    }
+
+    /* dispatch newly arrived frames, same bound; beyond 2× the max
+       frame the backlog can only be abuse — drop the client       */
+    budget = OPS_PER_POLL;
+    for (size_t i = 0; i < clients_.size();) {
+        if (clients_[i].inbuf.size() >
+            TPLC_CTL_MAX_PAYLOAD * 2 + TPLC_CTL_HDR_SIZE) {
+            dropClient(i);
+            continue;
+        }
+        while (budget > 0 && drainOne(clients_[i])) budget--;
+        i++;
     }
     return r;
 }

@@ -71,16 +71,22 @@ enum TplcCtlOp {
        u32 len(1|2|4|8), u8 cmp(0== 1!= 2< 3<= 4> 5>=), u8 pad[3],
        u64 value} → {u32 handle}                                   */
     TPLC_OP_DBG_BREAK      = 0x0508,
+    /* list entries: {u32 handle, u32 task, u64 off, u32 len,
+       u8 cmp, u8 kind(0 suspend|1 capture), u16 pad, u64 val,
+       u64 hits}                                                    */
     TPLC_OP_DBG_BREAK_LIST = 0x0509,  /* → {u32 n, entries}         */
     TPLC_OP_DBG_BREAK_CLEAR= 0x050A,  /* {u32 handle} 0xFF..=all    */
     /* flight recorder (doc 12 §7): fixed 4096-entry ring of per-scan
        channel samples. One frame per scan that ran ≥1 task; frames
        carry a seq so a wrapped ring shows as a gap, never silent
        loss.
-       CONF:   {u32 n_ch, u32 pad, {u64 off, u32 len, u32 pad}*}
+       CONF:   {u32 n_ch, u32 flags, {u64 off, u32 len, u32 pad}*}
                n_ch ≤ 8, per-ch len ≤ 8, Σlen ≤ 64 → {u32 frame_len};
-               n_ch = 0 disarms
-       STATUS: → {u32 n_ch, u32 frame_len, u64 written, u64 avail}
+               n_ch = 0 disarms.
+               flags bit0 NO_FAULT_FREEZE: opt out of the default
+               freeze-on-fault (the ring keeps post-mortem samples)
+       STATUS: → {u32 n_ch, u32 frame_len, u64 written, u64 avail,
+                  u32 flags}  flags bit0 = frozen
        READ:   {u64 from_seq, u32 max} → {u64 first_seq, u32 n,
                u32 frame_len, {u64 seq, u64 ts, u8 data[f..]}*}
        CLEAR:  {} — disarm and drop the ring                        */
@@ -88,6 +94,11 @@ enum TplcCtlOp {
     TPLC_OP_TRACE_STATUS   = 0x050C,
     TPLC_OP_TRACE_READ     = 0x050D,
     TPLC_OP_TRACE_CLEAR    = 0x050E,
+    /* capture trigger (doc 12 §5 dbg.capture_on): same 28-byte
+       request payload as DBG_BREAK; on hit the flight recorder
+       freezes instead of suspending the task. Listed in
+       DBG_BREAK_LIST with the flag byte set.                       */
+    TPLC_OP_DBG_CAPTURE    = 0x050F,
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,

@@ -208,8 +208,9 @@ int main(int argc, char** argv) {
             "|dbg-write OFF HEX|force OFF HEX|force-list"
             "|force-clear [H|all]|break T OFF LEN CMP V"
             "|break-list|break-clear [H|all]"
-            "|trace OFF:LEN..|trace-status|trace-read [SEQ [N]]"
-            "|trace-clear\n", argv[0]);
+            "|capture T OFF LEN CMP V"
+            "|trace [nofreeze] OFF:LEN..|trace-status"
+            "|trace-read [SEQ [N]]|trace-clear\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -370,7 +371,7 @@ int main(int argc, char** argv) {
         memcpy(pre, &h, 4);
         pre_len = 4;
     }
-    else if (!strcmp(cmd, "break")) {
+    else if (!strcmp(cmd, "break") || !strcmp(cmd, "capture")) {
         /* break <task> <off> <len> <cmp> <val>
            cmp: eq ne lt le gt ge → 0..5                            */
         if (argc < 8) {
@@ -384,7 +385,8 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 6; i++)
             if (!strcmp(argv[6], cmps[i])) cmp = i;
         if (cmp < 0) { fprintf(stderr, "bad cmp\n"); return 2; }
-        op = TPLC_OP_DBG_BREAK;
+        op = !strcmp(cmd, "capture") ? TPLC_OP_DBG_CAPTURE
+                                   : TPLC_OP_DBG_BREAK;
         uint32_t ti = (uint32_t)strtoul(argv[3], NULL, 0);
         uint64_t off = strtoull(argv[4], NULL, 0);
         uint32_t bl = (uint32_t)strtoul(argv[5], NULL, 0);
@@ -405,21 +407,30 @@ int main(int argc, char** argv) {
         memcpy(pre, &h, 4);
         pre_len = 4;
     }
-    /* trace OFF:LEN [OFF:LEN...]; up to 8 channels, len ≤ 8 each */
+    /* trace [nofreeze] OFF:LEN [OFF:LEN...]; ≤8 channels, len ≤ 8 */
     else if (!strcmp(cmd, "trace")) {
-        int nch = argc - 3;
-        if (nch > 8) { fprintf(stderr, "max 8 channels\n"); return 2; }
+        int base = 3;
+        uint32_t flags = 0;
+        if (argc > 3 && !strcmp(argv[3], "nofreeze")) {
+            flags = 1;
+            base = 4;
+        }
+        int nch = argc - base;
+        if (nch > 8 || nch < 0) {
+            fprintf(stderr, "max 8 channels\n"); return 2;
+        }
         op = TPLC_OP_TRACE_CONF;
         memset(pre, 0, 8);
         uint32_t u = (uint32_t)nch; memcpy(pre, &u, 4);
+        memcpy(pre + 4, &flags, 4);
         uint8_t* q = pre + 8;
         for (int i = 0; i < nch; i++) {
             uint64_t off; uint32_t l;
-            if (sscanf(argv[3 + i], "%llu:%u",
+            if (sscanf(argv[base + i], "%llu:%u",
                        (unsigned long long*)&off, &l) != 2 ||
                 l == 0 || l > 8) {
                 fprintf(stderr, "bad channel %s (want OFF:LEN, "
-                        "len 1..8)\n", argv[3 + i]);
+                        "len 1..8)\n", argv[base + i]);
                 return 2;
             }
             memcpy(q, &off, 8); memcpy(q + 8, &l, 4);
@@ -591,11 +602,12 @@ int main(int argc, char** argv) {
             memcpy(&h, q, 4); memcpy(&tix, q + 4, 4);
             memcpy(&off, q + 8, 8); memcpy(&l, q + 16, 4);
             c = q[20];
+            int cap = q[21];
             memcpy(&val, q + 24, 8); memcpy(&hits, q + 32, 8);
             q += 40;
-            printf("  h%u task %u  blob[%lu..%lu] %s %lu  "
-                   "hits %lu\n", h, tix, (unsigned long)off,
-                   (unsigned long)(off + l),
+            printf("  h%u%s task %u  blob[%lu..%lu] %s %lu  "
+                   "hits %lu\n", h, cap ? " cap" : "", tix,
+                   (unsigned long)off, (unsigned long)(off + l),
                    cmps[c <= 5 ? c : 0], (unsigned long)val,
                    (unsigned long)hits);
         }
@@ -631,12 +643,14 @@ int main(int argc, char** argv) {
     }
     else if (op == TPLC_OP_TRACE_STATUS) {
         if (len >= 24) {
-            uint32_t nch, fl; uint64_t wr, av;
+            uint32_t nch, fl, fl2 = 0; uint64_t wr, av;
             memcpy(&nch, pl, 4); memcpy(&fl, pl + 4, 4);
             memcpy(&wr, pl + 8, 8); memcpy(&av, pl + 16, 8);
+            if (len >= 28) memcpy(&fl2, pl + 24, 4);
             printf("trace  ch %u  frame %u B  written %lu  "
-                   "avail %lu\n", nch, fl, (unsigned long)wr,
-                   (unsigned long)av);
+                   "avail %lu%s\n", nch, fl, (unsigned long)wr,
+                   (unsigned long)av,
+                   fl2 & 1 ? "  FROZEN" : "");
         }
     }
     else if (op == TPLC_OP_TRACE_READ) {

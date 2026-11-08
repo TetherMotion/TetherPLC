@@ -55,6 +55,10 @@ public:
     void event(uint16_t type, uint32_t cat, const void* payload,
                uint32_t len);
 
+    /* Identity of a client for audit lines; false = fd unknown. */
+    bool clientInfo(int fd, uint64_t* session,
+                    std::string* name) const;
+
     /* Payload writer helpers (little-endian, bounds-checked) */
     struct W {
         std::vector<uint8_t> b;
@@ -78,6 +82,7 @@ private:
         bool greeted = false;
         uint32_t notify_mask = 0;
         uint64_t session_id = 0;
+        std::string name;
         std::vector<uint8_t> inbuf;
         std::vector<uint8_t> outbuf;
     };
@@ -91,7 +96,9 @@ private:
 
     void acceptAll();
     void dropClient(size_t idx);
-    void feed(Client& c);
+    void fill(Client& c);          /* recv into inbuf                */
+    bool drainOne(Client& c);      /* dispatch one buffered frame    */
+    bool hasFrame(const Client& c) const;
     void dispatch(Client& c, uint16_t type, uint16_t flags,
                   const uint8_t* payload, uint32_t len, uint64_t req_id);
     void sendFrame(Client& c, uint16_t type, uint16_t flags,

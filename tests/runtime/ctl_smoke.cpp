@@ -217,7 +217,7 @@ int main(void) {
         rlen = sizeof resp;
         CHECK_EQ(ctl_op(fd, TPLC_OP_TRACE_STATUS, nullptr, 0,
                         resp, &rlen, &fl), TPLC_OP_TRACE_STATUS);
-        CHECK_EQ(rlen, 24u);
+        CHECK_EQ(rlen, 28u);
         uint64_t w, a;
         memcpy(&w, resp + 8, 8); memcpy(&a, resp + 16, 8);
         CHECK(w > 0);

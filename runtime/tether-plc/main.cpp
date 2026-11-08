@@ -437,7 +437,8 @@ int main(int argc, char** argv) {
         uint32_t len;      /* 1/2/4/8  */
         uint8_t  cmp;      /* 0== 1!= 2< 3<= 4> 5>= */
         uint64_t val;
-        uint64_t hits = 0; /* suspensions caused  */
+        uint64_t hits = 0; /* triggers fired      */
+        bool     capture = false; /* freeze recorder, not suspend */
     };
     std::vector<Break>               breaks;
     uint32_t                         next_break_h = 1;
@@ -450,8 +451,11 @@ int main(int argc, char** argv) {
     std::vector<TraceCh>             trace_ch;
     std::vector<TraceFrame>          trace_ring;
     uint64_t                         trace_wr = 0;  /* frames written */
+    uint32_t                         trace_flags = 0;
+    bool                             trace_frozen = false;
     static const size_t              TRACE_CAP = 4096;
     static const size_t              MAX_TRACE_CH = 8;
+    static const uint32_t            TRACE_NO_FAULT_FREEZE = 1;
     /* online-change quarantine (doc 08 §7): the swapped-out program
        + module stay live for quarantine_cycles scans so rollback is
        a pointer swap back to untouched pre-swap state              */
@@ -480,6 +484,8 @@ int main(int argc, char** argv) {
         trace_ch.clear();
         trace_ring.clear();
         trace_wr = 0;
+        trace_flags = 0;
+        trace_frozen = false;
         d = TplcProgramDescriptor{};
         prog_started = false;
     };
@@ -544,6 +550,8 @@ int main(int argc, char** argv) {
         trace_ch.clear();
         trace_ring.clear();
         trace_wr = 0;
+        trace_flags = 0;
+        trace_frozen = false;
         sched.addProgram(*prog);
         d = mod->descriptor();
         if (retain) {
@@ -643,6 +651,11 @@ int main(int argc, char** argv) {
            hold = stay faulted; restart = warm reset bounded by
            restart_max/60s then hold; unload = stop+deschedule.      */
         last_fault = frc;
+        /* flight recorder (doc 12 §6): faults freeze the ring by
+           default — the last pre-fault scans are the post-mortem  */
+        if (!trace_ch.empty() &&
+            !(trace_flags & TRACE_NO_FAULT_FREEZE))
+            trace_frozen = true;
         tplc_image_set_fault(&img, (uint64_t)-frc);
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
         /* doc 08 §7: a fault inside the quarantine window restores
@@ -697,6 +710,19 @@ int main(int argc, char** argv) {
                       package_path.empty() ? module_path.c_str()
                                            : package_path.c_str(),
                       d.program_uuid, "error");
+    };
+
+    /* audit trail (doc 12 §8): every mutating debug/lifecycle op
+       logs who(session+name), what, and the operand — stderr so it
+       lands in the service journal                                */
+    auto audit = [&](int fd, const char* op,
+                     const std::string& detail) {
+        uint64_t s = 0; std::string nm;
+        ctl.clientInfo(fd, &s, &nm);
+        fprintf(stderr, "audit s%llu %s: %s %s\n",
+                (unsigned long long)s,
+                nm.empty() ? "?" : nm.c_str(), op,
+                detail.c_str());
     };
 
     /* ---------------- control channel -------------------------- */
@@ -777,12 +803,16 @@ int main(int argc, char** argv) {
     ctl.on(TPLC_OP_PROG_STOP, [&](int fd, uint16_t t,
                                   const uint8_t*, uint32_t,
                                   uint64_t req) {
-        /* STOP halts scheduling only — state is kept (doc 04 §4) */
+        /* STOP halts scheduling only — state is kept (doc 04 §4);
+           forces drop on stop (doc 12 §8 force_on_stop default:
+           a hidden force surviving a stop is a safety hazard)      */
         TplcCtlProgStateChange sc{(uint8_t)prog_state, PS_STOPPED, 0};
         if (prog_state == PS_RUNNING) {
             prog_state = PS_STOPPED;
+            forces.clear();
             tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         }
+        audit(fd, "prog.stop", "");
         ctl.reply(fd, t, &sc, sizeof sc, req);
     });
     ctl.on(TPLC_OP_PROG_START, [&](int fd, uint16_t t,
@@ -808,6 +838,7 @@ int main(int argc, char** argv) {
             prog_state = PS_RUNNING;
             tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
         }
+        audit(fd, "prog.start", "");
         TplcCtlProgStateChange sc{prev, (uint8_t)prog_state, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
     });
@@ -1113,6 +1144,8 @@ int main(int argc, char** argv) {
         trace_ch.clear();
         trace_ring.clear();
         trace_wr = 0;
+        trace_flags = 0;
+        trace_frozen = false;
         quar.cycles_left = quarantine_cycles;
         mod = std::make_unique<tplc::Module>(std::move(nmod));
         /* rebind: Program::create captured &nmod — retarget the new
@@ -1243,6 +1276,7 @@ int main(int argc, char** argv) {
                            "no such task", req);
             return;
         }
+        audit(fd, "task.suspend", std::to_string(idx));
         ctl.replyEmpty(fd, t, req);
     });
     ctl.on(TPLC_OP_TASK_RESUME, [&](int fd, uint16_t t,
@@ -1264,6 +1298,7 @@ int main(int argc, char** argv) {
                            "no such task", req);
             return;
         }
+        audit(fd, "task.resume", std::to_string(idx));
         ctl.replyEmpty(fd, t, req);
     });
     ctl.on(TPLC_OP_TASK_STEP, [&](int fd, uint16_t t,
@@ -1295,6 +1330,8 @@ int main(int argc, char** argv) {
                            "task not suspended", req);
             return;
         }
+        audit(fd, "task.step",
+              std::to_string(idx) + " n=" + std::to_string(count));
         ctl.replyEmpty(fd, t, req);
     });
 
@@ -1416,6 +1453,8 @@ int main(int argc, char** argv) {
             if (off < roff + rlen && off + wl > roff)
                 retain->noteDirty();
         }
+        audit(fd, "dbg.write", "off=" + std::to_string(off) +
+              " len=" + std::to_string(wl));
         ctl.replyEmpty(fd, t, req);
     });
 
@@ -1511,6 +1550,10 @@ int main(int argc, char** argv) {
         forces.push_back({next_force_h++, off,
                           std::vector<uint8_t>(p + 12, p + 12 + wl)});
         stamp_forces(0);   /* effective even while stopped */
+        audit(fd, "dbg.force", "h=" +
+              std::to_string(forces.back().handle) +
+              " off=" + std::to_string(off) +
+              " len=" + std::to_string(wl));
         tplc::CtlServer::W w;
         w.u32(forces.back().handle);
         ctl.reply(fd, t, w.data(), w.size(), req);
@@ -1540,12 +1583,14 @@ int main(int argc, char** argv) {
         uint32_t h; memcpy(&h, p, 4);
         if (h == 0xFFFFFFFFu) {
             forces.clear();
+            audit(fd, "dbg.force.clear", "all");
             ctl.replyEmpty(fd, t, req);
             return;
         }
         for (auto it = forces.begin(); it != forces.end(); ++it)
             if (it->handle == h) {
                 forces.erase(it);
+                audit(fd, "dbg.force.clear", std::to_string(h));
                 ctl.replyEmpty(fd, t, req);
                 return;
             }
@@ -1553,12 +1598,13 @@ int main(int argc, char** argv) {
                        "no such force", req);
     });
 
-    /* break_when (doc 12 §5): arm a conditional suspend.
+    /* break_when (doc 12 §5): arm a conditional suspend; capture_on
+       shares the payload but freezes the flight recorder instead.
        {u32 task_idx, u64 off, u32 len, u8 cmp, u8 pad[3], u64 val}
        → {u32 handle}                                              */
-    ctl.on(TPLC_OP_DBG_BREAK, [&](int fd, uint16_t t,
-                                  const uint8_t* p, uint32_t n,
-                                  uint64_t req) {
+    auto arm_break = [&](int fd, uint16_t t,
+                         const uint8_t* p, uint32_t n,
+                         uint64_t req) {
         if (!prog) {
             ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
                            "no program", req);
@@ -1602,11 +1648,22 @@ int main(int argc, char** argv) {
             return;
         }
         breaks.push_back({next_break_h++, task_idx, off, len,
-                          cmp, val, 0});
+                          cmp, val, 0,
+                          t == TPLC_OP_DBG_CAPTURE});
+        audit(fd, t == TPLC_OP_DBG_CAPTURE ? "dbg.capture"
+                                           : "dbg.break",
+              "h=" + std::to_string(breaks.back().handle) +
+              " task=" + std::to_string(task_idx) +
+              " off=" + std::to_string(off) +
+              " len=" + std::to_string(len) +
+              " cmp=" + std::to_string(cmp) +
+              " val=" + std::to_string(val));
         tplc::CtlServer::W w;
         w.u32(breaks.back().handle);
         ctl.reply(fd, t, w.data(), w.size(), req);
-    });
+    };
+    ctl.on(TPLC_OP_DBG_BREAK, arm_break);
+    ctl.on(TPLC_OP_DBG_CAPTURE, arm_break);
     /* {u32 n, {u32 handle, u32 task, u64 off, u32 len, u8 cmp,
                 u8 pad[3], u64 val, u64 hits}*}                    */
     ctl.on(TPLC_OP_DBG_BREAK_LIST, [&](int fd, uint16_t t,
@@ -1616,7 +1673,8 @@ int main(int argc, char** argv) {
         w.u32((uint32_t)breaks.size());
         for (auto& b : breaks) {
             w.u32(b.handle); w.u32(b.task_idx); w.u64(b.off);
-            w.u32(b.len); w.u8(b.cmp); w.u8(0); w.u16(0);
+            w.u32(b.len); w.u8(b.cmp); w.u8(b.capture ? 1 : 0);
+            w.u16(0);
             w.u64(b.val); w.u64(b.hits);
         }
         ctl.reply(fd, t, w.data(), w.size(), req);
@@ -1632,12 +1690,14 @@ int main(int argc, char** argv) {
         uint32_t h; memcpy(&h, p, 4);
         if (h == 0xFFFFFFFFu) {
             breaks.clear();
+            audit(fd, "dbg.break.clear", "all");
             ctl.replyEmpty(fd, t, req);
             return;
         }
         for (auto it = breaks.begin(); it != breaks.end(); ++it)
             if (it->handle == h) {
                 breaks.erase(it);
+                audit(fd, "dbg.break.clear", std::to_string(h));
                 ctl.replyEmpty(fd, t, req);
                 return;
             }
@@ -1662,7 +1722,9 @@ int main(int argc, char** argv) {
                            "u32 pad}*}", req);
             return;
         }
-        uint32_t nch; memcpy(&nch, p, 4);
+        uint32_t nch, flags;
+        memcpy(&nch, p, 4);
+        memcpy(&flags, p + 4, 4);
         if (nch > MAX_TRACE_CH || n != 8 + nch * 16) {
             ctl.errorReply(fd, t, TPLC_E_TRACE_CONFIG,
                            "channel count/frame shape", req);
@@ -1692,6 +1754,10 @@ int main(int argc, char** argv) {
         trace_ch = std::move(chs);
         trace_ring.clear();
         trace_wr = 0;
+        trace_flags = flags;
+        trace_frozen = false;
+        audit(fd, "trace.conf", "ch=" + std::to_string(nch) +
+              " flags=" + std::to_string(flags));
         tplc::CtlServer::W w;
         w.u32(total);
         ctl.reply(fd, t, w.data(), w.size(), req);
@@ -1706,6 +1772,7 @@ int main(int argc, char** argv) {
         w.u32(fl);
         w.u64(trace_wr);
         w.u64((uint64_t)trace_ring.size());
+        w.u32(trace_frozen ? 1u : 0u);
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
     ctl.on(TPLC_OP_TRACE_READ, [&](int fd, uint16_t t,
@@ -1755,6 +1822,9 @@ int main(int argc, char** argv) {
         trace_ch.clear();
         trace_ring.clear();
         trace_wr = 0;
+        trace_flags = 0;
+        trace_frozen = false;
+        audit(fd, "trace.clear", "");
         ctl.replyEmpty(fd, t, req);
     });
 
@@ -2021,7 +2091,11 @@ int main(int argc, char** argv) {
     auto eval_breaks = [&]() {
         if (!prog || breaks.empty()) return;
         for (auto& b : breaks) {
-            if (sched.suspended(*prog, b.task_idx)) continue;
+            /* suspend-breaks skip while their task is held; capture
+               breaks skip while the recorder is already frozen    */
+            if (b.capture ? trace_frozen
+                          : sched.suspended(*prog, b.task_idx))
+                continue;
             uint64_t cur = 0;
             memcpy(&cur, prog->blob() + b.off, b.len);
             bool hit;
@@ -2034,7 +2108,10 @@ int main(int argc, char** argv) {
                 default: hit = cur >= b.val; break;
             }
             if (!hit) continue;
-            if (sched.suspend(*prog, b.task_idx)) {
+            bool fired = b.capture
+                ? (trace_frozen = true)
+                : sched.suspend(*prog, b.task_idx);
+            if (fired) {
                 b.hits++;
                 tplc::CtlServer::W w;
                 w.u32(b.handle); w.u32(b.task_idx); w.u64(cur);
@@ -2065,11 +2142,11 @@ int main(int argc, char** argv) {
             /* re-assert overrides at the boundary: internals and
                shadows hold the forced value for observers too      */
             if (!forces.empty()) stamp_forces(0);
-            /* breaks see post-force state — the effective value    */
-            if (!breaks.empty()) eval_breaks();
             /* flight recorder: one frame per scan that ran work —
-               post-force, post-break state; bounded 64B copy      */
-            if (ran > 0 && !trace_ch.empty() && prog) {
+               post-force state; bounded 64B copy; sampled before
+               break/capture eval so the triggering scan is kept   */
+            if (ran > 0 && !trace_ch.empty() && !trace_frozen &&
+                prog) {
                 TraceFrame f;
                 f.seq = trace_wr;
                 f.ts = now;
@@ -2084,6 +2161,8 @@ int main(int argc, char** argv) {
                     trace_ring[trace_wr % TRACE_CAP] = f;
                 trace_wr++;
             }
+            /* breaks see post-force state — the effective value    */
+            if (!breaks.empty()) eval_breaks();
             progress.fetch_add(1);
             /* quarantine window: N scans after commit the old module
                is released — doc 08 §7 (drop order: Program first)  */
