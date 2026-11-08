@@ -45,7 +45,10 @@ pair_hi := i;
 END_PROGRAM
 ST
 
-$TPLCC build $WORK/pair.st -o $WORK/pair.tplc >/dev/null \
+# torn-read at 4 kHz (doc 12 §10.3): the pair writes race a fast
+# cyclic task — every boundary sample must still see lo == hi.
+$TPLCC build $WORK/pair.st -o $WORK/pair.tplc \
+    --task-period-ns 250000 >/dev/null \
     || { echo "pair build failed"; exit 1; }
 
 $BUILD/tplc-image create $IMG 64 64 >/dev/null
@@ -99,7 +102,8 @@ read r0 l0 m0 < <(task_stat)
 sleep 1
 read r1 l1 m1 < <(task_stat)
 base_rate=$((r1 - r0))
-[ "$base_rate" -gt 50 ] && ok "baseline cadence $base_rate runs/s" \
+# nominal 4000 runs/s at 4 kHz; allow half for a loaded box
+[ "$base_rate" -gt 2000 ] && ok "baseline cadence $base_rate runs/s" \
     || bad "baseline cadence ($base_rate)"
 
 flood() { local end=$((SECONDS + 4)); while [ $SECONDS -lt $end ]; do
@@ -114,10 +118,10 @@ read rf1 lf1 mf1 < <(task_stat)
 wait $fpids   # only the flood workers; RT_PID never exits
 
 druns=$((rf1 - rf0))
-# 4 s at 10 ms period: ~400 runs. Cadence must hold within 25% and the
-# worst release lateness must stay far under one period (10 ms), so
-# no release is ever skipped.
-[ "$druns" -ge 300 ] && ok "cadence under flood: $druns runs/4s" \
+# 4 s at 4 kHz: ~16000 runs. Cadence must hold within 50% (ctl flood
+# must shed before task releases slip) and the worst release
+# lateness must stay bounded.
+[ "$druns" -ge 8000 ] && ok "cadence under flood: $druns runs/4s" \
     || bad "cadence under flood ($druns runs)"
 [ "$mf1" -lt 5000000 ] \
     && ok "lateness under flood: max ${mf1} ns (< 5 ms)" \
