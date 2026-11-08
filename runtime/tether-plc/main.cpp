@@ -24,6 +24,7 @@
 #include <deque>
 #include <functional>
 #include <thread>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <fcntl.h>
@@ -279,6 +280,9 @@ static int supervise(char** argv, int sep) {
 }
 
 int main(int argc, char** argv) {
+    /* default timer slack coalesces nanosleep/epoll wakes by up to
+       ~1 ms; release timing needs precise wakes */
+    prctl(PR_SET_TIMERSLACK, 1UL);
     std::string image_path, module_path, package_path, ctl_path;
     std::string retain_dir, runbook_dir, instance_name, packages_dir;
     uint64_t retain_flush_ms = 1000;
@@ -3019,13 +3023,31 @@ int main(int argc, char** argv) {
 
         tplc_image_plc_heartbeat(&img, now);
 
-        /* wait: min(next task due, poll cap) */
+        /* wait: min(next task due, poll cap); a task already due
+           must not sleep past its release */
         uint64_t nd = sched.nextDueNs();
         uint64_t wait_ns = poll_ns;
-        if (nd != UINT64_MAX && nd > now)
-            wait_ns = (nd - now) < poll_ns ? (nd - now) : poll_ns;
-        int wait_ms = (int)(wait_ns / 1000000ull) + 1;
-        ctl.poll(wait_ms);
+        if (nd != UINT64_MAX)
+            wait_ns = (nd <= now) ? 0
+                      : ((nd - now) < poll_ns ? (nd - now) : poll_ns);
+        /* an epoll ms timeout can overshoot the due instant by a
+           scheduler tick, landing every release ~1 ms late; inside
+           IMMINENT the poll only peeks and the tail below carries
+           the wait with ns precision instead */
+        const uint64_t IMMINENT = 3000000ull;   /* 3 ms */
+        if (nd != UINT64_MAX && nd > now && nd - now < IMMINENT)
+            wait_ns = 0;
+        ctl.poll((int)(wait_ns / 1000000ull));
+        if (nd != UINT64_MAX && (now = mono_ns()) < nd &&
+            nd - now < IMMINENT) {
+            uint64_t rem = nd - now;
+            if (rem > 200000ull) {
+                struct timespec ts{0, (long)(rem - 200000ull)};
+                nanosleep(&ts, nullptr);
+                now = mono_ns();
+            }
+            while (nd > now) now = mono_ns();
+        }
     }
 
     fprintf(stderr, "tether-plc: stopping\n");
