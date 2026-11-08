@@ -309,6 +309,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut change_against: Option<PathBuf> = None;
     let mut allow_retain_loss = false;
     let mut json_mode = false;
+    let mut task_period_ns: u64 = 10_000_000;
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
@@ -324,6 +325,13 @@ fn cmd_build(args: &[String]) -> ExitCode {
             }
             "--allow-retain-loss" => allow_retain_loss = true,
             "--json" => json_mode = true,
+            "--task-period-ns" => {
+                task_period_ns = args[i + 1].parse().unwrap_or_else(|_| {
+                    eprintln!("tplcc build: bad --task-period-ns value");
+                    std::process::exit(2);
+                });
+                i += 1;
+            }
             "--rename" => {
                 if let Some((o, n)) = args[i + 1].split_once('=') {
                     renames.push((o.into(), n.into()));
@@ -577,6 +585,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         uuid,
         layout_hash,
         mig_emit.as_ref(),
+        task_period_ns,
     );
     if let Err(e) = llmod.verify() {
         if json_mode {

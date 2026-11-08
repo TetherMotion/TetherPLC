@@ -214,7 +214,7 @@ fn llvm_lowering_executes_through_jit() {
         ty: Type::Bool,
     }];
     let module = emit_program(
-        &lctx, m, l, program, &io_binds, "demo", [0x51; 16], [0xAA; 32], None,
+        &lctx, m, l, program, &io_binds, "demo", [0x51; 16], [0xAA; 32], None, 10_000_000,
     );
     std::fs::write("/tmp/gen.ll", module.print_to_string().to_string()).unwrap();
     module.verify().unwrap_or_else(|e| panic!("IR verify: {e}"));
@@ -430,6 +430,7 @@ fn migrate_jit() {
         [0x51; 16],
         [0xAA; 32],
         Some(&mig),
+        10_000_000,
     );
     module.verify().unwrap_or_else(|e| panic!("IR verify: {e}"));
     let ee = module.create_execution_engine().unwrap();

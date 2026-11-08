@@ -988,6 +988,7 @@ impl<'ctx> Gen<'ctx> {
 
     /// descriptor globals + tplc_get_descriptor + tplc_task_run
     /// dispatcher (task_fns table + bounds check + indirect call).
+    #[allow(clippy::too_many_arguments)]
     fn emit_descriptor(
         &mut self,
         _program: &Pou,
@@ -996,6 +997,7 @@ impl<'ctx> Gen<'ctx> {
         uuid: [u8; 16],
         layout_hash: [u8; 32],
         has_migrate: bool,
+        task_period_ns: u64,
     ) {
         let lctx = self.ctx;
         let i8p = self.i8p();
@@ -1025,9 +1027,9 @@ impl<'ctx> Gen<'ctx> {
                 lctx.i8_type().const_int(3, false).into(), // ENABLED|WATCHDOGGED
                 lctx.i8_type().const_int(10, false).into(),
                 lctx.i8_type().const_zero().into(),
-                lctx.i64_type().const_int(10_000_000, false).into(), // 10ms
-                lctx.i64_type().const_zero().into(),                 // wcet_hint
-                lctx.i32_type().const_zero().into(),                 // entry 0
+                lctx.i64_type().const_int(task_period_ns, false).into(),
+                lctx.i64_type().const_zero().into(), // wcet_hint
+                lctx.i32_type().const_zero().into(), // entry 0
                 lctx.i32_type().const_zero().into(),
             ],
             false,
@@ -1534,6 +1536,7 @@ pub fn emit_program<'ctx>(
     uuid: [u8; 16],
     layout_hash: [u8; 32],
     migrate: Option<&MigrateEmit>,
+    task_period_ns: u64,
 ) -> LlvmModule<'ctx> {
     let module = lctx.create_module("tplc_program");
     let mut g = Gen {
@@ -1745,6 +1748,7 @@ pub fn emit_program<'ctx>(
         uuid,
         layout_hash,
         migrate.is_some(),
+        task_period_ns,
     );
     g.module
 }
