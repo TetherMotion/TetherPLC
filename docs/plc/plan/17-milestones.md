@@ -28,6 +28,12 @@
 
 ## 2. Phases
 
+> **Status board (as of the P10 sweep):** P0–P9 **landed** — their
+> chapters (01–16) are retired into `docs/plc/` as-builts and the
+> acceptance matrix (`docs/plc/acceptance-matrix.md`) is the live
+> record. P10 is in flight: this doc survives until v1 ships and the
+> remainder re-plans under iteration 2.
+
 ### P0 — Foundations & runtime skeleton
 *Scope:* `libtplc-pkg` reader (C++/Rust), `tplc_abi.h`, image lib +
 `tplc-image` tool, `libtplc-host` skeleton (loader/scheduler/lifecycle
@@ -152,9 +158,11 @@ backends from day 1 — contracts are frozen docs, not code.
 ## 5. Iteration 2 (post-v1, recorded not scheduled)
 
 SFC language + editor; LD view/editor; multi-program IDE flows;
-CiA-405 OD endpoint (doc 16 §7); MCU loader path (doc 18); WSTRING/
-LTIME/REF dialect extensions; collaborative editing; visual diff;
-OPC-UA adapter; safety FB subset (certification program).
+CiA-405 OD endpoint (doc 16 §7); MCU loader path (doc 18); shadow
+run / compare-and-promote deploys (doc 19 — spec exists, may pull
+forward as a v1.x feature); WSTRING/LTIME/REF dialect extensions;
+collaborative editing; visual diff; OPC-UA adapter; safety FB
+subset (certification program).
 
 ## 6. Definition of done (per phase)
 

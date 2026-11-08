@@ -3418,29 +3418,41 @@ int main(int argc, char** argv) {
     std::thread monitor([&] {
         uint64_t last_seen = 0;
         uint64_t stale_since = mono_ns();
+        uint64_t fault_since = 0;
         while (mon_running.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             uint64_t p = progress.load();
             uint64_t now = mono_ns();
-            if (p != last_seen) { last_seen = p; stale_since = now; }
-            if (prog_state != PS_RUNNING) { stale_since = now; continue; }
-            uint64_t stale_ms = (now - stale_since) / 1000000ull;
-            if (stale_ms > hang_timeout_ms) {
-                if (prog_state == PS_RUNNING && prog) {
-                    prog->requestAbort();
-                    prog_state = PS_FAULT;
-                    stall_fault_ev = true;
-                    tplc_image_set_fault(&img, (uint64_t)-TPLC_TASK_E_FAULT);
-                    tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
-                    fprintf(stderr,
-                            "tether-plc: scan stall %llums — fault + abort\n",
-                            (unsigned long long)stale_ms);
-                }
-                if (stale_ms > 2 * hang_timeout_ms) {
+            if (p != last_seen) {
+                last_seen = p; stale_since = now; fault_since = 0;
+            }
+            if (prog_state != PS_RUNNING) {
+                /* escalation: only the stall WE flagged counts — the
+                   wedged task never returns to service ctl, so self-
+                   termination is the only escape. A cooperative fault
+                   (task aborted, operator can still ctl) keeps the
+                   process alive for diagnosis. */
+                if (fault_since &&
+                    (now - fault_since) / 1000000ull > hang_timeout_ms) {
                     fprintf(stderr,
                             "tether-plc: unrecovered stall — exiting\n");
                     _exit(2);
                 }
+                if (!fault_since) stale_since = now;
+                continue;
+            }
+            uint64_t stale_ms = (now - stale_since) / 1000000ull;
+            if (stale_ms > hang_timeout_ms &&
+                prog_state == PS_RUNNING && prog) {
+                prog->requestAbort();
+                prog_state = PS_FAULT;
+                stall_fault_ev = true;
+                tplc_image_set_fault(&img, (uint64_t)-TPLC_TASK_E_FAULT);
+                tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
+                fault_since = now;
+                fprintf(stderr,
+                        "tether-plc: scan stall %llums — fault + abort\n",
+                        (unsigned long long)stale_ms);
             }
         }
     });

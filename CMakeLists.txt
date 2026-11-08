@@ -253,6 +253,15 @@ add_scan_fixture(scan_evil_int80   evil_int80.c)
 add_scan_fixture(scan_evil_import  evil_import.c)
 add_scan_fixture(scan_good_imm     good_immediates.c)
 
+# perf-evidence fixture: uncooperative spin module for watchdog
+# latency measurement (tests/perf/evidence.sh)
+add_library(hang_spin MODULE tests/perf/hang_spin.c)
+set_target_properties(hang_spin PROPERTIES
+  PREFIX "" OUTPUT_NAME "hang_spin" SUFFIX ".so")
+target_include_directories(hang_spin PRIVATE include)
+target_compile_options(hang_spin PRIVATE
+  -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables)
+
 # sandbox-enforcement: a valid ABI module importing socket() — the
 # import scanner must reject it (layer 1); and a probe binary that
 # applies the sandbox then tests socket() families (layer 2)
@@ -310,13 +319,20 @@ set_tests_properties(safety_boundary PROPERTIES SKIP_RETURN_CODE 77)
 # doc 16 §9: v2 status object, strict transitions, events, epoch
 add_test(NAME mgmt_surface COMMAND bash
   ${CMAKE_SOURCE_DIR}/tests/scan/mgmt_surface.sh)
-set_tests_properties(mgmt_surface PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(mgmt_surface PROPERTIES SKIP_RETURN_CODE 77 RESOURCE_LOCK plc_scan)
+
+# watchdog escalation: uncooperative task must fault the image flag
+# and _exit at ~2x hang-timeout (needs hang_spin fixture)
+add_dependencies(tether-plc hang_spin)
+add_test(NAME watchdog_escalation COMMAND bash
+  ${CMAKE_SOURCE_DIR}/tests/fault/watchdog_escalation.sh)
+set_tests_properties(watchdog_escalation PROPERTIES SKIP_RETURN_CODE 77 RESOURCE_LOCK plc_scan)
 
 # live attach over tether_io: tplc-io TCP bridge + probe client
 if(TARGET tplc-io-probe)
   add_test(NAME tplc_io_attach COMMAND bash
     ${CMAKE_SOURCE_DIR}/tests/scan/tplc_io_attach.sh)
-  set_tests_properties(tplc_io_attach PROPERTIES SKIP_RETURN_CODE 77)
+  set_tests_properties(tplc_io_attach PROPERTIES SKIP_RETURN_CODE 77 RESOURCE_LOCK plc_scan)
 endif()
 
 # doc 15 §6: license manifest gate (skips when cargo metadata unusable)
@@ -355,13 +371,13 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/online_change/e2e.sh)
   set_tests_properties(online_change_e2e PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 120)
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # FBD gallery: ST/FBD pairs must produce identical %Q images
   add_test(NAME fbd_gallery_e2e
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/fbd_gallery/e2e.sh)
   set_tests_properties(fbd_gallery_e2e PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 120)
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # debug-plane stress: boundary-consistent reads never tear a
   # multi-byte field mid-update (doc 12 §10.3)
@@ -370,7 +386,7 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/debug/stress.sh)
   set_tests_properties(debug_stress PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 120)
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # sim vectors (doc 14 §3.1): replay the oracle corpus through
   # tether-plc-sim incl. named field expectations via ctl DBG_READ
@@ -379,7 +395,7 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       python3 ${CMAKE_SOURCE_DIR}/tests/sim/vector_run.py)
   set_tests_properties(sim_vectors PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 180)
+    SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
   # no-alloc property (doc 14 §5): LD_PRELOAD counter — steady-state
   # scans must not hit the heap
@@ -413,7 +429,7 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       python3 ${CMAKE_SOURCE_DIR}/tests/sim/vector_run.py --repeat 2)
   set_tests_properties(sim_determinism PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 300)
+    SKIP_RETURN_CODE 77 TIMEOUT 300 RESOURCE_LOCK plc_scan)
 
   # GPL quarantine scan (doc 14 §3/§4): no oracle coupling may reach
   # shipped paths
