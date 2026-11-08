@@ -418,6 +418,16 @@ int main(int argc, char** argv) {
     TplcProgramDescriptor            d{};
     std::vector<uint8_t>             pkg_layd;   /* for OP_PROG_LAYOUT */
     std::vector<uint8_t>             pkg_smap;   /* for OP_DBG_RESOLVE   */
+    /* force table (doc 12 §6): blob-offset overrides re-stamped at
+       every task boundary so program writes cannot undo them        */
+    struct Force {
+        uint32_t              handle;
+        uint64_t              off;
+        std::vector<uint8_t>  val;
+    };
+    std::vector<Force>               forces;
+    uint32_t                         next_force_h = 1;
+    static const size_t              MAX_FORCES = 64;
     /* online-change quarantine (doc 08 §7): the swapped-out program
        + module stay live for quarantine_cycles scans so rollback is
        a pointer swap back to untouched pre-swap state              */
@@ -439,6 +449,8 @@ int main(int argc, char** argv) {
         quar = Quarantine{};
         pkg_layd.clear();
         pkg_smap.clear();
+        forces.clear();
+        next_force_h = 1;
         d = TplcProgramDescriptor{};
         prog_started = false;
     };
@@ -498,6 +510,7 @@ int main(int argc, char** argv) {
         std::swap(mod, quar.mod);
         std::swap(pkg_layd, quar.layd);
         std::swap(pkg_smap, quar.smap);
+        forces.clear();   /* blob identity changed — forces stale */
         sched.addProgram(*prog);
         d = mod->descriptor();
         if (retain) {
@@ -513,6 +526,45 @@ int main(int argc, char** argv) {
         prog_state = PS_RUNNING;
         prog_started = true;
         return true;
+    };
+
+    /* force stamping (doc 12 §6): applied at every task boundary.
+       where: 0 → the blob itself; 1 → translate into img_in_
+       (post-latch, pre-copyInputsIn); 2 → img_out_ (post-copy,
+       pre-commit). I/O-bound ranges translate through io_bindings —
+       BOOL forces become bit ops on the image byte.              */
+    auto stamp_forces = [&](int where) {
+        if (!prog || forces.empty()) return;
+        const TplcProgramDescriptor& dd = prog->desc();
+        if (where == 0) {
+            for (auto& f : forces)
+                memcpy(prog->blob() + f.off, f.val.data(), f.val.size());
+            return;
+        }
+        uint8_t  reg   = where == 1 ? TPLC_REGION_IMAGE_IN
+                                    : TPLC_REGION_IMAGE_OUT;
+        uint8_t* img_p = where == 1 ? prog->imageIn() : prog->imageOut();
+        for (auto& f : forces)
+            for (uint32_t i = 0; i < dd.io_binding_count; i++) {
+                const TplcIoBinding& b = dd.io_bindings[i];
+                if (b.region != reg) continue;
+                uint32_t bs = b.size ? b.size : 1;
+                if (f.off < b.blob_offset ||
+                    f.off + f.val.size() >
+                        (uint64_t)b.blob_offset + bs)
+                    continue;
+                if (b.type_code == TPLC_IOT_BOOL) {
+                    if (f.val.size() != 1) break;
+                    uint8_t bit = (uint8_t)(1u << (b.unit & 7u));
+                    if (f.val[0]) img_p[b.image_offset] |= bit;
+                    else          img_p[b.image_offset] &= (uint8_t)~bit;
+                } else {
+                    memcpy(img_p + b.image_offset +
+                               (f.off - b.blob_offset),
+                           f.val.data(), f.val.size());
+                }
+                break;
+            }
     };
 
     tplc::Status lst = load_program(module_path);
@@ -541,11 +593,14 @@ int main(int argc, char** argv) {
     prog_state = PS_RUNNING;
 
     tplc::TickHooks hooks;
-    hooks.latch = [&img](tplc::Program& p, uint32_t) -> int32_t {
-        return tplc_image_latch_inputs(&img, p.imageIn(), 0,
-                                       p.desc().image_in_bytes);
+    hooks.latch = [&](tplc::Program& p, uint32_t) -> int32_t {
+        int32_t rc = tplc_image_latch_inputs(&img, p.imageIn(), 0,
+                                             p.desc().image_in_bytes);
+        if (rc == 0) stamp_forces(1);  /* forced inputs reach task */
+        return rc;
     };
-    hooks.commit = [&img](tplc::Program& p, uint32_t) -> int32_t {
+    hooks.commit = [&](tplc::Program& p, uint32_t) -> int32_t {
+        stamp_forces(2);               /* forced outs reach field  */
         return tplc_image_commit_outputs(&img, p.imageOut(), 0,
                                          p.desc().image_out_bytes);
     };
@@ -1020,6 +1075,7 @@ int main(int argc, char** argv) {
         mod.reset();
         quar.layd = std::move(pkg_layd);
         quar.smap = std::move(pkg_smap);
+        forces.clear();   /* new blob layout — overrides are stale */
         quar.cycles_left = quarantine_cycles;
         mod = std::make_unique<tplc::Module>(std::move(nmod));
         /* rebind: Program::create captured &nmod — retarget the new
@@ -1352,6 +1408,114 @@ int main(int argc, char** argv) {
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
 
+    /* force (doc 12 §6): {u64 off, u32 len, bytes} → {u32 handle}.
+       the override re-stamps every boundary until cleared — a
+       one-shot DBG_WRITE can be overwritten by the program, a
+       force cannot. overlaps are denied, not merged               */
+    ctl.on(TPLC_OP_DBG_FORCE, [&](int fd, uint16_t t,
+                                  const uint8_t* p, uint32_t n,
+                                  uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n < 12) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u64 off, u32 len, bytes}", req);
+            return;
+        }
+        uint64_t off; uint32_t wl;
+        memcpy(&off, p, 8); memcpy(&wl, p + 8, 4);
+        if ((uint64_t)wl + 12 != n || wl == 0) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "len/byte count mismatch", req);
+            return;
+        }
+        if (off > prog->blobSize() || wl > prog->blobSize() - off) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "range outside blob", req);
+            return;
+        }
+        if (forces.size() >= MAX_FORCES) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_OVERLOAD,
+                           "force table full", req);
+            return;
+        }
+        for (auto& f : forces)
+            if (off < f.off + f.val.size() && off + wl > f.off) {
+                ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                               "overlaps existing force", req);
+                return;
+            }
+        /* a range intersecting a non-forceable io binding is denied;
+           MARKER bindings have no image copy to translate into      */
+        const TplcProgramDescriptor& dd = prog->desc();
+        for (uint32_t i = 0; i < dd.io_binding_count; i++) {
+            const TplcIoBinding& b = dd.io_bindings[i];
+            uint32_t bs = b.size ? b.size : 1;
+            if (b.region == TPLC_REGION_MARKER &&
+                off < (uint64_t)b.blob_offset + bs &&
+                off + wl > b.blob_offset) {
+                ctl.errorReply(fd, t, TPLC_E_FORCE_DENIED,
+                               "marker bindings are not forceable",
+                               req);
+                return;
+            }
+            if (b.region != TPLC_REGION_MARKER &&
+                off < (uint64_t)b.blob_offset + bs &&
+                off + wl > b.blob_offset &&
+                !(b.flags & TPLC_IOB_FORCEABLE)) {
+                ctl.errorReply(fd, t, TPLC_E_FORCE_DENIED,
+                               "binding not forceable", req);
+                return;
+            }
+        }
+        forces.push_back({next_force_h++, off,
+                          std::vector<uint8_t>(p + 12, p + 12 + wl)});
+        stamp_forces(0);   /* effective even while stopped */
+        tplc::CtlServer::W w;
+        w.u32(forces.back().handle);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    /* {u32 n, {u32 handle, u64 off, u32 len, bytes}*} */
+    ctl.on(TPLC_OP_DBG_FORCE_LIST, [&](int fd, uint16_t t,
+                                       const uint8_t*, uint32_t,
+                                       uint64_t req) {
+        tplc::CtlServer::W w;
+        w.u32((uint32_t)forces.size());
+        for (auto& f : forces) {
+            w.u32(f.handle);
+            w.u64(f.off);
+            w.u32((uint32_t)f.val.size());
+            w.bytes(f.val.data(), f.val.size());
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_DBG_FORCE_CLEAR, [&](int fd, uint16_t t,
+                                        const uint8_t* p, uint32_t n,
+                                        uint64_t req) {
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 handle}", req);
+            return;
+        }
+        uint32_t h; memcpy(&h, p, 4);
+        if (h == 0xFFFFFFFFu) {
+            forces.clear();
+            ctl.replyEmpty(fd, t, req);
+            return;
+        }
+        for (auto it = forces.begin(); it != forces.end(); ++it)
+            if (it->handle == h) {
+                forces.erase(it);
+                ctl.replyEmpty(fd, t, req);
+                return;
+            }
+        ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                       "no such force", req);
+    });
+
     /* ---------------- deploy group (doc 04 §I.1 0x0200) ---------- */
     DeployUpload up;
     ctl.on(TPLC_OP_DEPLOY_BEGIN, [&](int fd, uint16_t t,
@@ -1625,6 +1789,9 @@ int main(int argc, char** argv) {
              mst == TPLC_IMG_MASTER_DEGRADED ||
              mst == TPLC_IMG_MASTER_INIT)) {
             sched.tick(now, hooks);
+            /* re-assert overrides at the boundary: internals and
+               shadows hold the forced value for observers too      */
+            if (!forces.empty()) stamp_forces(0);
             progress.fetch_add(1);
             /* quarantine window: N scans after commit the old module
                is released — doc 08 §7 (drop order: Program first)  */

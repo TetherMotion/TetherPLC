@@ -205,7 +205,8 @@ int main(int argc, char** argv) {
             "|shutdown|kill|reset [warm|cold]|unload|prepare X"
             "|pkg|deploy F|suspend N|resume N|step N [M]"
             "|resolve NAME|dbg-state|dbg-read OFF LEN"
-            "|dbg-write OFF HEX\n", argv[0]);
+            "|dbg-write OFF HEX|force OFF HEX|force-list"
+            "|force-clear [H|all]\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -334,6 +335,37 @@ int main(int argc, char** argv) {
             pre[12 + i] = (uint8_t)v;
         }
         pre_len = 12 + wl;
+    }
+    else if (!strcmp(cmd, "force")) {
+        if (!arg || argc < 5) {
+            fprintf(stderr, "force <off> <hex>\n"); return 2;
+        }
+        op = TPLC_OP_DBG_FORCE;
+        uint64_t off = strtoull(arg, NULL, 0);
+        const char* hex = argv[4];
+        size_t hl = strlen(hex) / 2;
+        if (strlen(hex) % 2 || hl > sizeof(pre) - 12) {
+            fprintf(stderr, "bad hex\n"); return 2;
+        }
+        memcpy(pre, &off, 8);
+        uint32_t wl = (uint32_t)hl;
+        memcpy(pre + 8, &wl, 4);
+        for (uint32_t i = 0; i < wl; i++) {
+            int v; char t[3] = {hex[i*2], hex[i*2+1], 0};
+            if (sscanf(t, "%02x", &v) != 1) {
+                fprintf(stderr, "bad hex\n"); return 2;
+            }
+            pre[12 + i] = (uint8_t)v;
+        }
+        pre_len = 12 + wl;
+    }
+    else if (!strcmp(cmd, "force-list")) op = TPLC_OP_DBG_FORCE_LIST;
+    else if (!strcmp(cmd, "force-clear")) {
+        op = TPLC_OP_DBG_FORCE_CLEAR;
+        uint32_t h = (!arg || !strcmp(arg, "all"))
+                         ? 0xFFFFFFFFu : (uint32_t)strtoul(arg, NULL, 0);
+        memcpy(pre, &h, 4);
+        pre_len = 4;
     }
     else { fprintf(stderr, "unknown cmd %s\n", cmd); return 2; }
 
@@ -470,6 +502,29 @@ int main(int argc, char** argv) {
             if (i % 16 == 0) printf("%08x  ", i);
             printf("%02x%s", pl[i],
                    i % 16 == 15 || i == len - 1 ? "\n" : " ");
+        }
+    }
+    else if (op == TPLC_OP_DBG_FORCE) {
+        if (len >= 4) {
+            uint32_t h;
+            memcpy(&h, pl, 4);
+            printf("forced  handle %u\n", h);
+        }
+    }
+    else if (op == TPLC_OP_DBG_FORCE_LIST) {
+        const uint8_t* q = pl;
+        uint32_t n; memcpy(&n, q, 4); q += 4;
+        printf("forces %u\n", n);
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t h, l; uint64_t off;
+            memcpy(&h, q, 4); memcpy(&off, q + 4, 8);
+            memcpy(&l, q + 12, 4); q += 16;
+            printf("  handle %u  off %lu  %u B  ", h,
+                   (unsigned long)off, l);
+            for (uint32_t b = 0; b < l && b < 16; b++)
+                printf("%02x", q[b]);
+            q += l;
+            printf("\n");
         }
     }
     else if (op == TPLC_OP_PING && len >= 8) {

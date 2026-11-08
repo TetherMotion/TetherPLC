@@ -64,6 +64,9 @@ enum TplcCtlOp {
     TPLC_OP_DBG_READ       = 0x0502,  /* P6 {u64 off, u32 len}      */
     TPLC_OP_DBG_WRITE      = 0x0503,  /* P6 {u64 off, u32 len,bytes}*/
     TPLC_OP_DBG_STATE      = 0x0504,  /* P6 → blob/retain extents   */
+    TPLC_OP_DBG_FORCE      = 0x0505,  /* P6 {u64 off, u32 len,bytes}*/
+    TPLC_OP_DBG_FORCE_LIST = 0x0506,  /* P6 → {u32 n, entries}      */
+    TPLC_OP_DBG_FORCE_CLEAR= 0x0507,  /* P6 {u32 handle} 0xFF..=all */
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,
