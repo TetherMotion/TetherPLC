@@ -285,6 +285,8 @@ int main(int argc, char** argv) {
     prctl(PR_SET_TIMERSLACK, 1UL);
     std::string image_path, module_path, package_path, ctl_path;
     std::string retain_dir, runbook_dir, instance_name, packages_dir;
+    std::string sig_policy = "open";               /* doc 15 §4.1 */
+    std::string trust_dir  = "/etc/tether/trust";
     uint64_t retain_flush_ms = 1000;
     uint64_t wcet_hard_ns = 0;
     int      quarantine_cycles = 10;
@@ -330,6 +332,8 @@ int main(int argc, char** argv) {
         else if (a == "--quarantine-cycles")
             quarantine_cycles = atoi(next().c_str());
         else if (a == "--auto-rollback") auto_rollback = true;
+        else if (a == "--sig-policy") sig_policy = next();
+        else if (a == "--trust-dir") trust_dir = next();
         else if (a == "--sim") ctx_flags |= TPLC_CTXF_SIM;
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -364,6 +368,20 @@ int main(int argc, char** argv) {
             return 1;
         }
         tplc::Package pkg = std::move(pres.value);
+        auto sigst = pkg.verifySignature(sig_policy, trust_dir);
+        if (!sigst.ok()) {
+            fprintf(stderr, "tether-plc: signature policy (%d) %s\n",
+                    sigst.code, sigst.msg.c_str());
+            tplc_image_close(&img);
+            return 1;
+        }
+        {
+            tplc::PkgSection sig{};
+            if (!pkg.section(TPLC_SEC_SIGNATURE, sig))
+                fprintf(stderr,
+                        "tether-plc: WARNING package is unsigned"
+                        " (signature.policy=open)\n");
+        }
         auto vst = pkg.validateForLoad(false);
         if (!vst.ok()) {
             fprintf(stderr, "tether-plc: package not loadable (%d) %s\n",
@@ -1377,6 +1395,11 @@ int main(int argc, char** argv) {
                 return;
             }
             tplc::Package pk = std::move(pres.value);
+            tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
+            if (!sgst.ok()) {
+                ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
+                return;
+            }
             tplc::PkgSection sec{};
             if (pk.section(TPLC_SEC_LAYOUT_DESC, sec))
                 layd_b.assign(sec.data, sec.data + sec.size);
@@ -1482,6 +1505,11 @@ int main(int argc, char** argv) {
             return;
         }
         tplc::Package pk = std::move(pres.value);
+        tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
+        if (!sgst.ok()) {
+            ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
+            return;
+        }
         tplc::PkgSection obj{}, migd{}, layd{}, smap{};
         if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
             ctl.errorReply(fd, t, TPLC_E_PKG_TOC, "no target_obj",

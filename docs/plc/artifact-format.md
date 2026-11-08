@@ -56,8 +56,20 @@ Wire constants + error codes shared by both implementations:
 - `MigdHeader` on the wire is `hash[32] | vlen u16 | version | pad4 |
   rule_count u32 | rules[16 B] | embedded LAYD` — matching
   `tests/abi/desc_formats.h` and the stub module's parser.
-- `header_hash`/`content_hash` are integrity (tamper-evident), not
-  authenticity — the `signature` section + trust policy are P8.
+- `header_hash`/`content_hash` are integrity (tamper-evident); the
+  `signature` section (0x60) adds authenticity (doc 15 §4.1): payload
+  `u32 ver=1 | key_id[32] | pubkey[32] | sig[64]` where
+  `key_id = sha256(pubkey)` and `sig` is an ed25519 signature over
+  `signing_hash` — sha256 of the non-signature TOC entries with their
+  `offset` fields zeroed plus the non-signature payloads. Zeroing
+  offset makes the signed message layout-independent: appending the
+  signature section shifts every payload offset, so `content_hash`
+  itself cannot be the signed message. `content_hash` still covers
+  real offsets at parse time, so the two checks compose.
+  `tplcc sign keygen|sign|verify` manages keys and trust stores
+  (`<dir>/<hex-keyid>.pub`, 32 raw bytes); `tether-plc
+  --sig-policy open|require|require-trusted --trust-dir D` enforces
+  policy at every package load path (errors `TPLC_E_SIG_*`).
 - `zstd` (SECF_COMPRESSED) is declared but no compressor/decompressor
   is linked yet; readers reject nothing about it today.
 - `validate_for_load` is format-level only. Semantic load checks —

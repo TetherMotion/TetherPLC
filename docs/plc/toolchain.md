@@ -14,6 +14,9 @@ One binary, five subcommands:
 | `tplcc info <p.tplc>` | dump package header + section table |
 | `tplcc serve <uds>` | persistent check service (see §4) |
 | `tplcc vectors` | conformance-vector runner (oracle harness) |
+| `tplcc sign keygen --dir D --name N` | ed25519 keypair → `N.key` + `<keyid>.pub` |
+| `tplcc sign sign <in.tplc> --key K [-o out]` | attach/replace signature section |
+| `tplcc sign verify <pkg> [--trust-dir D]` | verify sig (+ trust-store lookup) |
 
 `check` and `build` take `--json`: instead of the human renderer they
 emit one JSON line `{ok, errors, diags:[…]}` on stdout (build adds

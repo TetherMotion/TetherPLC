@@ -40,9 +40,22 @@ target_link_libraries(tplc_host PUBLIC tplc_image dl)
 # ------------------------------------------------------------------ #
 # Package library (.tplc C++ reader)
 # ------------------------------------------------------------------ #
-add_library(tplc_pkg STATIC runtime/pkg/src/Package.cpp)
+add_library(tplc_pkg STATIC
+  runtime/pkg/src/Package.cpp
+  runtime/pkg/src/Signature.cpp)
 target_include_directories(tplc_pkg PUBLIC
   runtime/pkg/include runtime/host/include)
+
+# ed25519 verification backend (doc 15 §4.1): optional — without it
+# "require*"-policies fail closed on signed packages
+find_library(TPLC_SODIUM_LIBSODIUM sodium)
+if(TPLC_SODIUM_LIBSODIUM)
+  target_compile_definitions(tplc_pkg PRIVATE TPLC_HAVE_SODIUM)
+  target_link_libraries(tplc_pkg PUBLIC ${TPLC_SODIUM_LIBSODIUM})
+  message(STATUS "tplc_pkg: signature verification via libsodium")
+else()
+  message(STATUS "tplc_pkg: no libsodium — signature policies fail closed")
+endif()
 
 # ------------------------------------------------------------------ #
 # Runtime binary
@@ -162,6 +175,9 @@ add_executable(module_scan tests/scan/module_scan.cpp)
 target_link_libraries(module_scan PRIVATE tplc_host)
 add_dependencies(module_scan scan_evil_syscall scan_evil_int80
   scan_evil_import scan_good_imm stub_v1 stub_v2)
+add_test(NAME sig_policy
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/scan/sig_policy.sh)
+set_tests_properties(sig_policy PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME module_scan COMMAND module_scan
   $<TARGET_FILE:scan_evil_syscall> reject
   $<TARGET_FILE:scan_evil_int80>   reject

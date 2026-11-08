@@ -106,10 +106,20 @@ impl<'a> Package<'a> {
         }
 
         // content_hash over raw TOC bytes then payloads in TOC order
-        // (matches writer; D-IMPL-13).
+        // (matches writer; D-IMPL-13). Signature sections are
+        // excluded: the signature authenticates content_hash itself.
         let mut ch = Sha256::new();
-        ch.update(&data[HEADER_FIXED..HEADER_FIXED + toc.len() * TOC_ENTRY_SIZE]);
+        for (i, e) in toc.iter().enumerate() {
+            if e.section_type == SectionType::Signature as u32 {
+                continue;
+            }
+            let t = HEADER_FIXED + i * TOC_ENTRY_SIZE;
+            ch.update(&data[t..t + TOC_ENTRY_SIZE]);
+        }
         for e in &toc {
+            if e.section_type == SectionType::Signature as u32 {
+                continue;
+            }
             ch.update(&data[e.offset as usize..(e.offset + e.size) as usize]);
         }
         let ch: [u8; 32] = ch.finalize().into();
@@ -123,6 +133,33 @@ impl<'a> Package<'a> {
     /// All TOC entries in canonical order.
     pub fn toc(&self) -> &[TocEntry] {
         &self.toc
+    }
+
+    /// Layout-independent content digest for signing (doc 15 §4.1):
+    /// SHA-256 over non-signature TOC entries with their `offset`
+    /// field zeroed, then the non-signature payloads. Zeroing offset
+    /// makes the digest stable when a section is appended (offsets
+    /// still shift); integrity of offsets themselves stays covered by
+    /// `content_hash` at parse time.
+    pub fn signing_hash(&self) -> [u8; 32] {
+        let mut ch = Sha256::new();
+        for e in &self.toc {
+            if e.section_type == SectionType::Signature as u32 {
+                continue;
+            }
+            let mut z = *e;
+            z.offset = 0;
+            let mut buf = [0u8; TOC_ENTRY_SIZE];
+            z.encode(&mut buf);
+            ch.update(buf);
+        }
+        for e in &self.toc {
+            if e.section_type == SectionType::Signature as u32 {
+                continue;
+            }
+            ch.update(&self.data[e.offset as usize..(e.offset + e.size) as usize]);
+        }
+        ch.finalize().into()
     }
 
     /// First section of a given type.

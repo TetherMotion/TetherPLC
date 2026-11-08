@@ -130,12 +130,20 @@ Result<Package> Package::parseImpl(const uint8_t* data, size_t size) {
         prevEnd = e.offset + e.size;
     }
 
-    /* content_hash over raw TOC bytes then payloads (D-IMPL-13). */
+    /* content_hash over raw TOC bytes then payloads (D-IMPL-13);
+       SIGNATURE sections are excluded from both passes — the sig
+       authenticates content_hash itself and cannot cover its own
+       bytes (doc 15 §4.1). */
     Sha256 ch;
-    ch.update(data + TPLC_PKG_HEADER_FIXED,
-              (size_t)pkg.hdr_.toc_count * TPLC_PKG_TOC_ENTRY_SIZE);
-    for (const auto& e : pkg.toc_)
+    for (uint32_t i = 0; i < pkg.hdr_.toc_count; i++) {
+        if (pkg.toc_[i].section_type == TPLC_SEC_SIGNATURE) continue;
+        ch.update(data + TPLC_PKG_HEADER_FIXED + i * TPLC_PKG_TOC_ENTRY_SIZE,
+                  TPLC_PKG_TOC_ENTRY_SIZE);
+    }
+    for (const auto& e : pkg.toc_) {
+        if (e.section_type == TPLC_SEC_SIGNATURE) continue;
         ch.update(data + e.offset, (size_t)e.size);
+    }
     uint8_t chd[TPLC_PKG_HASH_LEN];
     ch.finish(chd);
     if (std::memcmp(chd, pkg.hdr_.content_hash, TPLC_PKG_HASH_LEN) != 0)

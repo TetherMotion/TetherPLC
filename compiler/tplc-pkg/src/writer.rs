@@ -141,11 +141,17 @@ impl PackageWriter {
         {
             let mut buf = [0u8; TOC_ENTRY_SIZE];
             for s in &self.sections {
+                if s.toc.section_type == SectionType::Signature as u32 {
+                    continue;
+                }
                 s.toc.encode(&mut buf);
                 ch.update(buf);
             }
         }
         for s in &self.sections {
+            if s.toc.section_type == SectionType::Signature as u32 {
+                continue;
+            }
             ch.update(&s.data);
         }
         let content_hash: [u8; 32] = ch.finalize().into();

@@ -55,6 +55,16 @@ public:
     /* doc 01 §2.1 required-for-load set (format level only). */
     Status validateForLoad(bool irStripped) const;
 
+    /* doc 15 §4.1 signature policy check. policy:
+     *   "open"            — unsigned passes (loud warn via caller),
+     *                       signed packages are verified
+     *   "require"         — valid ed25519 signature required
+     *   "require-trusted" — valid signature AND signer key_id must
+     *                       exist in trustDir as <hex-keyid>.pub
+     * Errors: TPLC_E_SIG_REQUIRED / _INVALID / _UNTRUSTED. */
+    Status verifySignature(const std::string& policy,
+                           const std::string& trustDir) const;
+
     std::string manifestJson() const;
 
     /* The backing buffer, if the Package owns it (file-opened). */
