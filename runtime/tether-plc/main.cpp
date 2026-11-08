@@ -501,6 +501,27 @@ int main(int argc, char** argv) {
     static const size_t              TRACE_CAP = 4096;
     static const size_t              MAX_TRACE_CH = 8;
     static const uint32_t            TRACE_NO_FAULT_FREEZE = 1;
+    /* flight recorder is ON BY DEFAULT (doc 12 §6): at each program
+       start, if nothing is armed, record the program's I/O-bound
+       blob fields so a fault always leaves pre-fault history. A
+       user TRACE_CONF replaces the defaults; TRACE_CLEAR disarms
+       until the next start transition.                          */
+    auto arm_default_trace = [&] {
+        if (!trace_ch.empty() || !prog) return;
+        const TplcProgramDescriptor& dd = prog->desc();
+        size_t frame = 0;
+        for (uint32_t i = 0; i < dd.io_binding_count &&
+                trace_ch.size() < MAX_TRACE_CH; i++) {
+            const TplcIoBinding& b = dd.io_bindings[i];
+            if (b.region == TPLC_REGION_MARKER) continue;
+            uint32_t bl = b.size ? b.size : 1;
+            if (bl > 8) bl = 8;
+            if (frame + bl > sizeof(TraceFrame::data)) break;
+            if (b.blob_offset + bl > prog->blobSize()) continue;
+            trace_ch.push_back({(uint64_t)b.blob_offset, bl});
+            frame += bl;
+        }
+    };
     /* watch (doc 12 §3): named blob-range read sets; stream arms a
        per-watch push of EV_DBG_WATCH at ≤ rate_hz, sampled at task
        boundaries like the recorder                                 */
@@ -644,6 +665,7 @@ int main(int argc, char** argv) {
         quar = Quarantine{};
         prog_state = PS_RUNNING;
         prog_started = true;
+        arm_default_trace();
         return true;
     };
 
@@ -718,6 +740,7 @@ int main(int argc, char** argv) {
     }
     prog_started = true;
     prog_state = PS_RUNNING;
+    arm_default_trace();
 
     tplc::TickHooks hooks;
     hooks.latch = [&](tplc::Program& p, uint32_t) -> int32_t {
@@ -1163,6 +1186,7 @@ int main(int argc, char** argv) {
         ps.task_count = d.task_count;
         ps.cycles = prog ? prog->ctx().cycle_no : 0;
         ps.last_fault_code = last_fault;
+        ps.force_count = (uint32_t)forces.size();
         w.bytes(&ps, sizeof ps);
         for (uint32_t i = 0; i < d.task_count; i++) {
             const TplcTaskDesc& td = d.tasks[i];
@@ -1248,6 +1272,7 @@ int main(int argc, char** argv) {
                 prog_started = true;
             }
             prog_state = PS_RUNNING;
+            arm_default_trace();
             tplc_image_set_plc_status(&img, TPLC_IMG_PLC_RUN);
         }
         audit(fd, "prog.start", "");
@@ -1606,6 +1631,7 @@ int main(int argc, char** argv) {
         reresolve_subs();
         prog_state = PS_RUNNING;
         prog_started = true;
+        arm_default_trace();
         last_fault = 0;
         fprintf(stderr,
                 "tether-plc: online change committed (%s, "
@@ -2277,6 +2303,72 @@ int main(int argc, char** argv) {
                 ? smap_name(pkg_smap.data(), pkg_smap.size(), ns) : "";
             w.str(on.data(), (uint32_t)on.size());
             w.str(nn.data(), (uint32_t)nn.size());
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    /* blob layout browser (doc 12 §7): per-field rows from LAYD +
+       SMAP so a client can enumerate the loaded program's fields  */
+    ctl.on(TPLC_OP_DBG_FIELDS, [&](int fd, uint16_t t,
+                                   const uint8_t*, uint32_t,
+                                   uint64_t req) {
+        const uint8_t* b = pkg_layd.data();
+        size_t n = pkg_layd.size();
+        auto r32 = [](const uint8_t* p) {
+            uint32_t v; memcpy(&v, p, 4); return v; };
+        auto r64 = [](const uint8_t* p) {
+            uint64_t v; memcpy(&v, p, 8); return v; };
+        if (!b || n < 24 || memcmp(b, "LAYD", 4)) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "no layout descriptors", req);
+            return;
+        }
+        uint32_t nreg = r32(b + 8);
+        size_t at = 24 + (size_t)nreg * 24;
+        if (at + 4 > n) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "corrupt layout", req);
+            return;
+        }
+        uint32_t nf = r32(b + at); at += 4;
+        if (at + (uint64_t)nf * 32 > n) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "corrupt layout", req);
+            return;
+        }
+        /* SMAP rows carry name + region + access per sym_entry   */
+        const uint8_t* sm = pkg_smap.data();
+        bool have_sm = sm && pkg_smap.size() >= 32 &&
+                       !memcmp(sm, "SMAP", 4);
+        uint32_t scnt = have_sm ? r32(sm + 8) : 0;
+        uint32_t so = have_sm ? r32(sm + 12) : 0;
+        uint32_t sl = have_sm ? r32(sm + 16) : 0;
+        if (have_sm && ((uint64_t)so + sl > pkg_smap.size() ||
+                        32ull + (uint64_t)scnt * 64 >
+                            pkg_smap.size()))
+            have_sm = false;
+        tplc::CtlServer::W w;
+        w.u32(nf);
+        for (uint32_t i = 0; i < nf; i++) {
+            const uint8_t* f = b + at + (size_t)i * 32;
+            uint32_t sym = r32(f);
+            uint64_t off = r64(f + 8), sz = r64(f + 16);
+            w.u64(off); w.u64(sz); w.u32(r32(f + 24));
+            uint8_t region = 0, access = 0;
+            std::string nm;
+            if (have_sm && sym < scnt) {
+                const uint8_t* e = sm + 32 + (size_t)sym * 64;
+                region = e[6]; access = e[7];
+                uint32_t noff = r32(e);
+                if (noff < sl) {
+                    const char* p = (const char*)sm + so + noff;
+                    size_t mx = sl - noff;
+                    const void* z = memchr(p, 0, mx);
+                    nm.assign(p, z ? (const char*)z - p : mx);
+                }
+            }
+            w.u8(f[4]); w.u8(f[5]); w.u8(region); w.u8(access);
+            w.u8((uint8_t)(nm.size() > 255 ? 255 : nm.size()));
+            w.bytes(nm.data(), nm.size() > 255 ? 255 : nm.size());
         }
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
@@ -3045,16 +3137,27 @@ int main(int argc, char** argv) {
            IMMINENT the poll only peeks and the tail below carries
            the wait with ns precision instead */
         const uint64_t IMMINENT = 3000000ull;   /* 3 ms */
+        static uint64_t spin_margin = 600000;   /* ns, adapts below */
         if (nd != UINT64_MAX && nd > now && nd - now < IMMINENT)
             wait_ns = 0;
         ctl.poll((int)(wait_ns / 1000000ull));
         if (nd != UINT64_MAX && (now = mono_ns()) < nd &&
             nd - now < IMMINENT) {
             uint64_t rem = nd - now;
-            if (rem > 200000ull) {
-                struct timespec ts{0, (long)(rem - 200000ull)};
+            /* coarse-sleep to spin_margin out then spin the rest;
+               the margin adapts to measured sleep overshoot so a
+               loaded box widens it and an idle one narrows it,
+               bounded [200 us, 2 ms]                           */
+            if (rem > spin_margin) {
+                struct timespec ts{0, (long)(rem - spin_margin)};
                 nanosleep(&ts, nullptr);
                 now = mono_ns();
+                int64_t over = (int64_t)now - (int64_t)(nd - spin_margin);
+                if (over > 0 && spin_margin < 2000000ull)
+                    spin_margin += (uint64_t)over / 4 + 1;
+                else if (over < -(int64_t)(spin_margin / 2) &&
+                         spin_margin > 200000ull)
+                    spin_margin -= spin_margin / 8;
             }
             while (nd > now) now = mono_ns();
         }

@@ -18,9 +18,10 @@ static void print_prog_status(const uint8_t* p, uint32_t len) {
            ps->name, states[ps->state <= 2 ? ps->state : 3],
            ps->program_uuid[0], ps->program_uuid[1],
            ps->program_uuid[2], ps->program_uuid[3]);
-    printf("cycles     %lu   last_fault %d   tasks %u\n",
+    printf("cycles     %lu   last_fault %d   tasks %u  "
+           "forces %u\n",
            (unsigned long)ps->cycles, ps->last_fault_code,
-           ps->task_count);
+           ps->task_count, ps->force_count);
     const TplcCtlTaskStat* t =
         (const TplcCtlTaskStat*)(p + sizeof(TplcCtlProgStatus));
     uint32_t n = ps->task_count;
@@ -209,7 +210,7 @@ int main(int argc, char** argv) {
             "|force-clear [H|all]|break T OFF LEN CMP V"
             "|break-list|break-clear [H|all]"
             "|capture T OFF LEN CMP V"
-            "|breakx T EXPR|capturex T EXPR|state-diff"
+            "|breakx T EXPR|capturex T EXPR|state-diff|fields"
             "|trace [nofreeze] OFF:LEN..|trace-status"
             "|trace-read [SEQ [N]]|trace-clear"
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
@@ -489,6 +490,10 @@ int main(int argc, char** argv) {
     else if (!strcmp(cmd, "state-diff")) {
         /* state-diff: report the last swap's migrate rules        */
         op = TPLC_OP_DBG_STATE_DIFF;
+    }
+    else if (!strcmp(cmd, "fields")) {
+        /* fields: blob layout browser, per-field rows             */
+        op = TPLC_OP_DBG_FIELDS;
     }
     else if (!strcmp(cmd, "watch")) {
         /* watch ITEM [ITEM...]: ITEM is OFF:LEN (raw range) or a
@@ -774,6 +779,29 @@ int main(int argc, char** argv) {
                 }
                 printf("\n");
                 (void)aux;
+            }
+        }
+    }
+    else if (op == TPLC_OP_DBG_FIELDS) {
+        if (len < 4) { puts("(short payload)"); }
+        else {
+            const uint8_t* q = pl;
+            uint32_t n; memcpy(&n, q, 4); q += 4;
+            printf("fields %u\n", n);
+            for (uint32_t i = 0; i < n; i++) {
+                if ((size_t)(pl + len - q) < 25) break;
+                uint64_t fo, fs; uint32_t tr;
+                memcpy(&fo, q, 8); memcpy(&fs, q + 8, 8);
+                memcpy(&tr, q + 16, 4);
+                uint8_t kind = q[20], fl = q[21], reg = q[22],
+                        acc = q[23], nl = q[24];
+                q += 25;
+                if ((size_t)(pl + len - q) < nl) break;
+                printf("  [%4lu] %4lu B  t%-4u k%u f%02x r%u a%02x  "
+                       "%.*s\n",
+                       (unsigned long)fo, (unsigned long)fs, tr,
+                       kind, fl, reg, acc, (int)nl, (const char*)q);
+                q += nl;
             }
         }
     }

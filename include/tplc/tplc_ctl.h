@@ -134,6 +134,12 @@ enum TplcCtlOp {
        kind: 0 copy 1 transform 2 default-init 3 dropped 4 deny
        5 alias. Errors DBG_STATE when no swap has committed.      */
     TPLC_OP_DBG_STATE_DIFF   = 0x0517,
+    /* blob layout browser (doc 12 §7): per-field rows from LAYD +
+       SMAP. Replies {u32 n, rows*} — each row {u64 off, u64 size,
+       u32 type_ref, u8 kind, u8 flags, u8 region, u8 access,
+       u8 name_len, u8 name[name_len]}. Errors DBG_STATE when the
+       loaded program carries no layout descriptors.              */
+    TPLC_OP_DBG_FIELDS       = 0x0518,
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,
@@ -204,7 +210,7 @@ typedef struct TplcCtlProgStatus {
     uint32_t task_count;
     uint64_t cycles;                   /* program cycle_no            */
     int32_t  last_fault_code;
-    uint32_t _pad2;
+    uint32_t force_count;              /* doc 12 §8: globally visible */
     /* TplcCtlTaskStat tasks[task_count] follows */
 } TplcCtlProgStatus;
 
