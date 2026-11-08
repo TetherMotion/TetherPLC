@@ -42,21 +42,26 @@
 
 static const char* g_sock = "/tmp/tplc-image.ctl";
 static std::string g_tplcc = "tplcc";
+static std::string g_tplccd = "/tmp/tplccd.sock";
 
 static void http_reply(int fd, int code, const char* text,
                        const uint8_t* body, size_t blen,
                        const char* ctype);
 
-static int uds_connect() {
+static int uds_connect_to(const char* path) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     sockaddr_un a{};
     a.sun_family = AF_UNIX;
-    strncpy(a.sun_path, g_sock, sizeof a.sun_path - 1);
+    strncpy(a.sun_path, path, sizeof a.sun_path - 1);
     timeval tv{5, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     if (connect(fd, (sockaddr*)&a, sizeof a) != 0) { close(fd); return -1; }
     return fd;
+}
+
+static int uds_connect() {
+    return uds_connect_to(g_sock);
 }
 
 /* read exactly n bytes; false on eof/timeout */
@@ -193,6 +198,26 @@ static bool parse_srcs(const std::vector<uint8_t>& body,
 /* POST /compile: write the src frame to a temp dir, run tplcc --json,
  * wrap its stdout JSON; build mode appends the .tplc as base64. */
 static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build) {
+    /* check requests prefer the persistent `tplcc serve` daemon — the
+     * src frame forwards verbatim and its reply is already the right
+     * envelope shape; on connect failure fall through to popen. */
+    if (!build && !g_tplccd.empty()) {
+        int u = uds_connect_to(g_tplccd.c_str());
+        if (u >= 0) {
+            send(u, body.data(), body.size(), MSG_NOSIGNAL);
+            shutdown(u, SHUT_WR);
+            std::string out;
+            uint8_t b[8192];
+            ssize_t n;
+            while ((n = read(u, b, sizeof b)) > 0) out.append((const char*)b, n);
+            close(u);
+            if (!out.empty()) {
+                http_reply(cfd, 200, "OK", (const uint8_t*)out.data(), out.size(),
+                           "application/json");
+                return;
+            }
+        }
+    }
     std::vector<std::pair<std::string, std::vector<uint8_t>>> files;
     if (!parse_srcs(body, files) || files.size() > 64) {
         const char* m = "bad src frame";
@@ -396,8 +421,9 @@ int main(int argc, char** argv) {
         else if (a == "--port") port = atoi(next());
         else if (a == "--bind") bind_addr = next();
         else if (a == "--tplcc") g_tplcc = next();
+        else if (a == "--tplccd") g_tplccd = next();
         else {
-            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr] [--tplcc path]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr] [--tplcc path] [--tplccd uds|off]\n", argv[0]);
             return 2;
         }
     }
