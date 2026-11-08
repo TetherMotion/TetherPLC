@@ -122,6 +122,9 @@ sleep 1
 
 before=$(qd 4)
 sleep 0.4
+# named + offset watch armed pre-swap: the name re-resolves through
+# the new symmap, the raw range goes stale
+$BUILD/tplc-ctl $CTL watch cnt 0:4 >/dev/null || bad "watch arm"
 $BUILD/tplc-ctl $CTL swap $WORK/v2.tplc >/dev/null || bad "swap op"
 sleep 0.5
 after=$(qd 4)
@@ -136,6 +139,12 @@ d=$($BUILD/tplc-ctl $CTL state-diff 2>&1)
 echo "$d" | grep -q "migrated" && echo "$d" | grep -q "init " \
     && ok "state.diff reports migrate rules" \
     || bad "state.diff ($d)"
+
+# post-swap subscriptions: named item still reads, offset item stale
+g=$($BUILD/tplc-ctl $CTL watch-get 1 2>&1)
+echo "$g" | grep -q "(stale)" && echo "$g" | grep -q "4 B" \
+    && ok "watch re-resolution + stale marking" \
+    || bad "watch re-resolution ($g)"
 
 # module-swap fast path: v2→v2 identical layout
 $BUILD/tplc-ctl $CTL swap $WORK/v2.tplc >/dev/null \

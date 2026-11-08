@@ -491,11 +491,11 @@ int main(int argc, char** argv) {
         op = TPLC_OP_DBG_STATE_DIFF;
     }
     else if (!strcmp(cmd, "watch")) {
-        /* watch OFF:LEN [OFF:LEN...]: same channel shape as trace,
-           item len ≤ 64, ≤ 16 items                                */
+        /* watch ITEM [ITEM...]: ITEM is OFF:LEN (raw range) or a
+           symbol PATH the runtime resolves, ≤ 16 items             */
         int nch = argc - 3;
         if (nch < 1 || nch > 16) {
-            fprintf(stderr, "watch needs 1..16 OFF:LEN items\n");
+            fprintf(stderr, "watch needs 1..16 items\n");
             return 2;
         }
         op = TPLC_OP_DBG_WATCH_ADD;
@@ -503,16 +503,30 @@ int main(int argc, char** argv) {
         uint32_t u = (uint32_t)nch; memcpy(pre, &u, 4);
         uint8_t* q = pre + 8;
         for (int i = 0; i < nch; i++) {
-            uint64_t off; uint32_t l;
-            if (sscanf(argv[3 + i], "%llu:%u",
-                       (unsigned long long*)&off, &l) != 2 ||
-                l == 0 || l > 64) {
-                fprintf(stderr, "bad item %s (want OFF:LEN, "
-                        "len 1..64)\n", argv[3 + i]);
-                return 2;
+            const char* a = argv[3 + i];
+            uint64_t off = 0; uint32_t l = 0;
+            uint16_t nl = 0;
+            const char* nm = strchr(a, ':')
+                ? NULL : a;
+            if (!nm) {
+                if (sscanf(a, "%llu:%u",
+                           (unsigned long long*)&off, &l) != 2 ||
+                    l == 0 || l > 64) {
+                    fprintf(stderr, "bad item %s (want OFF:LEN, "
+                            "len 1..64, or a path)\n", a);
+                    return 2;
+                }
+            } else {
+                nl = (uint16_t)strlen(nm);
+                if (!nl || nl > 127) {
+                    fprintf(stderr, "bad path %s\n", a);
+                    return 2;
+                }
             }
             memcpy(q, &off, 8); memcpy(q + 8, &l, 4);
-            q += 16;
+            memcpy(q + 12, &nl, 2);
+            if (nl) memcpy(q + 14, nm, nl);
+            q += 14 + nl;
         }
         pre_len = (uint32_t)(q - pre);
     }
@@ -696,15 +710,17 @@ int main(int argc, char** argv) {
             memcpy(&off, q + 8, 8); memcpy(&l, q + 16, 4);
             c = q[20];
             int cap = q[21];
+            int stale = q[22];
             memcpy(&val, q + 24, 8); memcpy(&hits, q + 32, 8);
             q += 40;
             if (c == 0xFF)
-                printf("  h%u%s task %u  expr  hits %lu\n",
-                       h, cap ? " cap" : "", tix,
-                       (unsigned long)hits);
+                printf("  h%u%s%s task %u  expr  hits %lu\n",
+                       h, cap ? " cap" : "", stale ? " stale" : "",
+                       tix, (unsigned long)hits);
             else
-                printf("  h%u%s task %u  blob[%lu..%lu] %s %lu  "
-                       "hits %lu\n", h, cap ? " cap" : "", tix,
+                printf("  h%u%s%s task %u  blob[%lu..%lu] %s %lu  "
+                       "hits %lu\n", h, cap ? " cap" : "",
+                       stale ? " stale" : "", tix,
                        (unsigned long)off, (unsigned long)(off + l),
                        cmps[c <= 5 ? c : 0], (unsigned long)val,
                        (unsigned long)hits);
@@ -850,6 +866,7 @@ int main(int argc, char** argv) {
             for (uint32_t i = 0; i < n; i++) {
                 uint32_t l; memcpy(&l, q, 4); q += 4;
                 printf("  [%u] %u B  ", i, l);
+                if (!l) printf("(stale)");
                 for (uint32_t b = 0; b < l; b++)
                     printf("%02x", q[b]);
                 q += l;
@@ -863,12 +880,16 @@ int main(int argc, char** argv) {
             uint32_t n; memcpy(&n, q, 4); q += 4;
             printf("watches %u\n", n);
             for (uint32_t i = 0; i < n; i++) {
-                uint32_t h, ni, hz, tl;
+                uint32_t h, ni, hz, tl, nst = 0;
                 memcpy(&h, q, 4); memcpy(&ni, q + 4, 4);
                 memcpy(&hz, q + 8, 4); memcpy(&tl, q + 12, 4);
                 q += 16;
-                printf("  h%u  items %u  %u B  stream %u Hz\n",
-                       h, ni, tl, hz);
+                if ((size_t)(pl + len - q) >= 4) {
+                    memcpy(&nst, q, 4); q += 4;
+                }
+                printf("  h%u  items %u  %u B  stream %u Hz%s\n",
+                       h, ni, tl, hz,
+                       nst ? "  STALE" : "");
             }
         }
     }

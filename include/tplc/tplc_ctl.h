@@ -72,8 +72,8 @@ enum TplcCtlOp {
        u64 value} → {u32 handle}                                   */
     TPLC_OP_DBG_BREAK      = 0x0508,
     /* list entries: {u32 handle, u32 task, u64 off, u32 len,
-       u8 cmp, u8 kind(0 suspend|1 capture), u16 pad, u64 val,
-       u64 hits}                                                    */
+       u8 cmp, u8 kind(0 suspend|1 capture), u8 stale, u8 pad,
+       u64 val, u64 hits}                                          */
     TPLC_OP_DBG_BREAK_LIST = 0x0509,  /* → {u32 n, entries}         */
     TPLC_OP_DBG_BREAK_CLEAR= 0x050A,  /* {u32 handle} 0xFF..=all    */
     /* flight recorder (doc 12 §7): fixed 4096-entry ring of per-scan
@@ -99,14 +99,18 @@ enum TplcCtlOp {
        freezes instead of suspending the task. Listed in
        DBG_BREAK_LIST with the flag byte set.                       */
     TPLC_OP_DBG_CAPTURE    = 0x050F,
-    /* watch (doc 12 §3): named read sets over blob ranges. ADD uses
-       the same channel list shape as TRACE_CONF: n ≤ 16 items,
-       per-item len 1..64, Σlen ≤ 512 → {u32 handle}. GET returns
-       boundary-consistent bytes {u32 n, {u32 len, u8 data[len]}*}.
-       STREAM arms a push: at most rate_hz (1..50; 0 disarms)
-       EV_DBG_WATCH frames per second, sampled at task boundaries.
-       REMOVE takes a handle or 0xFFFFFFFF for all. LIST reports
-       {handle, n_items, rate_hz, total_len} rows.                 */
+    /* watch (doc 12 §3): named read sets over blob ranges. ADD:
+       {u32 n, {u64 off, u32 len, u16 nlen, char name[nlen]}*},
+       n ≤ 16 items, per-item len 1..64, Σlen ≤ 512 → {u32 handle}.
+       nlen>0 resolves the path through the symmap at arm time and
+       keeps it: after a swap the item re-resolves, while unnamed
+       (offset-only) items and vanished paths go stale (GET/stream
+       report len=0). GET returns boundary-consistent bytes
+       {u32 n, {u32 len, u8 data[len]}*}. STREAM arms a push: at
+       most rate_hz (1..50; 0 disarms) EV_DBG_WATCH frames per
+       second, sampled at task boundaries. REMOVE takes a handle
+       or 0xFFFFFFFF for all. LIST reports
+       {handle, n_items, rate_hz, total_len, n_stale} rows.       */
     TPLC_OP_DBG_WATCH_ADD    = 0x0510,
     TPLC_OP_DBG_WATCH_GET    = 0x0511,
     TPLC_OP_DBG_WATCH_REMOVE = 0x0512,

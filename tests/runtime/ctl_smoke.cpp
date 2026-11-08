@@ -280,11 +280,11 @@ int main(void) {
        stream arm shows in LIST, remove drops it */
     uint32_t watch_h = 0;
     {
-        uint8_t cf[8 + 2 * 16] = {};
+        uint8_t cf[8 + 2 * 14] = {};
         uint32_t ni = 2; memcpy(cf, &ni, 4);
         l = blob_sz >= 4 ? 4 : 1;
         memcpy(cf + 16, &l, 4);              /* item0: off 0 len l */
-        memcpy(cf + 32, &l, 4);              /* item1: off 0 len l */
+        memcpy(cf + 30, &l, 4);              /* item1: off 0 len l */
         rlen = sizeof resp;
         CHECK_EQ(ctl_op(fd, TPLC_OP_DBG_WATCH_ADD, cf, sizeof cf,
                         resp, &rlen, &fl), TPLC_OP_DBG_WATCH_ADD);

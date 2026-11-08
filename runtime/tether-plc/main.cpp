@@ -477,7 +477,9 @@ int main(int argc, char** argv) {
         uint64_t val;
         uint64_t hits = 0; /* triggers fired      */
         bool     capture = false; /* freeze recorder, not suspend */
+        bool     stale = false;   /* unresolved after a swap       */
         std::optional<Expr> x;    /* set → expression trigger        */
+        std::string src;          /* expr text for re-resolution   */
     };
     std::vector<Break>               breaks;
     uint32_t                         next_break_h = 1;
@@ -498,14 +500,28 @@ int main(int argc, char** argv) {
     /* watch (doc 12 §3): named blob-range read sets; stream arms a
        per-watch push of EV_DBG_WATCH at ≤ rate_hz, sampled at task
        boundaries like the recorder                                 */
+    /* a watch item may carry the symbol path it was armed with so a
+       swap can re-resolve it through the new symmap; offset-only
+       items and vanished paths go stale (len=0 rows, listed)      */
+    struct WatchItem {
+        uint64_t    off;
+        uint32_t    len;
+        std::string path;
+        bool        stale = false;
+    };
     struct Watch {
-        uint32_t             handle;
-        std::vector<TraceCh> chs;
-        uint32_t             rate_hz = 0;
-        uint64_t             next_emit = 0;
-        uint64_t             seq = 0;
+        uint32_t              handle;
+        std::vector<WatchItem> chs;
+        uint32_t              rate_hz = 0;
+        uint64_t              next_emit = 0;
+        uint64_t              seq = 0;
     };
     std::vector<Watch>               watches;
+    /* assigned once the expr machinery exists; re-resolves named
+       watch items and expression triggers through the live symmap,
+       marking unresolved entries stale. Called on swap commit and
+       rollback.                                                   */
+    std::function<void()>            reresolve_subs;
     uint32_t                         next_watch_h = 1;
     static const size_t              MAX_WATCHES = 256;
     static const size_t              MAX_WATCH_ITEMS = 16;
@@ -604,14 +620,12 @@ int main(int argc, char** argv) {
         std::swap(pkg_layd, quar.layd);
         std::swap(pkg_smap, quar.smap);
         forces.clear();   /* blob identity changed — forces stale */
-        breaks.clear();
         trace_ch.clear();
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = 0;
         trace_frozen = false;
-        watches.clear();
-        next_watch_h = 1;
+        if (reresolve_subs) reresolve_subs();
         sched.addProgram(*prog);
         d = mod->descriptor();
         if (retain) {
@@ -1079,6 +1093,45 @@ int main(int argc, char** argv) {
             X.prev[i] = v[i];
         return sp > 0 && st[sp - 1] != 0;
     };
+    /* seed slot history from the current blob; used at arm time and
+       after a swap re-resolves an expression against the new map   */
+    auto expr_seed = [&](Expr& X) {
+        for (size_t i = 0; i < X.slots.size(); i++) {
+            uint64_t u = 0;
+            memcpy(&u, prog->blob() + X.slots[i].off,
+                   X.slots[i].len);
+            switch (X.slots[i].len) {
+                case 1: X.prev[i] = (int8_t)u; break;
+                case 2: X.prev[i] = (int16_t)u; break;
+                case 4: X.prev[i] = (int32_t)u; break;
+                default: X.prev[i] = (int64_t)u; break;
+            }
+        }
+    };
+
+    /* subscriptions re-resolve against the live symmap: named
+       watch items re-bind to their new range, expression triggers
+       recompile and re-seed; vanished paths and offset-bound
+       entries go stale instead of silently dropping so the client
+       sees what broke                                             */
+    reresolve_subs = [&] {
+        for (auto& wt : watches)
+            for (auto& it : wt.chs) {
+                uint64_t o2 = 0; uint32_t l2 = 0;
+                it.stale = it.path.empty() ||
+                    !smap_find(it.path, &o2, &l2) || l2 > 64;
+                if (!it.stale) { it.off = o2; it.len = l2; }
+            }
+        for (auto& b : breaks) {
+            if (b.src.empty()) { b.stale = true; continue; }
+            Expr X;
+            if (expr_compile(b.src, X).empty()) {
+                expr_seed(X);
+                b.x = std::move(X);
+                b.stale = false;
+            } else b.stale = true;
+        }
+    };
 
     /* ---------------- control channel -------------------------- */
     if (ctl_enabled) {
@@ -1506,14 +1559,11 @@ int main(int argc, char** argv) {
         sdiff.old_blob = std::move(snap);
         sdiff.old_smap = quar.smap;
         forces.clear();   /* new blob layout — overrides are stale */
-        breaks.clear();
         trace_ch.clear();
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = 0;
         trace_frozen = false;
-        watches.clear();
-        next_watch_h = 1;
         quar.cycles_left = quarantine_cycles;
         mod = std::make_unique<tplc::Module>(std::move(nmod));
         /* rebind: Program::create captured &nmod — retarget the new
@@ -1539,6 +1589,7 @@ int main(int argc, char** argv) {
             retain->open(retain_dir, d.program_uuid, lh,
                          prog->retainSize());
         }
+        reresolve_subs();
         prog_state = PS_RUNNING;
         prog_started = true;
         last_fault = 0;
@@ -2027,7 +2078,8 @@ int main(int argc, char** argv) {
         }
         breaks.push_back({next_break_h++, task_idx, off, len,
                           cmp, val, 0,
-                          t == TPLC_OP_DBG_CAPTURE, std::nullopt});
+                          t == TPLC_OP_DBG_CAPTURE, false,
+                          std::nullopt, {}});
         audit(fd, t == TPLC_OP_DBG_CAPTURE ? "dbg.capture"
                                            : "dbg.break",
               "h=" + std::to_string(breaks.back().handle) +
@@ -2090,19 +2142,10 @@ int main(int argc, char** argv) {
         }
         /* seed slot history at arm time so changed/rising/falling
            start from the current value, not zero                  */
-        for (size_t i = 0; i < X.slots.size(); i++) {
-            uint64_t u = 0;
-            memcpy(&u, prog->blob() + X.slots[i].off,
-                   X.slots[i].len);
-            switch (X.slots[i].len) {
-                case 1: X.prev[i] = (int8_t)u; break;
-                case 2: X.prev[i] = (int16_t)u; break;
-                case 4: X.prev[i] = (int32_t)u; break;
-                default: X.prev[i] = (int64_t)u; break;
-            }
-        }
+        expr_seed(X);
         Break b{next_break_h++, task_idx, 0, 0, 0xFF, 0, 0,
-                t == TPLC_OP_DBG_CAPTURE_EXPR, std::move(X)};
+                t == TPLC_OP_DBG_CAPTURE_EXPR, false, std::move(X),
+                std::string((const char*)p + 6, el)};
         breaks.push_back(std::move(b));
         audit(fd, t == TPLC_OP_DBG_CAPTURE_EXPR ? "dbg.capture.expr"
                                                 : "dbg.break.expr",
@@ -2233,7 +2276,7 @@ int main(int argc, char** argv) {
         for (auto& b : breaks) {
             w.u32(b.handle); w.u32(b.task_idx); w.u64(b.off);
             w.u32(b.len); w.u8(b.cmp); w.u8(b.capture ? 1 : 0);
-            w.u16(0);
+            w.u8(b.stale ? 1 : 0); w.u8(0);
             w.u64(b.val); w.u64(b.hits);
         }
         ctl.reply(fd, t, w.data(), w.size(), req);
@@ -2400,26 +2443,55 @@ int main(int argc, char** argv) {
         }
         if (n < 8) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
-                           "{u32 n, {u64 off, u32 len, u32 pad}*}",
+                           "{u32 n, {u64 off, u32 len, u16 nlen,"
+                           " char name[nlen]}*}",
                            req);
             return;
         }
         uint32_t ni; memcpy(&ni, p, 4);
-        if (ni == 0 || ni > MAX_WATCH_ITEMS ||
-            n != 8 + ni * 16) {
+        if (ni == 0 || ni > MAX_WATCH_ITEMS) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
                            "item count/shape", req);
             return;
         }
-        std::vector<TraceCh> chs;
+        /* items {u64 off, u32 len, u16 nlen, char name[nlen]}: a
+           named item resolves its range through the symmap and the
+           path is kept for post-swap re-resolution                */
+        std::vector<WatchItem> chs;
         uint32_t total = 0;
+        size_t at = 8;
         for (uint32_t i = 0; i < ni; i++) {
-            uint64_t off; uint32_t l;
-            memcpy(&off, p + 8 + i * 16, 8);
-            memcpy(&l, p + 8 + i * 16 + 8, 4);
-            if (l == 0 || l > 64 ||
-                off > prog->blobSize() ||
-                l > prog->blobSize() - off) {
+            if (at + 14 > n) {
+                ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                               "item truncated", req);
+                return;
+            }
+            uint64_t off; uint32_t l; uint16_t nl2;
+            memcpy(&off, p + at, 8);
+            memcpy(&l, p + at + 8, 4);
+            memcpy(&nl2, p + at + 12, 2);
+            if (nl2 > 127 || at + 14 + nl2 > n) {
+                ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                               "item name truncated", req);
+                return;
+            }
+            std::string path((const char*)p + at + 14, nl2);
+            at += 14 + nl2;
+            if (nl2) {
+                if (!smap_find(path, &off, &l)) {
+                    ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                                   ("unknown path " + path).c_str(),
+                                   req);
+                    return;
+                }
+                if (l > 64) {
+                    ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                                   "symbol too large", req);
+                    return;
+                }
+            } else if (l == 0 || l > 64 ||
+                       off > prog->blobSize() ||
+                       l > prog->blobSize() - off) {
                 ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
                                "item outside blob", req);
                 return;
@@ -2430,7 +2502,12 @@ int main(int argc, char** argv) {
                                "watch payload > 512 B", req);
                 return;
             }
-            chs.push_back({off, l});
+            chs.push_back({off, l, std::move(path), false});
+        }
+        if (at != n) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "trailing bytes", req);
+            return;
         }
         if (watches.size() >= MAX_WATCHES) {
             ctl.errorReply(fd, t, TPLC_E_DBG_OVERLOAD,
@@ -2460,12 +2537,9 @@ int main(int argc, char** argv) {
                 tplc::CtlServer::W w;
                 w.u32((uint32_t)wt.chs.size());
                 for (auto& c : wt.chs) {
-                    w.u32(c.len);
-                    if (prog)
+                    w.u32(c.stale ? 0 : c.len);
+                    if (!c.stale && prog)
                         w.bytes(prog->blob() + c.off, c.len);
-                    else
-                        for (uint32_t i = 0; i < c.len; i++)
-                            w.u8(0);
                 }
                 ctl.reply(fd, t, w.data(), w.size(), req);
                 return;
@@ -2542,10 +2616,11 @@ int main(int argc, char** argv) {
         tplc::CtlServer::W w;
         w.u32((uint32_t)watches.size());
         for (auto& wt : watches) {
-            uint32_t tl = 0;
-            for (auto& c : wt.chs) tl += c.len;
+            uint32_t tl = 0, nst = 0;
+            for (auto& c : wt.chs)
+                if (c.stale) nst++; else tl += c.len;
             w.u32(wt.handle); w.u32((uint32_t)wt.chs.size());
-            w.u32(wt.rate_hz); w.u32(tl);
+            w.u32(wt.rate_hz); w.u32(tl); w.u32(nst);
         }
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
@@ -2813,6 +2888,7 @@ int main(int argc, char** argv) {
     auto eval_breaks = [&]() {
         if (!prog || breaks.empty()) return;
         for (auto& b : breaks) {
+            if (b.stale) continue;
             /* suspend-breaks skip while their task is held; capture
                breaks skip while the recorder is already frozen    */
             if (b.capture ? trace_frozen
@@ -2862,8 +2938,9 @@ int main(int argc, char** argv) {
             w.u32(wt.handle); w.u64(wt.seq++);
             w.u32((uint32_t)wt.chs.size());
             for (auto& c : wt.chs) {
-                w.u32(c.len);
-                w.bytes(prog->blob() + c.off, c.len);
+                w.u32(c.stale ? 0 : c.len);
+                if (!c.stale)
+                    w.bytes(prog->blob() + c.off, c.len);
             }
             ctl.event(TPLC_EV_DBG_WATCH,
                       1u << (TPLC_EV_DBG_WATCH & 0xFF),
