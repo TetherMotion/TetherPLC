@@ -73,9 +73,17 @@ size_t Scheduler::tick(uint64_t now_ns, const TickHooks& hooks) {
            releases; resume() re-arms the schedule                  */
         if (!e->suspended && e->desc->kind == TPLC_TASK_CYCLIC) {
             e->next_due += e->desc->period_ns;     /* phase-stable */
-            /* overrun: finished past the next release — skip policy
-               is start-immediately, never catch up (doc 04 §3.2)  */
-            if (now_ns >= e->next_due) e->stats.overruns++;
+            /* overrun (doc 04 §3.2): missed releases are skipped,
+               never made up; re-align to the next future phase
+               boundary so a single lag does not leave the task
+               permanently due (running at scan rate)              */
+            if (now_ns >= e->next_due) {
+                e->stats.overruns++;
+                uint64_t lag = now_ns - e->next_due;
+                e->next_due +=
+                    (lag / e->desc->period_ns + 1) *
+                    e->desc->period_ns;
+            }
         } else if (!e->suspended) {
             e->next_due = now_ns;
         }
