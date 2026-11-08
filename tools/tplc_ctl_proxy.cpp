@@ -9,12 +9,15 @@
  *                       in a temp dir; response wraps tplcc's JSON:
  *                       {"compile":{…},"exit":N,"package":"<base64>"}
  *                       (package only in build mode, on success)
+ *   GET /events         Server-Sent Events stream of ctl F_EVENT frames:
+ *                         data: {"type":N,"flags":F,"req":R,"payload":"<b64>"}
+ *                       Each connection forks a child holding its own UDS
+ *                       session with SET_NOTIFY(all categories).
  *   GET /health         "ok" when the ctl socket connects, else 503
  *   OPTIONS             CORS preflight (Access-Control-Allow-Origin: *)
  *
- * Limitations: SET_NOTIFY events are not carried (poll PROG_STATUS or
- * use the tether_io catalog); requests are serialized. /compile shells
- * out to tplcc per request — a language service should replace this.
+ * Limitations: requests are serialized. /compile shells out to tplcc per
+ * request — a language service should replace this.
  *
  * Usage: tplc-ctl-proxy [--socket <uds>] [--port N] [--bind <addr>]
  *                       [--tplcc <path>]
@@ -29,6 +32,7 @@
 #include <string>
 #include <vector>
 #include <netdb.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -270,6 +274,55 @@ static void http_reply(int fd, int code, const char* text,
     if (blen) send(fd, body, blen, MSG_NOSIGNAL);
 }
 
+/* GET /events: fork a child that holds its own UDS session subscribed to
+ * every notify category and pumps each ctl frame as an SSE `data:` line.
+ * The parent returns immediately so other requests stay serialized. */
+static void handle_events(int cfd) {
+    pid_t pid = fork();
+    if (pid != 0) { close(cfd); return; }
+    /* the runtime may still be starting: retry the ctl socket briefly
+     * instead of dying before the first event */
+    int u = -1;
+    for (int i = 0; i < 50 && u < 0; i++) {
+        u = uds_connect();
+        if (u < 0) usleep(100000);
+    }
+    if (u < 0 || !ctl_hello(u)) _exit(1);
+    timeval ntv{0, 0};
+    setsockopt(u, SOL_SOCKET, SO_RCVTIMEO, &ntv, sizeof ntv);
+    /* SET_NOTIFY 0x0104 {u32 mask} — subscribe all categories */
+    uint8_t sn[20] = {0x04, 0x01, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+                      0xff, 0xff, 0xff, 0xff};
+    if (send(u, sn, sizeof sn, MSG_NOSIGNAL) != (ssize_t)sizeof sn)
+        _exit(1);
+    static const char* shdr =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+        "Cache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\n"
+        "Connection: close\r\n\r\n";
+    send(cfd, shdr, strlen(shdr), MSG_NOSIGNAL);
+    for (;;) {
+        uint8_t fh[16];
+        if (!read_full(u, fh, sizeof fh)) break;
+        uint32_t plen = (uint32_t)fh[4] | ((uint32_t)fh[5] << 8) |
+                        ((uint32_t)fh[6] << 16) | ((uint32_t)fh[7] << 24);
+        if (plen > (1u << 20)) break;
+        std::vector<uint8_t> pl(plen);
+        if (plen && !read_full(u, pl.data(), plen)) break;
+        uint16_t type = (uint16_t)(fh[0] | ((uint16_t)fh[1] << 8));
+        uint16_t flags = (uint16_t)(fh[2] | ((uint16_t)fh[3] << 8));
+        uint64_t req;
+        memcpy(&req, fh + 8, 8);
+        std::string line = "data: {\"type\":" + std::to_string(type) +
+            ",\"flags\":" + std::to_string(flags) +
+            ",\"req\":" + std::to_string((unsigned long long)req) +
+            ",\"payload\":\"" + b64_encode(pl.data(), pl.size()) +
+            "\"}\n\n";
+        if (send(cfd, line.data(), line.size(), MSG_NOSIGNAL) !=
+            (ssize_t)line.size()) break;
+    }
+    _exit(0);
+}
+
 static void serve(int cfd) {
     timeval tv{10, 0};
     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
@@ -315,6 +368,9 @@ static void serve(int cfd) {
         else http_reply(cfd, 503, "Service Unavailable", (const uint8_t*)"down", 4, "text/plain");
     } else if (method == "POST" && path.rfind("/compile", 0) == 0) {
         handle_compile(cfd, body, path.find("build") != std::string::npos);
+    } else if (method == "GET" && path == "/events") {
+        handle_events(cfd);             /* parent closes; child owns */
+        return;
     } else if (method == "POST" && path == "/ctl") {
         std::vector<uint8_t> rep;
         if (ctl_roundtrip(body, rep))
@@ -345,6 +401,7 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
+    signal(SIGCHLD, SIG_IGN);           /* auto-reap /events children */
     int lfd = socket(AF_INET, SOCK_STREAM, 0);
     if (lfd < 0) { perror("socket"); return 1; }
     int one = 1;
