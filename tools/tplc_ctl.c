@@ -209,7 +209,7 @@ int main(int argc, char** argv) {
             "|force-clear [H|all]|break T OFF LEN CMP V"
             "|break-list|break-clear [H|all]"
             "|capture T OFF LEN CMP V"
-            "|breakx T EXPR|capturex T EXPR"
+            "|breakx T EXPR|capturex T EXPR|state-diff"
             "|trace [nofreeze] OFF:LEN..|trace-status"
             "|trace-read [SEQ [N]]|trace-clear"
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
@@ -486,6 +486,10 @@ int main(int argc, char** argv) {
         memcpy(pre + 6, ex, el);
         pre_len = 6 + (uint32_t)el;
     }
+    else if (!strcmp(cmd, "state-diff")) {
+        /* state-diff: report the last swap's migrate rules        */
+        op = TPLC_OP_DBG_STATE_DIFF;
+    }
     else if (!strcmp(cmd, "watch")) {
         /* watch OFF:LEN [OFF:LEN...]: same channel shape as trace,
            item len ≤ 64, ≤ 16 items                                */
@@ -704,6 +708,57 @@ int main(int argc, char** argv) {
                        (unsigned long)off, (unsigned long)(off + l),
                        cmps[c <= 5 ? c : 0], (unsigned long)val,
                        (unsigned long)hits);
+        }
+    }
+    else if (op == TPLC_OP_DBG_STATE_DIFF) {
+        static const char* kinds[] = {"copy", "xform", "init",
+                                      "drop", "deny", "alias"};
+        static const char* sevs[] = {"info", "degraded", "deny"};
+        static const char* tids[] = {"", "intwiden", "uintwiden",
+                                     "realwiden", "strtrunc",
+                                     "arraygrow"};
+        const uint8_t* q = pl;
+        if (len < 8) { printf("malformed\n"); }
+        else {
+            uint8_t same = q[0], mst = q[1];
+            uint32_t n; memcpy(&n, q + 4, 4); q += 8;
+            printf("state-diff  %s  mig_status %u  rules %u\n",
+                   same ? "same-layout" : "migrated", mst, n);
+            for (uint32_t i = 0; i < n; i++) {
+                uint8_t kind, sev, ovl, nvl; uint16_t tid, ol2, nl2;
+                uint32_t aux, olen, nlen;
+                uint64_t ooff, noff;
+                uint8_t ov[8], nv[8];
+                if ((size_t)(pl + len - q) < 60) break;
+                kind = q[0]; sev = q[1];
+                memcpy(&tid, q + 2, 2); memcpy(&aux, q + 4, 4);
+                memcpy(&ooff, q + 8, 8); memcpy(&olen, q + 16, 4);
+                memcpy(&noff, q + 24, 8); memcpy(&nlen, q + 32, 4);
+                ovl = q[40]; nvl = q[41];
+                memcpy(ov, q + 44, 8); memcpy(nv, q + 52, 8);
+                q += 60;
+                memcpy(&ol2, q, 2); q += 2;
+                char on[128]; if (ol2 > 127) break;
+                memcpy(on, q, ol2); on[ol2] = 0; q += ol2;
+                memcpy(&nl2, q, 2); q += 2;
+                if (nl2 > 127) break;
+                char nn[128]; memcpy(nn, q, nl2); nn[nl2] = 0;
+                q += nl2;
+                printf("  %-6s sev=%-8s %-9s %s[%lu:%u] -> %s[%lu:%u]",
+                       kinds[kind <= 5 ? kind : 0],
+                       sevs[sev <= 2 ? sev : 0],
+                       tid <= 5 ? tids[tid] : "tid?",
+                       ol2 ? on : "-", (unsigned long)ooff, olen,
+                       nl2 ? nn : "-", (unsigned long)noff, nlen);
+                if (ovl || nvl) {
+                    printf("  ");
+                    for (int k = 0; k < ovl; k++) printf("%02x", ov[k]);
+                    printf(" -> ");
+                    for (int k = 0; k < nvl; k++) printf("%02x", nv[k]);
+                }
+                printf("\n");
+                (void)aux;
+            }
         }
     }
     else if (op == TPLC_OP_DBG_FORCE) {

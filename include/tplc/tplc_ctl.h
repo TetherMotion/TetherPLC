@@ -121,6 +121,15 @@ enum TplcCtlOp {
        Listed in DBG_BREAK_LIST with len=0/cmp=0xFF.               */
     TPLC_OP_DBG_BREAK_EXPR   = 0x0515,
     TPLC_OP_DBG_CAPTURE_EXPR = 0x0516,
+    /* post-migration report (doc 12 §7): what the last swap's
+       migrate rules did. Replies {u8 same_layout, u8 mig_status,
+       u16 pad, u32 n_rules, rules*} — each rule {u8 kind, u8 sev,
+       u16 tid, u32 aux, u64 old_off, u32 old_len, u32 old_sym,
+       u64 new_off, u32 new_len, u32 new_sym, u8 old_vl, u8 new_vl,
+       u16 pad, u8 old_v[8], u8 new_v[8], str old_name, str new_name}.
+       kind: 0 copy 1 transform 2 default-init 3 dropped 4 deny
+       5 alias. Errors DBG_STATE when no swap has committed.      */
+    TPLC_OP_DBG_STATE_DIFF   = 0x0517,
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,

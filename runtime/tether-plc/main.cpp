@@ -421,6 +421,17 @@ int main(int argc, char** argv) {
     TplcProgramDescriptor            d{};
     std::vector<uint8_t>             pkg_layd;   /* for OP_PROG_LAYOUT */
     std::vector<uint8_t>             pkg_smap;   /* for OP_DBG_RESOLVE   */
+    /* what the last committed swap's migrate rules did: MIGD bytes
+       (rule table + embedded predecessor LAYD), the frozen pre-swap
+       blob snapshot, and the old symmap for name lookups           */
+    struct StateDiff {
+        bool                 ready = false;
+        bool                 same_layout = false;
+        uint32_t             mig_status = 0;
+        std::vector<uint8_t> migd;
+        std::vector<uint8_t> old_blob;
+        std::vector<uint8_t> old_smap;
+    } sdiff;
     /* force table (doc 12 §6): blob-offset overrides re-stamped at
        every task boundary so program writes cannot undo them.
        mask[i]&bit set → val bit wins; a full-0xFF mask is the
@@ -521,6 +532,7 @@ int main(int argc, char** argv) {
         quar = Quarantine{};
         pkg_layd.clear();
         pkg_smap.clear();
+        sdiff = StateDiff{};
         forces.clear();
         next_force_h = 1;
         breaks.clear();
@@ -1482,6 +1494,17 @@ int main(int argc, char** argv) {
         mod.reset();
         quar.layd = std::move(pkg_layd);
         quar.smap = std::move(pkg_smap);
+        sdiff.ready = true;
+        sdiff.same_layout = same_layout;
+        sdiff.mig_status = same_layout ? 0 : mo.out_status;
+        sdiff.migd.clear();
+        /* only a real migrate ran the MIGD rules; same-layout swaps
+           byte-copy the blob and the embedded table is a stale
+           description of the packaged predecessor                  */
+        if (!same_layout && migd.data && migd.size)
+            sdiff.migd.assign(migd.data, migd.data + migd.size);
+        sdiff.old_blob = std::move(snap);
+        sdiff.old_smap = quar.smap;
         forces.clear();   /* new blob layout — overrides are stale */
         breaks.clear();
         trace_ch.clear();
@@ -2092,6 +2115,114 @@ int main(int argc, char** argv) {
     };
     ctl.on(TPLC_OP_DBG_BREAK_EXPR, arm_break_expr);
     ctl.on(TPLC_OP_DBG_CAPTURE_EXPR, arm_break_expr);
+    /* state.diff: report the last committed swap's migrate rules —
+       MIGD rows resolved to names/offsets via the embedded old LAYD
+       and the live LAYD, values sampled from the frozen snapshot
+       and the running blob                                       */
+    ctl.on(TPLC_OP_DBG_STATE_DIFF,
+           [&](int fd, uint16_t t, const uint8_t*, uint32_t,
+               uint64_t req) {
+        if (!sdiff.ready || !prog) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "no committed swap", req);
+            return;
+        }
+        auto r16 = [](const uint8_t* p) { uint16_t v;
+            memcpy(&v, p, 2); return v; };
+        auto r32 = [](const uint8_t* p) { uint32_t v;
+            memcpy(&v, p, 4); return v; };
+        auto r64 = [](const uint8_t* p) { uint64_t v;
+            memcpy(&v, p, 8); return v; };
+        /* LAYD field i → {sym_entry, off, len} */
+        auto layd_field = [&](const uint8_t* b, size_t n, uint32_t i,
+                              uint32_t* sym, uint64_t* off,
+                              uint64_t* len) -> bool {
+            if (!b || n < 24 || memcmp(b, "LAYD", 4)) return false;
+            uint32_t nreg = r32(b + 8);
+            size_t at = 24 + (size_t)nreg * 24;
+            if (at + 4 > n) return false;
+            uint32_t nf = r32(b + at); at += 4;
+            if (i >= nf || at + (uint64_t)i * 32 + 32 > n) return false;
+            const uint8_t* f = b + at + (size_t)i * 32;
+            *sym = r32(f); *off = r64(f + 8); *len = r64(f + 16);
+            return true;
+        };
+        auto smap_name = [&](const uint8_t* sm, size_t n,
+                             uint32_t idx) -> std::string {
+            if (!sm || n < 32 || memcmp(sm, "SMAP", 4)) return "";
+            uint32_t cnt = r32(sm + 8), so = r32(sm + 12),
+                     sl = r32(sm + 16);
+            if ((uint64_t)so + sl > n ||
+                32ull + (uint64_t)cnt * 64 > n || idx >= cnt)
+                return "";
+            uint32_t noff = r32(sm + 32 + (size_t)idx * 64);
+            if (noff >= sl) return "";
+            const char* nm = (const char*)sm + so + noff;
+            size_t mx = sl - noff;
+            const void* z = memchr(nm, 0, mx);
+            return std::string(nm, z ? (const char*)z - nm : mx);
+        };
+        /* walk the MIGD: [32 hash][u16 vlen][ver][pad4]
+           [u32 nrules][16B rules][predecessor LAYD]              */
+        const uint8_t* m = sdiff.migd.data();
+        size_t mn = sdiff.migd.size();
+        struct R { uint8_t kind, sev; uint16_t tid;
+                   uint32_t of, nf, aux; };
+        std::vector<R> rules;
+        const uint8_t* olayd = nullptr;
+        size_t oln = 0;
+        if (mn >= 34) {
+            size_t at = 34 + r16(m + 32);
+            at += (4 - (at % 4)) % 4;
+            if (at + 4 <= mn) {
+                uint32_t nr = r32(m + at); at += 4;
+                for (uint32_t i = 0; i < nr && at + 16 <= mn; i++) {
+                    rules.push_back({m[at], m[at + 1],
+                                     r16(m + at + 2), r32(m + at + 4),
+                                     r32(m + at + 8), r32(m + at + 12)});
+                    at += 16;
+                }
+                if (at < mn) { olayd = m + at; oln = mn - at; }
+            }
+        }
+        tplc::CtlServer::W w;
+        w.u8(sdiff.same_layout ? 1 : 0);
+        w.u8((uint8_t)sdiff.mig_status);
+        w.u16(0);
+        w.u32((uint32_t)rules.size());
+        for (const R& r : rules) {
+            uint32_t os = 0xFFFFFFFFu, ns = 0xFFFFFFFFu;
+            uint64_t oo = 0, no = 0, ol = 0, nl = 0;
+            if (r.of != 0xFFFFFFFFu)
+                layd_field(olayd, oln, r.of, &os, &oo, &ol);
+            if (r.nf != 0xFFFFFFFFu)
+                layd_field(pkg_layd.data(), pkg_layd.size(),
+                           r.nf, &ns, &no, &nl);
+            w.u8(r.kind); w.u8(r.sev); w.u16(r.tid); w.u32(r.aux);
+            w.u64(oo); w.u32((uint32_t)ol); w.u32(os);
+            w.u64(no); w.u32((uint32_t)nl); w.u32(ns);
+            uint8_t ovl = 0, nvl = 0;
+            if (oo + ol <= sdiff.old_blob.size())
+                ovl = (uint8_t)(ol < 8 ? ol : 8);
+            if (no + nl <= prog->blobSize())
+                nvl = (uint8_t)(nl < 8 ? nl : 8);
+            w.u8(ovl); w.u8(nvl); w.u16(0);
+            uint8_t pv[8] = {0};
+            if (ovl) memcpy(pv, sdiff.old_blob.data() + oo, ovl);
+            w.bytes(pv, 8);
+            memset(pv, 0, 8);
+            if (nvl) memcpy(pv, prog->blob() + no, nvl);
+            w.bytes(pv, 8);
+            std::string on = os != 0xFFFFFFFFu
+                ? smap_name(sdiff.old_smap.data(),
+                            sdiff.old_smap.size(), os) : "";
+            std::string nn = ns != 0xFFFFFFFFu
+                ? smap_name(pkg_smap.data(), pkg_smap.size(), ns) : "";
+            w.str(on.data(), (uint32_t)on.size());
+            w.str(nn.data(), (uint32_t)nn.size());
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
     /* {u32 n, {u32 handle, u32 task, u64 off, u32 len, u8 cmp,
                 u8 pad[3], u64 val, u64 hits}*}                    */
     ctl.on(TPLC_OP_DBG_BREAK_LIST, [&](int fd, uint16_t t,

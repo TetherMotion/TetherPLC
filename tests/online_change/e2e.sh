@@ -131,6 +131,12 @@ after=$(qd 4)
 [ "$(qd 8)" = "42" ] && ok "default-init applied (out_x=42)" \
     || bad "default-init (got $(qd 8))"
 
+# state.diff: the committed migrate reports its rules with names
+d=$($BUILD/tplc-ctl $CTL state-diff 2>&1)
+echo "$d" | grep -q "migrated" && echo "$d" | grep -q "init " \
+    && ok "state.diff reports migrate rules" \
+    || bad "state.diff ($d)"
+
 # module-swap fast path: v2→v2 identical layout
 $BUILD/tplc-ctl $CTL swap $WORK/v2.tplc >/dev/null \
     && grep -q module-swap $WORK/rt.log \
