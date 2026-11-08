@@ -254,6 +254,11 @@ std::string progStatusJson(const std::vector<uint8_t>& p) {
     j.key("swap_stage", 1).num(ps->swap_stage);
     j.key("quarantine_left", 1).num(ps->quarantine_left);
     j.key("epoch", 1).num(ps->epoch);
+    j.key("shadow_state", 1).num(ps->shadow_state);
+    j.key("shadow_cycles", 1).num(ps->shadow_cycles);
+    j.key("shadow_missed", 1).num(ps->shadow_missed);
+    j.key("shadow_diff_count", 1).num(ps->shadow_diff_count);
+    j.key("shadow_last_diff_cycle", 1).num(ps->shadow_last_diff_cycle);
     j.key("tasks", 1).chr('[');
     const uint8_t* q = p.data() + sizeof(TplcCtlProgStatus);
     size_t left = p.size() - sizeof(TplcCtlProgStatus);
@@ -279,6 +284,73 @@ std::string progStatusJson(const std::vector<uint8_t>& p) {
         left -= sizeof(TplcCtlTaskStat);
     }
     j.chr(']').chr('}');
+    return j.s;
+}
+
+/* SHADOW_STATUS wire: u8 0 (no shadow) or TplcCtlShadowStatus    */
+std::string shadowStatusJson(const std::vector<uint8_t>& p) {
+    if (p.size() == 1 && p[0] == 0)
+        return "{\"loaded\":false}";
+    if (p.size() < sizeof(TplcCtlShadowStatus)) return "{}";
+    const TplcCtlShadowStatus* ss = (const TplcCtlShadowStatus*)p.data();
+    J j; j.chr('{');
+    j.key("loaded", 0).num(1);
+    j.key("uuid", 1).hex(ss->program_uuid, 16);
+    j.key("name", 1).strv(std::string((const char*)ss->name,
+        strnlen((const char*)ss->name, sizeof ss->name)));
+    j.key("state", 1).num(ss->state);
+    j.key("cycles", 1).num(ss->cycles);
+    j.key("missed", 1).num(ss->missed);
+    j.key("diff_count", 1).num(ss->diff_count);
+    j.key("last_diff_cycle", 1).num(ss->last_diff_cycle);
+    j.key("runs", 1).num(ss->runs);
+    j.chr('}');
+    return j.s;
+}
+
+/* SHADOW_COMPARE wire: {u32 n, TplcCtlShadowDiff[n]}             */
+std::string shadowCompareJson(const std::vector<uint8_t>& p) {
+    J j; j.raw("{\"diffs\":[");
+    const uint8_t* q = p.data();
+    size_t left = p.size();
+    if (left < 4) { j.raw("]}"); return j.s; }
+    uint32_t n;
+    memcpy(&n, q, 4); q += 4; left -= 4;
+    for (uint32_t i = 0; i < n && left >= sizeof(TplcCtlShadowDiff);
+         i++) {
+        const TplcCtlShadowDiff* df = (const TplcCtlShadowDiff*)q;
+        if (i) j.chr(',');
+        j.chr('{');
+        j.key("cycle", 0).num(df->cycle);
+        j.key("img_off", 1).num(df->img_off);
+        j.key("len", 1).num(df->len);
+        j.key("active", 1).hex(df->active_bytes, df->len);
+        j.key("shadow", 1).hex(df->shadow_bytes, df->len);
+        j.chr('}');
+        q += sizeof(TplcCtlShadowDiff);
+        left -= sizeof(TplcCtlShadowDiff);
+    }
+    j.raw("]}");
+    return j.s;
+}
+
+/* migrate-result replies (load/reset/swap): {u32 status, u32 err} */
+std::string migrateResultJson(const std::vector<uint8_t>& p) {
+    if (p.size() == 64) {
+        J j; j.chr('{');
+        j.key("refused", 0).strv("SWAP_RACE");
+        j.key("live", 1).hex(p.data(), 32);
+        j.key("pkg_pre", 1).hex(p.data() + 32, 32);
+        j.chr('}');
+        return j.s;
+    }
+    uint32_t st = 0, fe = 0;
+    if (p.size() >= 8) { memcpy(&st, p.data(), 4);
+                         memcpy(&fe, p.data() + 4, 4); }
+    J j; j.chr('{');
+    j.key("out_status", 0).num(st);
+    j.key("out_first_error", 1).num(fe);
+    j.chr('}');
     return j.s;
 }
 
@@ -785,9 +857,20 @@ std::vector<FunctionEntry> buildFunctions() {
     v.push_back(jsonOp("dbg.state",
                        "blob/retain extents + symbol count",
                        TPLC_OP_DBG_STATE, stateJson));
-    v.push_back(jsonOp("dbg.fields",
-                       "blob layout: every field with name/off/size/access",
-                       TPLC_OP_DBG_FIELDS, fieldsJson));
+    v.push_back(fn("dbg.fields",
+                   "blob layout: every field with name/off/size/access",
+                   {Popt("sel", "0 active 1 shadow", ValueType::U8,
+                         {0})},
+                   [](const std::vector<FunctionArgument>& a) {
+        uint64_t sel = argU(a, 0, 0);
+        W w;
+        if (sel) w.u8((uint8_t)sel);
+        std::vector<uint8_t> out;
+        FunctionCallResult r;
+        if (!ctlCall(TPLC_OP_DBG_FIELDS, w.b.data(),
+                     (uint32_t)w.b.size(), out, r)) return r;
+        return okStr(fieldsJson(out));
+    }, ValueType::String));
     v.push_back(jsonOp("dbg.state_diff",
                        "last online-change migrate rules",
                        TPLC_OP_DBG_STATE_DIFF, stateDiffJson));
@@ -815,6 +898,74 @@ std::vector<FunctionEntry> buildFunctions() {
     v.push_back(jsonOp("dbg.watch_list", "watch handles",
                        TPLC_OP_DBG_WATCH_LIST, watchListJson));
 
+    /* shadow run (doc 19 §3.3) */
+    v.push_back(fn("shadow.load",
+                   "load a candidate program as shadow (needs running "
+                   "active)",
+                   {P("path", "package path (server-local)",
+                      ValueType::String)},
+                   [](const std::vector<FunctionArgument>& a) {
+        W w; w.str(argStr(a, 0));
+        std::vector<uint8_t> out;
+        FunctionCallResult r;
+        if (!ctlCall(TPLC_OP_SHADOW_LOAD, w.b.data(),
+                     (uint32_t)w.b.size(), out, r)) return r;
+        if (out.size() >= 17 && out[0]) {
+            J j; j.chr('{');
+            j.key("loaded", 0).num(1);
+            j.key("uuid", 1).hex(out.data() + 1, 16);
+            j.chr('}');
+            return okStr(j.s);
+        }
+        return okStr(migrateResultJson(out));
+    }, ValueType::String));
+    v.push_back(jsonOp("shadow.status",
+                       "candidate program status",
+                       TPLC_OP_SHADOW_STATUS, shadowStatusJson));
+    v.push_back(fn("shadow.compare",
+                   "tail of the %Q diff ring (img-off runs ≤32B)",
+                   {Popt("max", "max entries", ValueType::U32,
+                         {32, 0, 0, 0})},
+                   [](const std::vector<FunctionArgument>& a) {
+        W w; w.u32((uint32_t)argU(a, 0, 32));
+        std::vector<uint8_t> out;
+        FunctionCallResult r;
+        if (!ctlCall(TPLC_OP_SHADOW_COMPARE, w.b.data(), 4, out, r))
+            return r;
+        return okStr(shadowCompareJson(out));
+    }, ValueType::String));
+    v.push_back(fn("shadow.promote",
+                   "promote the candidate to active (quarantines "
+                   "current)", {},
+                   [](const std::vector<FunctionArgument>&) {
+        std::vector<uint8_t> out;
+        FunctionCallResult r;
+        if (!ctlCall(TPLC_OP_SHADOW_PROMOTE, out, r)) return r;
+        J j; j.chr('{');
+        if (out.size() >= 24) {
+            j.key("uuid", 0).hex(out.data(), 16);
+            uint64_t ep; memcpy(&ep, out.data() + 16, 8);
+            j.key("epoch", 1).num(ep);
+        }
+        j.chr('}');
+        return okStr(j.s);
+    }, ValueType::String));
+    v.push_back(fn("shadow.drop", "discard the candidate", {},
+                   [](const std::vector<FunctionArgument>&) {
+        std::vector<uint8_t> out;
+        FunctionCallResult r;
+        if (!ctlCall(TPLC_OP_SHADOW_DROP, out, r)) return r;
+        return okVoid();
+    }));
+    v.push_back(fn("shadow.reset",
+                   "re-migrate candidate state from the live blob", {},
+                   [](const std::vector<FunctionArgument>&) {
+        std::vector<uint8_t> out;
+        FunctionCallResult r;
+        if (!ctlCall(TPLC_OP_SHADOW_RESET, out, r)) return r;
+        return okStr(migrateResultJson(out));
+    }, ValueType::String));
+
     /* debug reads/writes */
     v.push_back(fn("dbg.resolve",
                    "resolve a symbol path to blob offset/size",
@@ -829,9 +980,13 @@ std::vector<FunctionEntry> buildFunctions() {
     }, ValueType::String));
     v.push_back(fn("dbg.read", "read blob bytes",
                    {P("off", "blob offset", ValueType::U64),
-                    P("len", "byte count", ValueType::U32)},
+                    P("len", "byte count", ValueType::U32),
+                    Popt("sel", "0 active 1 shadow", ValueType::U8,
+                         {0})},
                    [](const std::vector<FunctionArgument>& a) {
+        uint64_t sel = argU(a, 2, 0);
         W w; w.u64(argU(a, 0)); w.u32((uint32_t)argU(a, 1));
+        if (sel) w.u8((uint8_t)sel);
         std::vector<uint8_t> out;
         FunctionCallResult r;
         if (!ctlCall(TPLC_OP_DBG_READ, w.b.data(),
@@ -1189,7 +1344,7 @@ static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --ctl SOCK [--port 43770] [--bind 127.0.0.1]\n"
         "       [--no-blob-signal]  (drop the whole-blob Binary\n"
-        "         signal from the catalog)\n", a0, a0);
+        "         signal from the catalog)\n", a0);
 }
 
 int main(int argc, char** argv) {
@@ -1245,6 +1400,24 @@ int main(int argc, char** argv) {
         ValueType::U8,
         scalarRd<uint8_t>([](TplcCtlProgStatus& ps, bool ok) {
             return ok ? ps.swap_stage : (uint8_t)0; })));
+    registry.addSignal(sig("shadow.state", "0 none 1 running",
+        ValueType::U8,
+        scalarRd<uint8_t>([](TplcCtlProgStatus& ps, bool ok) {
+            return ok ? ps.shadow_state : (uint8_t)0; })));
+    registry.addSignal(sig("shadow.cycles", "candidate task runs",
+        ValueType::U64,
+        scalarRd<uint64_t>([](TplcCtlProgStatus& ps, bool ok) {
+            return ok ? ps.shadow_cycles : 0; })));
+    registry.addSignal(sig("shadow.missed",
+        "budget-skipped candidate cycles",
+        ValueType::U64,
+        scalarRd<uint64_t>([](TplcCtlProgStatus& ps, bool ok) {
+            return ok ? ps.shadow_missed : 0; })));
+    registry.addSignal(sig("shadow.diff_count",
+        "total %Q diff entries",
+        ValueType::U64,
+        scalarRd<uint64_t>([](TplcCtlProgStatus& ps, bool ok) {
+            return ok ? ps.shadow_diff_count : 0; })));
 
     /* the whole program blob as one streamable Binary signal —
        clients slice offsets locally via plc.dbg.fields            */

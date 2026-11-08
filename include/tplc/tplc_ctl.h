@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define TPLC_CTL_PROTO_VER   2u
+#define TPLC_CTL_PROTO_VER   3u
 #define TPLC_CTL_HDR_SIZE    16u
 #define TPLC_CTL_MAX_PAYLOAD (8u * 1024u * 1024u)
 
@@ -151,6 +151,14 @@ enum TplcCtlOp {
     TPLC_OP_RETAIN_DUMP    = 0x0604,
     /* image 0x0700 */
     TPLC_OP_IMAGE_STATS    = 0x0701,  /* P0 */
+    /* shadow run 0x0800 (doc 19): candidate program on identical
+       inputs; its %Q lands in a private region, never the image   */
+    TPLC_OP_SHADOW_LOAD    = 0x0801,  /* {u16 plen,path} → status    */
+    TPLC_OP_SHADOW_STATUS  = 0x0802,  /* → TplcCtlShadowStatus       */
+    TPLC_OP_SHADOW_COMPARE = 0x0803,  /* {u32 max} → diff ring tail  */
+    TPLC_OP_SHADOW_PROMOTE = 0x0804,  /* ∅ → post-promote status     */
+    TPLC_OP_SHADOW_DROP    = 0x0805,  /* ∅                           */
+    TPLC_OP_SHADOW_RESET   = 0x0806,  /* ∅ → migrate result          */
     /* runtime 0x0900 */
     TPLC_OP_RT_STATUS      = 0x0901,  /* P0 */
     TPLC_OP_RT_SHUTDOWN    = 0x0905,  /* P0 {u8 mode}                */
@@ -243,8 +251,37 @@ typedef struct TplcCtlProgStatus {
     uint32_t quarantine_left;
     uint32_t _pad6;
     uint64_t epoch;                    /* bumps on program-set change */
+    /* proto v3 tail — shadow run (doc 19) */
+    uint8_t  shadow_state;             /* 0 none, 1 running           */
+    uint8_t  _pad7[7];
+    uint64_t shadow_cycles;
+    uint64_t shadow_missed;
+    uint64_t shadow_diff_count;
+    uint64_t shadow_last_diff_cycle;
     /* TplcCtlTaskStat tasks[task_count] follows */
 } TplcCtlProgStatus;
+
+/* SHADOW_STATUS reply */
+typedef struct TplcCtlShadowStatus {
+    uint8_t  program_uuid[16];
+    uint8_t  name[TPLC_PROG_NAME_MAX];
+    uint8_t  state;                    /* 0 none, 1 running           */
+    uint8_t  _pad[7];
+    uint64_t cycles;                   /* shadow task runs            */
+    uint64_t missed;                   /* budget-skipped cycles       */
+    uint64_t diff_count;               /* total diff entries          */
+    uint64_t last_diff_cycle;
+    uint64_t runs;                     /* sum of task runs            */
+} TplcCtlShadowStatus;
+
+/* SHADOW_COMPARE ring entry (one per differing byte-run) */
+typedef struct TplcCtlShadowDiff {
+    uint64_t cycle;
+    uint64_t img_off;
+    uint32_t len;                      /* ≤ 32                        */
+    uint8_t  active_bytes[32];
+    uint8_t  shadow_bytes[32];
+} TplcCtlShadowDiff;
 
 typedef struct TplcCtlRtStatus {
     uint32_t proto_ver;
@@ -305,7 +342,8 @@ typedef struct TplcCtlEvTransition {
     uint8_t  program_uuid[16];
     uint8_t  from_state;
     uint8_t  to_state;
-    uint8_t  reason;                /* 0 op, 1 fault, 2 rollback     */
+    uint8_t  reason;                /* 0 op, 1 fault, 2 rollback,
+                                       3 promote (doc 19)          */
     uint8_t  _pad;
     uint32_t _pad2;
     uint64_t ts_ns;                 /* realtime                      */

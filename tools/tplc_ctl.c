@@ -38,6 +38,13 @@ static void print_prog_status(const uint8_t* p, uint32_t len) {
            ps->predecessor_uuid[0], ps->predecessor_uuid[1],
            ps->predecessor_uuid[2], ps->predecessor_uuid[3],
            ps->swap_stage, ps->quarantine_left);
+    if (ps->shadow_state)
+        printf("shadow     running  cycles %lu  missed %lu  "
+               "diffs %lu  last_diff c%lu\n",
+               (unsigned long)ps->shadow_cycles,
+               (unsigned long)ps->shadow_missed,
+               (unsigned long)ps->shadow_diff_count,
+               (unsigned long)ps->shadow_last_diff_cycle);
     if (ps->last_fault_code)
         printf("fault      task %u  cycle %lu\n", ps->fault_task,
                (unsigned long)ps->fault_cycle);
@@ -219,7 +226,7 @@ static int do_deploy(const char* sock, const char* path) {
         ctl_recv(fd, pl, &len, &fl, &req) < 0 ||
         check_err(fl, pl, len)) { close(fd); return 1; }
     printf("deployed  uuid ");
-    for (int i = 0; i < 16 && 1 + i < len; i++)
+    for (uint32_t i = 0; i < 16 && 1 + i < len; i++)
         printf("%02x", pl[1 + i]);
     printf("  (%lu B)\n", (unsigned long)sz);
     close(fd);
@@ -243,7 +250,9 @@ int main(int argc, char** argv) {
             "|trace-read [SEQ [N]]|trace-clear"
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
             "|watch-rm [H|all]|watch-list|events [SEC]"
-            "|map-get|journal-tail [N]\n", argv[0]);
+            "|map-get|journal-tail [N]"
+            "|shadow-load X|shadow-status|shadow-compare [N]"
+            "|shadow-promote|shadow-drop|shadow-reset\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -314,6 +323,38 @@ int main(int argc, char** argv) {
             pre_len = 2 + pl;
         }
     }
+    else if (!strcmp(cmd, "shadow-load")) {
+        op = TPLC_OP_SHADOW_LOAD;
+        if (!arg) {
+            fprintf(stderr, "shadow-load <path|uuid>\n"); return 2;
+        }
+        size_t al = strlen(arg);
+        uint8_t u[16];
+        if (al == 32) {
+            int ok = 1;
+            for (int i = 0; i < 16 && ok; i++) {
+                int v; char t[3] = {arg[i*2], arg[i*2+1], 0};
+                if (sscanf(t, "%02x", &v) != 1) ok = 0; else u[i]=(uint8_t)v;
+            }
+            if (!ok) { fprintf(stderr, "bad uuid\n"); return 2; }
+            memcpy(pre, u, 16); pre_len = 16;
+        } else {
+            uint16_t pl = (uint16_t)al;
+            memcpy(pre, &pl, 2);
+            memcpy(pre + 2, arg, al);
+            pre_len = 2 + pl;
+        }
+    }
+    else if (!strcmp(cmd, "shadow-status"))  op = TPLC_OP_SHADOW_STATUS;
+    else if (!strcmp(cmd, "shadow-compare")) {
+        op = TPLC_OP_SHADOW_COMPARE;
+        uint32_t mx = arg ? (uint32_t)strtoul(arg, NULL, 0) : 32;
+        memcpy(pre, &mx, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "shadow-promote")) op = TPLC_OP_SHADOW_PROMOTE;
+    else if (!strcmp(cmd, "shadow-drop"))    op = TPLC_OP_SHADOW_DROP;
+    else if (!strcmp(cmd, "shadow-reset"))   op = TPLC_OP_SHADOW_RESET;
     else if (!strcmp(cmd, "suspend") || !strcmp(cmd, "resume")) {
         if (!arg) { fprintf(stderr, "%s <task_idx>\n", cmd); return 2; }
         op = cmd[0] == 's' ? TPLC_OP_TASK_SUSPEND : TPLC_OP_TASK_RESUME;
@@ -349,6 +390,10 @@ int main(int argc, char** argv) {
         memcpy(pre, &off, 8);
         memcpy(pre + 8, &rl, 4);
         pre_len = 12;
+        if (argc > 5) {           /* dbg-read OFF LEN [sel] */
+            pre[12] = (uint8_t)strtoul(argv[5], NULL, 0);
+            pre_len = 13;
+        }
     }
     else if (!strcmp(cmd, "dbg-write")) {
         if (!arg || argc < 5) {
@@ -521,8 +566,11 @@ int main(int argc, char** argv) {
         op = TPLC_OP_DBG_STATE_DIFF;
     }
     else if (!strcmp(cmd, "fields")) {
-        /* fields: blob layout browser, per-field rows             */
+        /* fields [sel]: blob layout browser — sel=1 lists the
+           shadow candidate's fields                               */
         op = TPLC_OP_DBG_FIELDS;
+        if (arg) { pre[0] = (uint8_t)strtoul(arg, NULL, 0);
+                   pre_len = 1; }
     }
     else if (!strcmp(cmd, "retain-status")) op = TPLC_OP_RETAIN_STATUS;
     else if (!strcmp(cmd, "retain-flush"))  op = TPLC_OP_RETAIN_FLUSH;
@@ -697,6 +745,75 @@ int main(int argc, char** argv) {
             memcpy(&st_, pl, 4); memcpy(&fe_, pl + 4, 4);
             printf("swap: out_status=%u out_first_error=%u\n",
                    st_, fe_);
+        }
+    }
+    else if (op == TPLC_OP_SHADOW_LOAD || op == TPLC_OP_SHADOW_RESET) {
+        if (len == 64) {          /* SWAP_RACE-style refusal */
+            printf("shadow load refused: SWAP_RACE\n  live    ");
+            for (int i = 0; i < 32; i++) printf("%02x", pl[i]);
+            printf("\n  pkg-pre ");
+            for (int i = 0; i < 32; i++) printf("%02x", pl[32 + i]);
+            printf("\n");
+        } else if (op == TPLC_OP_SHADOW_LOAD && len >= 17 && pl[0]) {
+            printf("shadow loaded  uuid ");
+            for (int i = 0; i < 16; i++) printf("%02x", pl[1 + i]);
+            printf("\n");
+        } else {
+            uint32_t st_ = 0, fe_ = 0;
+            if (len >= 8) { memcpy(&st_, pl, 4);
+                            memcpy(&fe_, pl + 4, 4); }
+            printf("%s: out_status=%u out_first_error=%u\n",
+                   op == TPLC_OP_SHADOW_LOAD ? "shadow load"
+                                             : "shadow reset",
+                   st_, fe_);
+        }
+    }
+    else if (op == TPLC_OP_SHADOW_STATUS) {
+        if (len == 1 && pl[0] == 0) {
+            puts("shadow: none");
+        } else if (len >= sizeof(TplcCtlShadowStatus)) {
+            const TplcCtlShadowStatus* ss =
+                (const TplcCtlShadowStatus*)pl;
+            printf("shadow     %s  state %u  uuid %02x%02x%02x%02x…\n",
+                   ss->name, ss->state,
+                   ss->program_uuid[0], ss->program_uuid[1],
+                   ss->program_uuid[2], ss->program_uuid[3]);
+            printf("cycles     %lu  missed %lu  diffs %lu  "
+                   "last_diff c%lu  task_runs %lu\n",
+                   (unsigned long)ss->cycles,
+                   (unsigned long)ss->missed,
+                   (unsigned long)ss->diff_count,
+                   (unsigned long)ss->last_diff_cycle,
+                   (unsigned long)ss->runs);
+        } else puts("(short payload)");
+    }
+    else if (op == TPLC_OP_SHADOW_COMPARE) {
+        const uint8_t* q = pl;
+        uint32_t nd; memcpy(&nd, q, 4); q += 4;
+        printf("diffs %u\n", nd);
+        for (uint32_t i = 0; i < nd &&
+                (size_t)(q - pl) + sizeof(TplcCtlShadowDiff) <= len;
+             i++) {
+            const TplcCtlShadowDiff* df =
+                (const TplcCtlShadowDiff*)q;
+            printf("  c%-6lu img+0x%02lx len %u  act ",
+                   (unsigned long)df->cycle,
+                   (unsigned long)df->img_off, df->len);
+            for (uint32_t b = 0; b < df->len; b++)
+                printf("%02x", df->active_bytes[b]);
+            printf("  shd ");
+            for (uint32_t b = 0; b < df->len; b++)
+                printf("%02x", df->shadow_bytes[b]);
+            printf("\n");
+            q += sizeof(TplcCtlShadowDiff);
+        }
+    }
+    else if (op == TPLC_OP_SHADOW_PROMOTE) {
+        if (len >= 24) {
+            printf("promoted  uuid ");
+            for (int i = 0; i < 16; i++) printf("%02x", pl[i]);
+            uint64_t ep; memcpy(&ep, pl + 16, 8);
+            printf("  epoch %lu\n", (unsigned long)ep);
         }
     }
     else if (op == TPLC_OP_IMAGE_STATS) {

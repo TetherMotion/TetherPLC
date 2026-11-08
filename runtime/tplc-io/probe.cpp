@@ -85,9 +85,10 @@ static std::string retStr(TetherIOClient& c,
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s <port>\n", argv[0]);
+        fprintf(stderr, "usage: %s <port> [shadow_pkg]\n", argv[0]);
         return 2;
     }
+    const char* shadow_pkg = argc > 2 ? argv[2] : nullptr;
     auto tr = tcpConnect("127.0.0.1", (uint16_t)atoi(argv[1]), 5000);
     if (!tr) { printf("FAIL connect\n"); return 1; }
     TetherIOClient c(
@@ -254,6 +255,73 @@ int main(int argc, char** argv) {
         auto wr = call(c, *fWRm,
                        {mkArg(c, *fWRm, "handle", nv::u(h))});
         check(wr && wr->success, "watch.rm");
+    }
+
+    /* ---- shadow run (doc 19 §3.3) — only when a candidate package
+       path is supplied; promotes last (it replaces the active)   */
+    if (shadow_pkg) {
+        auto* fShLoad = fns ? findFn(*fns, "shadow.load") : nullptr;
+        auto* fShStatus = fns ? findFn(*fns, "shadow.status") : nullptr;
+        auto* fShCompare = fns ? findFn(*fns, "shadow.compare") : nullptr;
+        auto* fShPromote = fns ? findFn(*fns, "shadow.promote") : nullptr;
+        auto* fShDrop = fns ? findFn(*fns, "shadow.drop") : nullptr;
+        auto* fShReset = fns ? findFn(*fns, "shadow.reset") : nullptr;
+        check(fShLoad && fShStatus && fShCompare && fShPromote &&
+              fShDrop && fShReset, "shadow function surface present");
+        auto* sShState = sigs ? findSig(*sigs, "shadow.state") : nullptr;
+        auto* sShDiff = sigs ? findSig(*sigs, "shadow.diff_count") : nullptr;
+        check(sShState && sShDiff, "shadow signals present");
+        if (fShStatus) {
+            auto r = call(c, *fShStatus);
+            std::string j = (r && r->success)
+                ? retStr(c, *fShStatus, *r) : "";
+            check(j.find("false") != std::string::npos,
+                  "shadow.status empty before load");
+        }
+        bool loaded = false;
+        if (fShLoad) {
+            auto r = call(c, *fShLoad,
+                          {mkArg(c, *fShLoad, "path",
+                                 nv::str(shadow_pkg))});
+            std::string j = (r && r->success)
+                ? retStr(c, *fShLoad, *r) : "";
+            loaded = j.find("loaded") != std::string::npos &&
+                     j.find("1") != std::string::npos;
+            check(loaded, "shadow.load");
+        }
+        if (loaded) {
+            if (sShState) {
+                auto v = c.getSignal(sShState->id);
+                auto dv = v ? c.decodeValue(sShState->schemaSlot,
+                                            v->data(), v->size())
+                            : std::unexpected(ClientError{});
+                bool one = false;
+                if (dv) if (auto u = asU64(*dv)) one = *u == 1;
+                check(one, "shadow.state signal reads 1");
+            }
+            auto r = call(c, *fShStatus);
+            std::string j = (r && r->success)
+                ? retStr(c, *fShStatus, *r) : "";
+            check(j.find("\"state\":1") != std::string::npos,
+                  "shadow.status running");
+            auto rc = call(c, *fShCompare);
+            std::string jc = (rc && rc->success)
+                ? retStr(c, *fShCompare, *rc) : "";
+            check(jc.find("diffs") != std::string::npos,
+                  "shadow.compare returns diff JSON");
+            auto rr = call(c, *fShReset);
+            check(rr && rr->success, "shadow.reset");
+            auto rp = call(c, *fShPromote);
+            std::string jp = (rp && rp->success)
+                ? retStr(c, *fShPromote, *rp) : "";
+            check(jp.find("epoch") != std::string::npos,
+                  "shadow.promote commits");
+            auto r2 = call(c, *fShStatus);
+            std::string j2 = (r2 && r2->success)
+                ? retStr(c, *fShStatus, *r2) : "";
+            check(j2.find("false") != std::string::npos,
+                  "shadow slot freed post-promote");
+        }
     }
 
     /* ---- lifecycle: strict transitions -------------------------- */

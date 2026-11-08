@@ -379,6 +379,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(fbd_gallery_e2e PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # shadow-run e2e (doc 19): candidate compare, isolation, promote
+  add_test(NAME shadow_e2e
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/shadow/e2e.sh)
+  set_tests_properties(shadow_e2e PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # debug-plane stress: boundary-consistent reads never tear a
   # multi-byte field mid-update (doc 12 §10.3)
   add_test(NAME debug_stress
@@ -402,7 +410,7 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME no_alloc
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/runtime/no_alloc.sh)
   set_tests_properties(no_alloc PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 60)
+    SKIP_RETURN_CODE 77 TIMEOUT 60 RESOURCE_LOCK plc_scan)
 
   # sanitizer passes (doc 14 §5): ASan+UBSan conformance, TSan on the
   # seqlock image protocol — builds dedicated build-san-* trees

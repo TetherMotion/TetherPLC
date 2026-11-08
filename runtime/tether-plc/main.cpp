@@ -78,6 +78,7 @@ static void usage(const char* a0) {
         "          [--runbook DIR] [--instance NAME] [--packages DIR]\n"
         "          [--sig-policy open|require|require-trusted]\n"
         "          [--trust-dir DIR] [--no-sandbox]\n"
+        "          [--quarantine-cycles N] [--shadow-budget-ns N]\n"
         "          [--sim]\n"
         "       %s --supervise [--respawn always|on-fault|never]\n"
         "          [--restart-delay-ms N] -- <tether-plc args>\n",
@@ -106,7 +107,8 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_RETAIN_DUMP:    case TPLC_OP_IMAGE_STATS:
     case TPLC_OP_RT_STATUS:      case TPLC_OP_PKG_LIST:
     case TPLC_OP_PKG_INFO:       case TPLC_OP_MAP_GET:
-    case TPLC_OP_JOURNAL_TAIL:
+    case TPLC_OP_JOURNAL_TAIL:   case TPLC_OP_SHADOW_STATUS:
+    case TPLC_OP_SHADOW_COMPARE:
         return tplc::TPLC_ROLE_OBSERVER;
     case TPLC_OP_DBG_WATCH_ADD:
     case TPLC_OP_DBG_WATCH_STREAM:
@@ -407,6 +409,7 @@ int main(int argc, char** argv) {
     uint32_t restart_max = 3;
     int wait_ms = 10000;
     uint64_t poll_ns = 1000 * 1000;          /* 1 ms max idle         */
+    uint64_t shadow_budget_ns = 200000;      /* slack needed to tick  */
     uint32_t ctx_flags = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -442,6 +445,8 @@ int main(int argc, char** argv) {
         else if (a == "--packages") packages_dir = next();
         else if (a == "--quarantine-cycles")
             quarantine_cycles = atoi(next().c_str());
+        else if (a == "--shadow-budget-ns")
+            shadow_budget_ns = strtoull(next().c_str(), 0, 0);
         else if (a == "--auto-rollback") auto_rollback = true;
         else if (a == "--sig-policy") sig_policy = next();
         else if (a == "--trust-dir") trust_dir = next();
@@ -731,6 +736,7 @@ int main(int argc, char** argv) {
         uint32_t    len;
         std::string path;
         bool        stale = false;
+        bool        shadow = false;   /* path resolved via shadow->smap */
     };
     struct Watch {
         uint32_t              handle;
@@ -763,12 +769,56 @@ int main(int argc, char** argv) {
         int                          cycles_left = 0;
     } quar;
 
+    /* shadow run (doc 19): a candidate program on the same latched
+       %I stream. Its %Q stays inside its own image_out buffer —
+       structurally unreachable by the image. Runs after the active
+       commit on a slack budget; promotion is a pointer swap.      */
+    struct ShadowDiff {
+        uint64_t cycle;
+        uint64_t img_off;
+        uint32_t len;
+        uint8_t  active_bytes[32];
+        uint8_t  shadow_bytes[32];
+    };
+    struct Shadow {
+        std::unique_ptr<tplc::Module> mod;
+        std::optional<tplc::Program>  prog;
+        tplc::Scheduler               sched;
+        std::vector<uint8_t>          layd;
+        std::vector<uint8_t>          smap;
+        std::vector<uint8_t>          imap;
+        uint8_t  pkg_hash[32] = {};
+        char     pkg_version[32] = {};
+        /* migrate outcome from SHADOW_LOAD (for STATE_DIFF after
+           promotion and SHADOW_RESET reporting)                   */
+        bool     mig_ready = false;
+        bool     same_layout = false;
+        uint32_t mig_status = 0;
+        std::vector<uint8_t> migd;
+        uint64_t cycles = 0, missed = 0;
+        uint64_t diff_count = 0, last_diff_cycle = 0;
+        std::vector<ShadowDiff> diffs;
+        uint64_t diff_wr = 0;
+    };
+    static const size_t SHADOW_DIFF_CAP = 256;
+    std::optional<Shadow> shadow;
+    bool     shadow_faulted = false;      /* set by shooks.fault  */
+
+    auto drop_shadow = [&](const char* why) {
+        if (!shadow) return;
+        shadow.reset();
+        shadow_faulted = false;
+        audit_log.record((uint32_t)getpid(), (uint32_t)geteuid(), 0,
+                         0, "-", "shadow.drop", why, 0);
+    };
+
     auto unload_program = [&] {
         /* monitor thread skips non-RUNNING states, so clearing state
            first makes destruction race-free */
         prog_state = PS_EMPTY;
         if (prog) { sched.removeProgram(*prog); prog.reset(); }
         mod.reset();
+        drop_shadow("unload");
         if (retain) retain->close();
         quar = Quarantine{};
         pkg_layd.clear();
@@ -849,6 +899,7 @@ int main(int argc, char** argv) {
         std::swap(mod, quar.mod);
         std::swap(pkg_layd, quar.layd);
         std::swap(pkg_smap, quar.smap);
+        drop_shadow("rollback");  /* candidate is stale post-rollback */
         forces.clear();   /* blob identity changed — forces stale */
         trace_ch.clear();
         trace_ring.clear();
@@ -972,6 +1023,30 @@ int main(int argc, char** argv) {
         stamp_forces(2);               /* forced outs reach field  */
         return tplc_image_commit_outputs(&img, p.imageOut(), 0,
                                          p.desc().image_out_bytes);
+    };
+    /* shadow hooks (doc 19): identical inputs by construction — the
+       latch copies the active program's already-latched %I buffer,
+       never re-reads the image. The commit is a no-op: img_out_ is
+       a private per-program buffer, i.e. the shadow output region —
+       nothing in this path can steer the real image.             */
+    tplc::TickHooks shooks;
+    shooks.latch = [&](tplc::Program& p, uint32_t) -> int32_t {
+        if (!prog) return tplc::TPLC_E_HOST_STATE;
+        uint64_t n = std::min((uint64_t)p.desc().image_in_bytes,
+                              (uint64_t)prog->desc().image_in_bytes);
+        memcpy(p.imageIn(), prog->imageIn(), n);
+        return 0;
+    };
+    shooks.commit = [](tplc::Program&, uint32_t) -> int32_t {
+        return 0;
+    };
+    shooks.fault = [&](tplc::Program&, uint32_t ti, int32_t rc) {
+        /* cannot destroy the Shadow inside sched.tick — flag it and
+           let the scan loop drop it after the tick returns        */
+        shadow_faulted = true;
+        fprintf(stderr,
+                "tether-plc: shadow task %u fault rc=%d "
+                "(active unaffected)\n", ti, rc);
     };
     tplc::CtlServer ctl;
     /* doc 16 §4: every program-set transition emits a state event a
@@ -1107,17 +1182,18 @@ int main(int argc, char** argv) {
     /* ---- trigger expressions (doc 12 §M) ------------------------
        Compiler + evaluator for the bounded stack machine; paths
        resolve through the symmap at arm time                      */
-    auto smap_find = [&](std::string_view want,
-                         uint64_t* off, uint32_t* len) -> bool {
-        const uint8_t* sm = pkg_smap.data();
-        if (pkg_smap.size() < 32 || memcmp(sm, "SMAP", 4) != 0)
+    auto smap_find_in = [&](const std::vector<uint8_t>& smap,
+                            std::string_view want,
+                            uint64_t* off, uint32_t* len) -> bool {
+        const uint8_t* sm = smap.data();
+        if (smap.size() < 32 || memcmp(sm, "SMAP", 4) != 0)
             return false;
         uint32_t count, stroff, strln;
         memcpy(&count, sm + 8, 4);
         memcpy(&stroff, sm + 12, 4);
         memcpy(&strln, sm + 16, 4);
-        if ((uint64_t)stroff + strln > pkg_smap.size() ||
-            32ull + (uint64_t)count * 64 > pkg_smap.size())
+        if ((uint64_t)stroff + strln > smap.size() ||
+            32ull + (uint64_t)count * 64 > smap.size())
             return false;
         const uint8_t* strs = sm + stroff;
         for (uint32_t i = 0; i < count; i++) {
@@ -1132,6 +1208,10 @@ int main(int argc, char** argv) {
             return true;
         }
         return false;
+    };
+    auto smap_find = [&](std::string_view want,
+                         uint64_t* off, uint32_t* len) -> bool {
+        return smap_find_in(pkg_smap, want, off, len);
     };
     /* compile expr text into X; returns "" or an error phrase */
     auto expr_compile = [&](std::string_view src,
@@ -1416,6 +1496,7 @@ int main(int argc, char** argv) {
             for (auto& it : wt.chs) {
                 uint64_t o2 = 0; uint32_t l2 = 0;
                 it.stale = it.path.empty() ||
+                    it.shadow ||
                     !smap_find(it.path, &o2, &l2) || l2 > 64;
                 if (!it.stale) { it.off = o2; it.len = l2; }
             }
@@ -1474,6 +1555,12 @@ int main(int argc, char** argv) {
         ps.swap_stage = quar.prog ? 1 : 0;
         ps.quarantine_left = quar.prog ? (uint32_t)quar.cycles_left : 0;
         ps.epoch = mgmt_epoch;
+        ps.shadow_state = (shadow && shadow->prog) ? 1 : 0;
+        ps.shadow_cycles = shadow ? shadow->cycles : 0;
+        ps.shadow_missed = shadow ? shadow->missed : 0;
+        ps.shadow_diff_count = shadow ? shadow->diff_count : 0;
+        ps.shadow_last_diff_cycle =
+            shadow ? shadow->last_diff_cycle : 0;
         w.bytes(&ps, sizeof ps);
         for (uint32_t i = 0; i < d.task_count; i++) {
             const TplcTaskDesc& td = d.tasks[i];
@@ -1542,6 +1629,7 @@ int main(int argc, char** argv) {
             return;
         }
         prog_state = PS_STOPPED;
+        drop_shadow("stop");
         forces.clear();
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         audit(fd, "prog.stop", "");
@@ -1599,6 +1687,7 @@ int main(int argc, char** argv) {
            let start clear the flag — immediate kill per doc 04 §4   */
         prog->requestAbort();
         prog_state = PS_STOPPED;
+        drop_shadow("kill");
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         emit_transition(PS_RUNNING, PS_STOPPED, 0);
         TplcCtlProgStateChange sc{PS_RUNNING, PS_STOPPED, 0};
@@ -1918,6 +2007,7 @@ int main(int argc, char** argv) {
             sdiff.migd.assign(migd.data, migd.data + migd.size);
         sdiff.old_blob = std::move(snap);
         sdiff.old_smap = quar.smap;
+        drop_shadow("swap");   /* candidate is stale post-swap    */
         forces.clear();   /* new blob layout — overrides are stale */
         trace_ch.clear();
         trace_ring.clear();
@@ -1984,6 +2074,344 @@ int main(int argc, char** argv) {
         memcpy(rep, &mo.out_status, 4);
         memcpy(rep + 4, &mo.out_first_error, 4);
         ctl.reply(fd, t, rep, sizeof rep, req);
+    });
+
+    /* ---- shadow run ops (doc 19 §3) -----------------------------
+
+       SHADOW_LOAD stages a candidate program: sig-checked like a
+       swap, blob seeded by migrate-from-active (or same-layout byte
+       copy), tasks registered on the shadow scheduler.            */
+    ctl.on(TPLC_OP_SHADOW_LOAD, [&](int fd, uint16_t t,
+                                    const uint8_t* payload,
+                                    uint32_t len, uint64_t req) {
+        if (prog_state != PS_RUNNING || !prog) {
+            char m[64];
+            snprintf(m, sizeof m, "current=%u requested=shadow.load",
+                     prog_state);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, m, req);
+            return;
+        }
+        if (shadow) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE,
+                           "shadow already loaded", req);
+            return;
+        }
+        std::string path;
+        if (!uuid_or_path(payload, len, packages_dir, path)) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "uuid or path", req);
+            return;
+        }
+        auto pres = tplc::Package::open(path);
+        if (!pres.ok()) {
+            ctl.errorReply(fd, t, pres.st.code, pres.st.msg.c_str(),
+                           req);
+            return;
+        }
+        tplc::Package pk = std::move(pres.value);
+        tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
+        if (!sgst.ok()) {
+            ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
+            return;
+        }
+        tplc::PkgSection obj{}, migd{}, layd{}, smap{}, imap{};
+        if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
+            ctl.errorReply(fd, t, TPLC_E_PKG_TOC, "no target_obj",
+                           req);
+            return;
+        }
+        bool has_migd = pk.section(TPLC_SEC_MIGRATE_DESC, migd);
+        pk.section(TPLC_SEC_LAYOUT_DESC, layd);
+        pk.section(TPLC_SEC_SYMMAP, smap);
+        pk.section(TPLC_SEC_DEPLOY_MAP, imap);
+        char tp[] = "/tmp/tplc_shadow_XXXXXX";
+        int tfd = mkstemp(tp);
+        if (tfd < 0 ||
+            write(tfd, obj.data, obj.size) != (ssize_t)obj.size) {
+            if (tfd >= 0) close(tfd);
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_DLOPEN,
+                           "extract failed", req);
+            return;
+        }
+        close(tfd);
+        auto mres = tplc::Module::open(tp, /*host_caps*/ 0);
+        if (!mres.ok()) {
+            ctl.errorReply(fd, t, mres.st.code, mres.st.msg.c_str(),
+                           req);
+            return;
+        }
+        tplc::Module nmod = std::move(mres.value);
+        const TplcProgramDescriptor& nd = nmod.descriptor();
+        if (nd.image_in_bytes > tplc_image_in_size(&img) ||
+            nd.image_out_bytes > tplc_image_out_size(&img)) {
+            ctl.errorReply(fd, t, TPLC_E_IMG_TOO_SMALL,
+                           "image too small", req);
+            return;
+        }
+        bool same_layout =
+            memcmp(nd.layout_hash, d.layout_hash, 32) == 0;
+        if (!same_layout) {
+            if (!nmod.hasMigrate() || !has_migd) {
+                ctl.errorReply(fd, t, TPLC_E_MIGRATE_LAYOUT,
+                               "no migrate path in package", req);
+                return;
+            }
+            if (migd.size < 32 ||
+                memcmp(migd.data, d.layout_hash, 32) != 0) {
+                uint8_t rep[64] = {};
+                memcpy(rep, d.layout_hash, 32);
+                if (migd.size >= 32)
+                    memcpy(rep + 32, migd.data, 32);
+                ctl.reply(fd, t, rep, sizeof rep, req);
+                fprintf(stderr,
+                        "tether-plc: shadow load refused — SWAP_RACE "
+                        "(compiled against stale layout)\n");
+                return;
+            }
+        }
+        auto nres = tplc::Program::create(nmod, pcfg);
+        if (!nres.ok()) {
+            ctl.errorReply(fd, t, nres.st.code, nres.st.msg.c_str(),
+                           req);
+            return;
+        }
+        tplc::Program nprog = std::move(nres.value);
+        tplc::Status ist = nprog.start();
+        if (!ist.ok()) {
+            ctl.errorReply(fd, t, ist.code, ist.msg.c_str(), req);
+            return;
+        }
+        /* seed the shadow blob from the live program: same-layout
+           byte copy, or tplc_migrate with the package MIGD          */
+        TplcMigrateCtx mo{};
+        memset(&mo, 0, sizeof mo);
+        std::vector<uint8_t> snap = prog->snapshotBlob();
+        if (same_layout) {
+            if (nprog.blobSize() == snap.size())
+                memcpy(nprog.blob(), snap.data(), snap.size());
+        } else {
+            int32_t mrc = nprog.migrateFrom(*prog, migd.data,
+                                            migd.size, &mo);
+            if (mrc != 0) {
+                uint8_t rep[8];
+                memcpy(rep, &mo.out_status, 4);
+                memcpy(rep + 4, &mo.out_first_error, 4);
+                ctl.reply(fd, t, rep, sizeof rep, req);
+                fprintf(stderr,
+                        "tether-plc: shadow migrate rc=%d "
+                        "status=%u — not loaded\n", mrc, mo.out_status);
+                return;
+            }
+        }
+        Shadow sh;
+        sh.mig_ready = true;
+        sh.same_layout = same_layout;
+        sh.mig_status = same_layout ? 0 : mo.out_status;
+        if (!same_layout && migd.data && migd.size)
+            sh.migd.assign(migd.data, migd.data + migd.size);
+        if (layd.data && layd.size)
+            sh.layd.assign(layd.data, layd.data + layd.size);
+        if (smap.data && smap.size)
+            sh.smap.assign(smap.data, smap.data + smap.size);
+        if (imap.data && imap.size)
+            sh.imap.assign(imap.data, imap.data + imap.size);
+        memcpy(sh.pkg_hash, pk.header().content_hash, 32);
+        snprintf(sh.pkg_version, sizeof sh.pkg_version, "%s",
+                 manifest_str(pk.manifestJson(), "version").c_str());
+        sh.mod = std::make_unique<tplc::Module>(std::move(nmod));
+        sh.prog.emplace(std::move(nprog));
+        sh.prog->rebindModule(*sh.mod);
+        /* the scheduler keeps Program* — register only after the
+           Program rests at its final address inside `shadow`      */
+        shadow.emplace(std::move(sh));
+        shadow->sched.addProgram(*shadow->prog);
+        audit(fd, "shadow.load", path);
+        fprintf(stderr, "tether-plc: shadow loaded (%.*s)\n",
+                TPLC_PROG_NAME_MAX, (const char*)nd.name);
+        tplc::CtlServer::W w;
+        w.u8(1);                    /* loaded */
+        w.bytes(shadow->prog->desc().program_uuid, 16);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    auto write_shadow_status = [&](tplc::CtlServer::W& w) {
+        if (!shadow || !shadow->prog) { w.u8(0); return; }
+        const TplcProgramDescriptor& sd = shadow->prog->desc();
+        TplcCtlShadowStatus ss{};
+        memcpy(ss.program_uuid, sd.program_uuid, 16);
+        memcpy(ss.name, sd.name, TPLC_PROG_NAME_MAX);
+        ss.state = 1;
+        ss.cycles = shadow->cycles;
+        ss.missed = shadow->missed;
+        ss.diff_count = shadow->diff_count;
+        ss.last_diff_cycle = shadow->last_diff_cycle;
+        for (uint32_t i = 0; i < sd.task_count; i++)
+            if (const auto* s = shadow->sched.stats(*shadow->prog, i))
+                ss.runs += s->runs;
+        w.bytes(&ss, sizeof ss);
+    };
+
+    ctl.on(TPLC_OP_SHADOW_STATUS, [&](int fd, uint16_t t,
+                                      const uint8_t*, uint32_t,
+                                      uint64_t req) {
+        tplc::CtlServer::W w;
+        write_shadow_status(w);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    ctl.on(TPLC_OP_SHADOW_COMPARE, [&](int fd, uint16_t t,
+                                       const uint8_t* p, uint32_t n,
+                                       uint64_t req) {
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 max}", req);
+            return;
+        }
+        uint32_t maxn; memcpy(&maxn, p, 4);
+        tplc::CtlServer::W w;
+        if (!shadow) { w.u32(0); ctl.reply(fd, t, w.data(), w.size(), req); return; }
+        size_t have = shadow->diffs.size();
+        size_t take = std::min<size_t>(maxn, have);
+        /* ring holds chronological entries; reply the newest `take`
+           oldest-first                                              */
+        w.u32((uint32_t)take);
+        for (size_t i = have - take; i < have; i++) {
+            const ShadowDiff& df = shadow->diffs[i];
+            w.u64(df.cycle); w.u64(df.img_off); w.u32(df.len);
+            w.bytes(df.active_bytes, 32);
+            w.bytes(df.shadow_bytes, 32);
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    ctl.on(TPLC_OP_SHADOW_DROP, [&](int fd, uint16_t t,
+                                    const uint8_t*, uint32_t,
+                                    uint64_t req) {
+        if (!shadow) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no shadow",
+                           req);
+            return;
+        }
+        drop_shadow("op");
+        audit(fd, "shadow.drop", "op");
+        ctl.replyEmpty(fd, t, req);
+    });
+
+    ctl.on(TPLC_OP_SHADOW_RESET, [&](int fd, uint16_t t,
+                                     const uint8_t*, uint32_t,
+                                     uint64_t req) {
+        if (!shadow || !shadow->prog) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no shadow",
+                           req);
+            return;
+        }
+        TplcMigrateCtx mo{};
+        memset(&mo, 0, sizeof mo);
+        std::vector<uint8_t> snap = prog->snapshotBlob();
+        if (shadow->same_layout) {
+            if (shadow->prog->blobSize() == snap.size())
+                memcpy(shadow->prog->blob(), snap.data(), snap.size());
+            mo.out_status = 0;
+        } else {
+            if (shadow->migd.empty()) {
+                ctl.errorReply(fd, t, TPLC_E_MIGRATE_LAYOUT,
+                               "no migrate descriptor", req);
+                return;
+            }
+            int32_t mrc = shadow->prog->migrateFrom(
+                *prog, shadow->migd.data(), shadow->migd.size(), &mo);
+            if (mrc != 0) {
+                uint8_t rep[8];
+                memcpy(rep, &mo.out_status, 4);
+                memcpy(rep + 4, &mo.out_first_error, 4);
+                ctl.reply(fd, t, rep, sizeof rep, req);
+                return;
+            }
+        }
+        shadow->diffs.clear(); shadow->diff_wr = 0;
+        shadow->diff_count = 0; shadow->last_diff_cycle = 0;
+        audit(fd, "shadow.reset", "resync");
+        uint8_t rep[8];
+        memcpy(rep, &mo.out_status, 4);
+        memcpy(rep + 4, &mo.out_first_error, 4);
+        ctl.reply(fd, t, rep, sizeof rep, req);
+    });
+
+    /* SHADOW_PROMOTE: quarantine active, adopt shadow — same commit
+       dance as swap, except the blob is already live and no migrate
+       runs here (it ran at SHADOW_LOAD)                            */
+    ctl.on(TPLC_OP_SHADOW_PROMOTE, [&](int fd, uint16_t t,
+                                       const uint8_t*, uint32_t,
+                                       uint64_t req) {
+        if (prog_state != PS_RUNNING || !prog || !shadow ||
+            !shadow->prog) {
+            char m[64];
+            snprintf(m, sizeof m, "current=%u requested=promote",
+                     prog_state);
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, m, req);
+            return;
+        }
+        sdiff.old_blob = prog->snapshotBlob();
+        sched.removeProgram(*prog);
+        quar.prog.emplace(std::move(*prog));
+        prog.reset();
+        quar.mod = std::move(mod);
+        mod.reset();
+        quar.layd = std::move(pkg_layd);
+        quar.smap = std::move(pkg_smap);
+        memcpy(quar.hash, pkg_hash, 32);
+        snprintf(quar.ver, sizeof quar.ver, "%s", pkg_version);
+        quar.cycles_left = quarantine_cycles;
+        sdiff.ready = shadow->mig_ready;
+        sdiff.same_layout = shadow->same_layout;
+        sdiff.mig_status = shadow->mig_status;
+        sdiff.migd = std::move(shadow->migd);
+        sdiff.old_smap = quar.smap;
+        mod = std::move(shadow->mod);
+        prog.emplace(std::move(*shadow->prog));
+        prog->rebindModule(*mod);
+        sched.addProgram(*prog);
+        d = mod->descriptor();
+        pkg_layd = std::move(shadow->layd);
+        pkg_smap = std::move(shadow->smap);
+        pkg_iomap = std::move(shadow->imap);
+        memcpy(pkg_hash, shadow->pkg_hash, 32);
+        snprintf(pkg_version, sizeof pkg_version, "%s",
+                 shadow->pkg_version);
+        shadow.reset();
+        if (!retain_dir.empty()) {
+            if (!retain) retain.emplace();
+            retain->close();
+            uint64_t lh;
+            memcpy(&lh, d.layout_hash, 8);
+            retain->open(retain_dir, d.program_uuid, lh,
+                         prog->retainSize());
+        }
+        forces.clear();   /* new program state — overrides stale */
+        trace_ch.clear();
+        trace_ring.clear();
+        trace_wr = 0;
+        trace_flags = 0;
+        trace_frozen = false;
+        memcpy(lin_predecessor, quar.prog->desc().program_uuid, 16);
+        lin_deployed_at_ns = realtime_ns();
+        {
+            uint32_t _p, _g;
+            ctl.peerCred(fd, &_p, &lin_deployed_by, &_g);
+        }
+        reresolve_subs();
+        arm_default_trace();
+        last_fault = 0;
+        mgmt_epoch++;
+        emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_RUNNING, 3);
+        audit(fd, "shadow.promote", "adopted");
+        fprintf(stderr,
+                "tether-plc: shadow promoted (quarantine %d scans)\n",
+                quarantine_cycles);
+        tplc::CtlServer::W w;
+        w.bytes(d.program_uuid, 16);
+        w.u64(mgmt_epoch);
+        ctl.reply(fd, t, w.data(), w.size(), req);
     });
 
     /* map.get / journal.tail (doc 16 §3.2): the deploy map and the
@@ -2166,12 +2594,6 @@ int main(int argc, char** argv) {
                            "no program", req);
             return;
         }
-        const uint8_t* sm = pkg_smap.data();
-        if (pkg_smap.size() < 32 || memcmp(sm, "SMAP", 4) != 0) {
-            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
-                           "no symbol map", req);
-            return;
-        }
         if (n < 2) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
                            "{u16 nlen, name}", req);
@@ -2183,27 +2605,48 @@ int main(int argc, char** argv) {
                            "name overruns payload", req);
             return;
         }
+        /* doc 19 §3.2: SHADOW.<sym> resolves through the candidate
+           program's symmap; the reply uuid identifies the program  */
         std::string_view want((const char*)p + 2, nl);
+        bool to_shadow = want.size() > 7 &&
+                         want.substr(0, 7) == "SHADOW.";
+        if (to_shadow && (!shadow || !shadow->prog)) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no shadow",
+                           req);
+            return;
+        }
+        const std::vector<uint8_t>& rsmap =
+            to_shadow ? shadow->smap : pkg_smap;
+        const uint8_t* rsm = rsmap.data();
+        if (to_shadow) want.remove_prefix(7);
+        if (rsmap.size() < 32 || memcmp(rsm, "SMAP", 4) != 0) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "no symbol map", req);
+            return;
+        }
         uint32_t count, stroff, strln;
-        memcpy(&count, sm + 8, 4);
-        memcpy(&stroff, sm + 12, 4);
-        memcpy(&strln, sm + 16, 4);
-        if ((uint64_t)stroff + strln > pkg_smap.size() ||
-            32ull + (uint64_t)count * 64 > pkg_smap.size()) {
+        memcpy(&count, rsm + 8, 4);
+        memcpy(&stroff, rsm + 12, 4);
+        memcpy(&strln, rsm + 16, 4);
+        if ((uint64_t)stroff + strln > rsmap.size() ||
+            32ull + (uint64_t)count * 64 > rsmap.size()) {
             ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
                            "corrupt symbol map", req);
             return;
         }
-        const uint8_t* strs = sm + stroff;
+        const uint8_t* strs = rsm + stroff;
         for (uint32_t i = 0; i < count; i++) {
-            const uint8_t* e = sm + 32 + (size_t)i * 64;
+            const uint8_t* e = rsm + 32 + (size_t)i * 64;
             uint32_t noff; memcpy(&noff, e, 4);
             if (noff >= strln) continue;
             const char* nm = (const char*)strs + noff;
             if (!memchr(nm, 0, strln - noff)) continue;
             if (want != nm) continue;
             tplc::CtlServer::W w;
-            w.bytes(d.program_uuid, 16);
+            if (to_shadow)
+                w.bytes(shadow->prog->desc().program_uuid, 16);
+            else
+                w.bytes(d.program_uuid, 16);
             w.u32(i);
             w.bytes(e + 4, 4);   /* kind flags region access */
             w.bytes(e + 8, 4);   /* type_ref  */
@@ -2224,19 +2667,34 @@ int main(int argc, char** argv) {
                            "no program", req);
             return;
         }
-        if (n != 12) {
+        /* doc 19 §3.2: 13th byte selects the program — 0/default
+           active, 1 = shadow blob (read-only through this path)   */
+        if (n != 12 && n != 13) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
-                           "{u64 off, u32 len}", req);
+                           "{u64 off, u32 len[, u8 sel]}", req);
             return;
         }
         uint64_t off; uint32_t rl;
         memcpy(&off, p, 8); memcpy(&rl, p + 8, 4);
-        if (off > prog->blobSize() || rl > prog->blobSize() - off) {
+        tplc::Program* tgt = prog ? &*prog : nullptr;
+        if (n == 13 && p[12] == 1) {
+            if (!shadow || !shadow->prog) {
+                ctl.errorReply(fd, t, TPLC_E_MGMT_STATE,
+                               "no shadow", req);
+                return;
+            }
+            tgt = &*shadow->prog;
+        } else if (n == 13 && p[12] != 0) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "sel must be 0 or 1", req);
+            return;
+        }
+        if (off > tgt->blobSize() || rl > tgt->blobSize() - off) {
             ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
                            "range outside blob", req);
             return;
         }
-        ctl.reply(fd, t, prog->blob() + off, rl, req);
+        ctl.reply(fd, t, tgt->blob() + off, rl, req);
     });
 
     /* read-only ranges: LAYD field flags bit1 marks VAR_CONSTANT
@@ -2770,12 +3228,29 @@ int main(int argc, char** argv) {
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
     /* blob layout browser (doc 12 §7): per-field rows from LAYD +
-       SMAP so a client can enumerate the loaded program's fields  */
+       SMAP so a client can enumerate the loaded program's fields.
+       Optional {u8 sel} payload (doc 19 §3.2): sel=1 enumerates the
+       shadow candidate's fields                                   */
     ctl.on(TPLC_OP_DBG_FIELDS, [&](int fd, uint16_t t,
-                                   const uint8_t*, uint32_t,
+                                   const uint8_t* p, uint32_t pn,
                                    uint64_t req) {
-        const uint8_t* b = pkg_layd.data();
-        size_t n = pkg_layd.size();
+        const std::vector<uint8_t>* layd_p = &pkg_layd;
+        const std::vector<uint8_t>* smap_p = &pkg_smap;
+        if (pn == 1 && p[0] == 1) {
+            if (!shadow || !shadow->prog) {
+                ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no shadow",
+                               req);
+                return;
+            }
+            layd_p = &shadow->layd;
+            smap_p = &shadow->smap;
+        } else if (pn != 0) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u8 sel}", req);
+            return;
+        }
+        const uint8_t* b = layd_p->data();
+        size_t n = layd_p->size();
         auto r32 = [](const uint8_t* p) {
             uint32_t v; memcpy(&v, p, 4); return v; };
         auto r64 = [](const uint8_t* p) {
@@ -2799,15 +3274,15 @@ int main(int argc, char** argv) {
             return;
         }
         /* SMAP rows carry name + region + access per sym_entry   */
-        const uint8_t* sm = pkg_smap.data();
-        bool have_sm = sm && pkg_smap.size() >= 32 &&
+        const uint8_t* sm = smap_p->data();
+        bool have_sm = sm && smap_p->size() >= 32 &&
                        !memcmp(sm, "SMAP", 4);
         uint32_t scnt = have_sm ? r32(sm + 8) : 0;
         uint32_t so = have_sm ? r32(sm + 12) : 0;
         uint32_t sl = have_sm ? r32(sm + 16) : 0;
-        if (have_sm && ((uint64_t)so + sl > pkg_smap.size() ||
+        if (have_sm && ((uint64_t)so + sl > smap_p->size() ||
                         32ull + (uint64_t)scnt * 64 >
-                            pkg_smap.size()))
+                            smap_p->size()))
             have_sm = false;
         tplc::CtlServer::W w;
         w.u32(nf);
@@ -3046,8 +3521,26 @@ int main(int argc, char** argv) {
             }
             std::string path((const char*)p + at + 14, nl2);
             at += 14 + nl2;
+            /* doc 19 §3.2: SHADOW.<sym> items resolve through the
+               candidate's symmap and sample its blob               */
+            bool item_shadow = path.size() > 7 &&
+                               path.compare(0, 7, "SHADOW.") == 0;
             if (nl2) {
-                if (!smap_find(path, &off, &l)) {
+                bool found;
+                if (item_shadow) {
+                    if (!shadow || !shadow->prog) {
+                        ctl.errorReply(fd, t, TPLC_E_MGMT_STATE,
+                                       "no shadow", req);
+                        return;
+                    }
+                    found = smap_find_in(shadow->smap,
+                                         std::string_view(path)
+                                             .substr(7),
+                                         &off, &l);
+                } else {
+                    found = smap_find(path, &off, &l);
+                }
+                if (!found) {
                     ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
                                    ("unknown path " + path).c_str(),
                                    req);
@@ -3071,7 +3564,8 @@ int main(int argc, char** argv) {
                                "watch payload > 512 B", req);
                 return;
             }
-            chs.push_back({off, l, std::move(path), false});
+            chs.push_back({off, l, std::move(path), false,
+                           item_shadow});
         }
         if (at != n) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
@@ -3106,9 +3600,16 @@ int main(int argc, char** argv) {
                 tplc::CtlServer::W w;
                 w.u32((uint32_t)wt.chs.size());
                 for (auto& c : wt.chs) {
-                    w.u32(c.stale ? 0 : c.len);
-                    if (!c.stale && prog)
-                        w.bytes(prog->blob() + c.off, c.len);
+                    tplc::Program* src =
+                        c.shadow ? (shadow && shadow->prog
+                                    ? &*shadow->prog : nullptr)
+                                 : (prog ? &*prog : nullptr);
+                    bool stale = c.stale || !src ||
+                        c.off > src->blobSize() ||
+                        c.len > src->blobSize() - c.off;
+                    w.u32(stale ? 0 : c.len);
+                    if (!stale)
+                        w.bytes(src->blob() + c.off, c.len);
                 }
                 ctl.reply(fd, t, w.data(), w.size(), req);
                 return;
@@ -3523,9 +4024,16 @@ int main(int argc, char** argv) {
             w.u32(wt.handle); w.u64(wt.seq++);
             w.u32((uint32_t)wt.chs.size());
             for (auto& c : wt.chs) {
-                w.u32(c.stale ? 0 : c.len);
-                if (!c.stale)
-                    w.bytes(prog->blob() + c.off, c.len);
+                tplc::Program* src =
+                    c.shadow ? (shadow && shadow->prog
+                                ? &*shadow->prog : nullptr)
+                             : prog ? &*prog : nullptr;
+                bool stale = c.stale || !src ||
+                    c.off > src->blobSize() ||
+                    c.len > src->blobSize() - c.off;
+                w.u32(stale ? 0 : c.len);
+                if (!stale)
+                    w.bytes(src->blob() + c.off, c.len);
             }
             ctl.event(TPLC_EV_DBG_WATCH,
                       1u << (TPLC_EV_DBG_WATCH & 0xFF),
@@ -3576,6 +4084,63 @@ int main(int argc, char** argv) {
             if (ran > 0) eval_watches(now);
             /* breaks see post-force state — the effective value    */
             if (!breaks.empty()) eval_breaks();
+            /* shadow run (doc 19 §2.4): after the active commit,
+               on the slack left until the next active release —
+               the shadow can never delay the scan. A faster-period
+               shadow ticks between active releases too (it re-reads
+               the same latched %I, consistent though stale)       */
+            if (shadow && shadow->prog) {
+                uint64_t sdue = shadow->sched.nextDueNs();
+                bool sh_due = sdue != UINT64_MAX && sdue <= now;
+                uint64_t due = sched.nextDueNs();
+                int64_t slack =
+                    due == UINT64_MAX ? INT64_MAX
+                  : due <= now        ? 0
+                  : (int64_t)std::min<uint64_t>(due - now,
+                                                (uint64_t)INT64_MAX);
+                if (!sh_due) {
+                    /* no shadow work due this scan */
+                } else if (slack >= (int64_t)shadow_budget_ns) {
+                    size_t sran = shadow->sched.tick(now, shooks);
+                    if (shadow_faulted) {
+                        shadow_faulted = false;
+                        drop_shadow("task fault");
+                    } else if (sran > 0) {
+                        shadow->cycles += sran;
+                        /* compare shadow %Q vs active %Q in image-
+                           offset space — run-length diffs ≤32B     */
+                        uint64_t nb = std::min(
+                            (uint64_t)prog->desc().image_out_bytes,
+                            (uint64_t)shadow->prog->desc()
+                                .image_out_bytes);
+                        const uint8_t* a = prog->imageOut();
+                        const uint8_t* s = shadow->prog->imageOut();
+                        for (uint64_t off = 0; off < nb;) {
+                            if (a[off] == s[off]) { off++; continue; }
+                            uint64_t e = off + 1;
+                            while (e < nb && a[e] != s[e] &&
+                                   e - off < 32) e++;
+                            ShadowDiff df{};
+                            df.cycle = shadow->cycles;
+                            df.img_off = off;
+                            df.len = (uint32_t)(e - off);
+                            memcpy(df.active_bytes, a + off, e - off);
+                            memcpy(df.shadow_bytes, s + off, e - off);
+                            if (shadow->diffs.size() < SHADOW_DIFF_CAP)
+                                shadow->diffs.push_back(df);
+                            else
+                                shadow->diffs[shadow->diff_wr %
+                                              SHADOW_DIFF_CAP] = df;
+                            shadow->diff_wr++;
+                            shadow->diff_count++;
+                            shadow->last_diff_cycle = shadow->cycles;
+                            off = e;
+                        }
+                    }
+                } else {
+                    shadow->missed++;
+                }
+            }
             progress.fetch_add(1);
             /* quarantine window: N scans after commit the old module
                is released — doc 08 §7 (drop order: Program first)  */

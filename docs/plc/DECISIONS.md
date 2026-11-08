@@ -260,3 +260,21 @@ client identity can't reach `SO_PEERCRED` (provider role applies),
 and complex replies use JSON strings rather than per-shape schema
 structs (keeps the schema catalog small and version-tolerant; typed
 structs remain an option).
+
+## D-IMPL-19 — Shadow run: structural output isolation + live-state promote (doc 19)
+
+**Plan:** shadow consumes identical `%I`, writes a "shadow output
+region", promotes instantly.
+**Implemented:** the shadow region needs no new image machinery —
+each `Program` already owns a private `imageOut()` buffer, so
+isolation is a no-op commit hook rather than a second image.
+Identical inputs come from the shadow latch hook memcpy'ing the
+active's `imageIn()` post-latch. Promotion moves the live
+`Program`/`Module` into the active slot through the same quarantine
+commit as swap, so the candidate's accumulated state carries over
+with zero re-initialization and rollback is the same code path.
+
+Consequence recorded in `docs/plc/shadow-run.md`: scheduling is
+budget-bounded slack (`--shadow-budget-ns`, default 200 µs) checked
+after the active `%Q` commit — a shadow can never delay the scan,
+it can only be skipped (`missed`).

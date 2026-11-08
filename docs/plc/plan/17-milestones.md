@@ -158,11 +158,12 @@ backends from day 1 — contracts are frozen docs, not code.
 ## 5. Iteration 2 (post-v1, recorded not scheduled)
 
 SFC language + editor; LD view/editor; multi-program IDE flows;
-CiA-405 OD endpoint (doc 16 §7); MCU loader path (doc 18); shadow
-run / compare-and-promote deploys (doc 19 — spec exists, may pull
-forward as a v1.x feature); WSTRING/LTIME/REF dialect extensions;
+CiA-405 OD endpoint (doc 16 §7); MCU loader path (doc 18);
+WSTRING/LTIME/REF dialect extensions;
 collaborative editing; visual diff; OPC-UA adapter; safety FB
-subset (certification program).
+subset (certification program). Shadow run (doc 19) pulled forward:
+runtime + ctl + tplc-io implemented (`docs/plc/shadow-run.md`);
+sim parity and WebUI flow remain open there.
 
 ## 6. Definition of done (per phase)
 
