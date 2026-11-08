@@ -193,6 +193,50 @@ fn layout_hash_stable_under_stmt_changes() {
 }
 
 #[test]
+fn gvl_vars_emit_smap_entries() {
+    let mut module = demo_module();
+    module.gvls.push(mir::Gvl {
+        name: "GLOBAL".into(),
+        retain: false,
+        vars: vec![mir::VarDecl {
+            name: "g_max".into(),
+            kind: mir::VarKind::Constant,
+            ty: mir::Type::Int {
+                signed: true,
+                bits: 32,
+            },
+            init: None,
+            retain: false,
+            at: None,
+            probe: false,
+            prov: mir::Prov::None,
+        }],
+    });
+    let program = module.pous.iter().find(|p| p.name == "MAIN").unwrap();
+    let mut layout = mir::layout_program(&module, program);
+    assert!(layout.fields.contains_key("GLOBAL.g_max"));
+    let nop = |_: &str| None;
+    let d = mir::desc::emit(&mut layout, program, &[], &nop);
+    // GVL-qualified vars get real symmap entries, access=1 (const)
+    let eoff = 32usize;
+    let count = u32::from_le_bytes(d.symmap[8..12].try_into().unwrap());
+    let stroff = u32::from_le_bytes(d.symmap[12..16].try_into().unwrap()) as usize;
+    let mut found = false;
+    for i in 0..count as usize {
+        let e = &d.symmap[eoff + i * 64..eoff + i * 64 + 64];
+        let noff = stroff + u32::from_le_bytes(e[0..4].try_into().unwrap()) as usize;
+        let end = d.symmap[noff..].iter().position(|b| *b == 0).unwrap();
+        let name = std::str::from_utf8(&d.symmap[noff..noff + end]).unwrap();
+        if name == "GLOBAL.g_max" {
+            assert_eq!(e[7], 1, "const gvl var must be access=ro");
+            found = true;
+        }
+    }
+    assert!(found, "GLOBAL.g_max missing from SMAP");
+    assert!(d.layd.fields.iter().all(|f| f.sym_entry != u32::MAX));
+}
+
+#[test]
 fn program_ctx_only_top_level() {
     let module = demo_module();
     let program = module.pous.iter().find(|p| p.name == "MAIN").unwrap();

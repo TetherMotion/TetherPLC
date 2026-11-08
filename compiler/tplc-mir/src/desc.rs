@@ -352,9 +352,9 @@ pub fn emit(
     let mut off_to_sym: BTreeMap<u64, u32> = BTreeMap::new();
 
     for (qname, f) in field_list.iter() {
-        if qname.contains('.') {
-            continue; // GVL-qualified handled with their pseudo-parent later
-        }
+        // dotted qnames are GVL-qualified vars (GLOBAL.x) — emit them
+        // as plain entries under the root so resolve/watch/force can
+        // find them by name
         let is_fb = f.field_kind == 1;
         let tref = cat.index_of(&f.ty);
         let idx = entries.len() as u32;

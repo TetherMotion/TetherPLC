@@ -390,6 +390,15 @@ fn cmd_build(args: &[String]) -> ExitCode {
             .iter()
             .find(|v| v.name == short)
             .map(|v| v.prov.clone())
+            .or_else(|| {
+                let (g, n) = name.split_once('.')?;
+                out.module
+                    .gvls
+                    .iter()
+                    .find(|gvl| gvl.name == g)
+                    .and_then(|gvl| gvl.vars.iter().find(|v| v.name == n))
+                    .map(|v| v.prov.clone())
+            })
     };
     let descs = desc::emit(&mut layout, &program, &io_triples, &prov_of);
     let layout_hash: [u8; 32] = Sha256::digest(&descs.payload_for_hash).into();

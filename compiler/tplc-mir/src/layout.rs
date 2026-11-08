@@ -197,7 +197,9 @@ pub fn layout_program(module: &Module, program: &Pou) -> Layout {
         }
     }
     for v in &program.iface {
-        if v.kind == VarKind::InOut {
+        // VAR_IN_OUT is host-provided; VAR_EXTERNAL only names a GVL
+        // var — it aliases that storage instead of owning a field
+        if matches!(v.kind, VarKind::InOut | VarKind::External) {
             continue;
         }
         let region = if v.retain {
@@ -256,6 +258,25 @@ pub fn layout_program(module: &Module, program: &Pou) -> Layout {
             off += size;
         }
         region_ranges[ri] = (region_start, off - region_start, region_align as u32);
+    }
+
+    // VAR_EXTERNAL decls get no storage — they alias the matching GVL
+    // var's field so reads/writes hit shared global state
+    for v in &program.iface {
+        if v.kind != VarKind::External || fields.contains_key(&v.name) {
+            continue;
+        }
+        let target = module.gvls.iter().find_map(|g| {
+            g.vars
+                .iter()
+                .find(|gv| gv.name.eq_ignore_ascii_case(&v.name))
+                .map(|gv| format!("{}.{}", g.name, gv.name))
+        });
+        if let Some(tq) = target {
+            if let Some(tf) = fields.get(&tq) {
+                fields.insert(v.name.clone(), tf.clone());
+            }
+        }
     }
 
     let total = (off + max_align - 1) & !(max_align - 1);
