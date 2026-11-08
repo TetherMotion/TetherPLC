@@ -11,45 +11,67 @@ runtime emits and which the tests exercise. Regenerate with
   `tplc_ctl.h`, `tplc_image.h`, `tplc_pkg.h`, and
   `runtime/host/include/tplc/host/Status.hpp`.
 - *Emit sites* are exact-symbol references in `runtime/`, `tools/`,
-  `compiler/` — authoritative.
+  `compiler/` — authoritative for the C side. The Rust package
+  reader reports `PkgError` variants by name rather than the C
+  symbols, so compiler-emitted codes can show 0 emit sites here
+  while still being exercised (see `PKG_SECTION_FORMAT`).
 - *Test hits* are symbol references plus numeric renderings tests
   grep for (`"-501"`, `ctl 415`, `error 401`, `code=415`) —
   heuristic; a small-code literal like `-21` in an FBD fixture
   counts as a hit even though it is data, not an assertion.
+- Test directories scanned: `tests/` (shell/C++ e2e) and
+  `compiler/*/tests/` (Rust unit tests). `TPLC_TASK_E_*` codes are
+  produced by *generated module code*, so the Rust codegen tests
+  are where they are asserted.
 - `TPLC_E_MODULE_MIN/MAX` are range sentinels and are excluded.
-- Task codes (`TPLC_TASK_E_*`) are produced by *generated module
-  code*, not the host — host emit count of 0 is expected for most of
-  them.
 
 ## Current numbers
 
-65 declared codes | 45 emitted by runtime/tools | 29 test-hit (~44%)
+65 declared codes | 46 emitted by runtime/tools | 54 test-hit (~83%)
 
-## Categories of gap
+Every code that has a host/tool emit site is covered except
+`IMG_EPOCH`; the remainder are declared-but-unemitted reservations.
 
-**Emitted but untested.** Real coverage gaps, worth a targeted test:
+## Induced-error conformance test
 
-- ctl plumbing: `CTL_STATE`, `CTL_UNKNOWN_OP`, `CTL_PROTO`,
-  `CTL_PAYLOAD` — malformed/state-mismatched requests
-- debug plane: `DBG_RESOLVE`, `DBG_OVERLOAD`, `DBG_STATE`,
-  `TRACE_CONFIG`
-- package validation: `PKG_VERSION`, `PKG_TOC`,
-  `PKG_UNKNOWN_SECTION`, `PKG_LIMIT`, `SIG_INVALID`,
-  `TARGET_MISMATCH`
-- image: `IMG_VERSION`, `IMG_TOO_SMALL`, `IMG_EPOCH`
-- host loader: `HOST_SYM`, `HOST_DESC`, `HOST_RANGE`, `HOST_STATE`
-- `MIGRATE_LAYOUT`, `ABI_EXT_UNMET`, `TASK_E_OVERRUN`
+`tests/scan/error_paths.sh` (ctest `error_paths`) exercises every
+reachable error surface and asserts the numeric magnitude on stderr
+or the wire reply:
 
-**Declared but never emitted** (dead reservations — prune or wire):
+- protocol: `CTL_STATE`, `CTL_UNKNOWN_OP`, `CTL_PAYLOAD` via
+  crafted frames (op before HELLO, bogus opcode, short payload)
+- ctl/debug plane: `DBG_STATE`, `DBG_OVERLOAD`, `TRACE_CONFIG`,
+  `DBG_ACCESS`, `MIGRATE_LAYOUT`, `HOST_STATE`
+- host loader: `HOST_SYM`, `HOST_DESC`, `HOST_RANGE`,
+  `ABI_EXT_UNMET` via gcc-built stub modules
+- package reader: `PKG_VERSION`, `PKG_TOC`, `PKG_LIMIT`,
+  `PKG_UNKNOWN_SECTION`, `TARGET_MISMATCH`, `SIG_INVALID`,
+  `PKG_SECTION_FORMAT` via byte-level package mutation (the
+  `pkgmut.py` helper repatches `content_hash`/`header_hash` so
+  surgical corruptions survive the integrity checks)
+- image: `IMG_VERSION`, `IMG_TOO_SMALL` via crafted shm headers
 
-- `TPLC_E_DBG_STALE` (-411)
+## Remaining gaps and why they stay
+
+**Emitted but not deterministically inducible:**
+
+- `TPLC_E_IMG_EPOCH` (-104) — fires inside the bounded seqlock
+  read-retry when `image_epoch` changes mid-read. In v1 the epoch
+  is written exactly once at `tplc_image_create`, so there is no
+  in-place re-init path a test can race. Becomes testable when a
+  master re-init op exists.
+
+**Declared but never emitted** (reserved — wire or prune):
+
+- `TPLC_TASK_E_PANIC`, `TASK_E_BOUNDS`, `TASK_E_DIVZERO`
+  (-17/-18/-19) — generated code saturates arithmetic and has no
+  bounds-check aborts today; reserved for checked-code modes.
 - `TPLC_E_MGMT_OP`, `MGMT_AUTHZ`, `MGMT_SCHEMA` (-500/-502/-503) —
-  ctl authz denials use `CTL_AUTHZ` (-401) uniformly today
+  reserved for the CiA-405 management surface; ctl authz denials
+  use `CTL_AUTHZ` (-401) uniformly today. Note the -500 range also
+  hosts `TPLC_E_MAP_*` in the bridge validator — see
+  `error-codes.md` for the collision caveat.
 - `TPLC_E_PKG_HIDDEN_STATE`, `SYMMAP_RANGE`, `PKG_ABI_MISMATCH`,
-  `REQUIRES_UNMET`, `PKG_SECTION_FORMAT`
-
-**Module-side codes the host cannot emit.** `TASK_E_PANIC`,
-`TASK_E_BOUNDS`, `TASK_E_DIVZERO`: the checked-arithmetic fault
-model is deferred — codegen currently saturates div-zero to 0
-(`llvm_emit.rs` "div-zero guard → 0 (deterministic fault model is
-P2)"). These come live with the checked-mode work.
+  `REQUIRES_UNMET` (-210/-211/-213/-214) — declared in
+  `tplc-pkg`'s `PkgError` but no site returns them yet (manifest
+  validation depth not implemented).

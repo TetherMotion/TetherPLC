@@ -783,7 +783,35 @@ impl<'ctx> Gen<'ctx> {
             .into_int_value()
     }
 
+    /// close the current block with `br target` unless a previous
+    /// statement already terminated it (Return/Exit/Continue)
+    fn term_br(&mut self, target: BasicBlock<'ctx>) {
+        if self
+            .b
+            .get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_none()
+        {
+            self.b.build_unconditional_branch(target).unwrap();
+        }
+    }
+
     fn stmt(&mut self, ctx: &Ctx, s: &Stmt) {
+        // a previous Return/Exit/Continue left the block terminated —
+        // resume in a fresh dead block so trailing statements stay
+        // well-formed IR (unreachable, eliminated later)
+        if self
+            .b
+            .get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_some()
+        {
+            let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+            let dead = self.ctx.append_basic_block(f, "dead");
+            self.b.position_at_end(dead);
+        }
         match &s.kind {
             StmtKind::Assign { lhs, rhs } => {
                 let v = self.expr(ctx, rhs);
@@ -792,9 +820,9 @@ impl<'ctx> Gen<'ctx> {
             StmtKind::If { branches, else_ } => {
                 let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
                 let end_bb = self.ctx.append_basic_block(f, "if.end");
-                let mut next_bb = end_bb;
-                for (cond, body) in branches.iter().rev() {
+                for (cond, body) in branches.iter() {
                     let then_bb = self.ctx.append_basic_block(f, "if.then");
+                    let next_bb = self.ctx.append_basic_block(f, "if.next");
                     let cv = self.expr(ctx, cond).into_int_value();
                     self.b
                         .build_conditional_branch(cv, then_bb, next_bb)
@@ -803,15 +831,14 @@ impl<'ctx> Gen<'ctx> {
                     for st in body {
                         self.stmt(ctx, st);
                     }
-                    self.b.build_unconditional_branch(end_bb).unwrap();
-                    next_bb = then_bb;
+                    self.term_br(end_bb);
                     self.b.position_at_end(next_bb);
                 }
                 // else block
                 for st in else_ {
                     self.stmt(ctx, st);
                 }
-                self.b.build_unconditional_branch(end_bb).unwrap();
+                self.term_br(end_bb);
                 self.b.position_at_end(end_bb);
             }
             StmtKind::While { cond, body } => {
@@ -832,7 +859,7 @@ impl<'ctx> Gen<'ctx> {
                     self.stmt(ctx, st);
                 }
                 self.loop_stack.pop();
-                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.term_br(cond_bb);
                 self.b.position_at_end(end_bb);
             }
             StmtKind::Repeat { cond, body } => {
@@ -847,7 +874,7 @@ impl<'ctx> Gen<'ctx> {
                     self.stmt(ctx, st);
                 }
                 self.loop_stack.pop();
-                self.b.build_unconditional_branch(cond_bb).unwrap();
+                self.term_br(cond_bb);
                 self.b.position_at_end(cond_bb);
                 self.abort_check();
                 let cv = self.expr(ctx, cond).into_int_value();
@@ -867,15 +894,26 @@ impl<'ctx> Gen<'ctx> {
                 let vr = Ref::Var(var.clone());
                 let sv = self.expr(ctx, start);
                 self.write(ctx, &vr, sv);
+                let vt = self.read(ctx, &vr).into_int_value().get_type();
+                // step/end are arbitrary int widths — normalize to the
+                // loop variable's type before compare/add
+                let step_e = step
+                    .as_ref()
+                    .map(|e| self.expr(ctx, e).into_int_value())
+                    .unwrap_or(vt.const_int(1, true));
+                let end_v = self.expr(ctx, end).into_int_value();
+                let step_e = self
+                    .b
+                    .build_int_cast(step_e, vt, "fs")
+                    .unwrap();
+                let end_v = self
+                    .b
+                    .build_int_cast(end_v, vt, "fe")
+                    .unwrap();
                 let cond_bb = self.ctx.append_basic_block(f, "f.cond");
                 let body_bb = self.ctx.append_basic_block(f, "f.body");
                 let step_bb = self.ctx.append_basic_block(f, "f.step");
                 let end_bb = self.ctx.append_basic_block(f, "f.end");
-                let step_e = step
-                    .as_ref()
-                    .map(|e| self.expr(ctx, e).into_int_value())
-                    .unwrap_or(self.ctx.i64_type().const_int(1, true));
-                let end_v = self.expr(ctx, end).into_int_value();
                 self.b.build_unconditional_branch(cond_bb).unwrap();
                 self.b.position_at_end(cond_bb);
                 self.abort_check();
@@ -894,7 +932,7 @@ impl<'ctx> Gen<'ctx> {
                     self.stmt(ctx, st);
                 }
                 self.loop_stack.pop();
-                self.b.build_unconditional_branch(step_bb).unwrap();
+                self.term_br(step_bb);
                 self.b.position_at_end(step_bb);
                 let cur = self.read(ctx, &vr).into_int_value();
                 let nxt = self.b.build_int_add(cur, step_e, "fn").unwrap();
@@ -952,13 +990,13 @@ impl<'ctx> Gen<'ctx> {
                     for st in body {
                         self.stmt(ctx, st);
                     }
-                    self.b.build_unconditional_branch(end_bb).unwrap();
+                    self.term_br(end_bb);
                     self.b.position_at_end(next_bb);
                 }
                 for st in else_ {
                     self.stmt(ctx, st);
                 }
-                self.b.build_unconditional_branch(end_bb).unwrap();
+                self.term_br(end_bb);
                 self.b.position_at_end(end_bb);
             }
             StmtKind::Call { inst, args } => self.fb_call(ctx, inst, args),
@@ -1265,9 +1303,17 @@ impl<'ctx> Gen<'ctx> {
         if let Body::Stmts(ss) = &pou.body {
             self.stmts(scope, ss);
         }
-        self.b
-            .build_return(Some(&self.ctx.i32_type().const_zero()))
-            .unwrap();
+        if self
+            .b
+            .get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_none()
+        {
+            self.b
+                .build_return(Some(&self.ctx.i32_type().const_zero()))
+                .unwrap();
+        }
     }
 }
 

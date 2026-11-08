@@ -60,7 +60,9 @@ enum TplcCtlOp {
     TPLC_OP_TASK_RESUME    = 0x0403,  /* P6 {u32 task_idx}          */
     TPLC_OP_TASK_STEP      = 0x0404,  /* P6 {u32 task_idx, u32 n}   */
     /* debug 0x0500 */
-    TPLC_OP_DBG_RESOLVE    = 0x0501,  /* P6 {u16 nlen,name}         */
+    TPLC_OP_DBG_RESOLVE    = 0x0501,  /* P6 {u16 nlen,name}; -410
+                                         unknown, -411 removed by
+                                         the last committed swap   */
     TPLC_OP_DBG_READ       = 0x0502,  /* P6 {u64 off, u32 len}      */
     TPLC_OP_DBG_WRITE      = 0x0503,  /* P6 {u64 off, u32 len,bytes}*/
     TPLC_OP_DBG_STATE      = 0x0504,  /* P6 → blob/retain extents   */

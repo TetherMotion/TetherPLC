@@ -396,6 +396,24 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(debug_stress PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # flight recorder: an induced task fault freezes the ring and the
+  # pre-fault channel scans survive for TRACE_READ (doc 12 §10.5)
+  add_test(NAME flight_recorder
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/fault/flight_recorder.sh)
+  set_tests_properties(flight_recorder PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60 RESOURCE_LOCK plc_scan)
+
+  # error-path conformance (Appendix L): induced TPLC_E_* codes across
+  # protocol frames, ctl ops, module stubs, package + image mutations
+  add_test(NAME error_paths
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/scan/error_paths.sh)
+  set_tests_properties(error_paths PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60 RESOURCE_LOCK plc_scan)
+
   # sim vectors (doc 14 §3.1): replay the oracle corpus through
   # tether-plc-sim incl. named field expectations via ctl DBG_READ
   add_test(NAME sim_vectors

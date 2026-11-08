@@ -164,5 +164,22 @@ $BUILD/tplc-ctl $CTL rollback >/dev/null \
     && grep -q "rollback restored" $WORK/rt.log \
     && ok "rollback restores prior program" || bad "rollback"
 
+# DBG_STALE: rebuild v1 against v2 (drops extra/out_x) and swap; a
+# name the predecessor's symmap held must report -411, while a
+# never-seen name stays -410
+$TPLCC build $WORK/v1.st -o $WORK/v1b.tplc --change-against $WORK/v2.tplc >/dev/null \
+    || bad "v1b change-against compile"
+$BUILD/tplc-ctl $CTL swap $WORK/v1b.tplc >/dev/null || bad "swap to v1b"
+sleep 0.3
+r=$($BUILD/tplc-ctl $CTL resolve extra 2>&1)
+echo "$r" | grep -q "error 411" \
+    && ok "DBG_STALE on swap-vanished symbol" || bad "resolve extra ($r)"
+r=$($BUILD/tplc-ctl $CTL resolve definitely_no_such 2>&1)
+echo "$r" | grep -q "error 410" \
+    && ok "DBG_RESOLVE on never-seen symbol" || bad "resolve nosuch ($r)"
+r=$($BUILD/tplc-ctl $CTL resolve cnt 2>&1)
+echo "$r" | grep -qv "error" \
+    && ok "resolve still works for kept symbol" || bad "resolve cnt ($r)"
+
 echo "== $pass pass, $fail fail"
 [ $fail -eq 0 ]

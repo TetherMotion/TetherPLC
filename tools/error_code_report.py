@@ -38,7 +38,11 @@ SENTINELS = {"TPLC_E_MODULE_MIN", "TPLC_E_MODULE_MAX"}
 NONERROR = {"TPLC_OK"}
 
 EMIT_DIRS = ["runtime", "tools", "compiler"]
-TEST_DIRS = ["tests"]
+# shell/C++ e2e tests plus Rust unit-test dirs (compiler/*/tests) —
+# both legitimately exercise error paths
+TEST_DIRS = ["tests"] + sorted(
+    str(p.relative_to(ROOT))
+    for p in ROOT.glob("compiler/*/tests") if p.is_dir())
 
 
 def declarations():

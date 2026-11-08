@@ -13,8 +13,8 @@ this matrix plus the as-built specs are the v1 acceptance surface.
 | watch/force/write/suspend/step/break ops end-to-end, gated+journaled | `tplc_io_attach` (probe: 26 checks), `authz_audit` (gating+journal), `debug_stress` | green |
 | determinism under max-rated debug load | `debug_stress` flood section (cadence + max_late bounds) | green |
 | boundary consistency: no torn multi-byte watch at 4 kHz | `debug_stress` torn-read sections (400+200 samples) | green |
-| post-swap: re-resolve, alias continuity, vanished→stale | `online_change_e2e` (swap continuity); `DBG_STALE` declared but unemitted — stale-marker path not exercised | gap |
-| flight-recorder: pre-fault cycles in trace snapshot | `fault_injection` + trace ops in `tplc_io_attach` | partial — no induced-fault trace check |
+| post-swap: re-resolve, alias continuity, vanished→stale | `online_change_e2e` (swap continuity + `DBG_STALE` -411 on vanished names vs -410 never-seen) | green |
+| flight-recorder: pre-fault cycles in trace snapshot | `flight_recorder` (induced hang→abort freeze, pre-fault samples readable, ctl live), `fault_injection`, `tplc_io_attach` | green |
 | force semantics cycle-accurate; masked-bit no neighbor disturb | `tplc_io_attach` (force/unforce/overlap), `debug_stress` | green |
 | sim parity for watch/trace | `debug_stress` sim section, `sim_determinism` | green |
 
@@ -27,7 +27,7 @@ this matrix plus the as-built specs are the v1 acceptance surface.
 | all §4 suites in CI with green criteria | ctest registry (25 tests), `.github/workflows/ci.yml` | green |
 | kill -9 + hang + seq-odd fault injection | `fault_injection`, `watchdog_escalation` | green |
 | perf/jitter numbers vs DESIGN-GOALS §6 | `docs/plc/perf-evidence.md` + `tests/perf/evidence.sh` | green |
-| coverage gates + zero uncovered error codes | `docs/plc/error-code-coverage.md` (29/65 test-hit) | gap — ~44% test-hit, "zero gaps" not met |
+| coverage gates + zero uncovered error codes | `error_paths` (induced codes), `docs/plc/error-code-coverage.md` (54/65 test-hit; every emitted code covered except race-only `IMG_EPOCH`) | green — emitted-code coverage complete; declared-not-emitted reservations documented |
 
 ## Doc 15 — Safety & security
 
@@ -82,12 +82,15 @@ swap injects no measurable pause, watchdog trip+escalation verified.
 
 ## Known acceptance gaps (owned, not hidden)
 
-1. `DBG_STALE` path (post-swap stale markers) — code declared, no
-   emit site or test. Either implement or drop the reservation.
-2. Flight-recorder induced-fault trace content — ops tested, fault-
-   triggered capture not asserted.
-3. Error-code "zero gaps" (all declared codes test-exercised) —
-   report exists (`error-code-coverage.md`), coverage ~44%; closing
-   it is test work, not feature work.
+1. ~~`DBG_STALE` path~~ — implemented: `DBG_RESOLVE`/`DBG_WATCH_ADD`
+   emit -411 when a name misses the live symmap but hits the
+   pre-swap map; `online_change_e2e` asserts -411 vs -410.
+2. ~~Flight-recorder induced-fault trace~~ — `flight_recorder`
+   hangs a task past the abort watchdog, asserts the armed ring
+   froze with pre-fault samples and the ctl plane stays live.
+3. ~~Error-code "zero gaps"~~ — `error_paths` induces every
+   reachable code; coverage report at 54/65 with all emitted codes
+   covered except race-only `IMG_EPOCH`; declared-not-emitted
+   reservations documented in `error-code-coverage.md`.
 4. Multi-tenant/cross-instance interference not load-tested
    (threat signoff marks it partial — v1 non-goal).

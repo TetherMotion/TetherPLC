@@ -37,15 +37,17 @@ test-serialization fix.
 
 Still open (acceptance-matrix "Known acceptance gaps"):
 
-1. `TPLC_E_DBG_STALE` — declared, no emit site or test. Implement
-   the post-swap stale-marker path or drop the reservation.
-2. Flight-recorder induced-fault trace — ops tested, fault-triggered
-   capture not asserted.
-3. Error-code coverage — ~44% test-hit vs the "zero gaps" release
-   criterion (`error-code-coverage.md`); test work, not feature work.
+1. ~~`TPLC_E_DBG_STALE`~~ — closed: `DBG_RESOLVE`/`DBG_WATCH_ADD`
+   emit -411 for names removed by the last committed swap;
+   `online_change_e2e` asserts -411 vs -410.
+2. ~~Flight-recorder induced-fault trace~~ — closed: `flight_recorder`
+   induces a hang→abort freeze and reads pre-fault samples.
+3. ~~Error-code coverage~~ — closed: `error_paths` induces every
+   reachable code; 54/65 test-hit, all emitted codes covered except
+   race-only `IMG_EPOCH`; reservations documented.
 4. Multi-tenant/cross-instance interference — not load-tested;
    marked v1 non-goal in the threat-model signoff.
-5. **v1 tag** — cut once 1–3 are closed or explicitly waived.
+5. **v1 tag** — 1–3 closed; ready to cut unless #4 is re-scoped.
 
 ## 3. Definition of done
 

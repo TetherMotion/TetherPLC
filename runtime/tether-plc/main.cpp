@@ -2686,6 +2686,16 @@ int main(int argc, char** argv) {
             ctl.reply(fd, t, w.data(), w.size(), req);
             return;
         }
+        /* a miss that the last swap's predecessor symmap still holds
+           is stale (-411), not merely unknown (-410)               */
+        if (!to_shadow && sdiff.ready) {
+            uint64_t oo; uint32_t ol;
+            if (smap_find_in(sdiff.old_smap, want, &oo, &ol)) {
+                ctl.errorReply(fd, t, TPLC_E_DBG_STALE,
+                               "symbol removed by online change", req);
+                return;
+            }
+        }
         ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
                        "symbol not found", req);
     });
@@ -3572,9 +3582,17 @@ int main(int argc, char** argv) {
                     found = smap_find(path, &off, &l);
                 }
                 if (!found) {
-                    ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
-                                   ("unknown path " + path).c_str(),
-                                   req);
+                    if (!item_shadow && sdiff.ready &&
+                        smap_find_in(sdiff.old_smap, path, &off, &l)) {
+                        ctl.errorReply(fd, t, TPLC_E_DBG_STALE,
+                                       ("path removed by online "
+                                        "change " + path).c_str(),
+                                       req);
+                    } else {
+                        ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                                       ("unknown path " + path)
+                                           .c_str(), req);
+                    }
                     return;
                 }
                 if (l > 64) {
