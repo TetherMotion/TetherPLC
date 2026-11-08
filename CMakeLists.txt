@@ -28,6 +28,7 @@ target_link_libraries(tplc_image PUBLIC rt)
 # ------------------------------------------------------------------ #
 add_library(tplc_host STATIC
   runtime/host/src/Module.cpp
+  runtime/host/src/ElfScan.cpp
   runtime/host/src/Program.cpp
   runtime/host/src/Scheduler.cpp
   runtime/host/src/RetainStore.cpp
@@ -95,6 +96,13 @@ function(add_stub name)
     -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables)
   target_link_options(${name} PRIVATE
     -Wl,--version-script=${STUB_VERSION_SCRIPT} -Wl,-z,defs)
+  # stub .so fixtures model shipped modules: the post-link scanner
+  # (ElfScan) rejects sanitizer-instrumented DT_NEEDED/imports, so
+  # fixtures build un-instrumented even under sanitizer suite builds
+  if(CMAKE_C_FLAGS MATCHES "sanitize")
+    target_compile_options(${name} PRIVATE -fno-sanitize=all)
+    target_link_options(${name} PRIVATE -fno-sanitize=all)
+  endif()
 endfunction()
 
 add_stub(stub_v1)
@@ -130,6 +138,37 @@ target_compile_definitions(ctl_smoke PRIVATE
   STUB_V1_PATH="$<TARGET_FILE:stub_v1>")
 add_dependencies(ctl_smoke tether-plc stub_v1)
 add_test(NAME ctl_smoke COMMAND ctl_smoke)
+
+# post-link scanner fixtures (doc 15 §4.3): evil .so must be rejected,
+# forbidden bytes inside immediates must NOT false-positive
+function(add_scan_fixture name src)
+  add_library(${name} MODULE tests/scan/${src})
+  set_target_properties(${name} PROPERTIES
+    PREFIX "" OUTPUT_NAME "${name}" SUFFIX ".so")
+  target_compile_options(${name} PRIVATE
+    -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables)
+  if(CMAKE_C_FLAGS MATCHES "sanitize")
+    target_compile_options(${name} PRIVATE -fno-sanitize=all)
+    target_link_options(${name} PRIVATE -fno-sanitize=all)
+  endif()
+endfunction()
+
+add_scan_fixture(scan_evil_syscall evil_syscall.c)
+add_scan_fixture(scan_evil_int80   evil_int80.c)
+add_scan_fixture(scan_evil_import  evil_import.c)
+add_scan_fixture(scan_good_imm     good_immediates.c)
+
+add_executable(module_scan tests/scan/module_scan.cpp)
+target_link_libraries(module_scan PRIVATE tplc_host)
+add_dependencies(module_scan scan_evil_syscall scan_evil_int80
+  scan_evil_import scan_good_imm stub_v1 stub_v2)
+add_test(NAME module_scan COMMAND module_scan
+  $<TARGET_FILE:scan_evil_syscall> reject
+  $<TARGET_FILE:scan_evil_int80>   reject
+  $<TARGET_FILE:scan_evil_import>  reject
+  $<TARGET_FILE:scan_good_imm>     ok
+  $<TARGET_FILE:stub_v1>           ok
+  $<TARGET_FILE:stub_v2>           ok)
 
 add_executable(pkg_conformance tests/pkg/pkg_conformance.cpp)
 target_link_libraries(pkg_conformance PRIVATE tplc_pkg)

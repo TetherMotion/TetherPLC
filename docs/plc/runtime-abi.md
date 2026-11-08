@@ -9,7 +9,18 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
   pinned), full return-code space, ctx/task/migrate contexts, `abort_flag` +
   `budget_deadline_ns` for cooperative checkpoints.
 - `runtime/host/` — C++17 host library:
-  - `Module` — `dlopen(RTLD_NOW|RTLD_LOCAL)`, resolves the symbol table,
+  - `Module` — post-link scan (`ElfScan`, doc 15 §4.3) then
+    `dlopen(RTLD_NOW|RTLD_LOCAL)`. The scanner rejects
+    (`TPLC_E_PKG_SYSCALL`, -216) any module with kernel-gate opcodes
+    (syscall/sysenter/sysret/sysexit/int/into/int1 on x86-64,
+    svc on aarch64) at instruction boundaries inside executable
+    sections, RWX segments, an executable stack, PT_INTERP, a
+    DT_NEEDED outside the libc/libm/rt whitelist, or an undefined
+    dynsym import outside the libc/libm/abort surface. x86-64 code is
+    decoded at STT_FUNC symbol boundaries with a minimal length
+    decoder so forbidden byte patterns inside immediates do not
+    false-positive; bytes outside symbols are scanned literally.
+    Then `dlopen`, resolves the symbol table,
     validates descriptor (size, abi_version, caps `abi_ext ⊆ host_caps`,
     task-table sanity, retain range, name termination), `has_migrate` flag
     ↔ symbol consistency.

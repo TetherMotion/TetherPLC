@@ -64,6 +64,7 @@
 #define TPLC_E_PKG_ABI_MISMATCH    (-213) /* doc's ABI_MISMATCH; abi.h owns -64 */
 #define TPLC_E_REQUIRES_UNMET      (-214)
 #define TPLC_E_PKG_SECTION_FORMAT  (-215) /* impl addition: malformed payload */
+#define TPLC_E_PKG_SYSCALL         (-216) /* doc 15 §9: post-link scanner reject */
 
 /* on-wire structures for readers that want them (packed, LE) */
 #pragma pack(push, 1)

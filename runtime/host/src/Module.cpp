@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
 #include <tplc/host/Module.hpp>
+#include <tplc/host/ElfScan.hpp>
 
 #include <dlfcn.h>
 #include <cstring>
@@ -37,6 +38,11 @@ static void* req_sym(void* h, const char* name, Status& st) {
 }
 
 Result<Module> Module::open(const std::string& path, uint32_t host_caps) {
+    /* post-link scanner first (doc 15 §4.3): never dlopen bytes that
+       carry kernel-gate opcodes or violate segment/library policy */
+    Status sst = scanModuleFile(path);
+    if (!sst.ok()) return Result<Module>::Err(sst);
+
     Module m;
     void* h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!h)
