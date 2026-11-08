@@ -6,9 +6,15 @@
  *
  * step-file line format:
  *   step <idx> time=<ns> [in <off>=<hex>[,<hex>..]] [expect <off>=<hex>..]
+ *              [expectf <blob_off>=<hex>..]
+ *   `expect` compares process-image %Q bytes; `expectf` reads back
+ *   program-blob bytes through the ctl channel (DBG_READ), so field
+ *   expectations like timer ET/CV values can be checked. expectf
+ *   requires --ctl to point at a real socket path.
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
 #include <tplc/tplc_image.h>
+#include "../../tools/ctl_client.h"
 
 #include <csignal>
 #include <cstdio>
@@ -29,10 +35,30 @@ static uint64_t mono_ns() {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
+/* one ctl round-trip: send `type` with `plen` bytes, skip pushed
+   event frames, return reply length or -1 on error. rbuf/rcap hold
+   the reply payload.                                                    */
+static int ctl_call(int fd, uint16_t type, const void* pl, uint32_t plen,
+                    uint8_t* rbuf, uint32_t rcap) {
+    if (ctl_send(fd, type, pl, plen) != 0) return -1;
+    for (int tr = 0; tr < 8; tr++) {
+        uint32_t len = rcap;
+        uint16_t fl = 0;
+        uint64_t req = 0;
+        int t = ctl_recv(fd, rbuf, &len, &fl, &req);
+        if (t < 0) return -1;
+        if (t == type && !(fl & TPLC_CTL_F_ERROR))
+            return (int)len;
+        if (fl & TPLC_CTL_F_ERROR) return -2;
+    }
+    return -1;
+}
+
 struct Step {
     uint32_t idx = 0;
     uint64_t time_ns = 0;
-    std::vector<std::pair<uint32_t,std::vector<uint8_t>>> in, expect;
+    std::vector<std::pair<uint32_t,std::vector<uint8_t>>> in, expect,
+                                                          expectf;
 };
 
 static bool hex_bytes(const std::string& s, std::vector<uint8_t>& out) {
@@ -70,8 +96,7 @@ static bool parse_steps(const std::string& path,
             std::string& w2 = t[i];
             if (w2.compare(0, 5, "time=") == 0) {
                 cur.time_ns = strtoull(w2.c_str() + 5, 0, 0);
-            } else if (w2 == "in" || w2 == "expect") {
-                bool exp = w2 == "expect";
+            } else if (w2 == "in" || w2 == "expect" || w2 == "expectf") {
                 if (i + 1 >= t.size()) return false;
                 std::string spec = t[++i];
                 size_t eq = spec.find('=');
@@ -82,7 +107,9 @@ static bool parse_steps(const std::string& path,
                     fprintf(stderr, "line %u: bad hex\n", ln);
                     return false;
                 }
-                (exp ? cur.expect : cur.in).push_back({off, bytes});
+                auto& dst = w2 == "in" ? cur.in
+                          : w2 == "expect" ? cur.expect : cur.expectf;
+                dst.push_back({off, bytes});
             }
         }
     }
@@ -97,6 +124,7 @@ int main(int argc, char** argv) {
     int wait_running_ms = 5000;
     int hold_ms = 0;
     int settle_ms = 0;
+    int scan_mode = 0;   /* --scan: one ctl TASK_STEP per step      */
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if      (a == "--image")  image_path = argv[++i];
@@ -106,12 +134,14 @@ int main(int argc, char** argv) {
         else if (a == "--ctl")    ctl_path    = argv[++i];
         else if (a == "--hold-ms") hold_ms    = atoi(argv[++i]);
         else if (a == "--settle-ms") settle_ms = atoi(argv[++i]);
+        else if (a == "--scan")   scan_mode  = 1;
         else if (a == "--in")     in_size     = (uint32_t)strtoul(argv[++i],0,0);
         else if (a == "--out")    out_size    = (uint32_t)strtoul(argv[++i],0,0);
         else if (a == "--help" || a == "-h") {
             fprintf(stderr,
                 "usage: %s --image X --package P --steps F "
-                "[--plc PATH] [--ctl PATH] [--in N] [--out N]\n",
+                "[--plc PATH] [--ctl PATH] [--in N] [--out N] "
+                "[--scan] [--settle-ms N] [--hold-ms N]\n",
                 argv[0]);
             return 0;
         }
@@ -172,6 +202,32 @@ int main(int argc, char** argv) {
 
     {
         uint32_t divergent = 0;
+        int ctl_fd = -1;   /* lazy ctl connection for expectf/scan */
+        auto ctl_ensure = [&]() -> int {
+            if (ctl_fd < 0 && ctl_path != "none") {
+                ctl_fd = ctl_connect(ctl_path.c_str(), 3000);
+                if (ctl_fd >= 0 &&
+                    ctl_hello(ctl_fd, "tether-plc-sim") != 0) {
+                    close(ctl_fd);
+                    ctl_fd = -1;
+                }
+            }
+            return ctl_fd;
+        };
+        /* scan mode: hold task 0, then each step runs exactly one
+           scan via TASK_STEP — cycle-per-step semantics matching
+           the oracle vectors (L1 interp) on the real runtime     */
+        if (scan_mode) {
+            uint8_t rb[64];
+            uint32_t idx = 0;
+            if (ctl_ensure() < 0 ||
+                ctl_call(ctl_fd, TPLC_OP_TASK_SUSPEND, &idx, 4,
+                         rb, sizeof rb) < 0) {
+                fprintf(stderr, "sim: --scan needs a live ctl "
+                        "socket and a suspendable task\n");
+                goto out;
+            }
+        }
         std::vector<uint8_t> obuf(out_size);
         for (auto& s : steps) {
             if (g_stop) break;
@@ -181,6 +237,19 @@ int main(int argc, char** argv) {
             for (auto& [off, bytes] : s.in)
                 tplc_image_write_inputs(&img, bytes.data(), off,
                                         (uint32_t)bytes.size());
+            if (scan_mode) {
+                uint8_t rq[8], rb[64];
+                uint32_t zero = 0, one = 1;
+                memcpy(rq, &zero, 4);
+                memcpy(rq + 4, &one, 4);
+                if (ctl_call(ctl_fd, TPLC_OP_TASK_STEP, rq, sizeof rq,
+                             rb, sizeof rb) < 0) {
+                    fprintf(stderr, "step %u: TASK_STEP failed\n",
+                            s.idx);
+                    divergent++;
+                    continue;
+                }
+            }
             /* wait for the plc to commit at least one new scan */
             uint64_t wt = mono_ns();
             while (tplc_img_load_u64(&img.hdr->out_seq) == seq0 &&
@@ -209,6 +278,40 @@ int main(int argc, char** argv) {
                     fprintf(stderr, "\n");
                 }
             }
+            /* blob-field expectations via ctl DBG_READ */
+            if (!s.expectf.empty()) {
+                if (ctl_ensure() < 0) {
+                    fprintf(stderr, "step %u: expectf needs a live "
+                                    "ctl socket (--ctl)\n", s.idx);
+                    divergent += (uint32_t)s.expectf.size();
+                } else {
+                    for (auto& [off, exp] : s.expectf) {
+                        uint8_t rq[12], rb[4096];
+                        uint64_t off64 = off;
+                        uint32_t rl = (uint32_t)exp.size();
+                        memcpy(rq, &off64, 8);
+                        memcpy(rq + 8, &rl, 4);
+                        int blen = ctl_call(ctl_fd, TPLC_OP_DBG_READ,
+                                            rq, sizeof rq, rb,
+                                            sizeof rb);
+                        if (blen == (int)exp.size() &&
+                            memcmp(rb, exp.data(), exp.size()) == 0)
+                            continue;
+                        divergent++;
+                        fprintf(stderr, "step %u: DIVERGENT field[%u] "
+                                        "expected ", s.idx, off);
+                        for (auto b : exp) fprintf(stderr, "%02x", b);
+                        fprintf(stderr, " got ");
+                        if (blen > 0)
+                            for (int k = 0;
+                                 k < blen && k < (int)exp.size(); k++)
+                                fprintf(stderr, "%02x", rb[k]);
+                        else
+                            fprintf(stderr, "<dbg-read rc=%d>", blen);
+                        fprintf(stderr, "\n");
+                    }
+                }
+            }
             int st;
             if (waitpid(pid, &st, WNOHANG) == pid) {
                 fprintf(stderr, "step %u: plc died\n", s.idx);
@@ -226,6 +329,7 @@ int main(int argc, char** argv) {
         /* keep the plc alive so external ctl clients can inspect
            the frozen post-scenario state (debug-plane parity) */
         if (hold_ms > 0) usleep((useconds_t)hold_ms * 1000);
+        if (ctl_fd >= 0) close(ctl_fd);
     }
 
 out:

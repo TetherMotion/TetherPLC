@@ -177,4 +177,13 @@ if(NOT CMAKE_CROSSCOMPILING)
       bash ${CMAKE_SOURCE_DIR}/tests/debug/stress.sh)
   set_tests_properties(debug_stress PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+  # sim vectors (doc 14 §3.1): replay the oracle corpus through
+  # tether-plc-sim incl. named field expectations via ctl DBG_READ
+  add_test(NAME sim_vectors
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      python3 ${CMAKE_SOURCE_DIR}/tests/sim/vector_run.py)
+  set_tests_properties(sim_vectors PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 180)
 endif()
