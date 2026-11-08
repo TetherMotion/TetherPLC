@@ -207,7 +207,9 @@ int main(int argc, char** argv) {
             "|resolve NAME|dbg-state|dbg-read OFF LEN"
             "|dbg-write OFF HEX|force OFF HEX|force-list"
             "|force-clear [H|all]|break T OFF LEN CMP V"
-            "|break-list|break-clear [H|all]\n", argv[0]);
+            "|break-list|break-clear [H|all]"
+            "|trace OFF:LEN..|trace-status|trace-read [SEQ [N]]"
+            "|trace-clear\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -403,6 +405,38 @@ int main(int argc, char** argv) {
         memcpy(pre, &h, 4);
         pre_len = 4;
     }
+    /* trace OFF:LEN [OFF:LEN...]; up to 8 channels, len ≤ 8 each */
+    else if (!strcmp(cmd, "trace")) {
+        int nch = argc - 3;
+        if (nch > 8) { fprintf(stderr, "max 8 channels\n"); return 2; }
+        op = TPLC_OP_TRACE_CONF;
+        memset(pre, 0, 8);
+        uint32_t u = (uint32_t)nch; memcpy(pre, &u, 4);
+        uint8_t* q = pre + 8;
+        for (int i = 0; i < nch; i++) {
+            uint64_t off; uint32_t l;
+            if (sscanf(argv[3 + i], "%llu:%u",
+                       (unsigned long long*)&off, &l) != 2 ||
+                l == 0 || l > 8) {
+                fprintf(stderr, "bad channel %s (want OFF:LEN, "
+                        "len 1..8)\n", argv[3 + i]);
+                return 2;
+            }
+            memcpy(q, &off, 8); memcpy(q + 8, &l, 4);
+            q += 16;
+        }
+        pre_len = (uint32_t)(q - pre);
+    }
+    else if (!strcmp(cmd, "trace-status")) op = TPLC_OP_TRACE_STATUS;
+    else if (!strcmp(cmd, "trace-read")) {
+        op = TPLC_OP_TRACE_READ;
+        uint64_t from = arg ? strtoull(arg, NULL, 0) : 0;
+        uint32_t mx = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0)
+                                 : 512;
+        memcpy(pre, &from, 8); memcpy(pre + 8, &mx, 4);
+        pre_len = 12;
+    }
+    else if (!strcmp(cmd, "trace-clear")) op = TPLC_OP_TRACE_CLEAR;
     else { fprintf(stderr, "unknown cmd %s\n", cmd); return 2; }
 
     int fd = ctl_connect(sock, 3000);
@@ -587,6 +621,44 @@ int main(int argc, char** argv) {
                 printf("%02x", q[b]);
             q += l;
             printf("\n");
+        }
+    }
+    else if (op == TPLC_OP_TRACE_CONF) {
+        if (len >= 4) {
+            uint32_t fl; memcpy(&fl, pl, 4);
+            printf("trace armed  frame %u B\n", fl);
+        }
+    }
+    else if (op == TPLC_OP_TRACE_STATUS) {
+        if (len >= 24) {
+            uint32_t nch, fl; uint64_t wr, av;
+            memcpy(&nch, pl, 4); memcpy(&fl, pl + 4, 4);
+            memcpy(&wr, pl + 8, 8); memcpy(&av, pl + 16, 8);
+            printf("trace  ch %u  frame %u B  written %lu  "
+                   "avail %lu\n", nch, fl, (unsigned long)wr,
+                   (unsigned long)av);
+        }
+    }
+    else if (op == TPLC_OP_TRACE_READ) {
+        if (len < 16) { puts("(short payload)"); }
+        else {
+            const uint8_t* q = pl;
+            uint64_t first; uint32_t n, fl;
+            memcpy(&first, q, 8); memcpy(&n, q + 8, 4);
+            memcpy(&fl, q + 12, 4); q += 16;
+            printf("first seq %lu  frames %u  frame %u B\n",
+                   (unsigned long)first, n, fl);
+            for (uint32_t i = 0; i < n; i++) {
+                uint64_t s, ts;
+                memcpy(&s, q, 8); memcpy(&ts, q + 8, 8);
+                q += 16;
+                printf("  #%lu t=%lu  ", (unsigned long)s,
+                       (unsigned long)ts);
+                for (uint32_t b = 0; b < fl; b++)
+                    printf("%02x", q[b]);
+                q += fl;
+                printf("\n");
+            }
         }
     }
     else if (op == TPLC_OP_PING && len >= 8) {

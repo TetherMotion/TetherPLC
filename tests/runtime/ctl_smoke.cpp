@@ -178,6 +178,8 @@ int main(void) {
     }
     /* stub module loads without a package: no SMAP → resolve fails
        with DBG_STATE, but blob extents still answer               */
+    uint64_t blob_sz = 0;
+    uint32_t l = 1;
     {
         uint8_t nm[8]; uint16_t nl = 4;
         memcpy(nm, &nl, 2); memcpy(nm + 2, "stub", 4);
@@ -192,6 +194,86 @@ int main(void) {
         uint32_t sc;
         memcpy(&sc, resp + 40, 4);
         CHECK_EQ(sc, 0u);                   /* no symbols */
+        memcpy(&blob_sz, resp + 16, 8);
+    }
+
+    /* flight recorder (doc 12 §7): arm a blob channel, frames accrue
+       per scan while work runs, freeze only when every task is
+       suspended, reads page by seq, clear disarms                 */
+    {
+        uint8_t cf[24] = {};
+        uint32_t nch = 1; memcpy(cf, &nch, 4);
+        l = blob_sz >= 4 ? 4 : 1;
+        memcpy(cf + 16, &l, 4);
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_TRACE_CONF, cf, 24,
+                        resp, &rlen, &fl), TPLC_OP_TRACE_CONF);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        uint32_t flen = 0; memcpy(&flen, resp, 4);
+        CHECK_EQ(flen, l);
+    }
+    usleep(80 * 1000);
+    {
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_TRACE_STATUS, nullptr, 0,
+                        resp, &rlen, &fl), TPLC_OP_TRACE_STATUS);
+        CHECK_EQ(rlen, 24u);
+        uint64_t w, a;
+        memcpy(&w, resp + 8, 8); memcpy(&a, resp + 16, 8);
+        CHECK(w > 0);
+        CHECK_EQ(a, w);
+        uint8_t rd[12] = {};
+        uint32_t mx = 4; memcpy(rd + 8, &mx, 4);
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_TRACE_READ, rd, 12,
+                        resp, &rlen, &fl), TPLC_OP_TRACE_READ);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        uint32_t n, flen;
+        memcpy(&n, resp + 8, 4); memcpy(&flen, resp + 12, 4);
+        CHECK(n > 0);
+        CHECK(n <= 4u);
+        CHECK_EQ(flen, l);
+        /* frame = {u64 seq, u64 ts, u8 data[flen]}; seq ascending */
+        CHECK_EQ(rlen, 16 + n * (16 + flen));
+        uint64_t s0, s1;
+        memcpy(&s0, resp + 16, 8);
+        if (n > 1) {
+            memcpy(&s1, resp + 16 + 16 + flen, 8);
+            CHECK(s1 > s0);
+        }
+    }
+    /* both tasks suspended → no scan runs work → frames freeze */
+    {
+        uint32_t t0 = 0, t1 = 1;
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TASK_SUSPEND, &t0, 4, resp, &rlen, &fl);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TASK_SUSPEND, &t1, 4, resp, &rlen, &fl);
+        usleep(60 * 1000);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TRACE_STATUS, nullptr, 0, resp, &rlen, &fl);
+        uint64_t w1; memcpy(&w1, resp + 8, 8);
+        usleep(60 * 1000);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TRACE_STATUS, nullptr, 0, resp, &rlen, &fl);
+        uint64_t w2; memcpy(&w2, resp + 8, 8);
+        CHECK_EQ(w2, w1);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TASK_RESUME, &t0, 4, resp, &rlen, &fl);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TASK_RESUME, &t1, 4, resp, &rlen, &fl);
+    }
+    /* clear disarms: subsequent reads are a state error */
+    {
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_TRACE_CLEAR, nullptr, 0,
+                        resp, &rlen, &fl), TPLC_OP_TRACE_CLEAR);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        uint8_t rd[12] = {};
+        uint32_t mx = 4; memcpy(rd + 8, &mx, 4);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_TRACE_READ, rd, 12, resp, &rlen, &fl);
+        CHECK(fl & TPLC_CTL_F_ERROR);
     }
 
     /* heartbeats: plc side is ticking */

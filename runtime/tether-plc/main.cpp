@@ -442,6 +442,16 @@ int main(int argc, char** argv) {
     std::vector<Break>               breaks;
     uint32_t                         next_break_h = 1;
     static const size_t              MAX_BREAKS = 32;
+    /* flight recorder (doc 12 §7): fixed-capacity ring of per-scan
+       samples — one frame per scan that ran ≥1 task, seq-numbered
+       so ring wrap shows as a gap rather than silent loss         */
+    struct TraceCh { uint64_t off; uint32_t len; };
+    struct TraceFrame { uint64_t seq; uint64_t ts; uint8_t data[64]; };
+    std::vector<TraceCh>             trace_ch;
+    std::vector<TraceFrame>          trace_ring;
+    uint64_t                         trace_wr = 0;  /* frames written */
+    static const size_t              TRACE_CAP = 4096;
+    static const size_t              MAX_TRACE_CH = 8;
     /* online-change quarantine (doc 08 §7): the swapped-out program
        + module stay live for quarantine_cycles scans so rollback is
        a pointer swap back to untouched pre-swap state              */
@@ -467,6 +477,9 @@ int main(int argc, char** argv) {
         next_force_h = 1;
         breaks.clear();
         next_break_h = 1;
+        trace_ch.clear();
+        trace_ring.clear();
+        trace_wr = 0;
         d = TplcProgramDescriptor{};
         prog_started = false;
     };
@@ -528,6 +541,9 @@ int main(int argc, char** argv) {
         std::swap(pkg_smap, quar.smap);
         forces.clear();   /* blob identity changed — forces stale */
         breaks.clear();
+        trace_ch.clear();
+        trace_ring.clear();
+        trace_wr = 0;
         sched.addProgram(*prog);
         d = mod->descriptor();
         if (retain) {
@@ -1094,6 +1110,9 @@ int main(int argc, char** argv) {
         quar.smap = std::move(pkg_smap);
         forces.clear();   /* new blob layout — overrides are stale */
         breaks.clear();
+        trace_ch.clear();
+        trace_ring.clear();
+        trace_wr = 0;
         quar.cycles_left = quarantine_cycles;
         mod = std::make_unique<tplc::Module>(std::move(nmod));
         /* rebind: Program::create captured &nmod — retarget the new
@@ -1626,6 +1645,119 @@ int main(int argc, char** argv) {
                        "no such break", req);
     });
 
+    /* flight recorder (doc 12 §7) — see enum block for the wire
+       shapes. CONF validates all channels before arming; a bad set
+       leaves the previous config untouched.                        */
+    ctl.on(TPLC_OP_TRACE_CONF, [&](int fd, uint16_t t,
+                                   const uint8_t* p, uint32_t n,
+                                   uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n < 8 || (n - 8) % 16 != 0) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 n_ch, u32 pad, {u64 off, u32 len, "
+                           "u32 pad}*}", req);
+            return;
+        }
+        uint32_t nch; memcpy(&nch, p, 4);
+        if (nch > MAX_TRACE_CH || n != 8 + nch * 16) {
+            ctl.errorReply(fd, t, TPLC_E_TRACE_CONFIG,
+                           "channel count/frame shape", req);
+            return;
+        }
+        std::vector<TraceCh> chs;
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < nch; i++) {
+            uint64_t off; uint32_t len;
+            memcpy(&off, p + 8 + i * 16, 8);
+            memcpy(&len, p + 8 + i * 16 + 8, 4);
+            if (len == 0 || len > 8 ||
+                off > prog->blobSize() ||
+                len > prog->blobSize() - off) {
+                ctl.errorReply(fd, t, TPLC_E_TRACE_CONFIG,
+                               "channel range outside blob", req);
+                return;
+            }
+            total += len;
+            if (total > 64) {
+                ctl.errorReply(fd, t, TPLC_E_TRACE_CONFIG,
+                               "frame > 64B", req);
+                return;
+            }
+            chs.push_back({off, len});
+        }
+        trace_ch = std::move(chs);
+        trace_ring.clear();
+        trace_wr = 0;
+        tplc::CtlServer::W w;
+        w.u32(total);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_TRACE_STATUS, [&](int fd, uint16_t t,
+                                     const uint8_t*, uint32_t,
+                                     uint64_t req) {
+        uint32_t fl = 0;
+        for (auto& c : trace_ch) fl += c.len;
+        tplc::CtlServer::W w;
+        w.u32((uint32_t)trace_ch.size());
+        w.u32(fl);
+        w.u64(trace_wr);
+        w.u64((uint64_t)trace_ring.size());
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_TRACE_READ, [&](int fd, uint16_t t,
+                                   const uint8_t* p, uint32_t n,
+                                   uint64_t req) {
+        if (n != 12) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u64 from_seq, u32 max}", req);
+            return;
+        }
+        if (trace_ring.empty() && trace_ch.empty()) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "no trace armed", req);
+            return;
+        }
+        uint64_t from; uint32_t mx;
+        memcpy(&from, p, 8);
+        memcpy(&mx, p + 8, 4);
+        uint64_t oldest = trace_wr - trace_ring.size();
+        uint64_t first = from > oldest ? from : oldest;
+        if (first > trace_wr) first = trace_wr;
+        uint64_t avail = trace_wr - first;
+        uint32_t n_out = (uint32_t)(avail < (uint64_t)mx ? avail : mx);
+        if (n_out > 512) n_out = 512;
+        uint32_t fl = 0;
+        for (auto& c : trace_ch) fl += c.len;
+        tplc::CtlServer::W w;
+        w.u64(first);
+        w.u32(n_out);
+        w.u32(fl);
+        for (uint32_t i = 0; i < n_out; i++) {
+            const TraceFrame& f =
+                trace_ring[(first + i) % TRACE_CAP];
+            w.u64(f.seq);
+            w.u64(f.ts);
+            w.bytes(f.data, fl);
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_TRACE_CLEAR, [&](int fd, uint16_t t,
+                                    const uint8_t*, uint32_t n,
+                                    uint64_t req) {
+        if (n != 0) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD, "{}", req);
+            return;
+        }
+        trace_ch.clear();
+        trace_ring.clear();
+        trace_wr = 0;
+        ctl.replyEmpty(fd, t, req);
+    });
+
     /* ---------------- deploy group (doc 04 §I.1 0x0200) ---------- */
     DeployUpload up;
     ctl.on(TPLC_OP_DEPLOY_BEGIN, [&](int fd, uint16_t t,
@@ -1929,12 +2061,29 @@ int main(int argc, char** argv) {
             (mst == TPLC_IMG_MASTER_RUN ||
              mst == TPLC_IMG_MASTER_DEGRADED ||
              mst == TPLC_IMG_MASTER_INIT)) {
-            sched.tick(now, hooks);
+            size_t ran = sched.tick(now, hooks);
             /* re-assert overrides at the boundary: internals and
                shadows hold the forced value for observers too      */
             if (!forces.empty()) stamp_forces(0);
             /* breaks see post-force state — the effective value    */
             if (!breaks.empty()) eval_breaks();
+            /* flight recorder: one frame per scan that ran work —
+               post-force, post-break state; bounded 64B copy      */
+            if (ran > 0 && !trace_ch.empty() && prog) {
+                TraceFrame f;
+                f.seq = trace_wr;
+                f.ts = now;
+                uint8_t* dp = f.data;
+                for (auto& c : trace_ch) {
+                    memcpy(dp, prog->blob() + c.off, c.len);
+                    dp += c.len;
+                }
+                if (trace_ring.size() < TRACE_CAP)
+                    trace_ring.push_back(f);
+                else
+                    trace_ring[trace_wr % TRACE_CAP] = f;
+                trace_wr++;
+            }
             progress.fetch_add(1);
             /* quarantine window: N scans after commit the old module
                is released — doc 08 §7 (drop order: Program first)  */

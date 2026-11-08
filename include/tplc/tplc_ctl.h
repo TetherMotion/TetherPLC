@@ -73,6 +73,21 @@ enum TplcCtlOp {
     TPLC_OP_DBG_BREAK      = 0x0508,
     TPLC_OP_DBG_BREAK_LIST = 0x0509,  /* → {u32 n, entries}         */
     TPLC_OP_DBG_BREAK_CLEAR= 0x050A,  /* {u32 handle} 0xFF..=all    */
+    /* flight recorder (doc 12 §7): fixed 4096-entry ring of per-scan
+       channel samples. One frame per scan that ran ≥1 task; frames
+       carry a seq so a wrapped ring shows as a gap, never silent
+       loss.
+       CONF:   {u32 n_ch, u32 pad, {u64 off, u32 len, u32 pad}*}
+               n_ch ≤ 8, per-ch len ≤ 8, Σlen ≤ 64 → {u32 frame_len};
+               n_ch = 0 disarms
+       STATUS: → {u32 n_ch, u32 frame_len, u64 written, u64 avail}
+       READ:   {u64 from_seq, u32 max} → {u64 first_seq, u32 n,
+               u32 frame_len, {u64 seq, u64 ts, u8 data[f..]}*}
+       CLEAR:  {} — disarm and drop the ring                        */
+    TPLC_OP_TRACE_CONF     = 0x050B,
+    TPLC_OP_TRACE_STATUS   = 0x050C,
+    TPLC_OP_TRACE_READ     = 0x050D,
+    TPLC_OP_TRACE_CLEAR    = 0x050E,
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,
