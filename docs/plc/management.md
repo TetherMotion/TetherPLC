@@ -5,6 +5,10 @@
 > (`docs/plc/tether-io-attach.md`). A CANopen object-dictionary
 > endpoint remains declared iteration-2 (doc 16 §7) — the state model
 > and op surface below are what those adapters must expose.
+>
+> `doc 16`/`doc 15` section references below are provenance to the
+> retired plan chapters; this document is authoritative (see
+> `architecture.md` §7).
 
 ## State model (doc 16 §2 mapping)
 

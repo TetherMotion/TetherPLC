@@ -1,9 +1,10 @@
 # Acceptance matrix
 
-Chapter acceptance criteria → covering test(s) → status. The
-surviving plan chapters (12, 14, 15, 16) plus DESIGN-GOALS §6 are
-the v1 acceptance surface; chapters 00–11 were retired when their
-as-built docs landed. Status reflects ctest state on main.
+Acceptance criteria → covering test(s) → status. All plan chapters
+(01–16, 19) are retired; the criteria they carried now live here —
+this matrix plus the as-built specs are the v1 acceptance surface.
+"Doc NN" headings are provenance labels for the retired chapters
+(see `architecture.md` §7). Status reflects ctest state on main.
 
 ## Doc 12 — Debug & observability
 
@@ -26,7 +27,7 @@ as-built docs landed. Status reflects ctest state on main.
 | all §4 suites in CI with green criteria | ctest registry (25 tests), `.github/workflows/ci.yml` | green |
 | kill -9 + hang + seq-odd fault injection | `fault_injection`, `watchdog_escalation` | green |
 | perf/jitter numbers vs DESIGN-GOALS §6 | `docs/plc/perf-evidence.md` + `tests/perf/evidence.sh` | green |
-| coverage gates + error-code coverage zero gaps | `docs/plc/error-code-coverage.md` (29/65 test-hit) | gap — ~40% documented, "zero gaps" not met |
+| coverage gates + zero uncovered error codes | `docs/plc/error-code-coverage.md` (29/65 test-hit) | gap — ~44% test-hit, "zero gaps" not met |
 
 ## Doc 15 — Safety & security
 
@@ -56,7 +57,7 @@ as-built docs landed. Status reflects ctest state on main.
 See `docs/plc/perf-evidence.md` — cadence targets met at 1 kHz/4 kHz,
 swap injects no measurable pause, watchdog trip+escalation verified.
 
-## Doc 19 — Shadow run
+## Doc 19 — Shadow run (retired — spec: `shadow-run.md`)
 
 | criterion | covering test | status |
 |---|---|---|
@@ -69,15 +70,15 @@ swap injects no measurable pause, watchdog trip+escalation verified.
 | epoch/events on promote | `shadow_e2e` (epoch reply) + `tplc_io_attach` (catalog epoch follows mgmt epoch) | green |
 | gating: observer 401 on mutating ops | `shadow_e2e` observer section | green |
 | lifecycle: stop/swap/unload/prepare drops; stopped-load → -501 | `shadow_e2e` (swap drop, stopped refusal, drop journal) | green |
-| bit-identical `%Q` vs solo run (§7.1) | `shadow_bitidentical` (solo vs shadowed `--dump-q` traces, 10 steps byte-identical) | green |
-| sim parity L1/L2 (§7.10) | `sim_shadow` (L1 `shadow` vector key + L2 `--shadow`/directives; deterministic via `--stopped`) | green |
-| UI flow (§7.11) | TetherWebUI shadow card: deploy-as-shadow, diff table, `SHADOW.` watch/read, confirm-with-summary promote, drop/reset | green |
+| bit-identical `%Q` vs solo run | `shadow_bitidentical` (solo vs shadowed `--dump-q` traces, 10 steps byte-identical) | green |
+| sim parity L1/L2 | `sim_shadow` (L1 `shadow` vector key + L2 `--shadow`/directives; deterministic via `--stopped`) | green |
+| UI flow | TetherWebUI shadow card: deploy-as-shadow, diff table, `SHADOW.` watch/read, confirm-with-summary promote, drop/reset | green |
 
 ## Pending chapters (not yet implemented — spec exists)
 
 | chapter | scope |
 |---|---|
-| `plan/18-mcu-path` | no-dlopen MCU targets — designed-for material, v1 ships none |
+| `plan/18-mcu-path` | no-`dlopen` MCU targets — designed-for material, v1 ships none |
 
 ## Known acceptance gaps (owned, not hidden)
 
@@ -85,8 +86,8 @@ swap injects no measurable pause, watchdog trip+escalation verified.
    emit site or test. Either implement or drop the reservation.
 2. Flight-recorder induced-fault trace content — ops tested, fault-
    triggered capture not asserted.
-3. Error-code "zero gaps" (doc 14 §10.6) — report exists
-   (`error-code-coverage.md`), coverage ~44%; closing it is test
-   work, not feature work.
+3. Error-code "zero gaps" (all declared codes test-exercised) —
+   report exists (`error-code-coverage.md`), coverage ~44%; closing
+   it is test work, not feature work.
 4. Multi-tenant/cross-instance interference not load-tested
    (threat signoff marks it partial — v1 non-goal).
