@@ -225,6 +225,35 @@ target_compile_definitions(abi_conformance PRIVATE
 add_dependencies(abi_conformance stub_v1 stub_v2 stub_bad_abi)
 add_test(NAME abi_conformance COMMAND abi_conformance)
 
+# MCU static-link shim (plan/18-mcu-path.md §7 crit 3): both module
+# images linked into one host binary — no dlopen, no ELF parsing, no
+# files, no mmap, no threads. ABI symbols are macro-renamed per
+# version so two modules coexist and resolve through a static table.
+set(SHIM_ABI_SYMS abi_version get_descriptor init shutdown
+    task_run migrate)
+function(add_shim_module name ver)
+  set(defs -DTPLC_STUB_V=${ver})
+  foreach(s ${SHIM_ABI_SYMS})
+    list(APPEND defs "-Dtplc_${s}=tplc_${name}_${s}")
+  endforeach()
+  add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_shim.o
+    COMMAND ${CMAKE_C_COMPILER} ${defs}
+            -I${CMAKE_SOURCE_DIR}/include -I${CMAKE_SOURCE_DIR}/tests/abi
+            -O2 -fno-exceptions -c ${CMAKE_SOURCE_DIR}/tests/abi/stub_module.c
+            -o ${CMAKE_CURRENT_BINARY_DIR}/${name}_shim.o
+    DEPENDS ${CMAKE_SOURCE_DIR}/tests/abi/stub_module.c)
+endfunction()
+add_shim_module(v1 1)
+add_shim_module(v2 2)
+add_executable(mcu_shim_host tests/abi/mcu_shim_host.c
+  ${CMAKE_CURRENT_BINARY_DIR}/v1_shim.o
+  ${CMAKE_CURRENT_BINARY_DIR}/v2_shim.o)
+target_include_directories(mcu_shim_host PRIVATE include tests/abi)
+add_test(NAME mcu_shim
+  COMMAND bash ${CMAKE_SOURCE_DIR}/tests/abi/mcu_shim.sh
+          $<TARGET_FILE:mcu_shim_host>)
+
 add_executable(ctl_smoke tests/runtime/ctl_smoke.cpp)
 target_include_directories(ctl_smoke PRIVATE tests tools)
 target_link_libraries(ctl_smoke PRIVATE tplc_host tplc_image)

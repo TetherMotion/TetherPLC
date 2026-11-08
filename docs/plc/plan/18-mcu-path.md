@@ -140,4 +140,10 @@ A no_std-ish embeddable runtime crate/C-lib implementing:
    subset (init/cycle/migrate) in <N KB RAM.
 3. The MCU-shim conformance host (runtime-abi.md §11.7) stays green — ABI
    never regressed toward Linux-only assumptions.
+   **Landed:** `tests/abi/mcu_shim_host.c` + ctest `mcu_shim` — both
+   module images statically linked, resolved through a function
+   table, run init/cycle/abort/relocate/migrate on static buffers;
+   the gate also asserts the binary imports no
+   dlopen/dlsym/mmap/files/threads symbols. Still open here: a
+   cross-compiled (Cortex-M) build of the same host.
 4. Image semantics demonstrated over a non-SHM transport.

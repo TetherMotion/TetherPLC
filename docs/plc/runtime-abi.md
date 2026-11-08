@@ -61,7 +61,7 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
 | `panic_module` | partial — abort-flag path done; panic-handler is a codegen/`tplc-rt` feature (P1) |
 | `migrate_sim` | done for copy/dropped/default/deny/desc-invalid |
 | armv6 qemu module | not yet (needs cross toolchain in CI) |
-| MCU static-link shim | not yet |
+| MCU static-link shim | done (`tests/abi/mcu_shim_host.c`, ctest `mcu_shim`): both module images linked into one binary, ABI resolved through a static table — no dlopen/mmap/files/threads; asserts the undefined-symbol set stays Linux-free |
 | `bad_*` prohibition series | blocked on the post-link scanner (P8-04) |
 
 ## Control channel + binary (added)
