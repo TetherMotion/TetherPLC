@@ -168,4 +168,13 @@ if(NOT CMAKE_CROSSCOMPILING)
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/fbd_gallery/e2e.sh)
   set_tests_properties(fbd_gallery_e2e PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+  # debug-plane stress: boundary-consistent reads never tear a
+  # multi-byte field mid-update (doc 12 §10.3)
+  add_test(NAME debug_stress
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/debug/stress.sh)
+  set_tests_properties(debug_stress PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
