@@ -24,7 +24,7 @@ cp "$FIX" "$WORK/prog.tplc"
 
 fail=0
 run() { timeout 4 "$BUILD/tether-plc" --image sig_test_img \
-            --package "$1" --ctl none "${@:2}" 2>&1 | head -1; }
+            --package "$1" --ctl none "${@:2}" 2>&1; }
 pass() { echo "PASS $1"; }
 failf(){ echo "FAIL $1"; fail=$((fail+1)); }
 

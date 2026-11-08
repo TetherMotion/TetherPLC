@@ -29,6 +29,7 @@ target_link_libraries(tplc_image PUBLIC rt)
 add_library(tplc_host STATIC
   runtime/host/src/Module.cpp
   runtime/host/src/ElfScan.cpp
+  runtime/host/src/Sandbox.cpp
   runtime/host/src/Program.cpp
   runtime/host/src/Scheduler.cpp
   runtime/host/src/RetainStore.cpp
@@ -55,6 +56,17 @@ if(TPLC_SODIUM_LIBSODIUM)
   message(STATUS "tplc_pkg: signature verification via libsodium")
 else()
   message(STATUS "tplc_pkg: no libsodium — signature policies fail closed")
+endif()
+
+# process sandbox syscall filter (doc 15 §3): optional — without
+# libseccomp only rlimits apply
+find_library(TPLC_SECCOMP_LIBSECCOMP seccomp)
+if(TPLC_SECCOMP_LIBSECCOMP)
+  target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_SECCOMP)
+  target_link_libraries(tplc_host PUBLIC ${TPLC_SECCOMP_LIBSECCOMP})
+  message(STATUS "tplc_host: seccomp sandbox via libseccomp")
+else()
+  message(STATUS "tplc_host: no libseccomp — sandbox rlimits only")
 endif()
 
 # ------------------------------------------------------------------ #
@@ -171,10 +183,27 @@ add_scan_fixture(scan_evil_int80   evil_int80.c)
 add_scan_fixture(scan_evil_import  evil_import.c)
 add_scan_fixture(scan_good_imm     good_immediates.c)
 
+# sandbox-enforcement: a valid ABI module importing socket() — the
+# import scanner must reject it (layer 1); and a probe binary that
+# applies the sandbox then tests socket() families (layer 2)
+add_library(scan_evil_inet MODULE tests/scan/evil_inet.c)
+set_target_properties(scan_evil_inet PROPERTIES
+  PREFIX "" OUTPUT_NAME "scan_evil_inet" SUFFIX ".so")
+target_include_directories(scan_evil_inet PRIVATE include)
+target_compile_options(scan_evil_inet PRIVATE
+  -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables)
+if(CMAKE_C_FLAGS MATCHES "sanitize")
+  target_compile_options(scan_evil_inet PRIVATE -fno-sanitize=all)
+  target_link_options(scan_evil_inet PRIVATE -fno-sanitize=all)
+endif()
+
+add_executable(sandbox_probe tests/scan/sandbox_probe.cpp)
+target_link_libraries(sandbox_probe PRIVATE tplc_host)
+
 add_executable(module_scan tests/scan/module_scan.cpp)
 target_link_libraries(module_scan PRIVATE tplc_host)
 add_dependencies(module_scan scan_evil_syscall scan_evil_int80
-  scan_evil_import scan_good_imm stub_v1 stub_v2)
+  scan_evil_import scan_evil_inet scan_good_imm stub_v1 stub_v2)
 add_test(NAME sig_policy
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/scan/sig_policy.sh)
 set_tests_properties(sig_policy PROPERTIES SKIP_RETURN_CODE 77)
@@ -182,9 +211,19 @@ add_test(NAME module_scan COMMAND module_scan
   $<TARGET_FILE:scan_evil_syscall> reject
   $<TARGET_FILE:scan_evil_int80>   reject
   $<TARGET_FILE:scan_evil_import>  reject
+  $<TARGET_FILE:scan_evil_inet>    reject
   $<TARGET_FILE:scan_good_imm>     ok
   $<TARGET_FILE:stub_v1>           ok
   $<TARGET_FILE:stub_v2>           ok)
+
+# doc 15 §3 acceptance: sandbox active, UDS-only socket gate enforced
+add_test(NAME sandbox_enforce COMMAND bash
+  ${CMAKE_SOURCE_DIR}/tests/scan/sandbox_enforce.sh
+  $<TARGET_FILE:tether-plc> $<TARGET_FILE:tplc-image>
+  $<TARGET_FILE:tplc-ctl>
+  $<TARGET_FILE:sandbox_probe> $<TARGET_FILE:stub_v1>)
+add_dependencies(sandbox_probe tether-plc tplc-image tplc-ctl)
+set_tests_properties(sandbox_enforce PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(pkg_conformance tests/pkg/pkg_conformance.cpp)
 target_link_libraries(pkg_conformance PRIVATE tplc_pkg)

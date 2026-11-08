@@ -13,6 +13,7 @@
 #include <tplc/host/Scheduler.hpp>
 #include <tplc/host/CtlServer.hpp>
 #include <tplc/host/RetainStore.hpp>
+#include <tplc/host/Sandbox.hpp>
 
 #include <cerrno>
 #include <atomic>
@@ -54,6 +55,8 @@ static void usage(const char* a0) {
         "          [--wcet-hard-ns N] [--hang-timeout-ms N]\n"
         "          [--fault-policy hold|restart|unload] [--restart-max N]\n"
         "          [--runbook DIR] [--instance NAME] [--packages DIR]\n"
+        "          [--sig-policy open|require|require-trusted]\n"
+        "          [--trust-dir DIR] [--no-sandbox]\n"
         "          [--sim]\n"
         "       %s --supervise [--respawn always|on-fault|never]\n"
         "          [--restart-delay-ms N] -- <tether-plc args>\n",
@@ -291,6 +294,7 @@ int main(int argc, char** argv) {
     uint64_t wcet_hard_ns = 0;
     int      quarantine_cycles = 10;
     bool     auto_rollback = false;
+    bool     no_sandbox = false;
     uint64_t hang_timeout_ms = 2000;
     uint8_t  fault_policy = 0;
     uint32_t restart_max = 3;
@@ -334,6 +338,7 @@ int main(int argc, char** argv) {
         else if (a == "--auto-rollback") auto_rollback = true;
         else if (a == "--sig-policy") sig_policy = next();
         else if (a == "--trust-dir") trust_dir = next();
+        else if (a == "--no-sandbox") no_sandbox = true;
         else if (a == "--sim") ctx_flags |= TPLC_CTXF_SIM;
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -355,6 +360,22 @@ int main(int argc, char** argv) {
         return 1;
     }
     tplc_image_set_plc_status(&img, TPLC_IMG_PLC_OPEN);
+
+    /* process sandbox (doc 15 §3): default-on, --no-sandbox is the
+       journaled escape. Install before any module bytes are touched;
+       the whitelist keeps dlopen/ctl/retain paths working. */
+    if (!no_sandbox) {
+        tplc::Status sbst = tplc::installSandbox();
+        if (!sbst.ok()) {
+            fprintf(stderr, "tether-plc: sandbox failed (%d) %s\n",
+                    sbst.code, sbst.msg.c_str());
+            tplc_image_close(&img);
+            return 1;
+        }
+    } else {
+        fprintf(stderr, "tether-plc: WARNING --no-sandbox: process "
+                        "containment disabled\n");
+    }
 
     /* ---------------- package → extracted module -------------- */
     std::string extracted_so;
