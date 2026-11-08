@@ -123,5 +123,63 @@ druns=$((rf1 - rf0))
     && ok "lateness under flood: max ${mf1} ns (< 5 ms)" \
     || bad "lateness under flood (max ${mf1} ns)"
 
+# sim parity (doc 12 §10.7): an identical release schedule must
+# produce identical watch values in --sim and in realtime.
+cat > $WORK/par.st <<'ST'
+PROGRAM P
+VAR
+    i : DINT := 0;
+    out AT %QB0 : BYTE;
+END_VAR
+i := i + 1;
+out := out + 1;
+END_PROGRAM
+ST
+
+$TPLCC build $WORK/par.st -o $WORK/par.tplc >/dev/null \
+    || bad "parity build"
+
+# realtime: replace with the parity program (stop/unload/prepare/
+# start; swap needs a migrate path), suspend exactly at i == 51,
+# then read the armed watch
+$BUILD/tplc-ctl $CTL stop >/dev/null
+$BUILD/tplc-ctl $CTL unload >/dev/null
+$BUILD/tplc-ctl $CTL prepare $WORK/par.tplc >/dev/null
+$BUILD/tplc-ctl $CTL start >/dev/null
+sleep 0.3
+rwh=$($BUILD/tplc-ctl $CTL watch i | awk '{print $3}')
+$BUILD/tplc-ctl $CTL breakx 0 'i == 51' >/dev/null
+for t in $(seq 1 50); do
+    $BUILD/tplc-ctl $CTL prog | awk '$1=="task"&&$6=="susp"{f=1}END{exit !f}' \
+        && break
+    sleep 0.1
+done
+ri=$($BUILD/tplc-ctl $CTL watch-get $rwh | awk '/\[0\]/{print $4}')
+[ "$ri" = "33000000" ] && ok "realtime watch i=51" \
+    || bad "realtime watch i ($ri)"
+
+# sim: 50 releases at 10 ms; first_run at t=0 plus 50 steps = 51 runs
+{ for k in $(seq 1 50); do
+    ex=""; [ $k -eq 50 ] && ex=" expect 0=33"
+    printf 'step %d time=%d%s\n' $k $((k * 10000000)) "$ex"
+done; } > $WORK/par.steps
+
+SIMCTL=/tmp/tplc_dbg_par.ctl
+rm -f $SIMCTL
+$BUILD/tether-plc-sim --image /tplc_dbg_par --package $WORK/par.tplc \
+    --steps $WORK/par.steps --plc $BUILD/tether-plc \
+    --ctl $SIMCTL --settle-ms 2500 --hold-ms 6000 \
+    >$WORK/sim.log 2>&1 &
+simpid=$!
+for t in $(seq 1 50); do [ -S $SIMCTL ] && break; sleep 0.1; done
+swh=$($BUILD/tplc-ctl $SIMCTL watch i | awk '{print $3}')
+sleep 3.5
+si=$($BUILD/tplc-ctl $SIMCTL watch-get $swh | awk '/\[0\]/{print $4}')
+wait $simpid
+[ "$si" = "33000000" ] && ok "sim watch i=51 (parity)" \
+    || bad "sim watch i ($si, want 33000000 = real $ri)"
+grep -q 'all matched' $WORK/sim.log && ok "sim expect out=0x33" \
+    || bad "sim expect mismatch ($(tail -2 $WORK/sim.log))"
+
 echo "== $pass pass, $fail fail"
 [ "$fail" -eq 0 ]
