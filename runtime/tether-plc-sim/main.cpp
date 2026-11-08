@@ -92,20 +92,27 @@ static bool parse_steps(const std::string& path,
 
 int main(int argc, char** argv) {
     std::string image_path, pkg_path, steps_path, plc_bin;
+    std::string ctl_path = "none";
     uint32_t in_size = 64, out_size = 64;
     int wait_running_ms = 5000;
+    int hold_ms = 0;
+    int settle_ms = 0;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if      (a == "--image")  image_path = argv[++i];
         else if (a == "--package") pkg_path   = argv[++i];
         else if (a == "--steps")  steps_path  = argv[++i];
         else if (a == "--plc")    plc_bin     = argv[++i];
+        else if (a == "--ctl")    ctl_path    = argv[++i];
+        else if (a == "--hold-ms") hold_ms    = atoi(argv[++i]);
+        else if (a == "--settle-ms") settle_ms = atoi(argv[++i]);
         else if (a == "--in")     in_size     = (uint32_t)strtoul(argv[++i],0,0);
         else if (a == "--out")    out_size    = (uint32_t)strtoul(argv[++i],0,0);
         else if (a == "--help" || a == "-h") {
             fprintf(stderr,
                 "usage: %s --image X --package P --steps F "
-                "[--plc PATH] [--in N] [--out N]\n", argv[0]);
+                "[--plc PATH] [--ctl PATH] [--in N] [--out N]\n",
+                argv[0]);
             return 0;
         }
     }
@@ -133,7 +140,7 @@ int main(int argc, char** argv) {
         execlp(plc_bin.c_str(), plc_bin.c_str(),
                "--image", image_path.c_str(),
                "--package", pkg_path.c_str(),
-               "--ctl", "none", "--sim", (char*)nullptr);
+               "--ctl", ctl_path.c_str(), "--sim", (char*)nullptr);
         _exit(127);
     }
     if (pid < 0) { fprintf(stderr, "sim: fork failed\n"); return 1; }
@@ -158,6 +165,10 @@ int main(int argc, char** argv) {
         goto out;
     }
     fprintf(stderr, "sim: plc running, %zu steps\n", steps.size());
+
+    /* settle window: the plc is up but the sim clock is still 0, so
+       ctl clients can arm watches/traces before the scenario runs */
+    if (settle_ms > 0) usleep((useconds_t)settle_ms * 1000);
 
     {
         uint32_t divergent = 0;
@@ -212,6 +223,9 @@ int main(int argc, char** argv) {
         } else {
             fprintf(stderr, "sim: %u divergent check(s)\n", divergent);
         }
+        /* keep the plc alive so external ctl clients can inspect
+           the frozen post-scenario state (debug-plane parity) */
+        if (hold_ms > 0) usleep((useconds_t)hold_ms * 1000);
     }
 
 out:
