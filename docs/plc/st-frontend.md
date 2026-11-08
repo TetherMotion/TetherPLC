@@ -1,6 +1,6 @@
 # ST frontend — as-built
 
-Status of `compiler/tplc-st` against `plan/05-st-frontend.md`.
+Status: as-built for `compiler/tplc-st`.
 
 ## Shape
 
@@ -14,7 +14,7 @@ Status of `compiler/tplc-st` against `plan/05-st-frontend.md`.
 - Unnamed `VAR_GLOBAL` blocks merge into the `GLOBAL` GVL; access is
   `GLOBAL.x` or via `VAR_EXTERNAL` declarations.
 
-## Sema rules (doc 05 §5–§9)
+## Sema rules (st-frontend.md §5–§9)
 
 - Name resolution canonicalizes case in place (`x`/`X` same var).
 - Enum elements resolve to ordinals when no var shadows the name.
@@ -32,7 +32,7 @@ Status of `compiler/tplc-st` against `plan/05-st-frontend.md`.
   error `TPLC_E_ST_TYPE`. FB-call args are checked against the FB
   iface (or builtin member layout); all FB inputs optional.
 
-## Diagnostics (doc 05 §12)
+## Diagnostics (st-frontend.md §12)
 
 Every diagnostic: `{code, severity, message, [help], [notes], span}`.
 `Diag::render(file, src)` produces rustc-style output: `file:line:col`

@@ -16,9 +16,9 @@ control plane of a real machine**. Assets and adversaries:
 
 | asset | threat | primary control |
 |---|---|---|
-| machine motion/outputs | buggy or malicious user logic drives unsafe state | FSoE boundary (§2), safe-state (doc 03), watchdog (doc 04) |
-| the fieldbus/master | PLC process fault or compromise | process isolation (G6), image protocol (doc 03 §9), sandbox (§3) |
-| other programs/tenants | cross-program interference | per-instance isolation (doc 04), map ownership (doc 09) |
+| machine motion/outputs | buggy or malicious user logic drives unsafe state | FSoE boundary (§2), safe-state (process-image.md), watchdog (plc-runtime.md) |
+| the fieldbus/master | PLC process fault or compromise | process isolation (G6), image protocol (process-image.md §9), sandbox (§3) |
+| other programs/tenants | cross-program interference | per-instance isolation (plc-runtime.md), map ownership (io-mapping.md) |
 | program integrity | tampered artifact executes | signing + verification (§4), hash-pinned runbook |
 | configuration integrity | map/task edits bypass policy | authority model + audit (§5) |
 | credentials/access | unauthorized deploy/force/debug | tether_io auth + channel authZ (§5) |
@@ -44,7 +44,7 @@ guard locking, safe speed).
 ### 2.1 Rules
 
 1. **Safety outputs are not programmable.** PDOs flagged
-   safety-classified may never map to `%Q` (doc 09 `MAP_SAFETY`) —
+   safety-classified may never map to `%Q` (io-mapping.md `MAP_SAFETY`) —
    enforced at map build, deploy, and (defense-in-depth) by the
    bridge at runtime.
 2. **Safety state is readable**: safety inputs, FSoE connection
@@ -53,7 +53,7 @@ guard locking, safe speed).
    (channel `forceable=false` hard-coded for safety class — the UI
    cannot express it, the resolver denies it).
 3. **Safe-state policy belongs to the trusted side**: per-channel
-   safe values are bridge/map property (doc 09 §4.3), applied by the
+   safe values are bridge/map property (io-mapping.md §4.3), applied by the
    master — a faulted or hostile PLC cannot veto safe outputs.
 4. **No watchdog delegation**: safety-relevant watchdogs (FSoE
    conn supervision, safety terminal watchdogs) run in the certified
@@ -86,7 +86,7 @@ Default-on (`--no-sandbox` is a debug escape, journaled):
 | rlimits | `RLIMIT_NPROC`, `RLIMIT_FSIZE` (retain), `RLIMIT_MEMLOCK` bounded, `RLIMIT_NOFILE` bounded |
 | FS | read-only root; writable only: retain dir, runbook dir, tmp staging (noexec) |
 | network | **no network** — the process has UDS only (ctl + image paths); seccomp denies socket() entirely where feasible |
-| watchdog | supervisor respawn (doc 04 §7) + hardware watchdog optional (`/dev/watchdog` hook by the *bridge*, not the PLC — trusted side holds it) |
+| watchdog | supervisor respawn (plc-runtime.md §7) + hardware watchdog optional (`/dev/watchdog` hook by the *bridge*, not the PLC — trusted side holds it) |
 
 A compromised/broken program's blast radius: it can corrupt `%Q`
 (bounded by ownership — it owns outputs anyway) and its own process.
@@ -105,7 +105,7 @@ anchor is artifact provenance (§4), not in-process containment.
 
 ## 4. Artifact provenance & integrity
 
-### 4.1 Signing (doc 01 §11 mechanism, policy here)
+### 4.1 Signing (artifact-format.md §11 mechanism, policy here)
 
 Deploy policies (config `signature.policy`):
 
@@ -141,7 +141,7 @@ toolchain still can't smuggle syscalls past policy B+).
 
 - Control channel: UDS peer creds → OS-level identity; bridge proxies
   to `tether_io` sessions with role mapping: `observer` /
-  `engineer` / `commissioner` (doc 11 §8) — deploy/force/suspend/
+  `engineer` / `commissioner` (web-ide.md §8) — deploy/force/suspend/
   clear-require commissioner.
 - All mutating ops journal `{timestamp, identity, op, args-hash,
   result}` into the existing `EventJournal` (durable sink) — the
@@ -153,7 +153,7 @@ toolchain still can't smuggle syscalls past policy B+).
 ## 6. Supply-chain hygiene
 
 - Pinned toolchain versions (rustc, LLVM, tplc-rt) recorded in the
-  `toolchain` package section; reproducibility gate (doc 01 §13)
+  `toolchain` package section; reproducibility gate (artifact-format.md §13)
   makes "this binary came from that source" checkable.
 - License manifest generated per release (cargo-about / reuse):
   shipped set ⊆ Apache-2.0/MPL-2.0/MIT/BSD; GPL presence anywhere in
@@ -168,7 +168,7 @@ toolchain still can't smuggle syscalls past policy B+).
 ## 7. Privacy/data notes
 
 Programs and traces can contain process know-how: package sources are
-optional-embedded (doc 01 §9 — IP choice); journal entries record
+optional-embedded (artifact-format.md §9 — IP choice); journal entries record
 hash not content; remote compile mode leaves source on the
 engineering host by design (device sees only artifacts) — the
 IP-sensitive path is the default, not an option you forget.

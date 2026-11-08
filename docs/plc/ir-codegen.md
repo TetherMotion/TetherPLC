@@ -1,5 +1,5 @@
 
-## Online-change emission (doc 08)
+## Online-change emission (online-change.md)
 
 - `tplc-mir/migrate.rs` decodes LAYD/SMAP/TYPC from a predecessor
   package, expands leaf fields (struct/FB members, array elems), and

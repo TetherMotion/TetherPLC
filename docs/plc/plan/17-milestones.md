@@ -38,7 +38,7 @@ the real ABI + SHM protocol; kill/restart/safe-state paths proven;
 CI suites exist.
 *Size:* L. *Unlocks:* everything.
 
-### P0.5 — Frontend spikes (doc 13, runs inside P0)
+### P0.5 — Frontend spikes (DECISIONS.md, runs inside P0)
 *Exit:* S1–S6 verdicts in DECISIONS.md; path chosen; 05/07 sections
 marked active.
 *Size:* S–M. *Hard gate for P1.*
@@ -60,7 +60,7 @@ bridge integration vs emulated slaves (L2/L3), catalog export v1.
 *Exit:* doc-04 acceptance; fault-injection suite green; programs
 survive restart with retain intact; **DEMO: crash-the-PLC
 transparency** (kill -9 → safe-state → respawn → resume).
-*Size:* L. *Parallel with P1* (contract: docs 02–04).
+*Size:* L. *Parallel with P1* (contract: docs–04).
 
 ### P3 — Online change
 *Scope:* `--change-against` pipeline, migrate codegen, snapshot/
@@ -143,10 +143,10 @@ backends from day 1 — contracts are frozen docs, not code.
 |---|---|---|
 | ruSTy boundary unusable → own-frontend cost | P0.5/P1 | fallback is planned (C); spike timeboxed; mir boundary makes the swap local |
 | online-change edge-case blowup (FB type change semantics) | P3 | conservative deny table; compile-time gate means users see refusals early |
-| LLVM toolchain weight on-device (Mode A) | P1/P10 | static-link; resource caps (doc 10); remote mode is the escape |
+| LLVM toolchain weight on-device (Mode A) | P1/P10 | static-link; resource caps (toolchain.md); remote mode is the escape |
 | debug-plane determinism surprises | P6 | boundary-apply model + load-shed rules; prove early with a stress fixture in P2 |
 | seqlock/image protocol bug under adversary timing | P0/P7 | TSan builds + fault-injected adversary suite — cheapest place to find it is P0 |
-| FBD editor scope creep | P5 | MVP interaction set fixed in doc 11; LD/SFC explicitly deferred |
+| FBD editor scope creep | P5 | MVP interaction set fixed in web-ide.md; LD/SFC explicitly deferred |
 | scope of "1 program" vs multi-instance UX | P2+ | design is multi-instance; v1 UX may expose one — honest scoping note |
 
 ## 5. Iteration 2 (post-v1, recorded not scheduled)
@@ -184,7 +184,7 @@ calibration; parallelize per §3).
 | P0-09 | fault-injection harness (kill, stall, seq-adversary) | M | P0-04 |
 | P0-10 | CI wiring: qemu-aarch64 runner + coverage plumbing | S | — |
 
-### P0.5 — spikes (doc 13 §7)
+### P0.5 — spikes (DECISIONS.md §7)
 
 S1–S4 (ruSTy consumption + elimination check) — S/M; S5 (B-path
 end-to-end POU) — S; S6 (own-parser prototype) — S.

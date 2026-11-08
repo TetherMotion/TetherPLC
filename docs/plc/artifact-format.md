@@ -1,11 +1,9 @@
 # As-Built: `.tplc` Package Format
 
 > Status: partial — the container, LAYD and MIGD codecs are implemented
-> and conformance-tested on both implementations (P0-02/P0-03 done).
-> SMAP/TCAT section readers, signature, zstd compression, manifest
-> schema validation, and NEEDED/hidden-state ELF checks remain owned by
-> `docs/plc/plan/01-artifact-format.md` (deleted when this doc covers
-> all of it).
+> and conformance-tested on both implementations. SMAP/TCAT section
+> readers, signature, zstd compression, manifest schema validation, and
+> NEEDED/hidden-state ELF checks remain future work.
 
 ## Implemented
 
@@ -64,7 +62,7 @@ Wire constants + error codes shared by both implementations:
   is linked yet; readers reject nothing about it today.
 - `validate_for_load` is format-level only. Semantic load checks —
   `requires` vs image size, `targets[]` triple match, ABI version —
-  belong to the host loader path (doc 10), not yet wired.
+  belong to the host loader path (toolchain.md), not yet wired.
 - Manifest is carried as opaque JSON bytes; schema validation is a
   P1-era concern (`tplcc` owns the producer side).
 

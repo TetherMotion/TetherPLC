@@ -37,12 +37,12 @@ declared a later option (§8), not a v1 deliverable.
 ## 2. The program-management model
 
 CiA 405's core: **program invocations** in states with transition
-commands. Mapping onto doc 04's lifecycle (the runtime's states are
+commands. Mapping onto plc-runtime.md's lifecycle (the runtime's states are
 authoritative; the management model is a view):
 
 | CiA-405-ish concept | TetherPLC state | transition ops |
 |---|---|---|
-| program downloaded | `LOADED`/`READY` | `deploy.*` (doc 10) |
+| program downloaded | `LOADED`/`READY` | `deploy.*` (toolchain.md) |
 | program created/idle | `READY` | `prog.prepare`, `prog.unload` |
 | running | `RUNNING` (+`SWAPPING`) | `prog.start` |
 | stopped | `READY` (stopped is not a separate state — READY means "prepared, not scheduled") | `prog.stop`, `prog.kill` |
@@ -51,7 +51,7 @@ authoritative; the management model is a view):
 | reset | `READY` after re-init | `prog.reset` (warm/cold flag) |
 | delete | `EMPTY` | `prog.unload` |
 
-- **Program invocation = program instance** (doc 04); multiple
+- **Program invocation = program instance** (plc-runtime.md); multiple
   invocations map 1:1 (the profile's multi-program model fits our
   multi-instance runtime).
 - Commands are **acknowledged + journaled**; illegal transitions
@@ -64,11 +64,11 @@ authoritative; the management model is a view):
 
 | surface | transport | contents |
 |---|---|---|
-| data plane | SHM image (doc 03) | %I/%Q — never management |
+| data plane | SHM image (process-image.md) | %I/%Q — never management |
 | management plane | `tether-plc` ctl.sock (local), `tether_io` (remote via bridge) | all ops below |
 
 The management plane is schema-exposed: each op group becomes
-`tether_io` catalog functions/parameters per doc 09 §6 — the web UI
+`tether_io` catalog functions/parameters per io-mapping.md §6 — the web UI
 (and any `tether_io` client) sees the full surface with no bespoke
 protocol.
 
@@ -116,7 +116,7 @@ are the live feed).
 
 ## 5. Relationship to tether_io schema negotiation
 
-- PLC program variables export as parameters/signals (doc 09 §6);
+- PLC program variables export as parameters/signals (io-mapping.md §6);
   management ops export as catalog functions; status objects as
   schema-typed values — all under the V6 bootstrap (client sees them
   after schema commit like everything else).
@@ -127,7 +127,7 @@ are the live feed).
 ## 6. Multiple machines/instances
 
 Ops take `instance`/`program_uuid` selectors; the bridge multiplexes
-per machine instance (doc 04 config). Fleet-scale orchestration
+per machine instance (plc-runtime.md config). Fleet-scale orchestration
 (N devices) is a later product layer — the op surface already carries
 the selectors it needs.
 

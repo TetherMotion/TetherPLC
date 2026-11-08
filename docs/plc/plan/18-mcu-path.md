@@ -20,8 +20,8 @@ doesn't exist. What *does* exist and transfers unchanged:
 
 - the canonical IR → native code for the MCU target (Cortex-M, RISC-V,
   Xtensa… — LLVM covers all Tether's ESP-IDF targets),
-- the runtime ABI (doc 02 — deliberately loader-agnostic),
-- the process-image *semantics* (doc 03 — latch/commit/consistency),
+- the runtime ABI (runtime-abi.md — deliberately loader-agnostic),
+- the process-image *semantics* (process-image.md — latch/commit/consistency),
 - the state-blob + migrate model (G4 — MCU memory constraints actually
   strengthen the case for one contiguous relocatable region).
 
@@ -48,14 +48,14 @@ Our equivalent:
   `aux=PIC_BLOB` — a `ET_REL`-style or flat PIC blob with a **fixup
   table** (GOT-like: the module's external references are exactly the
   `svc` table + rt helpers, resolved by the loader at load time —
-  our ABI is already function-table-shaped, doc 02 §2.8, which is
+  our ABI is already function-table-shaped, runtime-abi.md §2.8, which is
   precisely what makes this easy).
 - The mini-loader (part of MCU firmware, ~1–2 KB code): validate blob
   header/hash → place in reserved region → resolve svc table →
   allocate state blob in SRAM → call `tplc_init`. No general dynamic
   linking needed — the ABI's symbol surface is 6 functions.
 - **Online change on MCU** is then just: stop task → load new blob →
-  `tplc_migrate` → swap pointer — *the same protocol* (doc 08), because
+  `tplc_migrate` → swap pointer — *the same protocol* (online-change.md), because
   the hard part was always state layout, not ELF.
 
 ### 2.2 The hybrid coprocessor (the elegant one)
@@ -79,18 +79,18 @@ metadata.
 
 | now-decision | where | why |
 |---|---|---|
-| ABI is C + function-table, never ELF-specific | doc 02 | enables all loaders |
-| state blob is relocatable + pointer-free | doc 02 §3 | SRAM placement freedom + migrate |
-| package carries `target_obj` with `aux` flag space | doc 01 §2.1 | PIC_BLOB payload without container v2 |
-| codegen emits PIC-clean code (no absolute relocs) | doc 07 §4.1 | blob loads anywhere |
-| image protocol is offset+seq, not shm-specific | doc 03 §10 | SRAM/RPMsg transports later |
-| symmap/layout_desc are target-independent data | doc 01 | same debugging tooling on MCU |
-| `svc` table is the only host surface | doc 02 §2.8 | MCU host implements the same 5 functions |
-| no libc requirement in generated code | doc 10 §2.4 | bare metal has none |
+| ABI is C + function-table, never ELF-specific | runtime-abi.md | enables all loaders |
+| state blob is relocatable + pointer-free | runtime-abi.md §3 | SRAM placement freedom + migrate |
+| package carries `target_obj` with `aux` flag space | artifact-format.md §2.1 | PIC_BLOB payload without container v2 |
+| codegen emits PIC-clean code (no absolute relocs) | ir-codegen.md §4.1 | blob loads anywhere |
+| image protocol is offset+seq, not shm-specific | process-image.md §10 | SRAM/RPMsg transports later |
+| symmap/layout_desc are target-independent data | artifact-format.md | same debugging tooling on MCU |
+| `svc` table is the only host surface | runtime-abi.md §2.8 | MCU host implements the same 5 functions |
+| no libc requirement in generated code | toolchain.md §2.4 | bare metal has none |
 
 The anti-pattern to avoid: *anything in generated code or the ABI
 that assumes mmap/dlopen/files/threads exist*. The conformance suite's
-"MCU-shim host" (doc 02 §11.7 — a static-linked test host with no
+"MCU-shim host" (runtime-abi.md §11.7 — a static-linked test host with no
 dynamic loading) is the standing proof.
 
 ## 4. MCU-side runtime (future component: `tplc-mcu`)
@@ -109,7 +109,7 @@ A no_std-ish embeddable runtime crate/C-lib implementing:
 ## 5. Constraints & honesty
 
 - **RAM**: state blob + image + code must fit SRAM — package
-  `requires` fields (doc 01 §3) become the gate; tiny targets will
+  `requires` fields (artifact-format.md §3) become the gate; tiny targets will
   need genuinely small programs (the ABI scales down naturally; the
   IEC program model doesn't demand megabytes).
 - **Flash writes**: retain on flash = wear management; v1 retain
@@ -138,6 +138,6 @@ A no_std-ish embeddable runtime crate/C-lib implementing:
    Cortex-M target; package validates.
 2. A mini-loader on that target loads + runs the ABI conformance
    subset (init/cycle/migrate) in <N KB RAM.
-3. The MCU-shim conformance host (doc 02 §11.7) stays green — ABI
+3. The MCU-shim conformance host (runtime-abi.md §11.7) stays green — ABI
    never regressed toward Linux-only assumptions.
 4. Image semantics demonstrated over a non-SHM transport.

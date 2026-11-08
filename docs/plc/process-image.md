@@ -1,7 +1,7 @@
 # Process image (as built)
 
-Status: implemented for the P0 slice — see `docs/plc/plan/03-process-image.md`
-for the design this realizes. Deviations: `docs/plc/DECISIONS.md` D-IMPL-1/3/5.
+Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`
+D-IMPL-1/3/5.
 
 ## What exists
 

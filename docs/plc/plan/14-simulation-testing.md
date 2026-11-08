@@ -22,7 +22,7 @@ Three nested levels, all using **the same canonical IR** (G1/G7):
 
 The `.so` under test is byte-identical to the deployed one (the
 package's `target_obj` for the sim host's triple — emitted into every
-package by default, doc 01 §4). Bitcode JIT on host is a fallback path
+package by default, artifact-format.md §4). Bitcode JIT on host is a fallback path
 only; **the preferred sim target is the host .so** — what runs in CI is
 what ships.
 
@@ -39,7 +39,7 @@ Mechanisms making this true (already spec'd, tested here):
 - all time comes through `ctx->now_ns`/`svc->steady_ns` — sim hosts
   inject a virtual clock driving the *sequence* deterministically;
 - all IO comes through the latched image — sim injects sequences;
-- no nondeterminism sources inside generated code (doc 02 §8, doc 05
+- no nondeterminism sources inside generated code (runtime-abi.md §8, st-frontend.md
   §10) — tested by the "same-input-twice" property suite;
 - scheduling differences between hosts may change *when* tasks run but
   never *what* they compute — the trace comparator therefore works on

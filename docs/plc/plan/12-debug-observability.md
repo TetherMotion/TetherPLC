@@ -31,8 +31,8 @@ drains them in the inter-task gap. Consequences that define the plane:
   deterministic replay: a trace produced in sim is comparable
   bit-for-bit with target traces.
 
-Debug surface = control-channel op groups (doc 04 §9) proxied +
-policy-gated by the bridge (doc 09 §4) into `tether_io` parameters/
+Debug surface = control-channel op groups (plc-runtime.md §9) proxied +
+policy-gated by the bridge (io-mapping.md §4) into `tether_io` parameters/
 signals/functions for the UI.
 
 ## 2. Symbol resolution (`dbg.resolve`)
@@ -44,11 +44,11 @@ resolve(name | fbd_node_id) →
 ```
 
 - Names are qualified IEC paths (`PROG.Ton.Q`, `GVLIO.temps[3].raw`).
-- FBD overlay resolves by node/wire id via provenance (doc 06).
+- FBD overlay resolves by node/wire id via provenance (fbd-model.md).
 - After online change: epoch bump → all subscriptions re-resolve by
   name; failures become `stale` (visible state, not silent death);
   re-resolution is automatic on next read. Rename-with-alias entries
-  (doc 08) survive renames transparently.
+  (online-change.md) survive renames transparently.
 - Structured values address leaf fields (`struct.field`,
   `array[i].member`); the resolver walks type_catalog — UI never
   parses types itself.
@@ -80,7 +80,7 @@ PLC debugging needs both and users expect the distinction:
 | `dbg.write{path, value}` | one-shot assignment to a blob field at next boundary; program may overwrite next cycle (normal for outputs, sticky for internals) | none |
 | `dbg.force{path, value}` | **persistent override**: registered in the force table; reapplied every cycle at the documented point | until `force.remove`/`force.clear_all` |
 
-Force application points (doc 03 §5.2):
+Force application points (process-image.md §5.2):
 
 - `%I`-bound / input-shadow vars: forced **after latch, before task** —
   the program sees the forced value every cycle.
@@ -113,7 +113,7 @@ this as *task-level* control, and so do we:
   (requires halting machinery or invasive patching — the pause model
   covers the practical need; DWARF/gdb on a *sim* instance remains the
   escape hatch for deep debugging, doc 14).
-- Suspended-task UX makes the safe-state consequence explicit (doc 11
+- Suspended-task UX makes the safe-state consequence explicit (web-ide.md
   confirmation text shows which channels go safe).
 
 ## 6. Trace (cycle-accurate recording)

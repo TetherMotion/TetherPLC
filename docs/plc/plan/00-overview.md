@@ -79,21 +79,24 @@ committed at a task boundary.
 
 ## 4. Document map and deletion rule
 
-See README-level numbering in the plan directory. Each `NN-*.md` chapter
-ends with an **Acceptance criteria** section; a chapter is deleted when its
-criteria are met and the corresponding `docs/plc/*.md` as-built spec exists.
-Chapters depend on each other as follows:
+Each `NN-*.md` chapter ends with an **Acceptance criteria** section; a
+chapter is deleted when its criteria are met and the corresponding
+`docs/plc/*.md` as-built spec exists. As-built specs now live at
+`docs/plc/`:
 
 ```
-01 ──► 02 ──► 03 ──► 04 ──► 08 ──► 09
- │      │                 ▲
- │      ▼                 │
- 10 ──► 07 ◄── 05, 06 ────┘
-              ▲    ▲
-              │    └── 11 (editor produces FBD docs + ST)
-        13 (eval: gates implementation of 05/07 choices)
-        14, 15, 16 cross-cut everything; 17 schedules; 18 defers
+artifact-format.md   runtime-abi.md     process-image.md
+plc-runtime.md       st-frontend.md     fbd-model.md
+ir-codegen.md        online-change.md   io-mapping.md
+toolchain.md         web-ide.md         DECISIONS.md
 ```
+
+Chapters retired so far: 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 13.
+
+Remaining work-item chapters: 12 (debug plane — watch/force shipped,
+suspend/step/trace/`dbg.*` open), 14 (sim host + oracle harness shipped,
+HIL/gates open), 15 (fault policies shipped, authz open), 16 (CiA405,
+future), 17 (milestones), 18 (MCU path, P6).
 
 ## 5. Shared naming and file conventions
 
@@ -103,14 +106,14 @@ Chapters depend on each other as follows:
 | `tplcc` | the compiler driver binary |
 | `tether-plc` | the runtime process binary |
 | `tplc-rt` | clean-room FB/runtime support library (compiled into artifacts) |
-| `TplcCtx`, `TplcTaskCtx`, `TplcMigrateCtx` | ABI context structs (doc 02) |
+| `TplcCtx`, `TplcTaskCtx`, `TplcMigrateCtx` | ABI context structs (runtime-abi.md) |
 | `TplcProgramDescriptor` | ABI entry table returned by `tplc_get_descriptor()` |
-| `%I / %Q / %M / %R` | image areas: inputs, outputs, markers, retain (doc 03) |
-| *state blob* | single relocatable region holding all program state (doc 02/07) |
-| *symbol map* / `symmap` | compiler-emitted name↔offset table (doc 01/08) |
+| `%I / %Q / %M / %R` | image areas: inputs, outputs, markers, retain (process-image.md) |
+| *state blob* | single relocatable region holding all program state (runtime-abi.md/07) |
+| *symbol map* / `symmap` | compiler-emitted name↔offset table (artifact-format.md/08) |
 | *layout hash* | content hash of state-blob layout; drives migration compatibility |
-| *image latch* | atomic snapshot of the SHM image taken at task start (doc 03) |
-| *online change* | migrate + swap of a running program (doc 08) |
+| *image latch* | atomic snapshot of the SHM image taken at task start (process-image.md) |
+| *online change* | migrate + swap of a running program (online-change.md) |
 | *oracle* | GPL tool used dev-side only, behind `tools/oracle-*` adapters (G12) |
 
 Formats: all multi-byte fields in file formats are little-endian; all wire
@@ -136,21 +139,21 @@ noted.
 
 **Artifact / `.tplc` package** — self-contained compiled-program container:
 manifest, canonical bitcode, one or more target `.so`s, symbol map, migration
-descriptor, provenance/signature. (doc 01)
+descriptor, provenance/signature. (artifact-format.md)
 
 **Function block (FB)** — IEC stateful unit (TON, CTU, …); instance state lives
-in the state blob. (doc 07)
+in the state blob. (ir-codegen.md)
 
-**Image** — the shared-memory I/O exchange area, `%I`/`%Q`/`%M`/`%R`. (doc 03)
+**Image** — the shared-memory I/O exchange area, `%I`/`%Q`/`%M`/`%R`. (process-image.md)
 
 **Latch** — consistent snapshot of the image taken by the runtime at task
-start. (doc 03)
+start. (process-image.md)
 
 **Migration descriptor** — compiler-emitted description of a *previous*
-state-blob layout enabling `tplc_migrate`. (doc 08)
+state-blob layout enabling `tplc_migrate`. (online-change.md)
 
 **Online change** — replacing a running program with a new version, preserving
-state per migration rules. (doc 08, G4)
+state per migration rules. (online-change.md, G4)
 
 **Oracle adapter** — dev-only tool wrapping a GPL program (e.g. matiec) to
 emit expected-behavior test vectors; never shipped. (G12, doc 14)
@@ -165,14 +168,14 @@ vocabulary: creation, start, stop, reset, delete). (doc 16)
 
 **State blob** — compiler-defined relocatable struct holding globals, FB
 instance state, and internal bookkeeping; allocated and owned by the runtime,
-populated by generated code through the context pointer. (doc 02)
+populated by generated code through the context pointer. (runtime-abi.md)
 
 **Symbol map (`symmap`)** — binary table: name, kind (var/FB/param/I/O),
 state-blob or image offset, type descriptor, retain flag, source provenance
-(incl. FBD node ids). Feeds the `tether_io` catalog and the debugger. (doc 01)
+(incl. FBD node ids). Feeds the `tether_io` catalog and the debugger. (artifact-format.md)
 
 **WCET budget** — per-task declared worst-case execution time monitored by the
-runtime; violations are structured alarms. (doc 04)
+runtime; violations are structured alarms. (plc-runtime.md)
 
 ---
 

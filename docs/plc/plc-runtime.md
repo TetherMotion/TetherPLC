@@ -1,7 +1,6 @@
 # PLC runtime process — as-built
 
-Status of `runtime/tether-plc` + `runtime/host` against
-`plan/04-plc-runtime.md`.
+Status: as-built.
 
 ## Process
 
@@ -29,7 +28,7 @@ commit). Program: `PROG_PREPARE` (by package uuid), `PROG_START`,
 `RETAIN_DUMP`, `RT_STATUS`, `RT_SHUTDOWN`, plus
 `EV_PROG_TRANSITION`/`EV_FAULT` notify events.
 
-## Retain store (doc 04 §5)
+## Retain store (plc-runtime.md §5)
 
 - `RetainStore` mirrors `retain_region` to
   `<dir>/<program_uuid>.bin` — a second copy, not a blob mmap.
@@ -59,7 +58,7 @@ the retain segment is zeroed + retain literal inits applied only when
 `!CTXF_RETAIN_RESTORED`. (An earlier unconditional whole-blob memset
 destroyed restored retain data — fixed at P2-01.)
 
-## Watchdog & budget (doc 04 §3.2/§6)
+## Watchdog & budget (plc-runtime.md §3.2/§6)
 
 - Emitted tasks carry `ENABLED_AT_START|WATCHDOGGED`; `executeTask`
   arms `ctx.budget_deadline_ns` = now + `--wcet-hard-ns` (or 2x the
@@ -83,7 +82,7 @@ destroyed restored retain data — fixed at P2-01.)
 
 ## Bridge (`runtime/bridge/`, `tether-plc-bridge`)
 
-The master-side half of doc 03/09 as a reusable library plus a dev
+The master-side half of process-image.md/09 as a reusable library plus a dev
 driver process:
 
 - `ImageServer` — creates/owns the shm image (master role), master
@@ -118,7 +117,7 @@ driver process:
 - L1 = `tplcc vectors` (interp, same canonical IR). L3 lives in the
   Tether app's simulated-plant fleet — not this repo.
 
-## Map validator (doc 09 §2.2)
+## Map validator (io-mapping.md §2.2)
 
 - Map schema v1: `image`/`in`/`out` channels + `type=` (bool/u8…f64),
   `safe=` policy, `bind <at> <key|*>` program bindings, and `safety
@@ -131,7 +130,7 @@ driver process:
   refuses to start on any violation; parse is permissive so all
   violations surface in one pass.
 
-## Online change (doc 08)
+## Online change (online-change.md)
 
 - `PROG_SWAP {uuid|path}` stages the new module first; live
   `layout_hash` is compared to the package's `MIGD`

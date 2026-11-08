@@ -1,7 +1,5 @@
 # Runtime ABI & host library (as built)
-
-Status: implemented for the P0 slice — see `docs/plc/plan/02-runtime-abi.md`
-for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
+Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
 
 ## What exists
 
@@ -38,7 +36,7 @@ for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
   dispatch, scheduler, abort flag, blob relocation mid-life, retain-restore
   skip, migrate OK/DEGRADED/DENY/malformed.
 
-## Conformance status vs doc 02 §11
+## Conformance status vs runtime-abi.md §11
 
 | fixture | status |
 |---|---|
@@ -54,7 +52,7 @@ for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
 ## Control channel + binary (added)
 
 - `include/tplc/tplc_ctl.h` — wire protocol: 16 B LE frame header, op
-  ranges per plan doc 04 App I, session bootstrap (`hello`/`hello_ack`),
+  ranges per plan plc-runtime.md App I, session bootstrap (`hello`/`hello_ack`),
   packed payload structs for the implemented ops, ctl-local error range
   (-400..) + `TPLC_CTL_F_ERROR` flag-bit-15 error frames.
 - `runtime/host/CtlServer` — nonblocking UDS server: framed codec,
@@ -67,7 +65,7 @@ for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
   image size ≥ descriptor, loads module, schedules tasks, heartbeats,
   implements ping/status/prog.{status,list,start,stop}/task.stats/
   image.stats/rt.{status,shutdown}; fault → `plc_status=fault` +
-  `last_fault_code` per doc 02 §4.6.
+  `last_fault_code` per runtime-abi.md §4.6.
 - `tools/tplc-ctl` + `tools/ctl_client.h` — client CLI and shared
   client helper (hello, framed send/recv).
 - `tests/runtime/ctl_smoke.cpp` — 27 checks across a real process
@@ -84,7 +82,7 @@ for the normative contract. Deviations: `docs/plc/DECISIONS.md`.
   `TPLC_TASK_E_ABORTED`, the %Q commit is skipped for that cycle
   (`executeTask` early-returns before `copyOutputsOut`), and clearing
   the flag resumes cleanly. This is the pattern codegen emits at every
-  loop back-edge (doc 04 §5).
+  loop back-edge (plc-runtime.md §5).
 - **kill -9** — real `tether-plc` child is SIGKILLed mid-run: plc
   heartbeat freezes, `tplc_image_hb_stale` detects loss inside the
   bound, image stays consistent for master reads/writes, and a fresh

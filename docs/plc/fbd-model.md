@@ -1,6 +1,6 @@
 # FBD model — as-built
 
-Status of `compiler/fbd-model` against `plan/06-fbd-model.md`.
+Status: as-built for `compiler/fbd-model`.
 
 ## Shape
 
@@ -35,7 +35,7 @@ Status of `compiler/fbd-model` against `plan/06-fbd-model.md`.
 (schemars 0.8, draft-07). TS types for the editor are generated from
 this file.
 
-## `plcopen-io` (doc 06 §5 / App E)
+## `plcopen-io` (fbd-model.md §5 / App E)
 
 - `export(project, Strict|Roundtrip) -> (xml, [LossNote])`.
   Strict emits TC6-only XML (no `tether:` attrs): networks flatten
@@ -62,7 +62,7 @@ this file.
   98.4% edge coverage — over the §13.2 ≥95% target
   (`plcopen-io/tests/beremiz_corpus.rs`).
 
-## `fbd-lower` (doc 06 §4)
+## `fbd-lower` (fbd-model.md §4)
 
 `fbd-lower` translates `fbd.v1` models into `tplc-mir` modules plus
 `io_bindings` and diagnostics (`LowerOutput{module, io_bindings,
@@ -122,5 +122,5 @@ undeclared-name errors.
 - `<dataTypes>` round-trip beyond derived-name baseType; `assoc`
   edges exist in the model but XML import of wireless
   `formalParameter` associations is not yet mapped back.
-- mir-level `Label`/`Goto` for imported jumps (doc 06 §4.4 assumed
+- mir-level `Label`/`Goto` for imported jumps (fbd-model.md §4.4 assumed
   them; they were never in the IR).
