@@ -67,6 +67,12 @@ enum TplcCtlOp {
     TPLC_OP_DBG_FORCE      = 0x0505,  /* P6 {u64 off, u32 len,bytes}*/
     TPLC_OP_DBG_FORCE_LIST = 0x0506,  /* P6 → {u32 n, entries}      */
     TPLC_OP_DBG_FORCE_CLEAR= 0x0507,  /* P6 {u32 handle} 0xFF..=all */
+    /* break_when: conditional suspend — {u32 task_idx, u64 off,
+       u32 len(1|2|4|8), u8 cmp(0== 1!= 2< 3<= 4> 5>=), u8 pad[3],
+       u64 value} → {u32 handle}                                   */
+    TPLC_OP_DBG_BREAK      = 0x0508,
+    TPLC_OP_DBG_BREAK_LIST = 0x0509,  /* → {u32 n, entries}         */
+    TPLC_OP_DBG_BREAK_CLEAR= 0x050A,  /* {u32 handle} 0xFF..=all    */
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,
@@ -80,6 +86,7 @@ enum TplcCtlOp {
     /* events 0x0E00 */
     TPLC_EV_PROG_TRANSITION = 0x0E01,
     TPLC_EV_FAULT           = 0x0E02,
+    TPLC_EV_DBG_BREAK       = 0x0E03, /* {u32 handle, u32 task, u64 v}*/
     /* error frame — response with F_EVENT? No: same msg_type as the
        request, payload = TplcCtlError, flags bit15 marks error        */
     TPLC_CTL_F_ERROR       = 1u << 15

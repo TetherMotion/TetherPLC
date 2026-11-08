@@ -428,6 +428,20 @@ int main(int argc, char** argv) {
     std::vector<Force>               forces;
     uint32_t                         next_force_h = 1;
     static const size_t              MAX_FORCES = 64;
+    /* break_when (doc 12 §5): conditional suspend, evaluated at the
+       post-tick boundary — fires only on a fresh suspension        */
+    struct Break {
+        uint32_t handle;
+        uint32_t task_idx;
+        uint64_t off;
+        uint32_t len;      /* 1/2/4/8  */
+        uint8_t  cmp;      /* 0== 1!= 2< 3<= 4> 5>= */
+        uint64_t val;
+        uint64_t hits = 0; /* suspensions caused  */
+    };
+    std::vector<Break>               breaks;
+    uint32_t                         next_break_h = 1;
+    static const size_t              MAX_BREAKS = 32;
     /* online-change quarantine (doc 08 §7): the swapped-out program
        + module stay live for quarantine_cycles scans so rollback is
        a pointer swap back to untouched pre-swap state              */
@@ -451,6 +465,8 @@ int main(int argc, char** argv) {
         pkg_smap.clear();
         forces.clear();
         next_force_h = 1;
+        breaks.clear();
+        next_break_h = 1;
         d = TplcProgramDescriptor{};
         prog_started = false;
     };
@@ -511,6 +527,7 @@ int main(int argc, char** argv) {
         std::swap(pkg_layd, quar.layd);
         std::swap(pkg_smap, quar.smap);
         forces.clear();   /* blob identity changed — forces stale */
+        breaks.clear();
         sched.addProgram(*prog);
         d = mod->descriptor();
         if (retain) {
@@ -1076,6 +1093,7 @@ int main(int argc, char** argv) {
         quar.layd = std::move(pkg_layd);
         quar.smap = std::move(pkg_smap);
         forces.clear();   /* new blob layout — overrides are stale */
+        breaks.clear();
         quar.cycles_left = quarantine_cycles;
         mod = std::make_unique<tplc::Module>(std::move(nmod));
         /* rebind: Program::create captured &nmod — retarget the new
@@ -1516,6 +1534,98 @@ int main(int argc, char** argv) {
                        "no such force", req);
     });
 
+    /* break_when (doc 12 §5): arm a conditional suspend.
+       {u32 task_idx, u64 off, u32 len, u8 cmp, u8 pad[3], u64 val}
+       → {u32 handle}                                              */
+    ctl.on(TPLC_OP_DBG_BREAK, [&](int fd, uint16_t t,
+                                  const uint8_t* p, uint32_t n,
+                                  uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n != 28) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 task, u64 off, u32 len, u8 cmp, "
+                           "u64 val}", req);
+            return;
+        }
+        uint32_t task_idx, len; uint64_t off, val; uint8_t cmp;
+        memcpy(&task_idx, p, 4);
+        memcpy(&off, p + 4, 8);
+        memcpy(&len, p + 12, 4);
+        cmp = p[16];
+        memcpy(&val, p + 20, 8);
+        if (task_idx >= d.task_count) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                           "no such task", req);
+            return;
+        }
+        if (len != 1 && len != 2 && len != 4 && len != 8) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "len must be 1,2,4,8", req);
+            return;
+        }
+        if (cmp > 5) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "cmp out of range", req);
+            return;
+        }
+        if (off > prog->blobSize() || len > prog->blobSize() - off) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "range outside blob", req);
+            return;
+        }
+        if (breaks.size() >= MAX_BREAKS) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_OVERLOAD,
+                           "break table full", req);
+            return;
+        }
+        breaks.push_back({next_break_h++, task_idx, off, len,
+                          cmp, val, 0});
+        tplc::CtlServer::W w;
+        w.u32(breaks.back().handle);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    /* {u32 n, {u32 handle, u32 task, u64 off, u32 len, u8 cmp,
+                u8 pad[3], u64 val, u64 hits}*}                    */
+    ctl.on(TPLC_OP_DBG_BREAK_LIST, [&](int fd, uint16_t t,
+                                       const uint8_t*, uint32_t,
+                                       uint64_t req) {
+        tplc::CtlServer::W w;
+        w.u32((uint32_t)breaks.size());
+        for (auto& b : breaks) {
+            w.u32(b.handle); w.u32(b.task_idx); w.u64(b.off);
+            w.u32(b.len); w.u8(b.cmp); w.u8(0); w.u16(0);
+            w.u64(b.val); w.u64(b.hits);
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_DBG_BREAK_CLEAR, [&](int fd, uint16_t t,
+                                        const uint8_t* p, uint32_t n,
+                                        uint64_t req) {
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 handle}", req);
+            return;
+        }
+        uint32_t h; memcpy(&h, p, 4);
+        if (h == 0xFFFFFFFFu) {
+            breaks.clear();
+            ctl.replyEmpty(fd, t, req);
+            return;
+        }
+        for (auto it = breaks.begin(); it != breaks.end(); ++it)
+            if (it->handle == h) {
+                breaks.erase(it);
+                ctl.replyEmpty(fd, t, req);
+                return;
+            }
+        ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                       "no such break", req);
+    });
+
     /* ---------------- deploy group (doc 04 §I.1 0x0200) ---------- */
     DeployUpload up;
     ctl.on(TPLC_OP_DEPLOY_BEGIN, [&](int fd, uint16_t t,
@@ -1772,6 +1882,37 @@ int main(int argc, char** argv) {
             module_path.c_str(), image_path.c_str(), ctl_path.c_str());
 
     const bool sim_mode = (ctx_flags & TPLC_CTXF_SIM) != 0;
+    /* break_when evaluation (doc 12 §5): each armed condition is a
+       ≤8B blob read at the post-tick boundary — bounded work. A
+       break fires only when it newly suspends its task (resuming
+       while the condition holds re-arms it).                      */
+    auto eval_breaks = [&]() {
+        if (!prog || breaks.empty()) return;
+        for (auto& b : breaks) {
+            if (sched.suspended(*prog, b.task_idx)) continue;
+            uint64_t cur = 0;
+            memcpy(&cur, prog->blob() + b.off, b.len);
+            bool hit;
+            switch (b.cmp) {
+                case 0: hit = cur == b.val; break;
+                case 1: hit = cur != b.val; break;
+                case 2: hit = cur <  b.val; break;
+                case 3: hit = cur <= b.val; break;
+                case 4: hit = cur >  b.val; break;
+                default: hit = cur >= b.val; break;
+            }
+            if (!hit) continue;
+            if (sched.suspend(*prog, b.task_idx)) {
+                b.hits++;
+                tplc::CtlServer::W w;
+                w.u32(b.handle); w.u32(b.task_idx); w.u64(cur);
+                ctl.event(TPLC_EV_DBG_BREAK,
+                          1u << (TPLC_EV_DBG_BREAK & 0xFF),
+                          w.data(), w.size());
+            }
+        }
+    };
+
     while (!g_stop) {
         uint64_t now = mono_ns();
         if (sim_mode && prog) {
@@ -1792,6 +1933,8 @@ int main(int argc, char** argv) {
             /* re-assert overrides at the boundary: internals and
                shadows hold the forced value for observers too      */
             if (!forces.empty()) stamp_forces(0);
+            /* breaks see post-force state — the effective value    */
+            if (!breaks.empty()) eval_breaks();
             progress.fetch_add(1);
             /* quarantine window: N scans after commit the old module
                is released — doc 08 §7 (drop order: Program first)  */

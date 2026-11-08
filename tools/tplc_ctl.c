@@ -206,7 +206,8 @@ int main(int argc, char** argv) {
             "|pkg|deploy F|suspend N|resume N|step N [M]"
             "|resolve NAME|dbg-state|dbg-read OFF LEN"
             "|dbg-write OFF HEX|force OFF HEX|force-list"
-            "|force-clear [H|all]\n", argv[0]);
+            "|force-clear [H|all]|break T OFF LEN CMP V"
+            "|break-list|break-clear [H|all]\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -367,6 +368,41 @@ int main(int argc, char** argv) {
         memcpy(pre, &h, 4);
         pre_len = 4;
     }
+    else if (!strcmp(cmd, "break")) {
+        /* break <task> <off> <len> <cmp> <val>
+           cmp: eq ne lt le gt ge → 0..5                            */
+        if (argc < 8) {
+            fprintf(stderr,
+                    "break <task> <off> <len> <eq|ne|lt|le|gt|ge> "
+                    "<val>\n");
+            return 2;
+        }
+        static const char* cmps[] = {"eq","ne","lt","le","gt","ge"};
+        int cmp = -1;
+        for (int i = 0; i < 6; i++)
+            if (!strcmp(argv[6], cmps[i])) cmp = i;
+        if (cmp < 0) { fprintf(stderr, "bad cmp\n"); return 2; }
+        op = TPLC_OP_DBG_BREAK;
+        uint32_t ti = (uint32_t)strtoul(argv[3], NULL, 0);
+        uint64_t off = strtoull(argv[4], NULL, 0);
+        uint32_t bl = (uint32_t)strtoul(argv[5], NULL, 0);
+        uint64_t val = strtoull(argv[7], NULL, 0);
+        memset(pre, 0, 28);
+        memcpy(pre, &ti, 4);
+        memcpy(pre + 4, &off, 8);
+        memcpy(pre + 12, &bl, 4);
+        pre[16] = (uint8_t)cmp;
+        memcpy(pre + 20, &val, 8);
+        pre_len = 28;
+    }
+    else if (!strcmp(cmd, "break-list")) op = TPLC_OP_DBG_BREAK_LIST;
+    else if (!strcmp(cmd, "break-clear")) {
+        op = TPLC_OP_DBG_BREAK_CLEAR;
+        uint32_t h = (!arg || !strcmp(arg, "all"))
+                         ? 0xFFFFFFFFu : (uint32_t)strtoul(arg, NULL, 0);
+        memcpy(pre, &h, 4);
+        pre_len = 4;
+    }
     else { fprintf(stderr, "unknown cmd %s\n", cmd); return 2; }
 
     int fd = ctl_connect(sock, 3000);
@@ -502,6 +538,32 @@ int main(int argc, char** argv) {
             if (i % 16 == 0) printf("%08x  ", i);
             printf("%02x%s", pl[i],
                    i % 16 == 15 || i == len - 1 ? "\n" : " ");
+        }
+    }
+    else if (op == TPLC_OP_DBG_BREAK) {
+        if (len >= 4) {
+            uint32_t h;
+            memcpy(&h, pl, 4);
+            printf("armed  handle %u\n", h);
+        }
+    }
+    else if (op == TPLC_OP_DBG_BREAK_LIST) {
+        static const char* cmps[] = {"==","!=","<","<=",">",">="};
+        const uint8_t* q = pl;
+        uint32_t n; memcpy(&n, q, 4); q += 4;
+        printf("breaks %u\n", n);
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t h, tix, l; uint64_t off, val, hits; uint8_t c;
+            memcpy(&h, q, 4); memcpy(&tix, q + 4, 4);
+            memcpy(&off, q + 8, 8); memcpy(&l, q + 16, 4);
+            c = q[20];
+            memcpy(&val, q + 24, 8); memcpy(&hits, q + 32, 8);
+            q += 40;
+            printf("  h%u task %u  blob[%lu..%lu] %s %lu  "
+                   "hits %lu\n", h, tix, (unsigned long)off,
+                   (unsigned long)(off + l),
+                   cmps[c <= 5 ? c : 0], (unsigned long)val,
+                   (unsigned long)hits);
         }
     }
     else if (op == TPLC_OP_DBG_FORCE) {
