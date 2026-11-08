@@ -1341,6 +1341,7 @@ int main(int argc, char** argv) {
         }
         std::string mpath = path;
         std::string tmp_so;
+        std::vector<uint8_t> layd_b, smap_b;   /* sections borrow pk */
         /* .tplc → extract target_obj; .so → load directly */
         if (path.size() >= 5 &&
             path.compare(path.size() - 5, 5, ".tplc") == 0) {
@@ -1351,6 +1352,11 @@ int main(int argc, char** argv) {
                 return;
             }
             tplc::Package pk = std::move(pres.value);
+            tplc::PkgSection sec{};
+            if (pk.section(TPLC_SEC_LAYOUT_DESC, sec))
+                layd_b.assign(sec.data, sec.data + sec.size);
+            if (pk.section(TPLC_SEC_SYMMAP, sec))
+                smap_b.assign(sec.data, sec.data + sec.size);
             tplc::PkgSection obj{};
             if (!pk.section(TPLC_SEC_TARGET_OBJ, obj)) {
                 ctl.errorReply(fd, t, TPLC_E_PKG_TOC,
@@ -1374,6 +1380,10 @@ int main(int argc, char** argv) {
             ctl.errorReply(fd, t, lst.code, lst.msg.c_str(), req);
             return;
         }
+        /* install the package's debug descriptors so resolve/watch/
+           expr ops see symbols for prepare-loaded programs too */
+        pkg_layd = std::move(layd_b);
+        pkg_smap = std::move(smap_b);
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         TplcCtlProgStateChange sc{PS_EMPTY, PS_STOPPED, 0};
         ctl.reply(fd, t, &sc, sizeof sc, req);
