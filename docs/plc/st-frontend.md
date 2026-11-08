@@ -28,6 +28,12 @@ Status: as-built for `compiler/tplc-st`.
   `expected …, found …`.
 - Conditions (`IF`/`WHILE`/`REPEAT`) must be `BOOL` — strict, no
   permissive `Int→Bool` here.
+- `STRING`: comparisons are `=`/`<>` only — an ordered compare (or a
+  STRING↔non-STRING compare) errors `TPLC_E_ST_TYPE`. Literals assign
+  to any target cap (zero-padded; longer literals truncate with the
+  usual `implicit-narrow` lint). `WSTRING` currently lowers to a
+  narrow `STRING(160)` — true UTF-16 remains an iteration-2 dialect
+  item.
 - `FUNCTION` inputs without defaults are required; missing bindings
   error `TPLC_E_ST_TYPE`. FB-call args are checked against the FB
   iface (or builtin member layout); all FB inputs optional.

@@ -244,10 +244,40 @@ impl<'ctx> Gen<'ctx> {
                 .build_int_z_extend(v.into_int_value(), self.ctx.i8_type(), "z")
                 .unwrap()
                 .into()
+        } else if let Type::Str { cap } = &ty {
+            // source array may differ in width (literal cap vs target
+            // cap): rebuild to the target width, zero-padding/truncating
+            self.str_fit(v, 1 + *cap as u32)
         } else {
             v
         };
         self.b.build_store(p, v).unwrap();
+    }
+
+    /// coerce an array value to `want` elements, zero-padding or
+    /// truncating (STRING store semantics: len byte + data, rest 0)
+    fn str_fit(&mut self, v: BasicValueEnum<'ctx>, want: u32) -> BasicValueEnum<'ctx> {
+        let av = match v {
+            BasicValueEnum::ArrayValue(a) => a,
+            other => return other,
+        };
+        let have = av.get_type().len();
+        if have == want {
+            return av.into();
+        }
+        let i8t = self.ctx.i8_type();
+        let zeros: Vec<inkwell::values::IntValue<'ctx>> =
+            vec![i8t.const_zero(); want as usize];
+        let mut acc = i8t.const_array(&zeros);
+        for i in 0..want.min(have) {
+            let el = self.b.build_extract_value(av, i, "se").unwrap();
+            acc = self
+                .b
+                .build_insert_value(acc, el, i, "si")
+                .unwrap()
+                .into_array_value();
+        }
+        acc.into()
     }
 
     // ---- expressions ----
@@ -264,7 +294,26 @@ impl<'ctx> Gen<'ctx> {
                     Lit::Real(v) => lt.into_float_type().const_float(*v).into(),
                     Lit::TimeNs(v) => lt.into_int_type().const_int(*v as u64, true).into(),
                     Lit::EnumVal { .. } => lt.into_int_type().const_zero().into(),
-                    Lit::Str(_) => self.ctx.i8_type().const_zero().into(),
+                    Lit::Str(s) => {
+                        // STRING literal → [1+cap x i8] {len, bytes, 0…}
+                        // (a bare i8 zero would only clear the len byte)
+                        let cap = match &e.ty {
+                            Type::Str { cap } => *cap as usize,
+                            _ => s.len(),
+                        };
+                        let i8t = self.ctx.i8_type();
+                        let n = s.len().min(cap);
+                        let mut els: Vec<inkwell::values::IntValue<'ctx>> =
+                            Vec::with_capacity(1 + cap);
+                        els.push(i8t.const_int(n as u64, false));
+                        for b in s.as_bytes().iter().take(n) {
+                            els.push(i8t.const_int(*b as u64, false));
+                        }
+                        while els.len() < 1 + cap {
+                            els.push(i8t.const_zero());
+                        }
+                        i8t.const_array(&els).into()
+                    }
                 }
             }
             ExprKind::Ref(r) => self.read(ctx, r),
@@ -464,6 +513,39 @@ impl<'ctx> Gen<'ctx> {
                 return phi.as_basic_value();
             }
             _ => {}
+        }
+        // STRING =/<> : length byte then code-unit compare within the
+        // shorter string (sema rejects ordered compares). Unrolled —
+        // caps are small and this keeps the scan path libc-free.
+        if matches!(op, Eq | Ne)
+            && (matches!(a.ty, Type::Str { .. }) || matches!(b.ty, Type::Str { .. }))
+        {
+            let av = self.expr(ctx, a).into_array_value();
+            let bv = self.expr(ctx, b).into_array_value();
+            let cap = av.get_type().len().min(bv.get_type().len()) as usize;
+            let i8t = self.ctx.i8_type();
+            let la = self.b.build_extract_value(av, 0, "la").unwrap().into_int_value();
+            let lb = self.b.build_extract_value(bv, 0, "lb").unwrap().into_int_value();
+            let mut neq = self
+                .b
+                .build_int_compare(IntPredicate::NE, la, lb, "lneq")
+                .unwrap();
+            for i in 1..cap {
+                let ca = self.b.build_extract_value(av, i as u32, "ca").unwrap().into_int_value();
+                let cb = self.b.build_extract_value(bv, i as u32, "cb").unwrap().into_int_value();
+                let d = self.b.build_int_compare(IntPredicate::NE, ca, cb, "cd").unwrap();
+                let idx = i8t.const_int((i - 1) as u64, false);
+                let ina = self.b.build_int_compare(IntPredicate::ULT, idx, la, "ia").unwrap();
+                let inb = self.b.build_int_compare(IntPredicate::ULT, idx, lb, "ib").unwrap();
+                let act = self.b.build_and(ina, inb, "act").unwrap();
+                let m = self.b.build_and(d, act, "m").unwrap();
+                neq = self.b.build_or(neq, m, "no").unwrap();
+            }
+            return if op == Eq {
+                self.b.build_not(neq, "seq").unwrap().into()
+            } else {
+                neq.into()
+            };
         }
         let target = if matches!(op, Eq | Ne | Lt | Le | Gt | Ge) {
             Self::cmp_ty(&a.ty, &b.ty)

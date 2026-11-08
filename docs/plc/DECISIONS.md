@@ -297,3 +297,23 @@ numbers — `map: MAP_RANGE (-502)` printed an MGMT code's value).
 **Implemented:** MAP codes renumbered to -600..-609 in
 `runtime/bridge/include/tplc/bridge/MapRunner.hpp`; they remain
 report-domain codes, never wire errors. `error-codes.md` updated.
+
+## D-IMPL-22 — STRING semantics fixed end-to-end (codegen + interp + sema)
+
+**Found:** in the compiled path a STRING literal lowered to a bare
+`i8 0` (opaque-pointer store only cleared the len byte), so
+`s := 'abc'` silently produced an empty string; `a = b` on strings
+panicked the compiler (`ArrayValue` fed to `into_int_value`); the L1
+interpreter compared strings as 0 (always equal).
+
+**Implemented:** literals materialize as `[1+cap x i8]`
+`{len, bytes, 0…}`; the STRING store pads/truncates to the target cap
+(`str_fit`); `=`/`<>` lower to an unrolled length+code-unit compare
+(libc-free — the scan path must not call `memcmp`); the interpreter
+compares bytes lexicographically; sema rejects ordered or mixed-type
+STRING comparisons with `TPLC_E_ST_TYPE` instead of letting codegen
+fail. Covered by `str.compare` (oracle vector: L1 + sim parity) and
+`string_assign_and_compare_through_jit` (compiled path).
+
+**Still open:** `WSTRING` remains a narrow `STRING(160)`; true UTF-16
+(`u16` len + `u16[cap]`) is the iteration-2 dialect item.

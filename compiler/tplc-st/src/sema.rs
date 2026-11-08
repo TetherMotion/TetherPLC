@@ -349,7 +349,23 @@ impl<'e> Checker<'e> {
                         }
                     }
                     Shl | Shr | Rol | Ror => ta,
-                    Eq | Ne | Lt | Le | Gt | Ge => Type::Bool,
+                    Eq | Ne | Lt | Le | Gt | Ge => {
+                        // STRING supports =/<> only (IEC 61131-3); an
+                        // ordered compare or a mixed-type compare is a
+                        // type error rather than a codegen surprise
+                        let str_l = matches!(ta, Type::Str { .. });
+                        let str_r = matches!(tb, Type::Str { .. });
+                        if str_l || str_r {
+                            if !(str_l && str_r) || !matches!(op, Eq | Ne) {
+                                self.err(
+                                    codes::TYPE,
+                                    "STRING comparison supports = and <> only",
+                                    &e.prov,
+                                );
+                            }
+                        }
+                        Type::Bool
+                    }
                     And | Or | Xor | AndThen | OrElse => Type::Bool,
                 }
             }

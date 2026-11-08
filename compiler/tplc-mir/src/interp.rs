@@ -794,6 +794,15 @@ fn cmp(l: &Value, r: &Value) -> i8 {
     }
     match (l, r) {
         (Value::Bool(a), Value::Bool(b)) => (*a as i8) - (*b as i8),
+        (Value::Str(a), Value::Str(b)) => {
+            // lexicographic over bytes (IEC defines =/<> only; the
+            // ordering is what a memcmp-style engine would produce)
+            match a.cmp(b) {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            }
+        }
         _ => {
             let (a, b) = (l.as_i64(), r.as_i64());
             if a < b {

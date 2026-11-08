@@ -100,6 +100,44 @@ END_PROGRAM
 }
 
 #[test]
+fn string_semantics_are_typed() {
+    // STRING =/<> is legal; an ordered compare is a type error (IEC
+    // 61131-3) instead of a codegen surprise
+    let ok = r#"
+PROGRAM P
+VAR a : STRING[16]; b : STRING[16]; eq : BOOL; END_VAR
+    a := 'abc';
+    b := a;
+    eq := (a = b) OR (a <> 'x');
+END_PROGRAM
+"#;
+    let out = compile(&[("ok.st", ok)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        !diags.iter().any(|d| d.severity == tplc_st::Severity::Error),
+        "sema errors: {diags:?}"
+    );
+
+    let bad = r#"
+PROGRAM P
+VAR a : STRING[16]; b : STRING[16]; lt : BOOL; END_VAR
+    lt := (a < b);
+END_PROGRAM
+"#;
+    let out = compile(&[("bad.st", bad)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == tplc_st::codes::TYPE
+                && d.message.contains("STRING comparison")),
+        "expected ordered-string diag, got {diags:?}"
+    );
+}
+
+#[test]
 fn lints_fire_and_render() {
     let src = r#"
 PROGRAM P

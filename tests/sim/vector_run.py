@@ -254,7 +254,15 @@ def main():
                     "--steps", steps, "--plc", PLC, "--ctl", ctl,
                     "--settle-ms", "800", "--scan"]
             if shadow_pkg:
-                argv += ["--shadow", shadow_pkg]
+                # pin the two runtime knobs the promote vectors assume:
+                # a shadow tick every scan (budget) and immediate
+                # adoption with outputs live (quarantine is the old
+                # program's rollback window, not an output hold).
+                # Defaults make these timing-dependent — shadow_e2e
+                # pins them the same way.
+                argv += ["--shadow", shadow_pkg,
+                         "--quarantine-cycles", "100000",
+                         "--shadow-budget-ns", "999999999999"]
             r = subprocess.run(
                 argv,
                 env=env, capture_output=True, text=True, timeout=120)

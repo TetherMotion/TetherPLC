@@ -494,3 +494,125 @@ fn migrate_jit() {
         assert_eq!(mc.out_status, 4);
     }
 }
+
+/// STRING semantics through the compiled path: literal materialization
+/// (len byte + bytes + zero pad), cross-cap store, and =/<> compare.
+/// Regression for the opaque-pointer era bug where a literal lowered
+/// to a bare i8 zero and comparisons panicked on ArrayValue.
+#[test]
+fn string_assign_and_compare_through_jit() {
+    fn str_lit(s: &str) -> Expr {
+        Expr {
+            ty: Type::Str {
+                cap: s.len() as u16,
+            },
+            kind: ExprKind::Lit(Lit::Str(s.into())),
+            prov: Prov::None,
+        }
+    }
+    fn str_var(n: &str) -> Expr {
+        Expr {
+            ty: Type::Str { cap: 16 },
+            kind: ExprKind::Ref(Ref::Var(n.into())),
+            prov: Prov::None,
+        }
+    }
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+    };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "S".into(),
+        iface: vec![
+            vd("a", Type::Str { cap: 16 }, None),
+            vd("b", Type::Str { cap: 16 }, None),
+            vd("eq1", Type::Bool, None),
+            vd("eq2", Type::Bool, None),
+            vd("eq3", Type::Bool, None),
+        ],
+        body: Body::Stmts(vec![
+            assign(Ref::Var("a".into()), str_lit("abc")),
+            assign(Ref::Var("b".into()), str_lit("abd")),
+            assign(
+                Ref::Var("eq1".into()),
+                bin(BinOp::Eq, str_var("a"), str_var("b"), Type::Bool),
+            ),
+            assign(
+                Ref::Var("eq2".into()),
+                bin(BinOp::Eq, str_var("a"), str_lit("abc"), Type::Bool),
+            ),
+            assign(
+                Ref::Var("eq3".into()),
+                bin(BinOp::Ne, str_var("a"), str_var("b"), Type::Bool),
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx, m, l, program, &[], "str", [0x52; 16], [0xBB; 32], None, 10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        assert_eq!(run(&mut tctx), 0);
+
+        let a = scope["a"].0 as usize;
+        assert_eq!(blob[a], 3, "len byte");
+        assert_eq!(&blob[a + 1..a + 4], b"abc");
+        assert_eq!(&blob[a + 4..a + 17], &[0u8; 13], "zero pad");
+        let b = scope["b"].0 as usize;
+        assert_eq!(blob[b], 3);
+        assert_eq!(&blob[b + 1..b + 4], b"abd");
+
+        assert_eq!(blob[scope["eq1"].0 as usize], 0, "a = b is false");
+        assert_eq!(blob[scope["eq2"].0 as usize], 1, "a = 'abc' is true");
+        assert_eq!(blob[scope["eq3"].0 as usize], 1, "a <> b is true");
+    }
+}
