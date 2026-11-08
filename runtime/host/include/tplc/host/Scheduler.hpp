@@ -71,6 +71,9 @@ private:
         TaskStats stats;
     };
     std::vector<Entry> tasks_;
+    /* scratch due-set, reused across ticks — a per-scan heap alloc in
+       the scan loop is exactly what "no allocation after init" forbids */
+    std::vector<Entry*> due_scratch_;
 };
 
 } /* namespace tplc */

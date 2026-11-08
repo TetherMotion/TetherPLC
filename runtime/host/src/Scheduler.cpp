@@ -28,8 +28,10 @@ void Scheduler::removeProgram(Program& prog) {
 
 size_t Scheduler::tick(uint64_t now_ns, const TickHooks& hooks) {
     /* collect due, dispatch in priority order (doc 04 §4: single
-       thread, cooperative) */
-    std::vector<Entry*> due;
+       thread, cooperative) — scratch vector keeps its capacity
+       across ticks so steady-state scans never hit the heap       */
+    due_scratch_.clear();
+    std::vector<Entry*>& due = due_scratch_;
     for (auto& e : tasks_) {
         if (e.first_run) e.next_due = now_ns;      /* due immediately */
         if (e.suspended && e.step_budget == 0) continue;
