@@ -209,6 +209,7 @@ int main(int argc, char** argv) {
             "|force-clear [H|all]|break T OFF LEN CMP V"
             "|break-list|break-clear [H|all]"
             "|capture T OFF LEN CMP V"
+            "|breakx T EXPR|capturex T EXPR"
             "|trace [nofreeze] OFF:LEN..|trace-status"
             "|trace-read [SEQ [N]]|trace-clear"
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
@@ -468,6 +469,23 @@ int main(int argc, char** argv) {
         pre_len = 12;
     }
     else if (!strcmp(cmd, "trace-clear")) op = TPLC_OP_TRACE_CLEAR;
+    else if (!strcmp(cmd, "breakx") || !strcmp(cmd, "capturex")) {
+        /* breakx <task> <expr>: expression trigger (doc 12 §M)     */
+        if (!arg || argc < 5) {
+            fprintf(stderr, "%s <task> <expr>\n", cmd); return 2;
+        }
+        op = !strcmp(cmd, "capturex") ? TPLC_OP_DBG_CAPTURE_EXPR
+                                    : TPLC_OP_DBG_BREAK_EXPR;
+        uint32_t ti = (uint32_t)strtoul(arg, NULL, 0);
+        const char* ex = argv[4];
+        size_t el = strlen(ex);
+        if (el > 256) { fprintf(stderr, "expr > 256 chars\n");
+            return 2; }
+        memcpy(pre, &ti, 4);
+        uint16_t u = (uint16_t)el; memcpy(pre + 4, &u, 2);
+        memcpy(pre + 6, ex, el);
+        pre_len = 6 + (uint32_t)el;
+    }
     else if (!strcmp(cmd, "watch")) {
         /* watch OFF:LEN [OFF:LEN...]: same channel shape as trace,
            item len ≤ 64, ≤ 16 items                                */
@@ -654,7 +672,9 @@ int main(int argc, char** argv) {
                    i % 16 == 15 || i == len - 1 ? "\n" : " ");
         }
     }
-    else if (op == TPLC_OP_DBG_BREAK) {
+    else if (op == TPLC_OP_DBG_BREAK || op == TPLC_OP_DBG_CAPTURE ||
+             op == TPLC_OP_DBG_BREAK_EXPR ||
+             op == TPLC_OP_DBG_CAPTURE_EXPR) {
         if (len >= 4) {
             uint32_t h;
             memcpy(&h, pl, 4);
@@ -674,11 +694,16 @@ int main(int argc, char** argv) {
             int cap = q[21];
             memcpy(&val, q + 24, 8); memcpy(&hits, q + 32, 8);
             q += 40;
-            printf("  h%u%s task %u  blob[%lu..%lu] %s %lu  "
-                   "hits %lu\n", h, cap ? " cap" : "", tix,
-                   (unsigned long)off, (unsigned long)(off + l),
-                   cmps[c <= 5 ? c : 0], (unsigned long)val,
-                   (unsigned long)hits);
+            if (c == 0xFF)
+                printf("  h%u%s task %u  expr  hits %lu\n",
+                       h, cap ? " cap" : "", tix,
+                       (unsigned long)hits);
+            else
+                printf("  h%u%s task %u  blob[%lu..%lu] %s %lu  "
+                       "hits %lu\n", h, cap ? " cap" : "", tix,
+                       (unsigned long)off, (unsigned long)(off + l),
+                       cmps[c <= 5 ? c : 0], (unsigned long)val,
+                       (unsigned long)hits);
         }
     }
     else if (op == TPLC_OP_DBG_FORCE) {

@@ -112,6 +112,15 @@ enum TplcCtlOp {
     TPLC_OP_DBG_WATCH_REMOVE = 0x0512,
     TPLC_OP_DBG_WATCH_STREAM = 0x0513,
     TPLC_OP_DBG_WATCH_LIST   = 0x0514,
+    /* expression triggers (doc 12 §M): {u32 task_idx, u16 elen,
+       char expr[]} → {u32 handle}. expr compiles to a bounded stack
+       machine over resolved symmap paths (integer/boolean only,
+       ≤64 ops); paths become per-scan sampled slots so changed()/
+       rising()/falling() see a stable previous value. BREAK_EXPR
+       suspends the task on true; CAPTURE_EXPR freezes the recorder.
+       Listed in DBG_BREAK_LIST with len=0/cmp=0xFF.               */
+    TPLC_OP_DBG_BREAK_EXPR   = 0x0515,
+    TPLC_OP_DBG_CAPTURE_EXPR = 0x0516,
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,

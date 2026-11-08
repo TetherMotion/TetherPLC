@@ -17,9 +17,12 @@
 #include <cerrno>
 #include <atomic>
 #include <csignal>
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <thread>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -431,6 +434,27 @@ int main(int argc, char** argv) {
     std::vector<Force>               forces;
     uint32_t                         next_force_h = 1;
     static const size_t              MAX_FORCES = 64;
+    /* trigger expressions (doc 12 §M): a bounded stack machine over
+       resolved symmap paths; every path is a slot sampled once per
+       scan so changed()/rising()/falling() see a stable previous   */
+    enum ExprOp : uint8_t {
+        XO_LIT = 0x01,   /* u16 lit idx → push lit                  */
+        XO_SLOT = 0x02,  /* u8 slot idx → push sampled field value  */
+        XO_NEG = 0x03, XO_NOT = 0x04,
+        XO_ADD = 0x05, XO_SUB = 0x06, XO_MUL = 0x07,
+        XO_DIV = 0x08, XO_MOD = 0x09,
+        XO_EQ = 0x0A, XO_NE = 0x0B, XO_LT = 0x0C,
+        XO_LE = 0x0D, XO_GT = 0x0E, XO_GE = 0x0F,
+        XO_AND = 0x10, XO_OR = 0x11,
+        XO_CHANGED = 0x12, XO_RISING = 0x13, XO_FALLING = 0x14,
+    };
+    struct Expr {
+        struct Slot { uint64_t off; uint32_t len; };
+        std::vector<Slot>    slots;          /* blob ranges sampled */
+        std::vector<int64_t> prev;           /* last scan's values  */
+        std::vector<int64_t> lits;
+        std::vector<uint8_t> code;
+    };
     /* break_when (doc 12 §5): conditional suspend, evaluated at the
        post-tick boundary — fires only on a fresh suspension        */
     struct Break {
@@ -442,6 +466,7 @@ int main(int argc, char** argv) {
         uint64_t val;
         uint64_t hits = 0; /* triggers fired      */
         bool     capture = false; /* freeze recorder, not suspend */
+        std::optional<Expr> x;    /* set → expression trigger        */
     };
     std::vector<Break>               breaks;
     uint32_t                         next_break_h = 1;
@@ -754,6 +779,291 @@ int main(int argc, char** argv) {
                 (unsigned long long)s,
                 nm.empty() ? "?" : nm.c_str(), op,
                 detail.c_str());
+    };
+
+    /* ---- trigger expressions (doc 12 §M) ------------------------
+       Compiler + evaluator for the bounded stack machine; paths
+       resolve through the symmap at arm time                      */
+    auto smap_find = [&](std::string_view want,
+                         uint64_t* off, uint32_t* len) -> bool {
+        const uint8_t* sm = pkg_smap.data();
+        if (pkg_smap.size() < 32 || memcmp(sm, "SMAP", 4) != 0)
+            return false;
+        uint32_t count, stroff, strln;
+        memcpy(&count, sm + 8, 4);
+        memcpy(&stroff, sm + 12, 4);
+        memcpy(&strln, sm + 16, 4);
+        if ((uint64_t)stroff + strln > pkg_smap.size() ||
+            32ull + (uint64_t)count * 64 > pkg_smap.size())
+            return false;
+        const uint8_t* strs = sm + stroff;
+        for (uint32_t i = 0; i < count; i++) {
+            const uint8_t* e = sm + 32 + (size_t)i * 64;
+            uint32_t noff; memcpy(&noff, e, 4);
+            if (noff >= strln) continue;
+            const char* nm = (const char*)strs + noff;
+            if (!memchr(nm, 0, strln - noff)) continue;
+            if (want != nm) continue;
+            memcpy(off, e + 12, 8);
+            memcpy(len, e + 20, 4);
+            return true;
+        }
+        return false;
+    };
+    /* compile expr text into X; returns "" or an error phrase */
+    auto expr_compile = [&](std::string_view src,
+                            Expr& X) -> std::string {
+        struct C {
+            Expr* X;
+            std::string_view s;
+            C(Expr* x, std::string_view sv) : X(x), s(sv) {}
+            size_t i = 0;
+            std::string err;
+            void ws() { while (i < s.size() &&
+                         (s[i] == ' ' || s[i] == '\t')) i++; }
+            bool tok(std::string_view t) {
+                ws();
+                if (s.substr(i, t.size()) == t) { i += t.size();
+                    return true; }
+                return false;
+            }
+            bool ident(std::string_view& out) {
+                ws();
+                size_t b = i;
+                while (i < s.size() &&
+                       (isalnum((uint8_t)s[i]) || s[i] == '_' ||
+                        s[i] == '.' || s[i] == '[' || s[i] == ']'))
+                    i++;
+                out = s.substr(b, i - b);
+                return !out.empty() &&
+                       !(isdigit((uint8_t)out[0]));
+            }
+            bool number(int64_t* v) {
+                ws();
+                size_t b = i;
+                if (i + 1 < s.size() && s[i] == '0' &&
+                    (s[i + 1] == 'x' || s[i + 1] == 'X')) {
+                    i += 2;
+                    while (i < s.size() && isxdigit((uint8_t)s[i])) i++;
+                    if (i - b <= 2) return false;
+                    *v = (int64_t)strtoll(
+                        std::string(s.substr(b, i - b)).c_str(),
+                        nullptr, 16);
+                    return true;
+                }
+                while (i < s.size() && isdigit((uint8_t)s[i])) i++;
+                if (i == b) return false;
+                *v = strtoll(
+                    std::string(s.substr(b, i - b)).c_str(),
+                    nullptr, 10);
+                return true;
+            }
+            bool emit(uint8_t op) {
+                if (X->code.size() >= 128) { err = "expr too long";
+                    return false; }
+                X->code.push_back(op);
+                return true;
+            }
+            bool lit(int64_t v) {
+                if (X->lits.size() >= 32) { err = "too many literals";
+                    return false; }
+                if (!emit(XO_LIT)) return false;
+                uint16_t k = (uint16_t)(X->lits.size());
+                X->lits.push_back(v);
+                X->code.push_back((uint8_t)k);
+                X->code.push_back((uint8_t)(k >> 8));
+                return true;
+            }
+            int slot(std::string_view path) {
+                for (size_t i = 0; i < slots.size(); i++)
+                    if (slotnames[i] == path) return (int)i;
+                if (slots.size() >= 16) { err = "too many paths";
+                    return -1; }
+                uint64_t off; uint32_t len;
+                if (!find(path, &off, &len)) {
+                    err = "unknown path " + std::string(path);
+                    return -1;
+                }
+                if (len == 0 || len > 8) {
+                    err = "path not scalar " + std::string(path);
+                    return -1;
+                }
+                X->slots.push_back({off, len});
+                X->prev.push_back(0);
+                slots.push_back(1); slotnames.emplace_back(path);
+                return (int)(X->slots.size() - 1);
+            }
+            std::vector<int> slots;
+            std::vector<std::string> slotnames;
+            std::function<bool(std::string_view, uint64_t*, uint32_t*)>
+                find;
+            bool e_or() {
+                if (!e_and()) return false;
+                while (tok("||")) {
+                    if (!e_and() || !emit(XO_OR)) return false;
+                }
+                return true;
+            }
+            bool e_and() {
+                if (!e_cmp()) return false;
+                while (tok("&&")) {
+                    if (!e_cmp() || !emit(XO_AND)) return false;
+                }
+                return true;
+            }
+            bool e_cmp() {
+                if (!e_add()) return false;
+                ws();
+                uint8_t op = 0;
+                if (tok("==")) op = XO_EQ;
+                else if (tok("!=")) op = XO_NE;
+                else if (tok("<=")) op = XO_LE;
+                else if (tok(">=")) op = XO_GE;
+                else if (tok("<"))  op = XO_LT;
+                else if (tok(">"))  op = XO_GT;
+                if (!op) return true;
+                if (!e_add() || !emit(op)) return false;
+                return true;
+            }
+            bool e_add() {
+                if (!e_mul()) return false;
+                for (;;) {
+                    if (tok("+")) {
+                        if (!e_mul() || !emit(XO_ADD)) return false;
+                    } else if (tok("-")) {
+                        if (!e_mul() || !emit(XO_SUB)) return false;
+                    } else return true;
+                }
+            }
+            bool e_mul() {
+                if (!e_unary()) return false;
+                for (;;) {
+                    if (tok("*")) {
+                        if (!e_unary() || !emit(XO_MUL)) return false;
+                    } else if (tok("/")) {
+                        if (!e_unary() || !emit(XO_DIV)) return false;
+                    } else if (tok("%")) {
+                        if (!e_unary() || !emit(XO_MOD)) return false;
+                    } else return true;
+                }
+            }
+            bool e_unary() {
+                if (tok("!")) {
+                    if (!e_unary() || !emit(XO_NOT)) return false;
+                    return true;
+                }
+                if (tok("-")) {
+                    if (!e_unary() || !emit(XO_NEG)) return false;
+                    return true;
+                }
+                return e_prim();
+            }
+            bool e_prim() {
+                int64_t v;
+                if (number(&v)) return lit(v);
+                if (tok("(")) {
+                    if (!e_or() || !tok(")")) {
+                        if (err.empty()) err = "missing )";
+                        return false;
+                    }
+                    return true;
+                }
+                std::string_view id;
+                if (!ident(id)) { err = "operand expected";
+                    return false; }
+                if (id == "true")  return lit(1);
+                if (id == "false") return lit(0);
+                if (id == "changed" || id == "rising" ||
+                    id == "falling") {
+                    uint8_t op = id == "changed" ? XO_CHANGED
+                                 : id == "rising" ? XO_RISING
+                                                  : XO_FALLING;
+                    if (!tok("(")) { err = "missing ( after " +
+                        std::string(id); return false; }
+                    std::string_view path;
+                    if (!ident(path) || !tok(")")) {
+                        if (err.empty()) err = "bad " +
+                            std::string(id) + " arg";
+                        return false;
+                    }
+                    int si = slot(path);
+                    if (si < 0) return false;
+                    if (!emit(op)) return false;
+                    X->code.push_back((uint8_t)si);
+                    return true;
+                }
+                int si = slot(id);
+                if (si < 0) return false;
+                if (!emit(XO_SLOT)) return false;
+                X->code.push_back((uint8_t)si);
+                return true;
+            }
+        } c(&X, src);
+        c.find = [&](std::string_view p, uint64_t* o, uint32_t* l) {
+            return smap_find(p, o, l);
+        };
+        if (!c.e_or()) return c.err.empty() ? "syntax" : c.err;
+        c.ws();
+        if (c.i != c.s.size()) return "trailing input";
+        return "";
+    };
+    /* evaluate X against the current blob; updates slot prev values */
+    auto expr_eval = [&](Expr& X) -> bool {
+        int64_t v[16];
+        for (size_t i = 0; i < X.slots.size(); i++) {
+            uint64_t u = 0;
+            memcpy(&u, prog->blob() + X.slots[i].off, X.slots[i].len);
+            switch (X.slots[i].len) {
+                case 1: v[i] = (int8_t)u; break;
+                case 2: v[i] = (int16_t)u; break;
+                case 4: v[i] = (int32_t)u; break;
+                default: v[i] = (int64_t)u; break;
+            }
+        }
+        int64_t st[64]; int sp = 0;
+        auto bin = [&](uint8_t op) {
+            int64_t b = st[--sp], a = st[--sp];
+            switch (op) {
+                case XO_ADD: st[sp++] = a + b; break;
+                case XO_SUB: st[sp++] = a - b; break;
+                case XO_MUL: st[sp++] = a * b; break;
+                case XO_DIV: st[sp++] = b ? a / b : 0; break;
+                case XO_MOD: st[sp++] = b ? a % b : 0; break;
+                case XO_EQ:  st[sp++] = a == b; break;
+                case XO_NE:  st[sp++] = a != b; break;
+                case XO_LT:  st[sp++] = a <  b; break;
+                case XO_LE:  st[sp++] = a <= b; break;
+                case XO_GT:  st[sp++] = a >  b; break;
+                default:     st[sp++] = a >= b; break;
+                case XO_AND: st[sp++] = a && b; break;
+                case XO_OR:  st[sp++] = a || b; break;
+            }
+        };
+        for (size_t pc = 0; pc < X.code.size();) {
+            uint8_t op = X.code[pc++];
+            if (op == XO_LIT) {
+                uint16_t k = X.code[pc] | (X.code[pc + 1] << 8);
+                pc += 2;
+                st[sp++] = X.lits[k];
+            } else if (op == XO_SLOT) {
+                st[sp++] = v[X.code[pc++]];
+            } else if (op == XO_NEG) {
+                st[sp - 1] = -st[sp - 1];
+            } else if (op == XO_NOT) {
+                st[sp - 1] = !st[sp - 1];
+            } else if (op >= XO_CHANGED) {
+                uint8_t si = X.code[pc++];
+                int64_t cur = v[si], pr = X.prev[si];
+                st[sp++] = op == XO_CHANGED ? cur != pr
+                          : op == XO_RISING  ? !pr && cur
+                                             : pr && !cur;
+            } else {
+                bin(op);
+            }
+        }
+        for (size_t i = 0; i < X.slots.size(); i++)
+            X.prev[i] = v[i];
+        return sp > 0 && st[sp - 1] != 0;
     };
 
     /* ---------------- control channel -------------------------- */
@@ -1692,7 +2002,7 @@ int main(int argc, char** argv) {
         }
         breaks.push_back({next_break_h++, task_idx, off, len,
                           cmp, val, 0,
-                          t == TPLC_OP_DBG_CAPTURE});
+                          t == TPLC_OP_DBG_CAPTURE, std::nullopt});
         audit(fd, t == TPLC_OP_DBG_CAPTURE ? "dbg.capture"
                                            : "dbg.break",
               "h=" + std::to_string(breaks.back().handle) +
@@ -1707,6 +2017,66 @@ int main(int argc, char** argv) {
     };
     ctl.on(TPLC_OP_DBG_BREAK, arm_break);
     ctl.on(TPLC_OP_DBG_CAPTURE, arm_break);
+    /* expression triggers (doc 12 §M): {u32 task_idx, u16 elen,
+       char expr[]} → {u32 handle}. Compile failures carry the
+       offending term in the error detail                          */
+    auto arm_break_expr = [&](int fd, uint16_t t,
+                              const uint8_t* p, uint32_t n,
+                              uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n < 6) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 task_idx, u16 elen, char expr[]}",
+                           req);
+            return;
+        }
+        uint32_t task_idx; uint16_t el;
+        memcpy(&task_idx, p, 4);
+        memcpy(&el, p + 4, 2);
+        if ((uint32_t)el + 6 != n || el == 0 || el > 256) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "expr len 1..256", req);
+            return;
+        }
+        if (task_idx >= d.task_count) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_STATE,
+                           "no such task", req);
+            return;
+        }
+        if (breaks.size() >= MAX_BREAKS) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_OVERLOAD,
+                           "break table full", req);
+            return;
+        }
+        Expr X;
+        std::string err = expr_compile(
+            std::string_view((const char*)p + 6, el), X);
+        if (!err.empty()) {
+            ctl.errorReply(fd, t,
+                           err.rfind("unknown", 0) == 0
+                               ? TPLC_E_DBG_RESOLVE
+                               : TPLC_E_CTL_PAYLOAD,
+                           err.c_str(), req);
+            return;
+        }
+        Break b{next_break_h++, task_idx, 0, 0, 0xFF, 0, 0,
+                t == TPLC_OP_DBG_CAPTURE_EXPR, std::move(X)};
+        breaks.push_back(std::move(b));
+        audit(fd, t == TPLC_OP_DBG_CAPTURE_EXPR ? "dbg.capture.expr"
+                                                : "dbg.break.expr",
+              "h=" + std::to_string(breaks.back().handle) +
+              " task=" + std::to_string(task_idx) + " \"" +
+              std::string((const char*)p + 6, el) + "\"");
+        tplc::CtlServer::W w;
+        w.u32(breaks.back().handle);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    };
+    ctl.on(TPLC_OP_DBG_BREAK_EXPR, arm_break_expr);
+    ctl.on(TPLC_OP_DBG_CAPTURE_EXPR, arm_break_expr);
     /* {u32 n, {u32 handle, u32 task, u64 off, u32 len, u8 cmp,
                 u8 pad[3], u64 val, u64 hits}*}                    */
     ctl.on(TPLC_OP_DBG_BREAK_LIST, [&](int fd, uint16_t t,
@@ -2303,15 +2673,20 @@ int main(int argc, char** argv) {
                           : sched.suspended(*prog, b.task_idx))
                 continue;
             uint64_t cur = 0;
-            memcpy(&cur, prog->blob() + b.off, b.len);
             bool hit;
-            switch (b.cmp) {
-                case 0: hit = cur == b.val; break;
-                case 1: hit = cur != b.val; break;
-                case 2: hit = cur <  b.val; break;
-                case 3: hit = cur <= b.val; break;
-                case 4: hit = cur >  b.val; break;
-                default: hit = cur >= b.val; break;
+            if (b.x) {
+                hit = expr_eval(*b.x);
+                cur = (uint64_t)hit;
+            } else {
+                memcpy(&cur, prog->blob() + b.off, b.len);
+                switch (b.cmp) {
+                    case 0: hit = cur == b.val; break;
+                    case 1: hit = cur != b.val; break;
+                    case 2: hit = cur <  b.val; break;
+                    case 3: hit = cur <= b.val; break;
+                    case 4: hit = cur >  b.val; break;
+                    default: hit = cur >= b.val; break;
+                }
             }
             if (!hit) continue;
             bool fired = b.capture

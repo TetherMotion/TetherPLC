@@ -326,6 +326,29 @@ int main(void) {
         CHECK(fl & TPLC_CTL_F_ERROR);
     }
 
+    /* expression triggers: the stub carries no SMAP so every path
+       fails resolve; malformed text fails the payload check        */
+    {
+        uint8_t bx[6 + 32];
+        uint32_t ti = 0; memcpy(bx, &ti, 4);
+        const char* ex = "nope > 1";
+        uint16_t el = (uint16_t)strlen(ex);
+        memcpy(bx + 4, &el, 2);
+        memcpy(bx + 6, ex, el);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_DBG_BREAK_EXPR, bx, 6 + el,
+               resp, &rlen, &fl);
+        CHECK(fl & TPLC_CTL_F_ERROR);
+        const char* bx2 = "x >>";
+        el = (uint16_t)strlen(bx2);
+        memcpy(bx + 4, &el, 2);
+        memcpy(bx + 6, bx2, el);
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_DBG_BREAK_EXPR, bx, 6 + el,
+               resp, &rlen, &fl);
+        CHECK(fl & TPLC_CTL_F_ERROR);
+    }
+
     /* heartbeats: plc side is ticking */
     CHECK(tplc_image_plc_hb_ns(&master) > 0);
 
