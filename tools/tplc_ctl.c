@@ -211,6 +211,7 @@ int main(int argc, char** argv) {
             "|break-list|break-clear [H|all]"
             "|capture T OFF LEN CMP V"
             "|breakx T EXPR|capturex T EXPR|state-diff|fields"
+            "|retain-status|retain-flush|retain-clear|retain-dump"
             "|trace [nofreeze] OFF:LEN..|trace-status"
             "|trace-read [SEQ [N]]|trace-clear"
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
@@ -495,6 +496,10 @@ int main(int argc, char** argv) {
         /* fields: blob layout browser, per-field rows             */
         op = TPLC_OP_DBG_FIELDS;
     }
+    else if (!strcmp(cmd, "retain-status")) op = TPLC_OP_RETAIN_STATUS;
+    else if (!strcmp(cmd, "retain-flush"))  op = TPLC_OP_RETAIN_FLUSH;
+    else if (!strcmp(cmd, "retain-clear"))  op = TPLC_OP_RETAIN_CLEAR;
+    else if (!strcmp(cmd, "retain-dump"))   op = TPLC_OP_RETAIN_DUMP;
     else if (!strcmp(cmd, "watch")) {
         /* watch ITEM [ITEM...]: ITEM is OFF:LEN (raw range) or a
            symbol PATH the runtime resolves, ≤ 16 items             */
@@ -781,6 +786,28 @@ int main(int argc, char** argv) {
                 (void)aux;
             }
         }
+    }
+    else if (op == TPLC_OP_RETAIN_STATUS) {
+        if (len >= 44) {
+            uint64_t rlen, rgen, rfl, rrs, rls;
+            memcpy(&rlen, pl + 4, 8);  memcpy(&rgen, pl + 12, 8);
+            memcpy(&rfl,  pl + 20, 8); memcpy(&rrs,  pl + 28, 8);
+            memcpy(&rls,  pl + 36, 8);
+            printf("retain  attached %u  dirty %u  len %lu  "
+                   "gen %lu  flushes %lu  restores %lu  "
+                   "losses %lu\n",
+                   pl[0], pl[1], (unsigned long)rlen,
+                   (unsigned long)rgen, (unsigned long)rfl,
+                   (unsigned long)rrs, (unsigned long)rls);
+        } else puts("(short payload)");
+    }
+    else if (op == TPLC_OP_RETAIN_DUMP) {
+        printf("retain region  %u B\n", len);
+        for (uint32_t i = 0; i + 1 < len; i += 2)
+            printf("%02x%02x%c", pl[i], pl[i + 1],
+                   (i % 32 == 30 || i + 2 >= len) ? '\n' : ' ');
+        if (len % 2) printf("%02x\n", pl[len - 1]);
+        else if (!len || len % 32) putchar('\n');
     }
     else if (op == TPLC_OP_DBG_FIELDS) {
         if (len < 4) { puts("(short payload)"); }
