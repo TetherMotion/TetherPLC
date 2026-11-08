@@ -276,11 +276,22 @@ int CtlServer::poll(int timeout_ms) {
     }
 
     /* dispatch newly arrived frames, same bound; beyond 2× the max
-       frame the backlog can only be abuse — drop the client       */
+       frame the backlog can only be abuse — send DBG_OVERLOAD with
+       the head frame's identity (when parseable) and drop         */
     budget = OPS_PER_POLL;
     for (size_t i = 0; i < clients_.size();) {
         if (clients_[i].inbuf.size() >
             TPLC_CTL_MAX_PAYLOAD * 2 + TPLC_CTL_HDR_SIZE) {
+            const uint8_t* h = clients_[i].inbuf.data();
+            if (clients_[i].inbuf.size() >= TPLC_CTL_HDR_SIZE) {
+                uint16_t type = h[0] | (h[1] << 8);
+                uint64_t req  = 0;
+                for (int k = 0; k < 8; k++)
+                    req |= (uint64_t)h[8 + k] << (8 * k);
+                errorReply(clients_[i].fd, type, TPLC_E_DBG_OVERLOAD,
+                           "op shed: backlog exceeds watermark", req);
+                flush(clients_[i]);
+            }
             dropClient(i);
             continue;
         }

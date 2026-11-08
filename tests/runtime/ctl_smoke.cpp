@@ -276,6 +276,56 @@ int main(void) {
         CHECK(fl & TPLC_CTL_F_ERROR);
     }
 
+    /* watch: add a two-item set, get returns boundary bytes,
+       stream arm shows in LIST, remove drops it */
+    uint32_t watch_h = 0;
+    {
+        uint8_t cf[8 + 2 * 16] = {};
+        uint32_t ni = 2; memcpy(cf, &ni, 4);
+        l = blob_sz >= 4 ? 4 : 1;
+        memcpy(cf + 16, &l, 4);              /* item0: off 0 len l */
+        memcpy(cf + 32, &l, 4);              /* item1: off 0 len l */
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_DBG_WATCH_ADD, cf, sizeof cf,
+                        resp, &rlen, &fl), TPLC_OP_DBG_WATCH_ADD);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        memcpy(&watch_h, resp, 4);
+        CHECK(watch_h > 0);
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_DBG_WATCH_GET, &watch_h, 4,
+                        resp, &rlen, &fl), TPLC_OP_DBG_WATCH_GET);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        uint32_t n; memcpy(&n, resp, 4);
+        CHECK_EQ(n, 2u);
+        uint32_t i0; memcpy(&i0, resp + 4, 4);
+        CHECK_EQ(i0, l);
+        /* arm a 10 Hz stream */
+        uint8_t st[8];
+        memcpy(st, &watch_h, 4);
+        uint32_t hz = 10; memcpy(st + 4, &hz, 4);
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_DBG_WATCH_STREAM, st, 8,
+                        resp, &rlen, &fl), TPLC_OP_DBG_WATCH_STREAM);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_DBG_WATCH_LIST, nullptr, 0,
+                        resp, &rlen, &fl), TPLC_OP_DBG_WATCH_LIST);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        uint32_t wl_n; memcpy(&wl_n, resp, 4);
+        CHECK_EQ(wl_n, 1u);
+        uint32_t wl_hz; memcpy(&wl_hz, resp + 12, 4);
+        CHECK_EQ(wl_hz, 10u);
+        /* remove */
+        rlen = sizeof resp;
+        CHECK_EQ(ctl_op(fd, TPLC_OP_DBG_WATCH_REMOVE, &watch_h, 4,
+                        resp, &rlen, &fl), TPLC_OP_DBG_WATCH_REMOVE);
+        CHECK(!(fl & TPLC_CTL_F_ERROR));
+        rlen = sizeof resp;
+        ctl_op(fd, TPLC_OP_DBG_WATCH_GET, &watch_h, 4,
+               resp, &rlen, &fl);
+        CHECK(fl & TPLC_CTL_F_ERROR);
+    }
+
     /* heartbeats: plc side is ticking */
     CHECK(tplc_image_plc_hb_ns(&master) > 0);
 

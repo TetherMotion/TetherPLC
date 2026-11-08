@@ -210,7 +210,9 @@ int main(int argc, char** argv) {
             "|break-list|break-clear [H|all]"
             "|capture T OFF LEN CMP V"
             "|trace [nofreeze] OFF:LEN..|trace-status"
-            "|trace-read [SEQ [N]]|trace-clear\n", argv[0]);
+            "|trace-read [SEQ [N]]|trace-clear"
+            "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
+            "|watch-rm [H|all]|watch-list\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -341,14 +343,17 @@ int main(int argc, char** argv) {
         pre_len = 12 + wl;
     }
     else if (!strcmp(cmd, "force")) {
+        /* force <off> <hex> [maskhex]: mask limits the override to
+           the marked bits (bit force, doc 12 §4)                  */
         if (!arg || argc < 5) {
-            fprintf(stderr, "force <off> <hex>\n"); return 2;
+            fprintf(stderr, "force <off> <hex> [maskhex]\n");
+            return 2;
         }
         op = TPLC_OP_DBG_FORCE;
         uint64_t off = strtoull(arg, NULL, 0);
         const char* hex = argv[4];
         size_t hl = strlen(hex) / 2;
-        if (strlen(hex) % 2 || hl > sizeof(pre) - 12) {
+        if (strlen(hex) % 2 || hl > (sizeof(pre) - 12) / 2) {
             fprintf(stderr, "bad hex\n"); return 2;
         }
         memcpy(pre, &off, 8);
@@ -362,6 +367,21 @@ int main(int argc, char** argv) {
             pre[12 + i] = (uint8_t)v;
         }
         pre_len = 12 + wl;
+        if (argc > 5) {
+            const char* mh = argv[5];
+            if (strlen(mh) != hl * 2) {
+                fprintf(stderr, "mask must match hex length\n");
+                return 2;
+            }
+            for (uint32_t i = 0; i < wl; i++) {
+                int v; char t[3] = {mh[i*2], mh[i*2+1], 0};
+                if (sscanf(t, "%02x", &v) != 1) {
+                    fprintf(stderr, "bad mask hex\n"); return 2;
+                }
+                pre[12 + wl + i] = (uint8_t)v;
+            }
+            pre_len += wl;
+        }
     }
     else if (!strcmp(cmd, "force-list")) op = TPLC_OP_DBG_FORCE_LIST;
     else if (!strcmp(cmd, "force-clear")) {
@@ -448,6 +468,55 @@ int main(int argc, char** argv) {
         pre_len = 12;
     }
     else if (!strcmp(cmd, "trace-clear")) op = TPLC_OP_TRACE_CLEAR;
+    else if (!strcmp(cmd, "watch")) {
+        /* watch OFF:LEN [OFF:LEN...]: same channel shape as trace,
+           item len ≤ 64, ≤ 16 items                                */
+        int nch = argc - 3;
+        if (nch < 1 || nch > 16) {
+            fprintf(stderr, "watch needs 1..16 OFF:LEN items\n");
+            return 2;
+        }
+        op = TPLC_OP_DBG_WATCH_ADD;
+        memset(pre, 0, 8);
+        uint32_t u = (uint32_t)nch; memcpy(pre, &u, 4);
+        uint8_t* q = pre + 8;
+        for (int i = 0; i < nch; i++) {
+            uint64_t off; uint32_t l;
+            if (sscanf(argv[3 + i], "%llu:%u",
+                       (unsigned long long*)&off, &l) != 2 ||
+                l == 0 || l > 64) {
+                fprintf(stderr, "bad item %s (want OFF:LEN, "
+                        "len 1..64)\n", argv[3 + i]);
+                return 2;
+            }
+            memcpy(q, &off, 8); memcpy(q + 8, &l, 4);
+            q += 16;
+        }
+        pre_len = (uint32_t)(q - pre);
+    }
+    else if (!strcmp(cmd, "watch-get")) {
+        op = TPLC_OP_DBG_WATCH_GET;
+        uint32_t h = arg ? (uint32_t)strtoul(arg, NULL, 0) : 0;
+        memcpy(pre, &h, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "watch-stream")) {
+        /* watch-stream H [HZ]: hz 1..50 arm, 0 disarm             */
+        op = TPLC_OP_DBG_WATCH_STREAM;
+        uint32_t h = arg ? (uint32_t)strtoul(arg, NULL, 0) : 0;
+        uint32_t hz = (argc > 4)
+                          ? (uint32_t)strtoul(argv[4], NULL, 0) : 10;
+        memcpy(pre, &h, 4); memcpy(pre + 4, &hz, 4);
+        pre_len = 8;
+    }
+    else if (!strcmp(cmd, "watch-rm")) {
+        op = TPLC_OP_DBG_WATCH_REMOVE;
+        uint32_t h = (!arg || !strcmp(arg, "all"))
+                         ? 0xFFFFFFFFu : (uint32_t)strtoul(arg, NULL, 0);
+        memcpy(pre, &h, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "watch-list")) op = TPLC_OP_DBG_WATCH_LIST;
     else { fprintf(stderr, "unknown cmd %s\n", cmd); return 2; }
 
     int fd = ctl_connect(sock, 3000);
@@ -632,6 +701,18 @@ int main(int argc, char** argv) {
             for (uint32_t b = 0; b < l && b < 16; b++)
                 printf("%02x", q[b]);
             q += l;
+            /* mask bytes follow when the entry is masked */
+            if (q + l <= pl + len) {
+                int masked = 0;
+                for (uint32_t b = 0; b < l; b++)
+                    if (q[b] != 0xFF) masked = 1;
+                if (masked) {
+                    printf("  mask ");
+                    for (uint32_t b = 0; b < l && b < 16; b++)
+                        printf("%02x", q[b]);
+                }
+                q += l;
+            }
             printf("\n");
         }
     }
@@ -672,6 +753,42 @@ int main(int argc, char** argv) {
                     printf("%02x", q[b]);
                 q += fl;
                 printf("\n");
+            }
+        }
+    }
+    else if (op == TPLC_OP_DBG_WATCH_ADD) {
+        if (len >= 4) {
+            uint32_t h; memcpy(&h, pl, 4);
+            printf("watch handle %u\n", h);
+        }
+    }
+    else if (op == TPLC_OP_DBG_WATCH_GET) {
+        if (len >= 4) {
+            const uint8_t* q = pl;
+            uint32_t n; memcpy(&n, q, 4); q += 4;
+            printf("watch items %u\n", n);
+            for (uint32_t i = 0; i < n; i++) {
+                uint32_t l; memcpy(&l, q, 4); q += 4;
+                printf("  [%u] %u B  ", i, l);
+                for (uint32_t b = 0; b < l; b++)
+                    printf("%02x", q[b]);
+                q += l;
+                printf("\n");
+            }
+        }
+    }
+    else if (op == TPLC_OP_DBG_WATCH_LIST) {
+        if (len >= 4) {
+            const uint8_t* q = pl;
+            uint32_t n; memcpy(&n, q, 4); q += 4;
+            printf("watches %u\n", n);
+            for (uint32_t i = 0; i < n; i++) {
+                uint32_t h, ni, hz, tl;
+                memcpy(&h, q, 4); memcpy(&ni, q + 4, 4);
+                memcpy(&hz, q + 8, 4); memcpy(&tl, q + 12, 4);
+                q += 16;
+                printf("  h%u  items %u  %u B  stream %u Hz\n",
+                       h, ni, tl, hz);
             }
         }
     }

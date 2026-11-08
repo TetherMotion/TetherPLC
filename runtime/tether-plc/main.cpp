@@ -419,11 +419,14 @@ int main(int argc, char** argv) {
     std::vector<uint8_t>             pkg_layd;   /* for OP_PROG_LAYOUT */
     std::vector<uint8_t>             pkg_smap;   /* for OP_DBG_RESOLVE   */
     /* force table (doc 12 §6): blob-offset overrides re-stamped at
-       every task boundary so program writes cannot undo them        */
+       every task boundary so program writes cannot undo them.
+       mask[i]&bit set → val bit wins; a full-0xFF mask is the
+       plain overwrite case                                         */
     struct Force {
         uint32_t              handle;
         uint64_t              off;
         std::vector<uint8_t>  val;
+        std::vector<uint8_t>  mask;
     };
     std::vector<Force>               forces;
     uint32_t                         next_force_h = 1;
@@ -456,6 +459,22 @@ int main(int argc, char** argv) {
     static const size_t              TRACE_CAP = 4096;
     static const size_t              MAX_TRACE_CH = 8;
     static const uint32_t            TRACE_NO_FAULT_FREEZE = 1;
+    /* watch (doc 12 §3): named blob-range read sets; stream arms a
+       per-watch push of EV_DBG_WATCH at ≤ rate_hz, sampled at task
+       boundaries like the recorder                                 */
+    struct Watch {
+        uint32_t             handle;
+        std::vector<TraceCh> chs;
+        uint32_t             rate_hz = 0;
+        uint64_t             next_emit = 0;
+        uint64_t             seq = 0;
+    };
+    std::vector<Watch>               watches;
+    uint32_t                         next_watch_h = 1;
+    static const size_t              MAX_WATCHES = 256;
+    static const size_t              MAX_WATCH_ITEMS = 16;
+    static const size_t              MAX_WATCH_LEN = 512;
+    static const size_t              MAX_WATCH_STREAMS = 8;
     /* online-change quarantine (doc 08 §7): the swapped-out program
        + module stay live for quarantine_cycles scans so rollback is
        a pointer swap back to untouched pre-swap state              */
@@ -486,6 +505,8 @@ int main(int argc, char** argv) {
         trace_wr = 0;
         trace_flags = 0;
         trace_frozen = false;
+        watches.clear();
+        next_watch_h = 1;
         d = TplcProgramDescriptor{};
         prog_started = false;
     };
@@ -552,6 +573,8 @@ int main(int argc, char** argv) {
         trace_wr = 0;
         trace_flags = 0;
         trace_frozen = false;
+        watches.clear();
+        next_watch_h = 1;
         sched.addProgram(*prog);
         d = mod->descriptor();
         if (retain) {
@@ -578,8 +601,12 @@ int main(int argc, char** argv) {
         if (!prog || forces.empty()) return;
         const TplcProgramDescriptor& dd = prog->desc();
         if (where == 0) {
-            for (auto& f : forces)
-                memcpy(prog->blob() + f.off, f.val.data(), f.val.size());
+            for (auto& f : forces) {
+                uint8_t* dst = prog->blob() + f.off;
+                for (size_t i = 0; i < f.val.size(); i++)
+                    dst[i] = (uint8_t)((dst[i] & ~f.mask[i]) |
+                                       (f.val[i] & f.mask[i]));
+            }
             return;
         }
         uint8_t  reg   = where == 1 ? TPLC_REGION_IMAGE_IN
@@ -596,13 +623,17 @@ int main(int argc, char** argv) {
                     continue;
                 if (b.type_code == TPLC_IOT_BOOL) {
                     if (f.val.size() != 1) break;
+                    if (!(f.mask[0] & 1)) break;
                     uint8_t bit = (uint8_t)(1u << (b.unit & 7u));
-                    if (f.val[0]) img_p[b.image_offset] |= bit;
-                    else          img_p[b.image_offset] &= (uint8_t)~bit;
+                    if (f.val[0] & 1) img_p[b.image_offset] |= bit;
+                    else              img_p[b.image_offset] &=
+                                          (uint8_t)~bit;
                 } else {
-                    memcpy(img_p + b.image_offset +
-                               (f.off - b.blob_offset),
-                           f.val.data(), f.val.size());
+                    uint8_t* dst = img_p + b.image_offset +
+                                   (f.off - b.blob_offset);
+                    for (size_t i = 0; i < f.val.size(); i++)
+                        dst[i] = (uint8_t)((dst[i] & ~f.mask[i]) |
+                                           (f.val[i] & f.mask[i]));
                 }
                 break;
             }
@@ -1146,6 +1177,8 @@ int main(int argc, char** argv) {
         trace_wr = 0;
         trace_flags = 0;
         trace_frozen = false;
+        watches.clear();
+        next_watch_h = 1;
         quar.cycles_left = quarantine_cycles;
         mod = std::make_unique<tplc::Module>(std::move(nmod));
         /* rebind: Program::create captured &nmod — retarget the new
@@ -1503,9 +1536,11 @@ int main(int argc, char** argv) {
         }
         uint64_t off; uint32_t wl;
         memcpy(&off, p, 8); memcpy(&wl, p + 8, 4);
-        if ((uint64_t)wl + 12 != n || wl == 0) {
+        if (wl == 0 ||
+            (n != 12 + (uint64_t)wl && n != 12 + 2 * (uint64_t)wl)) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
-                           "len/byte count mismatch", req);
+                           "len/byte count mismatch (mask optional)",
+                           req);
             return;
         }
         if (off > prog->blobSize() || wl > prog->blobSize() - off) {
@@ -1547,18 +1582,25 @@ int main(int argc, char** argv) {
                 return;
             }
         }
+        bool masked = n == 12 + 2 * (uint64_t)wl;
         forces.push_back({next_force_h++, off,
-                          std::vector<uint8_t>(p + 12, p + 12 + wl)});
+                          std::vector<uint8_t>(p + 12, p + 12 + wl),
+                          masked
+                              ? std::vector<uint8_t>(p + 12 + wl,
+                                                     p + 12 + 2 * wl)
+                              : std::vector<uint8_t>(wl, 0xFF)});
         stamp_forces(0);   /* effective even while stopped */
         audit(fd, "dbg.force", "h=" +
               std::to_string(forces.back().handle) +
               " off=" + std::to_string(off) +
-              " len=" + std::to_string(wl));
+              " len=" + std::to_string(wl) +
+              (masked ? " masked" : ""));
         tplc::CtlServer::W w;
         w.u32(forces.back().handle);
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
-    /* {u32 n, {u32 handle, u64 off, u32 len, bytes}*} */
+    /* {u32 n, {u32 handle, u64 off, u32 len, u8 val[len],
+                u8 mask[len]}*}                                    */
     ctl.on(TPLC_OP_DBG_FORCE_LIST, [&](int fd, uint16_t t,
                                        const uint8_t*, uint32_t,
                                        uint64_t req) {
@@ -1569,6 +1611,7 @@ int main(int argc, char** argv) {
             w.u64(f.off);
             w.u32((uint32_t)f.val.size());
             w.bytes(f.val.data(), f.val.size());
+            w.bytes(f.mask.data(), f.mask.size());
         }
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
@@ -1826,6 +1869,169 @@ int main(int argc, char** argv) {
         trace_frozen = false;
         audit(fd, "trace.clear", "");
         ctl.replyEmpty(fd, t, req);
+    });
+
+    /* watch (doc 12 §3): ADD shares the TRACE_CONF channel list;
+       GET returns the boundary-consistent bytes right now; STREAM
+       arms a ≤50 Hz EV_DBG_WATCH push sampled at task boundaries  */
+    ctl.on(TPLC_OP_DBG_WATCH_ADD, [&](int fd, uint16_t t,
+                                      const uint8_t* p, uint32_t n,
+                                      uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n < 8) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 n, {u64 off, u32 len, u32 pad}*}",
+                           req);
+            return;
+        }
+        uint32_t ni; memcpy(&ni, p, 4);
+        if (ni == 0 || ni > MAX_WATCH_ITEMS ||
+            n != 8 + ni * 16) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "item count/shape", req);
+            return;
+        }
+        std::vector<TraceCh> chs;
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < ni; i++) {
+            uint64_t off; uint32_t l;
+            memcpy(&off, p + 8 + i * 16, 8);
+            memcpy(&l, p + 8 + i * 16 + 8, 4);
+            if (l == 0 || l > 64 ||
+                off > prog->blobSize() ||
+                l > prog->blobSize() - off) {
+                ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                               "item outside blob", req);
+                return;
+            }
+            total += l;
+            if (total > MAX_WATCH_LEN) {
+                ctl.errorReply(fd, t, TPLC_E_DBG_OVERLOAD,
+                               "watch payload > 512 B", req);
+                return;
+            }
+            chs.push_back({off, l});
+        }
+        if (watches.size() >= MAX_WATCHES) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_OVERLOAD,
+                           "watch table full", req);
+            return;
+        }
+        watches.push_back({next_watch_h++, std::move(chs), 0, 0, 0});
+        audit(fd, "dbg.watch.add",
+              "h=" + std::to_string(watches.back().handle) +
+              " items=" + std::to_string(ni));
+        tplc::CtlServer::W w;
+        w.u32(watches.back().handle);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    /* {u32 handle} → {u32 n, {u32 len, u8 data[len]}*} */
+    ctl.on(TPLC_OP_DBG_WATCH_GET, [&](int fd, uint16_t t,
+                                      const uint8_t* p, uint32_t n,
+                                      uint64_t req) {
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 handle}", req);
+            return;
+        }
+        uint32_t h; memcpy(&h, p, 4);
+        for (auto& wt : watches)
+            if (wt.handle == h) {
+                tplc::CtlServer::W w;
+                w.u32((uint32_t)wt.chs.size());
+                for (auto& c : wt.chs) {
+                    w.u32(c.len);
+                    if (prog)
+                        w.bytes(prog->blob() + c.off, c.len);
+                    else
+                        for (uint32_t i = 0; i < c.len; i++)
+                            w.u8(0);
+                }
+                ctl.reply(fd, t, w.data(), w.size(), req);
+                return;
+            }
+        ctl.errorReply(fd, t, TPLC_E_DBG_STATE, "no such watch", req);
+    });
+    /* {u32 handle, u32 rate_hz} — rate 1..50 arm, 0 disarm */
+    ctl.on(TPLC_OP_DBG_WATCH_STREAM, [&](int fd, uint16_t t,
+                                         const uint8_t* p, uint32_t n,
+                                         uint64_t req) {
+        if (n != 8) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 handle, u32 rate_hz}", req);
+            return;
+        }
+        uint32_t h, hz;
+        memcpy(&h, p, 4); memcpy(&hz, p + 4, 4);
+        if (hz > 50) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_RATE,
+                           "rate > 50 Hz", req);
+            return;
+        }
+        uint32_t armed = 0;
+        for (auto& wt : watches)
+            if (wt.rate_hz) armed++;
+        for (auto& wt : watches)
+            if (wt.handle == h) {
+                if (hz && !wt.rate_hz && armed >= MAX_WATCH_STREAMS) {
+                    ctl.errorReply(fd, t, TPLC_E_DBG_OVERLOAD,
+                                   "stream slots full", req);
+                    return;
+                }
+                wt.rate_hz = hz;
+                /* emit first frame at the next boundary */
+                wt.next_emit = 0;
+                audit(fd, "dbg.watch.stream",
+                      "h=" + std::to_string(h) +
+                      " hz=" + std::to_string(hz));
+                ctl.replyEmpty(fd, t, req);
+                return;
+            }
+        ctl.errorReply(fd, t, TPLC_E_DBG_STATE, "no such watch", req);
+    });
+    /* {u32 handle} 0xFFFFFFFF = all */
+    ctl.on(TPLC_OP_DBG_WATCH_REMOVE, [&](int fd, uint16_t t,
+                                         const uint8_t* p, uint32_t n,
+                                         uint64_t req) {
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 handle}", req);
+            return;
+        }
+        uint32_t h; memcpy(&h, p, 4);
+        if (h == 0xFFFFFFFFu) {
+            watches.clear();
+            audit(fd, "dbg.watch.remove", "all");
+            ctl.replyEmpty(fd, t, req);
+            return;
+        }
+        for (auto it = watches.begin(); it != watches.end(); ++it)
+            if (it->handle == h) {
+                watches.erase(it);
+                audit(fd, "dbg.watch.remove", std::to_string(h));
+                ctl.replyEmpty(fd, t, req);
+                return;
+            }
+        ctl.errorReply(fd, t, TPLC_E_DBG_STATE, "no such watch", req);
+    });
+    /* → {u32 n, {u32 handle, u32 n_items, u32 rate_hz,
+                  u32 total_len}*}                                 */
+    ctl.on(TPLC_OP_DBG_WATCH_LIST, [&](int fd, uint16_t t,
+                                       const uint8_t*, uint32_t,
+                                       uint64_t req) {
+        tplc::CtlServer::W w;
+        w.u32((uint32_t)watches.size());
+        for (auto& wt : watches) {
+            uint32_t tl = 0;
+            for (auto& c : wt.chs) tl += c.len;
+            w.u32(wt.handle); w.u32((uint32_t)wt.chs.size());
+            w.u32(wt.rate_hz); w.u32(tl);
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
     });
 
     /* ---------------- deploy group (doc 04 §I.1 0x0200) ---------- */
@@ -2122,6 +2328,28 @@ int main(int argc, char** argv) {
         }
     };
 
+    /* watch streams (doc 12 §3): armed watches push one
+       EV_DBG_WATCH frame when their interval elapses — the sample
+       is the boundary-consistent blob bytes of that scan          */
+    auto eval_watches = [&](uint64_t now) {
+        if (!prog || watches.empty()) return;
+        for (auto& wt : watches) {
+            if (!wt.rate_hz) continue;
+            if (wt.next_emit && now < wt.next_emit) continue;
+            wt.next_emit = now + 1000000000ull / wt.rate_hz;
+            tplc::CtlServer::W w;
+            w.u32(wt.handle); w.u64(wt.seq++);
+            w.u32((uint32_t)wt.chs.size());
+            for (auto& c : wt.chs) {
+                w.u32(c.len);
+                w.bytes(prog->blob() + c.off, c.len);
+            }
+            ctl.event(TPLC_EV_DBG_WATCH,
+                      1u << (TPLC_EV_DBG_WATCH & 0xFF),
+                      w.data(), w.size());
+        }
+    };
+
     while (!g_stop) {
         uint64_t now = mono_ns();
         if (sim_mode && prog) {
@@ -2161,6 +2389,8 @@ int main(int argc, char** argv) {
                     trace_ring[trace_wr % TRACE_CAP] = f;
                 trace_wr++;
             }
+            /* watch streams sample the same boundary image        */
+            if (ran > 0) eval_watches(now);
             /* breaks see post-force state — the effective value    */
             if (!breaks.empty()) eval_breaks();
             progress.fetch_add(1);

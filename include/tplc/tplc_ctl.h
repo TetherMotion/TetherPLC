@@ -99,6 +99,19 @@ enum TplcCtlOp {
        freezes instead of suspending the task. Listed in
        DBG_BREAK_LIST with the flag byte set.                       */
     TPLC_OP_DBG_CAPTURE    = 0x050F,
+    /* watch (doc 12 §3): named read sets over blob ranges. ADD uses
+       the same channel list shape as TRACE_CONF: n ≤ 16 items,
+       per-item len 1..64, Σlen ≤ 512 → {u32 handle}. GET returns
+       boundary-consistent bytes {u32 n, {u32 len, u8 data[len]}*}.
+       STREAM arms a push: at most rate_hz (1..50; 0 disarms)
+       EV_DBG_WATCH frames per second, sampled at task boundaries.
+       REMOVE takes a handle or 0xFFFFFFFF for all. LIST reports
+       {handle, n_items, rate_hz, total_len} rows.                 */
+    TPLC_OP_DBG_WATCH_ADD    = 0x0510,
+    TPLC_OP_DBG_WATCH_GET    = 0x0511,
+    TPLC_OP_DBG_WATCH_REMOVE = 0x0512,
+    TPLC_OP_DBG_WATCH_STREAM = 0x0513,
+    TPLC_OP_DBG_WATCH_LIST   = 0x0514,
     /* retain 0x0600 — P2 */
     TPLC_OP_RETAIN_STATUS  = 0x0601,
     TPLC_OP_RETAIN_FLUSH   = 0x0602,
@@ -113,6 +126,8 @@ enum TplcCtlOp {
     TPLC_EV_PROG_TRANSITION = 0x0E01,
     TPLC_EV_FAULT           = 0x0E02,
     TPLC_EV_DBG_BREAK       = 0x0E03, /* {u32 handle, u32 task, u64 v}*/
+    /* {u32 handle, u64 seq, u32 n, {u32 len, u8 data[len]}*}        */
+    TPLC_EV_DBG_WATCH       = 0x0E04,
     /* error frame — response with F_EVENT? No: same msg_type as the
        request, payload = TplcCtlError, flags bit15 marks error        */
     TPLC_CTL_F_ERROR       = 1u << 15
