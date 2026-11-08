@@ -1,8 +1,8 @@
 # As-Built: Shadow Run — Parallel Candidate with Instant Promotion
 
-> Status: implemented (runtime + ctl + `tplc-io` + e2e). WebUI flow
-> (plan 19 §4) and simulation parity (§6) are not yet built; the
-> plan chapter stays until they land.
+> Status: implemented (runtime + ctl + `tplc-io` + e2e + L1/L2 sim
+> parity). WebUI flow (plan 19 §4) is not yet built; the plan
+> chapter stays until it lands.
 
 A **shadow program** runs alongside the **active program** on the
 same latched `%I` inputs. The active program alone steers `%Q`; the
@@ -109,15 +109,30 @@ status reads allowed, `missed` counting under an impossible budget.
 `tests/scan/tplc_io_attach.sh` extends the probe with the shadow
 function/signal surface through the real tether_io protocol.
 
+`sim_shadow` (ctest): `tools/oracle/corpus/vectors_shadow.jsonl`
+drives the same scenario at both legs — the L1 interpreter runs the
+`"shadow"` vector key (per-cycle `shadow_load`, `shadow_promote`,
+`expect_shadow_q` directives; seed is a name-wise field copy, the
+L1 model of the same-layout blob copy), and `tether-plc-sim --scan`
+replays it on the real runtime via `--shadow PKG` and the
+`shadow_load`/`expect_shadow`/`shadow_promote` step directives.
+`expect_shadow` reconstructs the candidate's `%Q` from the newest
+`SHADOW_COMPARE` entries overlaid on the image.
+
+For deterministic step-level parity the runtime also accepts
+`--stopped`: the program loads and registers tasks but does not
+start until a ctl `start`. `--scan` uses it to suspend the task
+before the first `first_run` can fire, removing the startup
+free-run race that made cycle counts nondeterministic.
+
 ## Open items
 
 - **Bit-identical %Q proof** (plan §7.1): e2e asserts ramp shape;
   a solo-vs-shadowed byte-diff over a deterministic input vector is
   not yet automated.
-- **Identical-input proof vs L1** (§7.2) and **sim parity** (§7.10):
-  the L1 shadow-pair mode and L2 `tether-plc-sim` directives
-  (`shadow_load`, `expect_shadow`, `shadow_promote`) are not
-  implemented.
+- **Identical-input proof vs L1** (§7.2): the sim vectors prove
+  same-`%I` behavior through expected outputs, not a literal
+  byte-diff of both programs' `imageIn()` snapshots.
 - **WebUI** (§7.11): deploy-as-shadow, diff table, side-by-side
   watch, confirm-with-summary promote — not started.
 - Multiple-shadow, per-channel promote, shadow→image preview:

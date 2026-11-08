@@ -61,16 +61,16 @@ swap injects no measurable pause, watchdog trip+escalation verified.
 | criterion | covering test | status |
 |---|---|---|
 | no steering: shadow `%Q` never reaches the image | `shadow_e2e` (active ramp unchanged under shadow; isolation is structural — no-op commit) | green |
-| identical inputs (active-latch copy) | `shadow_e2e` implicitly (same %I → expected divergence only at gain); L1-interp proof pending | partial |
+| identical inputs (active-latch copy) | `shadow_e2e` implicitly (same %I → expected divergence only at gain); `sim_shadow` (same tape both legs) | green |
 | compare accuracy: offsets + bounded runs | `shadow_e2e` (`%QD4` divergence at `img+0x04`) | green |
-| atomic promote, state preserved | `shadow_e2e` (post-promote doubled ramp continues, no reset) | green |
+| atomic promote, state preserved | `shadow_e2e` (post-promote doubled ramp continues, no reset); `sim_shadow` promote step | green |
 | rollback during quarantine | `shadow_e2e` (rollback restores original ramp) | green |
 | active determinism + `missed` under budget | `shadow_e2e` missed section + `--shadow-budget-ns` flag | green |
 | epoch/events on promote | `shadow_e2e` (epoch reply) + `tplc_io_attach` (catalog epoch follows mgmt epoch) | green |
 | gating: observer 401 on mutating ops | `shadow_e2e` observer section | green |
 | lifecycle: stop/swap/unload/prepare drops; stopped-load → -501 | `shadow_e2e` (swap drop, stopped refusal, drop journal) | green |
 | bit-identical `%Q` vs solo run (§7.1) | not automated | gap |
-| sim parity L1/L2 (§7.10) | not implemented | gap |
+| sim parity L1/L2 (§7.10) | `sim_shadow` (L1 `shadow` vector key + L2 `--shadow`/directives; deterministic via `--stopped`) | green |
 | UI flow (§7.11) | not implemented | gap |
 
 ## Pending chapters (not yet implemented — spec exists)

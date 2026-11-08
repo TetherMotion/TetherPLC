@@ -7,10 +7,18 @@
  * step-file line format:
  *   step <idx> time=<ns> [in <off>=<hex>[,<hex>..]] [expect <off>=<hex>..]
  *              [expectf <blob_off>=<hex>..]
+ *              [shadow_load] [shadow_promote]
+ *              [expect_shadow <off>=<hex>..]
  *   `expect` compares process-image %Q bytes; `expectf` reads back
  *   program-blob bytes through the ctl channel (DBG_READ), so field
  *   expectations like timer ET/CV values can be checked. expectf
  *   requires --ctl to point at a real socket path.
+ *   Shadow directives (doc 19 §6): `shadow_load` loads the package
+ *   given by --shadow as a shadow candidate at the step boundary;
+ *   `expect_shadow` reconstructs the candidate's would-be %Q from
+ *   the image plus the newest SHADOW_COMPARE entries; `shadow_promote`
+ *   commits the candidate (task suspension survives promotion, so
+ *   the step-per-cycle contract holds across it).
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
 #include <tplc/tplc_image.h>
@@ -57,8 +65,10 @@ static int ctl_call(int fd, uint16_t type, const void* pl, uint32_t plen,
 struct Step {
     uint32_t idx = 0;
     uint64_t time_ns = 0;
+    bool shadow_load = false, shadow_promote = false;
     std::vector<std::pair<uint32_t,std::vector<uint8_t>>> in, expect,
-                                                          expectf;
+                                                          expectf,
+                                                          expect_shadow;
 };
 
 static bool hex_bytes(const std::string& s, std::vector<uint8_t>& out) {
@@ -96,7 +106,12 @@ static bool parse_steps(const std::string& path,
             std::string& w2 = t[i];
             if (w2.compare(0, 5, "time=") == 0) {
                 cur.time_ns = strtoull(w2.c_str() + 5, 0, 0);
-            } else if (w2 == "in" || w2 == "expect" || w2 == "expectf") {
+            } else if (w2 == "shadow_load") {
+                cur.shadow_load = true;
+            } else if (w2 == "shadow_promote") {
+                cur.shadow_promote = true;
+            } else if (w2 == "in" || w2 == "expect" || w2 == "expectf" ||
+                       w2 == "expect_shadow") {
                 if (i + 1 >= t.size()) return false;
                 std::string spec = t[++i];
                 size_t eq = spec.find('=');
@@ -108,7 +123,9 @@ static bool parse_steps(const std::string& path,
                     return false;
                 }
                 auto& dst = w2 == "in" ? cur.in
-                          : w2 == "expect" ? cur.expect : cur.expectf;
+                          : w2 == "expect" ? cur.expect
+                          : w2 == "expectf" ? cur.expectf
+                          : cur.expect_shadow;
                 dst.push_back({off, bytes});
             }
         }
@@ -119,7 +136,7 @@ static bool parse_steps(const std::string& path,
 
 int main(int argc, char** argv) {
     std::string image_path, pkg_path, steps_path, plc_bin;
-    std::string ctl_path = "none";
+    std::string shadow_pkg, ctl_path = "none";
     uint32_t in_size = 64, out_size = 64;
     int wait_running_ms = 5000;
     int hold_ms = 0;
@@ -132,6 +149,7 @@ int main(int argc, char** argv) {
         else if (a == "--steps")  steps_path  = argv[++i];
         else if (a == "--plc")    plc_bin     = argv[++i];
         else if (a == "--ctl")    ctl_path    = argv[++i];
+        else if (a == "--shadow") shadow_pkg  = argv[++i];
         else if (a == "--hold-ms") hold_ms    = atoi(argv[++i]);
         else if (a == "--settle-ms") settle_ms = atoi(argv[++i]);
         else if (a == "--scan")   scan_mode  = 1;
@@ -140,7 +158,8 @@ int main(int argc, char** argv) {
         else if (a == "--help" || a == "-h") {
             fprintf(stderr,
                 "usage: %s --image X --package P --steps F "
-                "[--plc PATH] [--ctl PATH] [--in N] [--out N] "
+                "[--plc PATH] [--ctl PATH] [--shadow PKG] "
+                "[--in N] [--out N] "
                 "[--scan] [--settle-ms N] [--hold-ms N]\n",
                 argv[0]);
             return 0;
@@ -167,10 +186,17 @@ int main(int argc, char** argv) {
 
     pid_t pid = fork();
     if (pid == 0) {
-        execlp(plc_bin.c_str(), plc_bin.c_str(),
-               "--image", image_path.c_str(),
-               "--package", pkg_path.c_str(),
-               "--ctl", ctl_path.c_str(), "--sim", (char*)nullptr);
+        if (scan_mode)
+            execlp(plc_bin.c_str(), plc_bin.c_str(),
+                   "--image", image_path.c_str(),
+                   "--package", pkg_path.c_str(),
+                   "--ctl", ctl_path.c_str(), "--sim", "--stopped",
+                   (char*)nullptr);
+        else
+            execlp(plc_bin.c_str(), plc_bin.c_str(),
+                   "--image", image_path.c_str(),
+                   "--package", pkg_path.c_str(),
+                   "--ctl", ctl_path.c_str(), "--sim", (char*)nullptr);
         _exit(127);
     }
     if (pid < 0) { fprintf(stderr, "sim: fork failed\n"); return 1; }
@@ -196,10 +222,6 @@ int main(int argc, char** argv) {
     }
     fprintf(stderr, "sim: plc running, %zu steps\n", steps.size());
 
-    /* settle window: the plc is up but the sim clock is still 0, so
-       ctl clients can arm watches/traces before the scenario runs */
-    if (settle_ms > 0) usleep((useconds_t)settle_ms * 1000);
-
     {
         uint32_t divergent = 0;
         int ctl_fd = -1;   /* lazy ctl connection for expectf/scan */
@@ -214,20 +236,28 @@ int main(int argc, char** argv) {
             }
             return ctl_fd;
         };
-        /* scan mode: hold task 0, then each step runs exactly one
-           scan via TASK_STEP — cycle-per-step semantics matching
-           the oracle vectors (L1 interp) on the real runtime     */
+        /* scan mode: the plc was spawned --stopped, so no task has
+           run yet. Suspend task 0 first (registered at load, holds
+           through start), then START — the program comes up with the
+           task already held, so the scenario's first TASK_STEP is
+           exactly cycle 0 with no free-run race                 */
         if (scan_mode) {
             uint8_t rb[64];
             uint32_t idx = 0;
             if (ctl_ensure() < 0 ||
                 ctl_call(ctl_fd, TPLC_OP_TASK_SUSPEND, &idx, 4,
+                         rb, sizeof rb) < 0 ||
+                ctl_call(ctl_fd, TPLC_OP_PROG_START, nullptr, 0,
                          rb, sizeof rb) < 0) {
                 fprintf(stderr, "sim: --scan needs a live ctl "
                         "socket and a suspendable task\n");
                 goto out;
             }
         }
+        /* settle window: the plc is up but the sim clock is still 0,
+           so ctl clients can arm watches/traces before the scenario
+           runs                                                    */
+        if (settle_ms > 0) usleep((useconds_t)settle_ms * 1000);
         std::vector<uint8_t> obuf(out_size);
         for (auto& s : steps) {
             if (g_stop) break;
@@ -237,6 +267,42 @@ int main(int argc, char** argv) {
             for (auto& [off, bytes] : s.in)
                 tplc_image_write_inputs(&img, bytes.data(), off,
                                         (uint32_t)bytes.size());
+            /* shadow ops run on the step boundary: load/promote
+               before the step's scan so the candidate sees this
+               step's inputs / owns this step's %Q                */
+            if (s.shadow_load) {
+                if (shadow_pkg.empty() || ctl_ensure() < 0) {
+                    fprintf(stderr, "step %u: shadow_load needs "
+                            "--shadow and --ctl\n", s.idx);
+                    divergent++;
+                    continue;
+                }
+                uint16_t plen = (uint16_t)shadow_pkg.size();
+                std::vector<uint8_t> rq(2 + plen), rb(512);
+                memcpy(rq.data(), &plen, 2);
+                memcpy(rq.data() + 2, shadow_pkg.data(), plen);
+                if (ctl_call(ctl_fd, TPLC_OP_SHADOW_LOAD, rq.data(),
+                             (uint32_t)rq.size(), rb.data(),
+                             (uint32_t)rb.size()) < 0) {
+                    fprintf(stderr, "step %u: SHADOW_LOAD failed\n",
+                            s.idx);
+                    divergent++;
+                    continue;
+                }
+            }
+            if (s.shadow_promote) {
+                uint8_t rb[128];
+                if (ctl_ensure() < 0 ||
+                    ctl_call(ctl_fd, TPLC_OP_SHADOW_PROMOTE, nullptr, 0,
+                             rb, sizeof rb) < 0) {
+                    fprintf(stderr, "step %u: SHADOW_PROMOTE failed\n",
+                            s.idx);
+                    divergent++;
+                    continue;
+                }
+                /* adoption carries the suspended-task set across —
+                   the next TASK_STEP stays exactly one cycle       */
+            }
             if (scan_mode) {
                 uint8_t rq[8], rb[64];
                 uint32_t zero = 0, one = 1;
@@ -276,6 +342,66 @@ int main(int argc, char** argv) {
                     for (size_t k = 0; k < exp.size(); k++)
                         fprintf(stderr, "%02x", obuf[off + k]);
                     fprintf(stderr, "\n");
+                }
+            }
+            /* shadow %Q reconstruction (doc 19 §6): the candidate's
+               would-be outputs = image %Q overlaid with the newest
+               compare-cycle diff entries                        */
+            if (!s.expect_shadow.empty()) {
+                uint8_t rb[64 * 1024];
+                uint32_t mx = 256;
+                if (ctl_ensure() < 0) {
+                    fprintf(stderr, "step %u: expect_shadow needs "
+                                    "--ctl\n", s.idx);
+                    divergent += (uint32_t)s.expect_shadow.size();
+                } else {
+                    int clen = ctl_call(ctl_fd, TPLC_OP_SHADOW_COMPARE,
+                                        &mx, 4, rb, sizeof rb);
+                    uint32_t nd = 0;
+                    if (clen >= 4) memcpy(&nd, rb, 4);
+                    if (clen < 4 ||
+                        clen < (int)(4 + nd * 84)) {
+                        fprintf(stderr, "step %u: SHADOW_COMPARE "
+                                "rc=%d\n", s.idx, clen);
+                        divergent += (uint32_t)s.expect_shadow.size();
+                        nd = 0;
+                    }
+                    /* entries past the newest compare cycle are
+                       stale — keep only cycle == max              */
+                    uint64_t maxc = 0;
+                    for (uint32_t k = 0; k < nd; k++) {
+                        uint64_t c;
+                        memcpy(&c, rb + 4 + k * 84, 8);
+                        if (c > maxc) maxc = c;
+                    }
+                    for (auto& [off, exp] : s.expect_shadow) {
+                        for (size_t j = 0; j < exp.size(); j++) {
+                            if (off + j >= out_size) break;
+                            uint8_t got = obuf[off + j];
+                            for (uint32_t k = 0; k < nd; k++) {
+                                const uint8_t* e = rb + 4 + k * 84;
+                                uint64_t c, io; uint32_t l;
+                                memcpy(&c, e, 8);
+                                memcpy(&io, e + 8, 8);
+                                memcpy(&l, e + 16, 4);
+                                if (c != maxc ||
+                                    off + j < io ||
+                                    off + j >= io + l)
+                                    continue;
+                                got = e[20 + 32 + (off + j - io)];
+                                break;
+                            }
+                            if (got != exp[j]) {
+                                divergent++;
+                                fprintf(stderr, "step %u: DIVERGENT "
+                                        "shadow[%u] expected %02x "
+                                        "got %02x\n",
+                                        s.idx, off + (uint32_t)j,
+                                        exp[j], got);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             /* blob-field expectations via ctl DBG_READ */

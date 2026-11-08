@@ -191,6 +191,21 @@ def main():
             nfail += 1
             continue
 
+        # shadow candidate: compiled once, passed to the sim via
+        # --shadow; cycles direct load/promote/compare
+        shadow_pkg = None
+        if "shadow" in v:
+            ssrc = os.path.join(corpus, v["shadow"])
+            shadow_pkg = os.path.join(
+                work, vid.replace(".", "_") + "_sh.tplc")
+            rc = subprocess.run([tplcc, "build", ssrc, "-o", shadow_pkg],
+                                env=env, capture_output=True)
+            if rc.returncode != 0 or not os.path.isfile(shadow_pkg):
+                print(f"FAIL {vid}: shadow compile rc={rc.returncode} "
+                      f"{rc.stderr.decode()[:200]}")
+                nfail += 1
+                continue
+
         data = open(pkg, "rb").read()
         syms = smap_entries(pkg_section(data, 0x0020))
         tags = typc_tags(pkg_section(data, 0x0021))
@@ -201,8 +216,14 @@ def main():
             parts = ["step", str(k), f"time={cyc['t_ns']}"]
             if "i" in cyc:
                 parts += ["in", "0=" + cyc["i"]]
+            if cyc.get("shadow_load"):
+                parts += ["shadow_load"]
+            if cyc.get("shadow_promote"):
+                parts += ["shadow_promote"]
             if "expect_q" in cyc:
                 parts += ["expect", "0=" + cyc["expect_q"]]
+            if "expect_shadow_q" in cyc:
+                parts += ["expect_shadow", "0=" + cyc["expect_shadow_q"]]
             for name, val in cyc.get("expect_fields", {}).items():
                 if name not in syms:
                     bad = f"unknown field {name}"
@@ -229,10 +250,13 @@ def main():
         for rep in range(repeat):
             img = f"/tplc_vec_{os.getpid()}_{nfail + npass}_{rep}"
             ctl = f"/tmp/tplc_vec_{os.getpid()}_{npass + nfail}_{rep}.ctl"
+            argv = [SIM, "--image", img, "--package", pkg,
+                    "--steps", steps, "--plc", PLC, "--ctl", ctl,
+                    "--settle-ms", "800", "--scan"]
+            if shadow_pkg:
+                argv += ["--shadow", shadow_pkg]
             r = subprocess.run(
-                [SIM, "--image", img, "--package", pkg, "--steps", steps,
-                 "--plc", PLC, "--ctl", ctl, "--settle-ms", "800",
-                 "--scan"],
+                argv,
                 env=env, capture_output=True, text=True, timeout=120)
             # normalize: keep only trace-meaningful lines (divergence
             # lines carry the produced bytes; audit lines carry the

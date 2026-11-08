@@ -47,7 +47,10 @@ emitted), `DBG_OVERLOAD` -412, `DBG_RATE` -413, `FORCE_DENIED` -414,
   are dropped on program stop — a hidden force surviving a stop is
   a hazard.
 - **Suspend/step** is per-task: suspended tasks skip release;
-  `step n` runs n releases then re-suspends.
+  `step n` runs n releases then re-suspends. To step from a known
+  start state, boot with `--stopped`: tasks register at load but
+  the program waits for `start`, so a suspend lands before the
+  first release can fire.
 - **Breakpoints**: value-compared or expression triggers evaluated
   post-force at the boundary; a hit suspends the task and emits an
   event.

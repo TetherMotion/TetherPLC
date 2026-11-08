@@ -405,6 +405,16 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(sim_vectors PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
+  # shadow-run vectors: load/compare/promote through the real runtime
+  # (--scan) with the L1 interpreter as the oracle leg
+  add_test(NAME sim_shadow
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      python3 ${CMAKE_SOURCE_DIR}/tests/sim/vector_run.py
+      --vectors ${CMAKE_SOURCE_DIR}/tools/oracle/corpus/vectors_shadow.jsonl)
+  set_tests_properties(sim_shadow PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
+
   # no-alloc property (doc 14 §5): LD_PRELOAD counter — steady-state
   # scans must not hit the heap
   add_test(NAME no_alloc

@@ -1221,6 +1221,37 @@ fn img_put(img: &mut [u8], b: &IoBind, v: &tplc_mir::interp::Value) {
     }
 }
 
+type VecRun = (
+    tplc_st::FrontendOutput,
+    Pou,
+    tplc_mir::layout::Layout,
+    tplc_mir::interp::Ctx,
+    Vec<u8>,
+);
+
+fn compile_run(f: &str, src_dir: &std::path::Path, id: &str) -> Result<VecRun, String> {
+    let prog_file = src_dir.join(f);
+    let src =
+        std::fs::read_to_string(&prog_file).map_err(|e| format!("{id}: {prog_file:?}: {e}"))?;
+    let mut out = compile_srcs(&[(prog_file.to_string_lossy().into(), src)]);
+    let mut diags = std::mem::take(&mut out.diags);
+    diags.extend(tplc_st::sema::check(&mut out.module));
+    if diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
+        return Err(format!("{id} {f}: frontend errors"));
+    }
+    let program = out
+        .module
+        .pous
+        .iter()
+        .find(|p| p.kind == tplc_mir::ir::PouKind::Program)
+        .cloned()
+        .ok_or("no PROGRAM")?;
+    let layout = layout_program(&out.module, &program);
+    let ctx = program_ctx(&layout);
+    let blob = vec![0u8; layout.total_size as usize];
+    Ok((out, program, layout, ctx, blob))
+}
+
 fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), String> {
     let id = v["id"].as_str().unwrap_or("?");
     // "program": one file, or "programs": several sources run against the
@@ -1231,29 +1262,19 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
         serde_json::Value::Array(a) => a.iter().map(|p| p.as_str().unwrap().to_string()).collect(),
         _ => vec![v["program"].as_str().unwrap().to_string()],
     };
-    let mut runs = Vec::new();
-    for f in &files {
-        let prog_file = src_dir.join(f);
-        let src =
-            std::fs::read_to_string(&prog_file).map_err(|e| format!("{id}: {prog_file:?}: {e}"))?;
-        let mut out = compile_srcs(&[(prog_file.to_string_lossy().into(), src)]);
-        let mut diags = std::mem::take(&mut out.diags);
-        diags.extend(tplc_st::sema::check(&mut out.module));
-        if diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
-            return Err(format!("{id} {f}: frontend errors"));
-        }
-        let program = out
-            .module
-            .pous
-            .iter()
-            .find(|p| p.kind == tplc_mir::ir::PouKind::Program)
-            .cloned()
-            .ok_or("no PROGRAM")?;
-        let layout = layout_program(&out.module, &program);
-        let ctx = program_ctx(&layout);
-        let blob = vec![0u8; layout.total_size as usize];
-        runs.push((out, program, layout, ctx, blob));
+    let shadow_file = v["shadow"].as_str().map(|s| s.to_string());
+    if shadow_file.is_some() && files.len() != 1 {
+        return Err(format!("{id}: shadow pairs with a single program"));
     }
+    let mut runs: Vec<VecRun> = Vec::new();
+    for f in &files {
+        runs.push(compile_run(f, src_dir, id)?);
+    }
+    // shadow slot: loaded by a cycle's "shadow_load" — the candidate
+    // sees identical %I, writes to a private image, and seeds its
+    // state name-wise from the active blob at the load boundary.
+    // "shadow_promote" adopts it as the active run (state carries).
+    let mut shadow: Option<VecRun> = None;
     let mut img_in = vec![0u8; 64];
     let cycles = v["cycles"].as_array().ok_or("no cycles")?;
     for (ci, c) in cycles.iter().enumerate() {
@@ -1264,6 +1285,33 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                     img_in[i] = *b;
                 }
             }
+        }
+        if c["shadow_load"].as_bool().unwrap_or(false) {
+            let f = shadow_file
+                .as_deref()
+                .ok_or(format!("{id} cycle {ci}: shadow_load w/o shadow"))?;
+            let mut sh = compile_run(f, src_dir, id)?;
+            // seed: same-named fields carry the active blob's value —
+            // the L1 model of the runtime's same-layout copy / MIGD
+            {
+                let (a_out, _, a_lay, _, a_blob) = &mut runs[0];
+                let (s_out, _, s_lay, _, s_blob) = &mut sh;
+                let art = Rt::new(a_blob, a_lay, &a_out.module, 0);
+                let mut srt = Rt::new(s_blob, s_lay, &s_out.module, 0);
+                for name in s_lay.fields.keys() {
+                    if a_lay.fields.contains_key(name) {
+                        let val = art.read_field(name);
+                        srt.write_field(name, &val);
+                    }
+                }
+            }
+            shadow = Some(sh);
+        }
+        if c["shadow_promote"].as_bool().unwrap_or(false) {
+            let sh = shadow
+                .take()
+                .ok_or(format!("{id} cycle {ci}: promote w/o shadow"))?;
+            runs[0] = sh;
         }
         let mut q_imgs: Vec<Vec<u8>> = Vec::new();
         for (pi, (out, program, layout, ctx, blob)) in runs.iter_mut().enumerate() {
@@ -1346,6 +1394,45 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                     qh,
                     hex_str(&q_imgs[0][..want.len()])
                 ));
+            }
+        }
+        if c.get("expect_shadow_q").is_some() && shadow.is_none() {
+            return Err(format!("{id} cycle {ci}: expect_shadow_q w/o shadow"));
+        }
+        // shadow scan on the same inputs; its %Q stays private
+        if let Some(sh) = shadow.as_mut() {
+            let (out, program, layout, ctx, blob) = sh;
+            let tplc_mir::ir::Body::Stmts(stmts) = &program.body else {
+                return Err("shadow body not stmts".into());
+            };
+            let mut rt = Rt::new(blob, layout, &out.module, 0);
+            rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
+            rt.cycle = ci as u64;
+            for b in &out.io_bindings {
+                if b.at.region == AtRegion::I {
+                    let val = img_get(&img_in, b);
+                    let short = b.name.rsplit('.').next().unwrap_or(&b.name);
+                    rt.write_field(short, &val);
+                }
+            }
+            rt.exec_all(ctx, stmts);
+            let mut sh_img = vec![0u8; 64];
+            for b in &out.io_bindings {
+                if b.at.region == AtRegion::Q {
+                    let short = b.name.rsplit('.').next().unwrap_or(&b.name);
+                    let val = rt.read_field(short);
+                    img_put(&mut sh_img, b, &val);
+                }
+            }
+            if let Some(qh) = c["expect_shadow_q"].as_str() {
+                let want = hex_bytes(qh);
+                if sh_img[..want.len()] != want[..] {
+                    return Err(format!(
+                        "{id} cycle {ci}: shadow %Q want {} got {}",
+                        qh,
+                        hex_str(&sh_img[..want.len()])
+                    ));
+                }
             }
         }
     }

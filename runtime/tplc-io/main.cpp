@@ -156,11 +156,16 @@ FunctionCallResult okU32(uint32_t v) {
     return retOf(ValueType::U32, nv::u(v));
 }
 
-/* call ctl, surface errors; payload already in `out` on success */
+/* progStatus keeps a short cache (see below); mutating ops must
+   invalidate it or a signal read right after e.g. shadow.load can
+   see the pre-op state for the cache window                      */
+void invalidateStatusCache();
+
 bool ctlCall(uint16_t op, const void* p, uint32_t n,
              std::vector<uint8_t>& out, FunctionCallResult& r) {
     tplcio::CtlClient::Error e;
     if (!g_ctl.call(op, p, n, out, &e)) { r = ferr(e); return false; }
+    if (op != TPLC_OP_PROG_STATUS) invalidateStatusCache();
     return true;
 }
 
@@ -1287,16 +1292,22 @@ std::vector<FunctionEntry> buildFunctions() {
 
 /* PROG_STATUS → struct, ~20 ms cached so a signal batch costs one
    ctl round-trip (mutex covers the cache; sessions are threaded)  */
+static std::mutex g_psMu;
+static uint64_t g_psTs = 0;
+
+void invalidateStatusCache() {
+    std::lock_guard<std::mutex> lk(g_psMu);
+    g_psTs = 0;
+}
+
 bool progStatus(TplcCtlProgStatus& ps,
                 std::vector<uint8_t>& raw) {
-    static std::mutex mu;
-    static uint64_t cache_ts = 0;
     static TplcCtlProgStatus cached{};
     static std::vector<uint8_t> cached_raw;
     static bool cached_ok = false;
-    std::lock_guard<std::mutex> lk(mu);
+    std::lock_guard<std::mutex> lk(g_psMu);
     uint64_t now = nowUs();
-    if (now - cache_ts < 20000 && cache_ts) {
+    if (now - g_psTs < 20000 && g_psTs) {
         if (cached_ok) { ps = cached; raw = cached_raw; }
         return cached_ok;
     }
@@ -1304,7 +1315,7 @@ bool progStatus(TplcCtlProgStatus& ps,
     tplcio::CtlClient::Error e;
     cached_ok = g_ctl.call(TPLC_OP_PROG_STATUS, out, &e) &&
                 out.size() >= sizeof(TplcCtlProgStatus);
-    cache_ts = now;
+    g_psTs = now;
     if (!cached_ok) return false;
     memcpy(&cached, out.data(), sizeof cached);
     cached_raw = out;

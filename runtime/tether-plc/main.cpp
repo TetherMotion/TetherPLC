@@ -79,7 +79,7 @@ static void usage(const char* a0) {
         "          [--sig-policy open|require|require-trusted]\n"
         "          [--trust-dir DIR] [--no-sandbox]\n"
         "          [--quarantine-cycles N] [--shadow-budget-ns N]\n"
-        "          [--sim]\n"
+        "          [--stopped] [--sim]\n"
         "       %s --supervise [--respawn always|on-fault|never]\n"
         "          [--restart-delay-ms N] -- <tether-plc args>\n",
         a0, a0);
@@ -410,6 +410,7 @@ int main(int argc, char** argv) {
     int wait_ms = 10000;
     uint64_t poll_ns = 1000 * 1000;          /* 1 ms max idle         */
     uint64_t shadow_budget_ns = 200000;      /* slack needed to tick  */
+    bool     stopped_boot = false;
     uint32_t ctx_flags = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -448,6 +449,7 @@ int main(int argc, char** argv) {
         else if (a == "--shadow-budget-ns")
             shadow_budget_ns = strtoull(next().c_str(), 0, 0);
         else if (a == "--auto-rollback") auto_rollback = true;
+        else if (a == "--stopped") stopped_boot = true;
         else if (a == "--sig-policy") sig_policy = next();
         else if (a == "--trust-dir") trust_dir = next();
         else if (a == "--no-sandbox") no_sandbox = true;
@@ -812,6 +814,22 @@ int main(int argc, char** argv) {
                          0, "-", "shadow.drop", why, 0);
     };
 
+    /* task-control preservation across program adoption: fresh
+       addProgram entries come up running — a suspended task must
+       not silently resume across swap/promote/rollback          */
+    std::vector<uint32_t> adopt_suspended;
+    auto adopt_begin = [&] {
+        adopt_suspended.clear();
+        if (prog)
+            for (uint32_t i = 0; i < d.task_count; i++)
+                if (sched.suspended(*prog, i))
+                    adopt_suspended.push_back(i);
+    };
+    auto adopt_end = [&] {
+        for (uint32_t i : adopt_suspended) sched.suspend(*prog, i);
+        adopt_suspended.clear();
+    };
+
     auto unload_program = [&] {
         /* monitor thread skips non-RUNNING states, so clearing state
            first makes destruction race-free */
@@ -889,6 +907,7 @@ int main(int argc, char** argv) {
         /* same storage-address rule as commit: the scheduler keeps
            Program* — move objects between homes explicitly, then
            register the final address (heap Modules never move)     */
+        adopt_begin();
         sched.removeProgram(*prog);
         tplc::Program oldp = std::move(*quar.prog);
         quar.prog.reset();
@@ -908,6 +927,7 @@ int main(int argc, char** argv) {
         trace_frozen = false;
         if (reresolve_subs) reresolve_subs();
         sched.addProgram(*prog);
+        adopt_end();
         d = mod->descriptor();
         /* lineage restore (doc 16 §3.3): the rolled-back program
            reclaims its package identity; the failed program becomes
@@ -999,18 +1019,25 @@ int main(int argc, char** argv) {
     lin_deployed_by = (uint32_t)getuid();   /* boot deploy = self */
     memset(lin_predecessor, 0, 16);
     mgmt_epoch++;
-    tplc::Status st = prog->start();
-    if (!st.ok()) {
-        fprintf(stderr, "tether-plc: init failed (%d) %s\n",
-                st.code, st.msg.c_str());
-        tplc_image_set_fault(&img, (uint64_t)-st.code);
-        tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
-        tplc_image_close(&img);
-        return 1;
+    /* --stopped: program stays loaded + registered but unstarted until
+       a ctl 'start'. Lets a stepper (sim --scan, commissioning UI)
+       suspend tasks before the first free-run can fire — without it
+       the first_run race makes startup-state vectors nondeterministic */
+    tplc::Status st = tplc::Status::Ok();
+    if (!stopped_boot) {
+        st = prog->start();
+        if (!st.ok()) {
+            fprintf(stderr, "tether-plc: init failed (%d) %s\n",
+                    st.code, st.msg.c_str());
+            tplc_image_set_fault(&img, (uint64_t)-st.code);
+            tplc_image_set_plc_status(&img, TPLC_IMG_PLC_FAULT);
+            tplc_image_close(&img);
+            return 1;
+        }
+        prog_started = true;
+        prog_state = PS_RUNNING;
+        arm_default_trace();
     }
-    prog_started = true;
-    prog_state = PS_RUNNING;
-    arm_default_trace();
 
     tplc::TickHooks hooks;
     hooks.latch = [&](tplc::Program& p, uint32_t) -> int32_t {
@@ -1988,6 +2015,7 @@ int main(int argc, char** argv) {
            Program* pointers, so registration happens only after
            every object rests at its final storage address (heap
            Modules move owners freely — their address never does)   */
+        adopt_begin();
         sched.removeProgram(*prog);
         tplc::Program oldp = std::move(*prog);
         prog.reset();
@@ -2021,6 +2049,7 @@ int main(int argc, char** argv) {
         prog.emplace(std::move(nprog));
         prog->rebindModule(*mod);
         sched.addProgram(*prog);
+        adopt_end();
         d = mod->descriptor();
         if (layd.data && layd.size)
             pkg_layd.assign(layd.data, layd.data + layd.size);
@@ -2352,6 +2381,7 @@ int main(int argc, char** argv) {
             return;
         }
         sdiff.old_blob = prog->snapshotBlob();
+        adopt_begin();
         sched.removeProgram(*prog);
         quar.prog.emplace(std::move(*prog));
         prog.reset();
@@ -2371,6 +2401,7 @@ int main(int argc, char** argv) {
         prog.emplace(std::move(*shadow->prog));
         prog->rebindModule(*mod);
         sched.addProgram(*prog);
+        adopt_end();
         d = mod->descriptor();
         pkg_layd = std::move(shadow->layd);
         pkg_smap = std::move(shadow->smap);
@@ -4100,6 +4131,10 @@ int main(int argc, char** argv) {
                                                 (uint64_t)INT64_MAX);
                 if (!sh_due) {
                     /* no shadow work due this scan */
+                } else if (shadow->cycles == 0 && ran == 0) {
+                    /* join boundary: the first shadow cycle waits
+                       for an active scan so its latch copies this
+                       scan's %I, never stale pre-load inputs     */
                 } else if (slack >= (int64_t)shadow_budget_ns) {
                     size_t sran = shadow->sched.tick(now, shooks);
                     if (shadow_faulted) {
