@@ -5,7 +5,9 @@ Status: as-built.
 ## Process
 
 `tether-plc --image <shm> --module <so> | --package <.tplc>
-[--ctl <uds>|none] [--retain DIR] [--retain-flush-ms N] [--sim]`
+[--ctl <uds>|none] [--retain DIR] [--retain-flush-ms N] [--sim]
+[--sig-policy open|require|require-trusted] [--trust-dir DIR]
+[--no-sandbox] [--authz FILE] [--audit-log FILE]`
 
 - Attaches to the SHM process image (plc role), validates size.
 - `--package` extracts the `target_obj` section to a temp `.so`, then
@@ -14,6 +16,35 @@ Status: as-built.
   tasks in priority order inside the main loop; latch/commit hooks go
   through the seqlock image protocol.
 - `--ctl none` runs headless (fault injection / tests).
+
+## Containment, provenance, access control (doc 15)
+
+- **Sandbox (§3)** — on by default: rlimits (NOFILE/FSIZE/MEMLOCK/
+  CORE), `PR_SET_NO_NEW_PRIVS`, and a libseccomp filter (~150
+  syscalls whitelisted; `socket()` gated to AF_UNIX so the process
+  speaks UDS only). `--no-sandbox` is the debug escape — warned on
+  stderr and journaled. Verified by `sandbox_enforce` (probe:
+  AF_INET → SIGSYS, AF_UNIX → pass) and `Seccomp: 2` in /proc.
+- **Signature policy (§4)** — `--sig-policy` + `--trust-dir` at
+  every package load path (boot/prepare/swap); see toolchain.md.
+- **Post-link scanner (§4.3)** — ELF64 scan inside `Module::open`
+  before `dlopen`: kernel-gate opcodes, RWX/exec-stack/PT_INTERP,
+  DT_NEEDED + import whitelists.
+- **Access control (§5)** — UDS `SO_PEERCRED` binds each session to
+  a kernel-attested uid at accept; `--authz FILE` maps
+  `<uid> <role>` (`observer`/`engineer`/`commissioner`). Defaults:
+  server euid or root → commissioner, other uids → observer.
+  observer = read ops only; engineer adds watch-set mutations;
+  commissioner owns deploy/lifecycle/suspend/write/force/break/
+  trace-arm/retain/shutdown. Denied ops get `TPLC_E_CTL_AUTHZ`
+  (401); mutating ops are rate-limited at 20/s (burst 40) per
+  **uid** — reconnecting does not reset the budget — excess gets
+  `TPLC_E_DBG_RATE` (413). HELLO ack reports the bound role.
+- **Audit journal (§5)** — `--audit-log FILE` (default
+  `<runbook|retain|cwd>/audit.log`): append-only, fsync per record,
+  `ts uid gid pid sess name op args ahash rc` per mutating op —
+  including denied ones (`rc=-401/-413`) and the `--no-sandbox`
+  boot flag. Verified by `authz_audit`.
 
 ## Control channel (0x0— ops implemented)
 

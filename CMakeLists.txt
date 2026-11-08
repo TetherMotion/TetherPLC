@@ -30,6 +30,7 @@ add_library(tplc_host STATIC
   runtime/host/src/Module.cpp
   runtime/host/src/ElfScan.cpp
   runtime/host/src/Sandbox.cpp
+  runtime/host/src/AuditLog.cpp
   runtime/host/src/Program.cpp
   runtime/host/src/Scheduler.cpp
   runtime/host/src/RetainStore.cpp
@@ -224,6 +225,13 @@ add_test(NAME sandbox_enforce COMMAND bash
   $<TARGET_FILE:sandbox_probe> $<TARGET_FILE:stub_v1>)
 add_dependencies(sandbox_probe tether-plc tplc-image tplc-ctl)
 set_tests_properties(sandbox_enforce PROPERTIES SKIP_RETURN_CODE 77)
+
+# doc 15 §5 acceptance: role-gated ops, durable journal, rate limit
+add_test(NAME authz_audit COMMAND bash
+  ${CMAKE_SOURCE_DIR}/tests/scan/authz_audit.sh
+  $<TARGET_FILE:tether-plc> $<TARGET_FILE:tplc-image>
+  $<TARGET_FILE:tplc-ctl> $<TARGET_FILE:stub_v1>)
+set_tests_properties(authz_audit PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(pkg_conformance tests/pkg/pkg_conformance.cpp)
 target_link_libraries(pkg_conformance PRIVATE tplc_pkg)

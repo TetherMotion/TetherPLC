@@ -6,6 +6,7 @@
 #include <tplc/host/CtlServer.hpp>
 
 #include <cerrno>
+#include <ctime>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -63,6 +64,12 @@ void CtlServer::acceptAll() {
         if (c < 0) return;
         Client cl;
         cl.fd = c;
+        struct ucred uc{};
+        socklen_t ul = sizeof uc;
+        if (getsockopt(c, SOL_SOCKET, SO_PEERCRED, &uc, &ul) == 0) {
+            cl.pid = (uint32_t)uc.pid;
+            cl.uid = uc.uid; cl.gid = uc.gid;
+        }
         clients_.push_back(std::move(cl));
     }
 }
@@ -152,13 +159,19 @@ void CtlServer::dispatch(Client& c, uint16_t type, uint16_t flags,
                 if (c.name.size() > 48) c.name.resize(48);
             }
         }
+        /* resolve the client's role once, from kernel-attested creds;
+           unresolvable → observer (read-only fail-safe)              */
+        c.role = (uint8_t)(role_for_uid_
+               ? role_for_uid_(c.uid)
+               : (int)TPLC_ROLE_COMMISSIONER);
+        if (c.role == TPLC_ROLE_NONE) c.role = TPLC_ROLE_OBSERVER;
         TplcCtlHelloAck ack{};
         ack.proto_ver = h->proto_ver < TPLC_CTL_PROTO_VER
                           ? h->proto_ver : TPLC_CTL_PROTO_VER;
         ack.runtime_ver = TPLC_CTL_PROTO_VER;
         ack.caps = 0;
         ack.session_id = c.session_id;
-        ack.authz = 1;                     /* full control; authz P8   */
+        ack.authz = c.role;
         sendFrame(c, TPLC_OP_HELLO_ACK, 0, &ack, sizeof ack, req_id);
         return;
     }
@@ -174,6 +187,34 @@ void CtlServer::dispatch(Client& c, uint16_t type, uint16_t flags,
         }
         replyEmpty(c.fd, type, req_id);
         return;
+    }
+    /* authZ gate (doc 15 §5): every op has a minimum role; the
+       client's role was bound at HELLO from peer creds. Mutating ops
+       also spend a rate-limit token. */
+    int min_role = min_role_for_op_ ? min_role_for_op_(type)
+                                    : TPLC_ROLE_COMMISSIONER;
+    if (c.role < min_role) {
+        errorReply(c.fd, type, TPLC_E_CTL_AUTHZ,
+                   "insufficient role", req_id);
+        if (deny_) deny_(c.fd, type, TPLC_E_CTL_AUTHZ);
+        return;
+    }
+    if (min_role >= TPLC_ROLE_ENGINEER && mut_rate_ > 0) {
+        timespec ts{}; clock_gettime(CLOCK_MONOTONIC, &ts);
+        uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+        Bucket& b = mut_buckets_[c.uid];
+        if (!b.refill_ns) { b.refill_ns = now; b.tokens = mut_burst_; }
+        double dt = (double)(now - b.refill_ns) / 1e9;
+        b.tokens += dt * mut_rate_;
+        if (b.tokens > mut_burst_) b.tokens = mut_burst_;
+        b.refill_ns = now;
+        if (b.tokens < 1.0) {
+            errorReply(c.fd, type, TPLC_E_DBG_RATE,
+                       "mutating-op rate exceeded", req_id);
+            if (deny_) deny_(c.fd, type, TPLC_E_DBG_RATE);
+            return;
+        }
+        b.tokens -= 1.0;
     }
     auto it = ops_.find(type);
     if (it != ops_.end()) { it->second(c.fd, type, payload, len, req_id); return; }
@@ -223,6 +264,18 @@ bool CtlServer::clientInfo(int fd, uint64_t* session,
         if (c.fd == fd) {
             if (session) *session = c.session_id;
             if (name)    *name    = c.name;
+            return true;
+        }
+    return false;
+}
+
+bool CtlServer::peerCred(int fd, uint32_t* pid, uint32_t* uid,
+                         uint32_t* gid) const {
+    for (auto& c : clients_)
+        if (c.fd == fd) {
+            if (pid) *pid = c.pid;
+            if (uid) *uid = c.uid;
+            if (gid) *gid = c.gid;
             return true;
         }
     return false;

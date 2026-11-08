@@ -14,6 +14,7 @@
 #include <tplc/host/CtlServer.hpp>
 #include <tplc/host/RetainStore.hpp>
 #include <tplc/host/Sandbox.hpp>
+#include <tplc/host/AuditLog.hpp>
 
 #include <cerrno>
 #include <atomic>
@@ -35,7 +36,10 @@
 #include <dirent.h>
 #include <optional>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unistd.h>
 
 static volatile sig_atomic_t g_stop = 0;
@@ -65,6 +69,61 @@ static void usage(const char* a0) {
 
 enum ProgState : uint8_t { PS_STOPPED = 0, PS_RUNNING = 1, PS_FAULT = 2,
                            PS_EMPTY = 3 };
+
+/* doc 15 §5: minimum ctl role per op. observer = read-only;
+   engineer adds debug-state mutation that cannot move the program
+   (watch sets); commissioner owns everything that can (deploy,
+   lifecycle, suspend/step, writes, forces, breaks, trace arms,
+   retain, shutdown). Unknown ops → commissioner (fail-safe).     */
+static int op_min_role(uint16_t t) {
+    switch (t) {
+    case TPLC_OP_PING:           case TPLC_OP_SET_NOTIFY:
+    case TPLC_OP_PROG_STATUS:    case TPLC_OP_PROG_LIST:
+    case TPLC_OP_PROG_LAYOUT:    case TPLC_OP_TASK_STATS:
+    case TPLC_OP_DBG_RESOLVE:    case TPLC_OP_DBG_READ:
+    case TPLC_OP_DBG_STATE:      case TPLC_OP_DBG_FORCE_LIST:
+    case TPLC_OP_DBG_BREAK_LIST: case TPLC_OP_DBG_STATE_DIFF:
+    case TPLC_OP_DBG_FIELDS:     case TPLC_OP_TRACE_STATUS:
+    case TPLC_OP_TRACE_READ:     case TPLC_OP_DBG_WATCH_GET:
+    case TPLC_OP_DBG_WATCH_LIST: case TPLC_OP_RETAIN_STATUS:
+    case TPLC_OP_RETAIN_DUMP:    case TPLC_OP_IMAGE_STATS:
+    case TPLC_OP_RT_STATUS:      case TPLC_OP_PKG_LIST:
+    case TPLC_OP_PKG_INFO:
+        return tplc::TPLC_ROLE_OBSERVER;
+    case TPLC_OP_DBG_WATCH_ADD:
+    case TPLC_OP_DBG_WATCH_STREAM:
+    case TPLC_OP_DBG_WATCH_REMOVE:
+        return tplc::TPLC_ROLE_ENGINEER;
+    default:
+        return tplc::TPLC_ROLE_COMMISSIONER;
+    }
+}
+
+/* --authz file: "<uid> <role>" per line ('#' comments). Entries take
+   precedence over the defaults (peer uid == server euid or root →
+   commissioner, else observer), so a file can also downgrade.      */
+static std::unordered_map<uint32_t, int>
+load_authz(const std::string& path, bool* ok) {
+    std::unordered_map<uint32_t, int> m;
+    std::ifstream f(path);
+    if (!f) { *ok = false; return m; }
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t h = line.find('#');
+        if (h != std::string::npos) line.resize(h);
+        std::istringstream is(line);
+        uint32_t uid; std::string role;
+        if (!(is >> uid >> role)) continue;
+        int r = role == "observer"     ? tplc::TPLC_ROLE_OBSERVER
+              : role == "engineer"     ? tplc::TPLC_ROLE_ENGINEER
+              : role == "commissioner" ? tplc::TPLC_ROLE_COMMISSIONER
+              : tplc::TPLC_ROLE_NONE;
+        if (r == tplc::TPLC_ROLE_NONE) { *ok = false; return m; }
+        m[uid] = r;
+    }
+    *ok = true;
+    return m;
+}
 
 static void uuid_hex(const uint8_t u[16], char out[33]) {
     static const char* H = "0123456789abcdef";
@@ -290,6 +349,7 @@ int main(int argc, char** argv) {
     std::string retain_dir, runbook_dir, instance_name, packages_dir;
     std::string sig_policy = "open";               /* doc 15 §4.1 */
     std::string trust_dir  = "/etc/tether/trust";
+    std::string authz_path, audit_path;            /* doc 15 §5   */
     uint64_t retain_flush_ms = 1000;
     uint64_t wcet_hard_ns = 0;
     int      quarantine_cycles = 10;
@@ -339,6 +399,8 @@ int main(int argc, char** argv) {
         else if (a == "--sig-policy") sig_policy = next();
         else if (a == "--trust-dir") trust_dir = next();
         else if (a == "--no-sandbox") no_sandbox = true;
+        else if (a == "--authz") authz_path = next();
+        else if (a == "--audit-log") audit_path = next();
         else if (a == "--sim") ctx_flags |= TPLC_CTXF_SIM;
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
         else { usage(argv[0]); return 2; }
@@ -376,6 +438,33 @@ int main(int argc, char** argv) {
         fprintf(stderr, "tether-plc: WARNING --no-sandbox: process "
                         "containment disabled\n");
     }
+
+    /* durable audit journal (doc 15 §5): append-only, fsync'd per
+       record, survives restart. Default path: runbook dir → retain
+       dir → cwd. An explicit --audit-log that fails is fatal — a
+       silently absent audit trail is worse than no start.        */
+    tplc::AuditLog audit_log;
+    std::string al_path = audit_path;
+    if (al_path.empty()) {
+        const std::string& base = !runbook_dir.empty() ? runbook_dir
+                                : !retain_dir.empty() ? retain_dir
+                                : std::string(".");
+        al_path = base + "/audit.log";
+    }
+    if (tplc::Status ast = audit_log.open(al_path); !ast.ok()) {
+        if (!audit_path.empty()) {
+            fprintf(stderr, "tether-plc: %s\n", ast.msg.c_str());
+            tplc_image_close(&img);
+            return 1;
+        }
+        fprintf(stderr, "tether-plc: audit journal unavailable "
+                        "(%s) — stderr only\n", ast.msg.c_str());
+    }
+    if (no_sandbox)
+        audit_log.record((uint32_t)getpid(), (uint32_t)getuid(),
+                         (uint32_t)getgid(), 0, "runtime",
+                         "runtime.no_sandbox",
+                         "containment disabled at boot", 0);
 
     /* ---------------- package → extracted module -------------- */
     std::string extracted_so;
@@ -860,18 +949,50 @@ int main(int argc, char** argv) {
                       d.program_uuid, "error");
     };
 
-    /* audit trail (doc 12 §8): every mutating debug/lifecycle op
-       logs who(session+name), what, and the operand — stderr so it
-       lands in the service journal                                */
+    /* audit trail (doc 12 §8 / doc 15 §5): every mutating op logs
+       who(session+name+kernel uid/gid/pid), what, the operand hash
+       and the result — stderr (service journal) + the durable
+       fsync'd AuditLog that survives restart                      */
     auto audit = [&](int fd, const char* op,
-                     const std::string& detail) {
+                     const std::string& detail, int32_t rc = 0) {
         uint64_t s = 0; std::string nm;
+        uint32_t pid = 0, uid = 0, gid = 0;
         ctl.clientInfo(fd, &s, &nm);
+        ctl.peerCred(fd, &pid, &uid, &gid);
         fprintf(stderr, "audit s%llu %s: %s %s\n",
                 (unsigned long long)s,
                 nm.empty() ? "?" : nm.c_str(), op,
                 detail.c_str());
+        audit_log.record(pid, uid, gid, s,
+                         nm.empty() ? "-" : nm.c_str(), op, detail,
+                         rc);
     };
+
+    /* authZ + rate limiting at the dispatch gate */
+    if (!authz_path.empty()) {
+        bool azok = false;
+        auto azm = load_authz(authz_path, &azok);
+        if (!azok) {
+            fprintf(stderr, "tether-plc: --authz %s unreadable or "
+                            "bad role\n", authz_path.c_str());
+            tplc_image_close(&img);
+            return 1;
+        }
+        ctl.setRoleResolver([azm](uint32_t uid) -> int {
+            auto it = azm.find(uid);
+            if (it != azm.end()) return it->second;
+            return (uid == 0 || uid == geteuid())
+                 ? tplc::TPLC_ROLE_COMMISSIONER
+                 : tplc::TPLC_ROLE_OBSERVER;
+        });
+    }
+    ctl.setOpMinRole([](uint16_t t) { return op_min_role(t); });
+    ctl.setMutRate(20.0, 40.0);              /* 20 ops/s, burst 40  */
+    ctl.setDenyHook([&](int fd, uint16_t type, int32_t code) {
+        char op[24];
+        snprintf(op, sizeof op, "op.0x%04x.denied", type);
+        audit(fd, op, "gate", code);
+    });
 
     /* ---- trigger expressions (doc 12 §M) ------------------------
        Compiler + evaluator for the bounded stack machine; paths
