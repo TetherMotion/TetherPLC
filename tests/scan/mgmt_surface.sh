@@ -105,6 +105,15 @@ echo "$out" | grep -q "version    1.4.3" \
 echo "$out" | grep -q "pred [0-9a-f][0-9a-f]" \
     && pass "predecessor recorded" || failf "pred: $out"
 
+# 14-char path = 16-byte payload: must decode as {u16 len, path},
+# not as a program uuid
+"$TPLCC" build "$WORK/a.st" -o "$WORK/c.tplc" >/dev/null
+ln -sf "$WORK/c.tplc" /tmp/io_N.tplc
+out=$("$BUILD/tplc-ctl" "$CTL" prepare /tmp/io_N.tplc 2>&1)
+echo "$out" | grep -q "state 3 -> 0" \
+    && pass "14-char path decodes as path" || failf "shortpath: $out"
+rm -f /tmp/io_N.tplc
+
 # map.get with no DEPLOY_MAP section reports empty
 out=$("$BUILD/tplc-ctl" "$CTL" map-get)
 echo "$out" | grep -q "no deploy map" \

@@ -150,6 +150,35 @@ static void uuid_hex(const uint8_t u[16], char out[33]) {
     }
     out[32] = 0;
 }
+/* uuid-or-path payload: a 14-char path yields a 16-byte
+   {u16 plen, path} payload that collides with the raw-uuid form.
+   Prefer the path decode when it parses cleanly (plen + 2 == len
+   and the tail is printable); a binary uuid essentially never
+   does. */
+static bool uuid_or_path(const uint8_t* p, uint32_t len,
+                         const std::string& dir, std::string& out) {
+    if (len >= 2) {
+        uint16_t plen;
+        memcpy(&plen, p, 2);
+        if ((uint32_t)plen + 2 == len && plen > 0) {
+            bool printable = true;
+            for (uint32_t i = 2; i < len; i++)
+                if (p[i] < 0x20 || p[i] == 0x7f) {
+                    printable = false; break;
+                }
+            if (printable) {
+                out.assign((const char*)p + 2, plen);
+                return true;
+            }
+        }
+    }
+    if (len == 16) {
+        char hex[33]; uuid_hex(p, hex);
+        out = dir + "/" + hex + ".tplc";
+        return true;
+    }
+    return false;
+}
 static bool hex_uuid(const std::string& hex, uint8_t u[16]) {
     if (hex.size() != 32) return false;
     auto nib = [](char c) -> int {
@@ -1628,19 +1657,7 @@ int main(int argc, char** argv) {
             return;
         }
         std::string path;
-        if (len == 16) {
-            char hex[33]; uuid_hex(payload, hex);
-            path = packages_dir + "/" + hex + ".tplc";
-        } else if (len >= 2) {
-            uint16_t plen;
-            memcpy(&plen, payload, 2);
-            if ((uint32_t)plen + 2 > len) {
-                ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
-                               "bad path", req);
-                return;
-            }
-            path.assign((const char*)payload + 2, plen);
-        } else {
+        if (!uuid_or_path(payload, len, packages_dir, path)) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
                            "uuid or path", req);
             return;
@@ -1768,19 +1785,7 @@ int main(int argc, char** argv) {
         }
         /* resolve the staged package — 16B uuid or {len,path} */
         std::string path;
-        if (len == 16) {
-            char hex[33]; uuid_hex(payload, hex);
-            path = packages_dir + "/" + hex + ".tplc";
-        } else if (len >= 2) {
-            uint16_t plen;
-            memcpy(&plen, payload, 2);
-            if ((uint32_t)plen + 2 > len) {
-                ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
-                               "bad path", req);
-                return;
-            }
-            path.assign((const char*)payload + 2, plen);
-        } else {
+        if (!uuid_or_path(payload, len, packages_dir, path)) {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
                            "uuid or path", req);
             return;

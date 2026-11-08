@@ -95,9 +95,12 @@ invocations. `maxClients = 8` caps concurrent sessions.
 - No per-entry catalog removal — program swaps keep the same
   function/signal surface; stale symbols fail at `dbg.resolve`
   time (`ctl 410`).
-- `mgmt_epoch` is exposed via `status.epoch` and `prog.status`,
-  but the tether_io catalog epoch itself is static per server
-  instance — full V6 epoch invalidation on swap is future work.
+- `mgmt_epoch` is bridged onto the tether_io catalog: the provider
+  polls `PROG_STATUS` and, on change, re-installs the schema
+  catalog (epoch bump → V6 stale-epoch rejection) and registers an
+  `epoch.<N>` marker signal (registry revision bump →
+  `CatalogChanged` push). The marker signals accumulate one entry
+  per program-set change — bounded by deploy frequency.
 - `dbg.state_diff` returns the committed-swap migration rules as
   JSON; it errors `ctl 416 no committed swap` until a swap lands.
 

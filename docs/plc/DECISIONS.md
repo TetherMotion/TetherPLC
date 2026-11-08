@@ -257,6 +257,6 @@ and a provider crash cannot stall the scan loop.
 
 Consequences recorded in `docs/plc/tether-io-attach.md`: remote
 client identity can't reach `SO_PEERCRED` (provider role applies),
-the catalog epoch is static per instance, and complex replies use
-JSON strings rather than per-shape schema structs (keeps the schema
-catalog small and version-tolerant; typed structs remain an option).
+and complex replies use JSON strings rather than per-shape schema
+structs (keeps the schema catalog small and version-tolerant; typed
+structs remain an option).

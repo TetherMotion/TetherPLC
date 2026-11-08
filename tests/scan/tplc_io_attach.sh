@@ -60,4 +60,31 @@ grep -q "tether_io on" "$WORK/io.log" \
 
 "$BUILD/tplc-io-probe" "$PORT" || { echo "FAIL probe"; exit 1; }
 
+# epoch bridge: a program-set change must bump the schema epoch and
+# add an epoch.N marker — verified through a second probe session
+cat > "$WORK/b.st" <<'EOF'
+PROGRAM P
+VAR
+    n : INT;
+    x AT %IX0.0 : BOOL;
+    y AT %QX0.0 : BOOL;
+END_VAR
+n := n + 2;
+y := x;
+END_PROGRAM
+EOF
+"$TPLCC" build "$WORK/b.st" -o "$WORK/b_long_name.tplc" >/dev/null \
+    || { echo "FAIL build b"; exit 1; }
+"$BUILD/tplc-ctl" "$CTL" stop >/dev/null 2>&1
+"$BUILD/tplc-ctl" "$CTL" prepare "$WORK/b_long_name.tplc" \
+    >/dev/null 2>&1 || { echo "FAIL prepare"; exit 1; }
+"$BUILD/tplc-ctl" "$CTL" start >/dev/null 2>&1
+sleep 1
+"$BUILD/tplc-io-probe" "$PORT" > "$WORK/probe2.log" 2>&1 \
+    || { echo "FAIL probe2: $(cat "$WORK/probe2.log")"; exit 1; }
+grep -q "info schema_epoch=2" "$WORK/probe2.log" \
+    || { echo "FAIL epoch bump: $(head -3 "$WORK/probe2.log")"; exit 1; }
+grep -q "catalog bumped" "$WORK/io.log" \
+    || { echo "FAIL catalog bump log"; exit 1; }
+
 echo "tplc_io_attach: all checks passed"

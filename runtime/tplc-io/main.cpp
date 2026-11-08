@@ -1306,12 +1306,48 @@ int main(int argc, char** argv) {
             bind.c_str(), port, ctl_path.c_str(),
             (unsigned)(g_fnId - 100), (unsigned)(g_sigId - 200));
 
+    /* management-epoch → catalog-epoch bridge (doc 16 §5): when the
+       runtime's program-set epoch changes, re-install the schema
+       catalog (epoch bump → stale client epochs are rejected) and
+       add an `epoch.<N>` marker signal (registry revision bump →
+       CatalogChanged push so clients re-list)                      */
+    uint64_t last_epoch = 0;
+    {
+        TplcCtlProgStatus ps0{};
+        std::vector<uint8_t> raw;
+        if (progStatus(ps0, raw)) last_epoch = ps0.epoch;
+    }
+
     while (!g_stop) {
         /* ctl link watchdog: reconnect keeps the surface live
            across runtime restarts                                   */
         if (!g_ctl.connected()) {
             if (!g_ctl.connectSock(ctl_path, 2000))
                 fprintf(stderr, "tplc-io: ctl reconnect failed\n");
+        } else {
+            TplcCtlProgStatus ps{};
+            std::vector<uint8_t> raw;
+            if (progStatus(ps, raw) && ps.epoch != last_epoch) {
+                last_epoch = ps.epoch;
+                g_catalog.install(g_graph,
+                                  buildSchemaManifest(g_graph));
+                SignalEntry m;
+                m.id = g_sigId++;
+                m.name = "epoch." + std::to_string(ps.epoch);
+                m.description =
+                    "program-set generation marker (epoch bump)";
+                m.group = "plc";
+                m.valueType = ValueType::U64;
+                m.readFn = [ep = ps.epoch](void* dst) {
+                    uint64_t v = ep;
+                    memcpy(dst, &v, 8);
+                };
+                assignSchema(m);
+                registry.addSignal(std::move(m));
+                fprintf(stderr,
+                        "tplc-io: mgmt epoch → %llu, catalog bumped\n",
+                        (unsigned long long)ps.epoch);
+            }
         }
         struct timespec ts{0, 500 * 1000 * 1000};
         nanosleep(&ts, nullptr);

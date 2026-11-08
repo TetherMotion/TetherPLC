@@ -95,6 +95,8 @@ int main(int argc, char** argv) {
 
     auto p = c.ping(0xCAFE);
     check(p && *p == 0xCAFE, "ping");
+    printf("info schema_epoch=%llu\n",
+           (unsigned long long)c.schemaEpoch());
 
     auto sigs = c.listSignals();
     check(sigs && sigs->size() >= 6, "listSignals >= 6");
