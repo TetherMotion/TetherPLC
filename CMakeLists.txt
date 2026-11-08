@@ -186,4 +186,11 @@ if(NOT CMAKE_CROSSCOMPILING)
       python3 ${CMAKE_SOURCE_DIR}/tests/sim/vector_run.py)
   set_tests_properties(sim_vectors PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180)
+
+  # no-alloc property (doc 14 §5): LD_PRELOAD counter — steady-state
+  # scans must not hit the heap
+  add_test(NAME no_alloc
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/runtime/no_alloc.sh)
+  set_tests_properties(no_alloc PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60)
 endif()
