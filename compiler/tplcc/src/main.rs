@@ -1118,8 +1118,23 @@ fn cmd_build(args: &[String]) -> ExitCode {
         })
         .collect::<Vec<_>>()
         .join(",");
+    // manifest requires: runtime resource needs verified pre-load
+    // (same extent formula the descriptor's image_*_bytes uses)
+    let img_need = |r: AtRegion| -> u64 {
+        io_binds
+            .iter()
+            .filter(|b| b.at.region == r)
+            .map(|b| b.at.byte + b.ty.size().max(1))
+            .max()
+            .unwrap_or(0)
+    };
     let manifest = format!(
-        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\",\"target_triple\":\"{triple}\"}}"
+        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\",\"target_triple\":\"{triple}\",\"requires\":{{\"image_in_bytes\":{},\"image_out_bytes\":{},\"marker_bytes\":{},\"retain_bytes\":{},\"state_blob_bytes\":{}}}}}",
+        img_need(AtRegion::I),
+        img_need(AtRegion::Q),
+        img_need(AtRegion::M),
+        layout_ref.retain_size,
+        layout_ref.total_size
     );
     let src_bundle: String = srcs
         .iter()

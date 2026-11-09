@@ -376,6 +376,23 @@ echo "$out" | grep -q '(-210)' \
     && ok "TPLC_E_PKG_HIDDEN_STATE on .data/.bss globals" \
     || bad "PKG_HIDDEN_STATE: $out"
 
+# manifest requires: AT binding needs more image than attached (256)
+cat > "$WORK/req.st" <<'EOF'
+PROGRAM Demo
+VAR
+    out_big AT %QD2000 : DINT;
+    cnt : DINT := 0;
+END_VAR
+cnt := cnt + 1;
+out_big := cnt;
+END_PROGRAM
+EOF
+"$TPLCC" build "$WORK/req.st" -o "$WORK/req.tplc" >/dev/null 2>&1
+out=$(run_pkg "$WORK/req.tplc")
+echo "$out" | grep -q '(-214)' \
+    && ok "TPLC_E_REQUIRES_UNMET on undersized image" \
+    || bad "REQUIRES_UNMET: $out"
+
 # signature tamper (sig section bytes; content_hash excludes it)
 "$TPLCC" sign keygen --dir "$WORK/trust" --name dev >/dev/null 2>&1
 "$TPLCC" sign sign "$WORK/a.tplc" --key "$WORK/trust/dev.key" \

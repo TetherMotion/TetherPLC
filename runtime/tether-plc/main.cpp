@@ -627,6 +627,16 @@ int main(int argc, char** argv) {
             tplc_image_close(&img);
             return 1;
         }
+        {
+            auto rst = pkg.checkRequires(tplc_image_in_size(&img),
+                                         tplc_image_out_size(&img));
+            if (!rst.ok()) {
+                fprintf(stderr, "tether-plc: requires unmet (%d) %s\n",
+                        rst.code, rst.msg.c_str());
+                tplc_image_close(&img);
+                return 1;
+            }
+        }
         tplc::PkgSection obj{}, b_layd{}, b_smap{}, b_iomap{};
         /* v1: first target_obj (multi-target selection comes with
            manifest.targets[] parsing) */
@@ -1920,6 +1930,12 @@ int main(int argc, char** argv) {
                 ctl.errorReply(fd, t, vst.code, vst.msg.c_str(), req);
                 return;
             }
+            auto rst = pk.checkRequires(tplc_image_in_size(&img),
+                                        tplc_image_out_size(&img));
+            if (!rst.ok()) {
+                ctl.errorReply(fd, t, rst.code, rst.msg.c_str(), req);
+                return;
+            }
             tplc::PkgSection sec{};
             if (pk.section(TPLC_SEC_LAYOUT_DESC, sec))
                 layd_b.assign(sec.data, sec.data + sec.size);
@@ -2055,6 +2071,12 @@ int main(int argc, char** argv) {
         auto vst = pk.validateForLoad(false);
         if (!vst.ok()) {
             ctl.errorReply(fd, t, vst.code, vst.msg.c_str(), req);
+            return;
+        }
+        auto rst = pk.checkRequires(tplc_image_in_size(&img),
+                                    tplc_image_out_size(&img));
+        if (!rst.ok()) {
+            ctl.errorReply(fd, t, rst.code, rst.msg.c_str(), req);
             return;
         }
         tplc::PkgSection obj{}, migd{}, layd{}, smap{}, imap{};
@@ -2314,6 +2336,12 @@ int main(int argc, char** argv) {
         auto vst = pk.validateForLoad(false);
         if (!vst.ok()) {
             ctl.errorReply(fd, t, vst.code, vst.msg.c_str(), req);
+            return;
+        }
+        auto rst = pk.checkRequires(tplc_image_in_size(&img),
+                                    tplc_image_out_size(&img));
+        if (!rst.ok()) {
+            ctl.errorReply(fd, t, rst.code, rst.msg.c_str(), req);
             return;
         }
         tplc::PkgSection obj{}, migd{}, layd{}, smap{}, imap{};

@@ -92,11 +92,19 @@ Wire constants + error codes shared by both implementations:
 - `zstd` (SECF_COMPRESSED) is declared but no compressor/decompressor
   is linked yet; readers reject nothing about it today.
 - `validate_for_load` now also runs the package-byte semantic checks:
-  manifest `abi_version` must be 1 (`PKG_ABI_MISMATCH` -213) and every
+  manifest `abi_version` must be 1 (`PKG_ABI_MISMATCH` -213), every
   blob-resident symmap leaf must lie inside the LAYD state blob
   (`SYMMAP_RANGE` -211; `SK_IO_CHANNEL` entries are exempt — their
-  offsets address the process image). `requires` vs image size and
-  `targets[]` triple selection remain unwired.
+  offsets address the process image), and `target_obj` must not hide
+  program state in `.data`/`.bss` (`PKG_HIDDEN_STATE` -210).
+- `tplcc` emits a manifest `requires` object
+  (`image_in_bytes`/`image_out_bytes`/`marker_bytes` from `%`-AT
+  binding extents, `retain_bytes`/`state_blob_bytes` from the
+  layout). `Package::checkRequires` compares the image fields
+  against the attached process image on every load path — boot,
+  `PROG_PREPARE`, `PROG_SWAP`, `SHADOW_LOAD` — and fails with
+  `REQUIRES_UNMET` (-214) before any module bytes are touched.
+  `targets[]` triple selection remains unwired.
 - Manifest is carried as opaque JSON bytes; schema validation is a
   P1-era concern (`tplcc` owns the producer side).
 

@@ -269,6 +269,52 @@ Status Package::validateForLoad(bool irStripped) const {
     return Status::Ok();
 }
 
+/* minimal JSON helpers for the flat manifest object: locate a
+   top-level "key":{...} span, then read "key":number inside it */
+static bool jsonSpan(const std::string& js, const char* key,
+                     size_t& b, size_t& e) {
+    std::string pat = std::string("\"") + key + "\"";
+    size_t p = js.find(pat);
+    if (p == std::string::npos) return false;
+    p = js.find('{', p + pat.size());
+    if (p == std::string::npos) return false;
+    size_t q = js.find('}', p);
+    if (q == std::string::npos) return false;
+    b = p;
+    e = q;
+    return true;
+}
+static bool jsonNum(const std::string& js, size_t b, size_t e,
+                    const char* key, uint64_t& out) {
+    std::string pat = std::string("\"") + key + "\"";
+    size_t p = js.find(pat, b);
+    if (p == std::string::npos || p >= e) return false;
+    p = js.find(':', p + pat.size());
+    if (p == std::string::npos || p >= e) return false;
+    p++;
+    while (p < e && (js[p] == ' ' || js[p] == '\t')) p++;
+    char* end = nullptr;
+    unsigned long long v = strtoull(js.c_str() + p, &end, 10);
+    if (end == js.c_str() + p) return false;
+    out = v;
+    return true;
+}
+
+Status Package::checkRequires(uint64_t image_in,
+                              uint64_t image_out) const {
+    std::string mj = manifestJson();
+    size_t b = 0, e = 0;
+    if (!jsonSpan(mj, "requires", b, e)) return Status::Ok();
+    uint64_t need = 0;
+    if (jsonNum(mj, b, e, "image_in_bytes", need) && need > image_in)
+        return perr(TPLC_E_REQUIRES_UNMET,
+                    "requires.image_in_bytes exceeds image");
+    if (jsonNum(mj, b, e, "image_out_bytes", need) && need > image_out)
+        return perr(TPLC_E_REQUIRES_UNMET,
+                    "requires.image_out_bytes exceeds image");
+    return Status::Ok();
+}
+
 std::string Package::manifestJson() const {
     PkgSection s;
     if (!section(TPLC_SEC_MANIFEST, s)) return {};

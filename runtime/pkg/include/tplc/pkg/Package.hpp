@@ -55,6 +55,12 @@ public:
     /* doc 01 §2.1 required-for-load set (format level only). */
     Status validateForLoad(bool irStripped) const;
 
+    /* manifest `requires` check (doc 01 §3): image_in_bytes and
+       image_out_bytes must fit the attached process image; absent
+       fields impose no requirement. Packages without a requires
+       object pass. Error: TPLC_E_REQUIRES_UNMET. */
+    Status checkRequires(uint64_t image_in, uint64_t image_out) const;
+
     /* doc 15 §4.1 signature policy check. policy:
      *   "open"            — unsigned passes (loud warn via caller),
      *                       signed packages are verified
