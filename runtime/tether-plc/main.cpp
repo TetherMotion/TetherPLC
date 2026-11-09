@@ -2741,10 +2741,6 @@ int main(int argc, char** argv) {
         const char* name;
         std::vector<uint8_t> bytes;
     };
-    auto od_put = [](std::vector<uint8_t>& v, const void* p, size_t n) {
-        const uint8_t* b = (const uint8_t*)p;
-        v.insert(v.end(), b, b + n);
-    };
     /* enumerate the dictionary — `sub == 0xFF` means "any sub" */
     auto od_rows = [&](uint16_t index, uint8_t sub) {
         std::vector<OdRow> rows;
