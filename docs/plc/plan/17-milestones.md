@@ -73,6 +73,7 @@ collaborative editing; visual diff; OPC-UA adapter; safety FB subset
 (certification program). Crypto authentication for updates landed —
 `--update-auth strict` + per-channel `--update-auth-map`, see
 `docs/plc/crypto-auth.md`.
-Shadow-run extension candidates (all currently non-goals):
-multiple simultaneous shadows, per-channel promote, shadow→image
-preview.
+Shadow-run extension candidates: multiple simultaneous shadows and
+shadow→image preview landed (≤4 candidates, `SHADOW_LIST`, indexed
+selectors — see `docs/plc/shadow-run.md`); per-channel promote
+remains a non-goal.

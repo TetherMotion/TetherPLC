@@ -153,15 +153,22 @@ enum TplcCtlOp {
     TPLC_OP_RETAIN_DUMP    = 0x0604,
     /* image 0x0700 */
     TPLC_OP_IMAGE_STATS    = 0x0701,  /* P0 */
-    /* shadow run 0x0800 (doc 19): candidate program on identical
-       inputs; its %Q lands in a private region, never the image   */
+    /* shadow run 0x0800 (doc 19): candidate program(s) on identical
+       inputs; their %Q lands in private regions, never the image.
+       Up to MAX_SHADOWS candidates may be loaded at once; every op
+       below except LOAD and LIST takes an optional trailing
+       selector {u16 slen, sel[slen]} where sel is the 16-byte
+       program uuid or the program name. With no selector the op
+       applies to the only loaded shadow; with several loaded it
+       fails MGMT_STATE "selector required". */
     TPLC_OP_SHADOW_LOAD    = 0x0801,  /* {u16 plen,path} → status    */
-    TPLC_OP_SHADOW_STATUS  = 0x0802,  /* → TplcCtlShadowStatus       */
-    TPLC_OP_SHADOW_COMPARE = 0x0803,  /* {u32 max} → diff ring tail  */
-    TPLC_OP_SHADOW_PROMOTE = 0x0804,  /* ∅ → post-promote status     */
-    TPLC_OP_SHADOW_DROP    = 0x0805,  /* ∅                           */
-    TPLC_OP_SHADOW_RESET   = 0x0806,  /* ∅ → migrate result          */
-    TPLC_OP_SHADOW_IMAGE   = 0x0807,  /* {u64 off,u32 len} → shadow %Q */
+    TPLC_OP_SHADOW_STATUS  = 0x0802,  /* [sel] → TplcCtlShadowStatus */
+    TPLC_OP_SHADOW_COMPARE = 0x0803,  /* {u32 max}[sel] → diff tail  */
+    TPLC_OP_SHADOW_PROMOTE = 0x0804,  /* [sel] → post-promote status */
+    TPLC_OP_SHADOW_DROP    = 0x0805,  /* [sel]                        */
+    TPLC_OP_SHADOW_RESET   = 0x0806,  /* [sel] → migrate result      */
+    TPLC_OP_SHADOW_IMAGE   = 0x0807,  /* {u64 off,u32 len}[sel] → %Q */
+    TPLC_OP_SHADOW_LIST    = 0x0808,  /* ∅ → {u32 n, status[n]}      */
     /* runtime 0x0900 */
     TPLC_OP_RT_STATUS      = 0x0901,  /* P0 */
     TPLC_OP_RT_SHUTDOWN    = 0x0905,  /* P0 {u8 mode}                */
@@ -269,7 +276,11 @@ typedef struct TplcCtlProgStatus {
     uint32_t quarantine_left;
     uint32_t _pad6;
     uint64_t epoch;                    /* bumps on program-set change */
-    /* proto v3 tail — shadow run (doc 19) */
+    /* proto v3 tail — shadow run (doc 19). With several shadows
+       loaded the counters aggregate: state is 1 when any shadow
+       runs, cycles/missed/diff_count sum across candidates, and
+       last_diff_cycle is the newest of them. Per-shadow detail is
+       on SHADOW_LIST / SHADOW_STATUS. */
     uint8_t  shadow_state;             /* 0 none, 1 running           */
     uint8_t  _pad7[7];
     uint64_t shadow_cycles;

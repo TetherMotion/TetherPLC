@@ -1368,8 +1368,21 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
         serde_json::Value::Array(a) => a.iter().map(|p| p.as_str().unwrap().to_string()).collect(),
         _ => vec![v["program"].as_str().unwrap().to_string()],
     };
+    // shadow candidates: "shadow" names one file, "shadows" an
+    // array — up to 4 may be loaded, each sees identical %I, writes
+    // to a private image, and seeds its state name-wise from the
+    // active blob at the load boundary. "shadow_load"/"shadow_load@N"
+    // loads candidate file N (true = 0); "shadow_promote[@N]" adopts
+    // candidate N and drops every peer; "shadow_drop@N" removes one.
+    // Candidate indices are load order, matching SHADOW_LIST.
     let shadow_file = v["shadow"].as_str().map(|s| s.to_string());
-    if shadow_file.is_some() && files.len() != 1 {
+    let shadow_files: Vec<String> = match &v["shadows"] {
+        serde_json::Value::Array(a) => {
+            a.iter().map(|p| p.as_str().unwrap().to_string()).collect()
+        }
+        _ => shadow_file.map(|f| vec![f]).unwrap_or_default(),
+    };
+    if !shadow_files.is_empty() && files.len() != 1 {
         return Err(format!("{id}: shadow pairs with a single program"));
     }
     let mut runs: Vec<VecRun> = Vec::new();
@@ -1382,11 +1395,9 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
     for r in &mut runs {
         r.0.module.checked_arith = checked;
     }
-    // shadow slot: loaded by a cycle's "shadow_load" — the candidate
-    // sees identical %I, writes to a private image, and seeds its
-    // state name-wise from the active blob at the load boundary.
-    // "shadow_promote" adopts it as the active run (state carries).
-    let mut shadow: Option<VecRun> = None;
+    // (file index, run) pairs — the file index models the runtime's
+    // duplicate-uuid rejection (same source = same program uuid)
+    let mut shadows: Vec<(usize, VecRun)> = Vec::new();
     let mut img_in = vec![0u8; 64];
     let cycles = v["cycles"].as_array().ok_or("no cycles")?;
     for (ci, c) in cycles.iter().enumerate() {
@@ -1398,12 +1409,34 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                 }
             }
         }
-        if c["shadow_load"].as_bool().unwrap_or(false) {
-            let f = shadow_file
-                .as_deref()
-                .ok_or(format!("{id} cycle {ci}: shadow_load w/o shadow"))?;
+        // "shadow_load": true → file 0, integer N → file N
+        let sload = match &c["shadow_load"] {
+            serde_json::Value::Bool(b) if *b => Some(0usize),
+            serde_json::Value::Number(n) => {
+                n.as_u64().map(|x| x as usize)
+            }
+            _ => None,
+        };
+        if let Some(fi) = sload {
+            let f = shadow_files.get(fi).ok_or(format!(
+                "{id} cycle {ci}: shadow_load@{fi} w/o shadow file"))?;
+            if shadows.len() >= 4 {
+                return Err(format!(
+                    "{id} cycle {ci}: shadow slots full (4)"));
+            }
+            if shadows.iter().any(|(si, _)| *si == fi) {
+                return Err(format!(
+                    "{id} cycle {ci}: shadow already loaded"));
+            }
             let mut sh = compile_run(f, src_dir, id)?;
             sh.0.module.checked_arith = checked;
+            // declaration initializers run at load — the L1 model
+            // of tplc_init on the candidate program
+            {
+                let (s_out, _, s_lay, s_ctx, s_blob) = &mut sh;
+                let mut srt = Rt::new(s_blob, s_lay, &s_out.module, 0);
+                srt.run_inits(s_ctx);
+            }
             // seed: same-named fields carry the active blob's value —
             // the L1 model of the runtime's same-layout copy / MIGD
             {
@@ -1418,13 +1451,32 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                     }
                 }
             }
-            shadow = Some(sh);
+            shadows.push((fi, sh));
         }
-        if c["shadow_promote"].as_bool().unwrap_or(false) {
-            let sh = shadow
-                .take()
-                .ok_or(format!("{id} cycle {ci}: promote w/o shadow"))?;
-            runs[0] = sh;
+        // "shadow_promote": true → candidate 0, integer N → N;
+        // adoption drops every peer candidate
+        let spr = match &c["shadow_promote"] {
+            serde_json::Value::Bool(b) if *b => Some(0usize),
+            serde_json::Value::Number(n) => {
+                n.as_u64().map(|x| x as usize)
+            }
+            _ => None,
+        };
+        if let Some(pi) = spr {
+            if pi >= shadows.len() {
+                return Err(format!(
+                    "{id} cycle {ci}: promote@{pi} w/o shadow"));
+            }
+            runs[0] = shadows.remove(pi).1;
+            shadows.clear();
+        }
+        if let Some(di) = c["shadow_drop"].as_u64() {
+            let di = di as usize;
+            if di >= shadows.len() {
+                return Err(format!(
+                    "{id} cycle {ci}: drop@{di} w/o shadow"));
+            }
+            shadows.remove(di);
         }
         let mut q_imgs: Vec<Vec<u8>> = Vec::new();
         let mut aborts: Vec<Option<i32>> = Vec::new();
@@ -1564,49 +1616,88 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                 }
             }
         }
-        if c.get("expect_shadow_q").is_some() && shadow.is_none() {
-            return Err(format!("{id} cycle {ci}: expect_shadow_q w/o shadow"));
+        // shadow %Q expectations: a string addresses candidate 0,
+        // an object {"<idx>": "<hex>"} addresses candidates by
+        // SHADOW_LIST (load-order) index
+        let mut sh_expect: Vec<(usize, String)> = Vec::new();
+        match &c["expect_shadow_q"] {
+            serde_json::Value::String(s) => sh_expect.push((0, s.clone())),
+            serde_json::Value::Object(o) => {
+                for (k, val) in o {
+                    let i = k.parse::<usize>().map_err(|_| {
+                        format!("{id} cycle {ci}: bad shadow idx {k}")
+                    })?;
+                    sh_expect.push((
+                        i,
+                        val.as_str()
+                            .ok_or(format!(
+                                "{id} cycle {ci}: expect_shadow_q[{k}]"))?
+                            .to_string(),
+                    ));
+                }
+            }
+            _ => {}
         }
-        // shadow scan on the same inputs; its %Q stays private
-        if let Some(sh) = shadow.as_mut() {
-            let (out, program, layout, ctx, blob) = sh;
-            let tplc_mir::ir::Body::Stmts(stmts) = &program.body else {
-                return Err("shadow body not stmts".into());
+        for (i, _) in &sh_expect {
+            if *i >= shadows.len() {
+                return Err(format!(
+                    "{id} cycle {ci}: expect_shadow_q@{i} w/o shadow"));
+            }
+        }
+        // shadow scans on the same inputs; each candidate's %Q
+        // stays private. A faulting candidate drops out, matching
+        // the runtime's per-shadow task-fault handling.
+        let mut si = 0;
+        while si < shadows.len() {
+            let (aborted, sh_img) = {
+                let (out, program, layout, ctx, blob) =
+                    &mut shadows[si].1;
+                let tplc_mir::ir::Body::Stmts(stmts) =
+                    &program.body
+                else {
+                    return Err("shadow body not stmts".into());
+                };
+                let mut rt = Rt::new(blob, layout, &out.module, 0);
+                rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
+                rt.cycle = ci as u64;
+                for b in &out.io_bindings {
+                    if b.at.region == AtRegion::I {
+                        let val = img_get(&img_in, b);
+                        let short =
+                            b.name.rsplit('.').next().unwrap_or(&b.name);
+                        rt.write_field(short, &val);
+                    }
+                }
+                let flow = rt.exec_all(ctx, stmts);
+                let mut sh_img = vec![0u8; 64];
+                for b in &out.io_bindings {
+                    if b.at.region == AtRegion::Q {
+                        let short =
+                            b.name.rsplit('.').next().unwrap_or(&b.name);
+                        let val = rt.read_field(short);
+                        img_put(&mut sh_img, b, &val);
+                    }
+                }
+                (matches!(flow, Flow::Abort(_)), sh_img)
             };
-            let mut rt = Rt::new(blob, layout, &out.module, 0);
-            rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
-            rt.cycle = ci as u64;
-            /* declaration initializers run once at program start, as
-            tplc_init does on the compiled path */
-            if ci == 0 {
-                rt.run_inits(ctx);
+            if aborted {
+                shadows.remove(si);
+                continue;
             }
-            for b in &out.io_bindings {
-                if b.at.region == AtRegion::I {
-                    let val = img_get(&img_in, b);
-                    let short = b.name.rsplit('.').next().unwrap_or(&b.name);
-                    rt.write_field(short, &val);
+            for (ei, qh) in &sh_expect {
+                if *ei != si {
+                    continue;
                 }
-            }
-            rt.exec_all(ctx, stmts);
-            let mut sh_img = vec![0u8; 64];
-            for b in &out.io_bindings {
-                if b.at.region == AtRegion::Q {
-                    let short = b.name.rsplit('.').next().unwrap_or(&b.name);
-                    let val = rt.read_field(short);
-                    img_put(&mut sh_img, b, &val);
-                }
-            }
-            if let Some(qh) = c["expect_shadow_q"].as_str() {
                 let want = hex_bytes(qh);
                 if sh_img[..want.len()] != want[..] {
                     return Err(format!(
-                        "{id} cycle {ci}: shadow %Q want {} got {}",
+                        "{id} cycle {ci}: shadow@{si} %Q want {} got {}",
                         qh,
                         hex_str(&sh_img[..want.len()])
                     ));
                 }
             }
+            si += 1;
         }
     }
     Ok(())

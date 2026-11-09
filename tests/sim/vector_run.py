@@ -193,22 +193,30 @@ def main():
             nfail += 1
             continue
 
-        # shadow candidate: compiled once, passed to the sim via
-        # --shadow; cycles direct load/promote/compare
-        shadow_pkg = None
-        if "shadow" in v:
-            ssrc = os.path.join(corpus, v["shadow"])
-            shadow_pkg = os.path.join(
-                work, vid.replace(".", "_") + "_sh.tplc")
-            sargv = [tplcc, "build", ssrc, "-o", shadow_pkg]
+        # shadow candidates: "shadow" names one source, "shadows" an
+        # array — each compiled once and passed via repeated --shadow;
+        # cycles direct load/promote/drop/compare per candidate
+        shadow_pkgs = []
+        shadow_srcs = (v["shadows"] if isinstance(v.get("shadows"), list)
+                       else ([v["shadow"]] if "shadow" in v else []))
+        shadow_bad = False
+        for si, sname in enumerate(shadow_srcs):
+            ssrc = os.path.join(corpus, sname)
+            spkg = os.path.join(
+                work, vid.replace(".", "_") + f"_sh{si}.tplc")
+            sargv = [tplcc, "build", ssrc, "-o", spkg]
             if v.get("checked_arith"):
                 sargv.append("--checked-arith")
             rc = subprocess.run(sargv, env=env, capture_output=True)
-            if rc.returncode != 0 or not os.path.isfile(shadow_pkg):
-                print(f"FAIL {vid}: shadow compile rc={rc.returncode} "
+            if rc.returncode != 0 or not os.path.isfile(spkg):
+                print(f"FAIL {vid}: shadow{si} compile rc={rc.returncode} "
                       f"{rc.stderr.decode()[:200]}")
                 nfail += 1
-                continue
+                shadow_bad = True
+                break
+            shadow_pkgs.append(spkg)
+        if shadow_bad:
+            continue
 
         data = open(pkg, "rb").read()
         syms = smap_entries(pkg_section(data, 0x0020))
@@ -220,14 +228,26 @@ def main():
             parts = ["step", str(k), f"time={cyc['t_ns']}"]
             if "i" in cyc:
                 parts += ["in", "0=" + cyc["i"]]
-            if cyc.get("shadow_load"):
+            sl = cyc.get("shadow_load")
+            if sl is True:
                 parts += ["shadow_load"]
-            if cyc.get("shadow_promote"):
+            elif isinstance(sl, int):
+                parts += [f"shadow_load@{sl}"]
+            sp = cyc.get("shadow_promote")
+            if sp is True:
                 parts += ["shadow_promote"]
+            elif isinstance(sp, int):
+                parts += [f"shadow_promote@{sp}"]
+            if isinstance(cyc.get("shadow_drop"), int):
+                parts += [f"shadow_drop@{cyc['shadow_drop']}"]
             if "expect_q" in cyc:
                 parts += ["expect", "0=" + cyc["expect_q"]]
-            if "expect_shadow_q" in cyc:
-                parts += ["expect_shadow", "0=" + cyc["expect_shadow_q"]]
+            esq = cyc.get("expect_shadow_q")
+            if isinstance(esq, str):
+                parts += ["expect_shadow", "0=" + esq]
+            elif isinstance(esq, dict):
+                for k, val in esq.items():
+                    parts += [f"expect_shadow@{k}", "0=" + val]
             for name, val in cyc.get("expect_fields", {}).items():
                 if name not in syms:
                     bad = f"unknown field {name}"
@@ -258,15 +278,16 @@ def main():
             argv = [SIM, "--image", img, "--package", pkg,
                     "--steps", steps, "--plc", PLC, "--ctl", ctl,
                     "--settle-ms", "800", "--scan"]
-            if shadow_pkg:
+            if shadow_pkgs:
                 # pin the two runtime knobs the promote vectors assume:
                 # a shadow tick every scan (budget) and immediate
                 # adoption with outputs live (quarantine is the old
                 # program's rollback window, not an output hold).
                 # Defaults make these timing-dependent — shadow_e2e
                 # pins them the same way.
-                argv += ["--shadow", shadow_pkg,
-                         "--quarantine-cycles", "100000",
+                for spkg in shadow_pkgs:
+                    argv += ["--shadow", spkg]
+                argv += ["--quarantine-cycles", "100000",
                          "--shadow-budget-ns", "999999999999"]
             r = subprocess.run(
                 argv,

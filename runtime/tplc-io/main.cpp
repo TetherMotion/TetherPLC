@@ -314,6 +314,64 @@ std::string shadowStatusJson(const std::vector<uint8_t>& p) {
     return j.s;
 }
 
+/* shadow selector wire tail {u16 slen, sel}: sel is the 16-byte
+   program uuid (passed as 32 hex chars) or the program name       */
+void wsel(W& w, const std::string& sel) {
+    std::vector<uint8_t> b;
+    if (sel.size() == 32) {
+        auto nib = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        bool ok = true;
+        for (int i = 0; i < 16 && ok; i++) {
+            int hi = nib(sel[i * 2]), lo = nib(sel[i * 2 + 1]);
+            if (hi < 0 || lo < 0) { ok = false; break; }
+            b.push_back((uint8_t)(hi * 16 + lo));
+        }
+        if (!ok) b.clear();
+    }
+    if (b.empty()) b.assign(sel.begin(), sel.end());
+    if (b.empty() || b.size() > 0xFFFF) return;
+    w.u16((uint16_t)b.size());
+    w.bytes(b.data(), (uint32_t)b.size());
+}
+
+/* SHADOW_LIST wire: {u32 n, TplcCtlShadowStatus[n]}               */
+std::string shadowListJson(const std::vector<uint8_t>& p) {
+    J j; j.raw("{\"shadows\":[");
+    const uint8_t* q = p.data();
+    size_t left = p.size();
+    if (left < 4) { j.raw("]}"); return j.s; }
+    uint32_t n;
+    memcpy(&n, q, 4); q += 4; left -= 4;
+    for (uint32_t i = 0; i < n &&
+                        left >= sizeof(TplcCtlShadowStatus);
+         i++) {
+        const TplcCtlShadowStatus* ss =
+            (const TplcCtlShadowStatus*)q;
+        if (i) j.chr(',');
+        j.chr('{');
+        j.key("uuid", 0).hex(ss->program_uuid, 16);
+        j.key("name", 1).strv(std::string(
+            (const char*)ss->name,
+            strnlen((const char*)ss->name, sizeof ss->name)));
+        j.key("state", 1).num(ss->state);
+        j.key("cycles", 1).num(ss->cycles);
+        j.key("missed", 1).num(ss->missed);
+        j.key("diff_count", 1).num(ss->diff_count);
+        j.key("last_diff_cycle", 1).num(ss->last_diff_cycle);
+        j.key("runs", 1).num(ss->runs);
+        j.chr('}');
+        q += sizeof(TplcCtlShadowStatus);
+        left -= sizeof(TplcCtlShadowStatus);
+    }
+    j.raw("]}");
+    return j.s;
+}
+
 /* SHADOW_COMPARE wire: {u32 n, TplcCtlShadowDiff[n]}             */
 std::string shadowCompareJson(const std::vector<uint8_t>& p) {
     J j; j.raw("{\"diffs\":[");
@@ -873,7 +931,7 @@ std::vector<FunctionEntry> buildFunctions() {
                        TPLC_OP_DBG_STATE, stateJson));
     v.push_back(fn("dbg.fields",
                    "blob layout: every field with name/off/size/access",
-                   {Popt("sel", "0 active 1 shadow", ValueType::U8,
+                   {Popt("sel", "0 active, N = shadow N (SHADOW_LIST order)", ValueType::U8,
                          {0})},
                    [](const std::vector<FunctionArgument>& a) {
         uint64_t sel = argU(a, 0, 0);
@@ -933,28 +991,47 @@ std::vector<FunctionEntry> buildFunctions() {
         }
         return okStr(migrateResultJson(out));
     }, ValueType::String));
-    v.push_back(jsonOp("shadow.status",
-                       "candidate program status",
-                       TPLC_OP_SHADOW_STATUS, shadowStatusJson));
+    v.push_back(fn("shadow.status",
+                   "candidate program status (sel: name or uuid)",
+                   {Popt("sel", "shadow name or uuid-hex",
+                         ValueType::String, {})},
+                   [](const std::vector<FunctionArgument>& a) {
+        W w; wsel(w, argStr(a, 0));
+        std::vector<uint8_t> out;
+        FunctionCallResult r;
+        if (!ctlCall(TPLC_OP_SHADOW_STATUS, w.b.data(),
+                     (uint32_t)w.b.size(), out, r)) return r;
+        return okStr(shadowStatusJson(out));
+    }, ValueType::String));
+    v.push_back(jsonOp("shadow.list",
+                       "every loaded shadow candidate (JSON array)",
+                       TPLC_OP_SHADOW_LIST, shadowListJson));
     v.push_back(fn("shadow.compare",
                    "tail of the %Q diff ring (img-off runs ≤32B)",
                    {Popt("max", "max entries", ValueType::U32,
-                         {32, 0, 0, 0})},
+                         {32, 0, 0, 0}),
+                    Popt("sel", "shadow name or uuid-hex",
+                         ValueType::String, {})},
                    [](const std::vector<FunctionArgument>& a) {
         W w; w.u32((uint32_t)argU(a, 0, 32));
+        wsel(w, argStr(a, 1));
         std::vector<uint8_t> out;
         FunctionCallResult r;
-        if (!ctlCall(TPLC_OP_SHADOW_COMPARE, w.b.data(), 4, out, r))
-            return r;
+        if (!ctlCall(TPLC_OP_SHADOW_COMPARE, w.b.data(),
+                     (uint32_t)w.b.size(), out, r)) return r;
         return okStr(shadowCompareJson(out));
     }, ValueType::String));
     v.push_back(fn("shadow.promote",
                    "promote the candidate to active (quarantines "
-                   "current)", {},
-                   [](const std::vector<FunctionArgument>&) {
+                   "current; drops other shadows)",
+                   {Popt("sel", "shadow name or uuid-hex",
+                         ValueType::String, {})},
+                   [](const std::vector<FunctionArgument>& a) {
+        W w; wsel(w, argStr(a, 0));
         std::vector<uint8_t> out;
         FunctionCallResult r;
-        if (!ctlCall(TPLC_OP_SHADOW_PROMOTE, out, r)) return r;
+        if (!ctlCall(TPLC_OP_SHADOW_PROMOTE, w.b.data(),
+                     (uint32_t)w.b.size(), out, r)) return r;
         J j; j.chr('{');
         if (out.size() >= 24) {
             j.key("uuid", 0).hex(out.data(), 16);
@@ -964,19 +1041,27 @@ std::vector<FunctionEntry> buildFunctions() {
         j.chr('}');
         return okStr(j.s);
     }, ValueType::String));
-    v.push_back(fn("shadow.drop", "discard the candidate", {},
-                   [](const std::vector<FunctionArgument>&) {
+    v.push_back(fn("shadow.drop", "discard a candidate", 
+                   {Popt("sel", "shadow name or uuid-hex",
+                         ValueType::String, {})},
+                   [](const std::vector<FunctionArgument>& a) {
+        W w; wsel(w, argStr(a, 0));
         std::vector<uint8_t> out;
         FunctionCallResult r;
-        if (!ctlCall(TPLC_OP_SHADOW_DROP, out, r)) return r;
+        if (!ctlCall(TPLC_OP_SHADOW_DROP, w.b.data(),
+                     (uint32_t)w.b.size(), out, r)) return r;
         return okVoid();
     }));
     v.push_back(fn("shadow.reset",
-                   "re-migrate candidate state from the live blob", {},
-                   [](const std::vector<FunctionArgument>&) {
+                   "re-migrate candidate state from the live blob",
+                   {Popt("sel", "shadow name or uuid-hex",
+                         ValueType::String, {})},
+                   [](const std::vector<FunctionArgument>& a) {
+        W w; wsel(w, argStr(a, 0));
         std::vector<uint8_t> out;
         FunctionCallResult r;
-        if (!ctlCall(TPLC_OP_SHADOW_RESET, out, r)) return r;
+        if (!ctlCall(TPLC_OP_SHADOW_RESET, w.b.data(),
+                     (uint32_t)w.b.size(), out, r)) return r;
         return okStr(migrateResultJson(out));
     }, ValueType::String));
 
@@ -995,7 +1080,7 @@ std::vector<FunctionEntry> buildFunctions() {
     v.push_back(fn("dbg.read", "read blob bytes",
                    {P("off", "blob offset", ValueType::U64),
                     P("len", "byte count", ValueType::U32),
-                    Popt("sel", "0 active 1 shadow", ValueType::U8,
+                    Popt("sel", "0 active, N = shadow N (SHADOW_LIST order)", ValueType::U8,
                          {0})},
                    [](const std::vector<FunctionArgument>& a) {
         uint64_t sel = argU(a, 2, 0);

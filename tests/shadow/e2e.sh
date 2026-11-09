@@ -111,6 +111,10 @@ simg32() { # u32 LE at shadow %Q byte offset $1
     $BUILD/tplc-ctl $CTL shadow-image "$1" 4 2>&1 | tail -1 \
       | python3 -c "import sys;print(int.from_bytes(bytes.fromhex(sys.stdin.read().split(None,1)[1].replace(' ','')),'little'))"
 }
+simg32u() { # u32 LE at %Q offset $2 of the shadow selected by $1
+    $BUILD/tplc-ctl $CTL shadow-image "$2" 4 "$1" 2>&1 | tail -1 \
+      | python3 -c "import sys;print(int.from_bytes(bytes.fromhex(sys.stdin.read().split(None,1)[1].replace(' ','')),'little'))"
+}
 sv=$(simg32 4); av=$(qd 4)
 [ "$sv" -gt $((av * 3 / 2)) ] && [ "$sv" -lt $((av * 5 / 2)) ] \
     && ok "shadow-image shows candidate's doubled %Q ($sv vs $av)" \
@@ -213,6 +217,117 @@ echo "$s" | grep -q "none" && ok "shadow-drop frees slot" \
     || bad "shadow-drop ($s)"
 grep -q "shadow.drop" $WORK/rt.log && ok "drop journaled" \
     || bad "drop journal"
+
+# ---- multi-shadow: up to 4 candidates, uuid selectors, peer drop --
+# candidates share the Demo layout (same PROGRAM + fields → same
+# layout hash → same-layout seed). cand=×2 (already built), plus
+# ×3..×6 — five distinct uuids for load/capacity/promote coverage.
+for n in 3 4 5 6; do
+cat > $WORK/cand$n.st <<EOF
+PROGRAM Demo
+VAR
+    out_cnt  AT %QD4 : DINT;
+    cnt  : DINT := 0;
+END_VAR
+cnt := cnt + 1;
+out_cnt := $n * cnt;
+END_PROGRAM
+EOF
+$TPLCC build $WORK/cand$n.st -o $WORK/cand$n.tplc >/dev/null \
+    || bad "cand$n build"
+done
+
+# four loads = the slot cap; the load reply carries the full uuid
+U2=$($BUILD/tplc-ctl $CTL shadow-load $WORK/cand.tplc 2>&1 \
+     | grep -oE '[0-9a-f]{32}' | head -1)
+U3=$($BUILD/tplc-ctl $CTL shadow-load $WORK/cand3.tplc 2>&1 \
+     | grep -oE '[0-9a-f]{32}' | head -1)
+U4=$($BUILD/tplc-ctl $CTL shadow-load $WORK/cand4.tplc 2>&1 \
+     | grep -oE '[0-9a-f]{32}' | head -1)
+U5=$($BUILD/tplc-ctl $CTL shadow-load $WORK/cand5.tplc 2>&1 \
+     | grep -oE '[0-9a-f]{32}' | head -1)
+[ -n "$U2$U3$U4$U5" ] && ok "four shadow loads (cap)" \
+    || bad "multi loads ($U2 $U3 $U4 $U5)"
+sleep 0.4
+sl=$($BUILD/tplc-ctl $CTL shadow-list 2>&1)
+echo "$sl" | grep -q "shadows 4" && ok "shadow-list shows 4" \
+    || bad "shadow-list ($sl)"
+
+# capacity + duplicate rejection
+r=$($BUILD/tplc-ctl $CTL shadow-load $WORK/cand6.tplc 2>&1)
+echo "$r" | grep -qi "slots full\|error" \
+    && ok "fifth load refused (slots full)" \
+    || bad "slots full ($r)"
+r=$($BUILD/tplc-ctl $CTL shadow-load $WORK/cand.tplc 2>&1)
+echo "$r" | grep -qi "already loaded\|error" \
+    && ok "duplicate uuid refused" \
+    || bad "duplicate load ($r)"
+
+# selector required with several candidates
+r=$($BUILD/tplc-ctl $CTL shadow-status 2>&1)
+echo "$r" | grep -q "selector required" \
+    && ok "bare shadow-status ambiguous → selector required" \
+    || bad "bare status ($r)"
+r=$($BUILD/tplc-ctl $CTL shadow-drop 2>&1)
+echo "$r" | grep -q "selector required" \
+    && ok "bare shadow-drop ambiguous → selector required" \
+    || bad "bare drop ($r)"
+
+# per-candidate ops through the uuid selector
+s=$($BUILD/tplc-ctl $CTL shadow-status $U3 2>&1)
+echo "$s" | grep -q "state 1" \
+    && ok "shadow-status <uuid> selects candidate" \
+    || bad "status sel ($s)"
+c=$($BUILD/tplc-ctl $CTL shadow-compare 8 $U4 2>&1)
+echo "$c" | grep -q "img+0x04" \
+    && ok "shadow-compare <uuid> per-candidate diffs" \
+    || bad "compare sel ($c)"
+# ×5 candidate's would-be %Q ≈ 2.5× the ×2 active's (band absorbs
+# the one-cycle state skew between the two writers)
+sv=$(simg32u $U5 4); av=$(qd 4)
+[ "$sv" -gt $((av * 2)) ] && [ "$sv" -lt $((av * 3)) ] \
+    && ok "shadow-image <uuid> reads candidate %Q ($sv vs $av)" \
+    || bad "image sel ($sv vs $av)"
+
+# debug plane: SHADOW[2].<sym> + sel byte address the 2nd candidate
+soff=$($BUILD/tplc-ctl $CTL resolve SHADOW[2].out_cnt 2>&1 \
+       | grep -oE "off [0-9]+" | awk '{print $2}')
+if [ -n "$soff" ]; then
+    d0=$($BUILD/tplc-ctl $CTL dbg-read $soff 4 0 2>&1 | tail -1)
+    d2=$($BUILD/tplc-ctl $CTL dbg-read $soff 4 2 2>&1 | tail -1)
+    [ "$d0" != "$d2" ] \
+        && ok "dbg-read sel=2 reads 2nd shadow blob" \
+        || bad "dbg-read sel2 ($d0 vs $d2)"
+else
+    bad "SHADOW[2].out_cnt resolve"
+fi
+f=$($BUILD/tplc-ctl $CTL fields 3 2>&1)
+echo "$f" | grep -qi "out_cnt\|cnt" \
+    && ok "fields sel=3 lists 3rd shadow layout" \
+    || bad "fields sel3 ($f)"
+
+# drop one by uuid: list shrinks, survivors keep working
+$BUILD/tplc-ctl $CTL shadow-drop $U4 >/dev/null \
+    || bad "shadow-drop <uuid>"
+sl=$($BUILD/tplc-ctl $CTL shadow-list 2>&1)
+echo "$sl" | grep -q "shadows 3" && ok "drop shrinks list to 3" \
+    || bad "post-drop list ($sl)"
+s=$($BUILD/tplc-ctl $CTL shadow-status $U5 2>&1)
+echo "$s" | grep -q "state 1" \
+    && ok "surviving candidate unaffected by peer drop" \
+    || bad "post-drop status ($s)"
+
+# promote one by uuid: it becomes active, every peer drops
+$BUILD/tplc-ctl $CTL shadow-promote $U5 >$WORK/promote5.out 2>&1 \
+    || bad "shadow-promote <uuid> ($(cat $WORK/promote5.out))"
+sl=$($BUILD/tplc-ctl $CTL shadow-list 2>&1)
+echo "$sl" | grep -q "shadows 0" \
+    && ok "promote drops all peer shadows" \
+    || bad "post-promote list ($sl)"
+p=$($BUILD/tplc-ctl $CTL prog 2>&1)
+echo "$p" | grep -q "${U5:0:8}" \
+    && ok "promoted uuid is now the active program" \
+    || bad "post-promote prog ($p)"
 
 # §7.8 authorization: an observer can read shadow status but every
 # mutating shadow op is commissioner-only

@@ -560,3 +560,36 @@ merge exists for instcombine to fold). `INT_MIN / -1` overflow remains
 UB on the hardware path in both modes, matching prior behavior.
 Coverage: `saturating_arith_divmod_jit`, `checked_arith_divzero_jit`,
 and the `div.zero.sat`/`div.zero.checked` vectors through L1+L2.
+
+## D-IMPL-33 — multi-shadow: capped candidate slots with uuid/name selectors
+
+**Plan:** doc 19 listed multiple simultaneous shadows as an
+iteration-2 candidate next to per-channel promote.
+**Implemented:** the single `Shadow` slot became
+`std::vector<std::unique_ptr<Shadow>>` capped at `MAX_SHADOWS = 4`.
+Every candidate keeps its own `Scheduler`, counters, diff ring,
+fault flag, and last-tick timestamp; the scan loop iterates
+candidates inside the same post-commit slack gate, so candidates
+share the budget check but tick, miss, and fault independently. A
+fault drops only the faulting slot; lifecycle ops clear the vector.
+
+Selection is an optional `{u16 slen, sel}` tail on
+STATUS/COMPARE/IMAGE/PROMOTE/DROP/RESET where `sel` is the 16-byte
+program uuid or the program name. Selector-less ops resolve to the
+only loaded candidate and fail `MGMT_STATE` when several are
+loaded. `SHADOW_LIST` (`0x0808`) enumerates candidates in load order
+— the index space for `SHADOW[<i>].<sym>` resolve/watch paths and
+the `DBG_READ`/`DBG_FIELDS` selector byte (`0` active, `N` =
+`shadows[N-1]`). Promotion of candidate N moves it into the active
+slot through the existing quarantine commit and clears every peer:
+their blobs were seeded from the pre-promote program and their
+migrate descriptors no longer match. `TplcCtlProgStatus`'s shadow
+tail aggregates (state OR, counters summed, newest diff cycle)
+because per-candidate detail lives on `SHADOW_LIST`.
+
+**Consequence:** name selectors resolve first-match, so
+same-named candidates (the normal versioning case) must be
+addressed by uuid — `SHADOW_LOAD`'s reply carries it. The sim and
+L1 vectors address candidates by load-order index and resolve to
+uuids through `SHADOW_LIST`, keeping the wire selector as the only
+stable identity across drops.

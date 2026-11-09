@@ -11,6 +11,34 @@
 #include <time.h>
 #include <poll.h>
 
+/* shadow selector tail {u16 slen, sel}: sel is the 16-byte program
+   uuid (passed as 32 hex chars) or the program name              */
+static void append_sel(uint8_t* pre, uint32_t pre_cap,
+                       uint32_t* pre_len, const char* sel) {
+    if (!sel || !*sel) return;
+    uint8_t b[256];
+    uint32_t bl = 0;
+    size_t sl = strlen(sel);
+    if (sl == 32) {
+        int ok = 1;
+        for (int i = 0; i < 16 && ok; i++) {
+            int v; char t[3] = {sel[i*2], sel[i*2+1], 0};
+            if (sscanf(t, "%02x", &v) != 1) ok = 0;
+            else b[i] = (uint8_t)v;
+        }
+        if (ok) bl = 16;
+    }
+    if (!bl) {
+        if (sl > sizeof b) return;
+        memcpy(b, sel, sl); bl = (uint32_t)sl;
+    }
+    if (*pre_len + 2 + bl > pre_cap) return;
+    uint16_t sl16 = (uint16_t)bl;
+    memcpy(pre + *pre_len, &sl16, 2);
+    memcpy(pre + *pre_len + 2, b, bl);
+    *pre_len += 2 + bl;
+}
+
 static void print_prog_status(const uint8_t* p, uint32_t len) {
     if (len < sizeof(TplcCtlProgStatus)) { puts("(short payload)"); return; }
     const TplcCtlProgStatus* ps = (const TplcCtlProgStatus*)p;
@@ -251,9 +279,11 @@ int main(int argc, char** argv) {
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
             "|watch-rm [H|all]|watch-list|events [SEC]"
             "|map-get|journal-tail [N]|od-read IDX [SUB]|od-list|od-write IDX SUB HEX"
-            "|shadow-load X|shadow-status|shadow-compare [N]"
-            "|shadow-image OFF LEN"
-            "|shadow-promote|shadow-drop|shadow-reset\n", argv[0]);
+            "|shadow-load X|shadow-status [SEL]|shadow-list"
+            "|shadow-compare [N] [SEL]"
+            "|shadow-image OFF LEN [SEL]"
+            "|shadow-promote [SEL]|shadow-drop [SEL]"
+            "|shadow-reset [SEL]\n", argv[0]);
         return 2;
     }
     const char* sock = argv[1];
@@ -346,16 +376,22 @@ int main(int argc, char** argv) {
             pre_len = 2 + pl;
         }
     }
-    else if (!strcmp(cmd, "shadow-status"))  op = TPLC_OP_SHADOW_STATUS;
+    else if (!strcmp(cmd, "shadow-status")) {
+        op = TPLC_OP_SHADOW_STATUS;
+        append_sel(pre, sizeof pre, &pre_len, arg);
+    }
+    else if (!strcmp(cmd, "shadow-list"))   op = TPLC_OP_SHADOW_LIST;
     else if (!strcmp(cmd, "shadow-compare")) {
         op = TPLC_OP_SHADOW_COMPARE;
         uint32_t mx = arg ? (uint32_t)strtoul(arg, NULL, 0) : 32;
         memcpy(pre, &mx, 4);
         pre_len = 4;
+        append_sel(pre, sizeof pre, &pre_len, argc > 4 ? argv[4] : NULL);
     }
     else if (!strcmp(cmd, "shadow-image")) {
         if (!arg || argc < 5) {
-            fprintf(stderr, "shadow-image <off> <len>\n"); return 2;
+            fprintf(stderr, "shadow-image <off> <len> [sel]\n");
+            return 2;
         }
         op = TPLC_OP_SHADOW_IMAGE;
         uint64_t off = strtoull(arg, NULL, 0);
@@ -363,10 +399,20 @@ int main(int argc, char** argv) {
         memcpy(pre, &off, 8);
         memcpy(pre + 8, &rl, 4);
         pre_len = 12;
+        append_sel(pre, sizeof pre, &pre_len, argc > 5 ? argv[5] : NULL);
     }
-    else if (!strcmp(cmd, "shadow-promote")) op = TPLC_OP_SHADOW_PROMOTE;
-    else if (!strcmp(cmd, "shadow-drop"))    op = TPLC_OP_SHADOW_DROP;
-    else if (!strcmp(cmd, "shadow-reset"))   op = TPLC_OP_SHADOW_RESET;
+    else if (!strcmp(cmd, "shadow-promote")) {
+        op = TPLC_OP_SHADOW_PROMOTE;
+        append_sel(pre, sizeof pre, &pre_len, arg);
+    }
+    else if (!strcmp(cmd, "shadow-drop")) {
+        op = TPLC_OP_SHADOW_DROP;
+        append_sel(pre, sizeof pre, &pre_len, arg);
+    }
+    else if (!strcmp(cmd, "shadow-reset")) {
+        op = TPLC_OP_SHADOW_RESET;
+        append_sel(pre, sizeof pre, &pre_len, arg);
+    }
     else if (!strcmp(cmd, "suspend") || !strcmp(cmd, "resume")) {
         if (!arg) { fprintf(stderr, "%s <task_idx>\n", cmd); return 2; }
         op = cmd[0] == 's' ? TPLC_OP_TASK_SUSPEND : TPLC_OP_TASK_RESUME;
@@ -578,8 +624,8 @@ int main(int argc, char** argv) {
         op = TPLC_OP_DBG_STATE_DIFF;
     }
     else if (!strcmp(cmd, "fields")) {
-        /* fields [sel]: blob layout browser — sel=1 lists the
-           shadow candidate's fields                               */
+        /* fields [sel]: blob layout browser — sel=N lists
+           shadows[N-1]'s fields (0/absent = active)              */
         op = TPLC_OP_DBG_FIELDS;
         if (arg) { pre[0] = (uint8_t)strtoul(arg, NULL, 0);
                    pre_len = 1; }
@@ -820,6 +866,29 @@ int main(int argc, char** argv) {
                    op == TPLC_OP_SHADOW_LOAD ? "shadow load"
                                              : "shadow reset",
                    st_, fe_);
+        }
+    }
+    else if (op == TPLC_OP_SHADOW_LIST) {
+        const uint8_t* q = pl;
+        uint32_t ns = 0;
+        if (len >= 4) { memcpy(&ns, q, 4); q += 4; }
+        printf("shadows %u\n", ns);
+        for (uint32_t i = 0; i < ns &&
+                (size_t)(q - pl) + sizeof(TplcCtlShadowStatus) <= len;
+             i++) {
+            const TplcCtlShadowStatus* ss =
+                (const TplcCtlShadowStatus*)q;
+            char nm[TPLC_PROG_NAME_MAX + 1];
+            memcpy(nm, ss->name, TPLC_PROG_NAME_MAX);
+            nm[TPLC_PROG_NAME_MAX] = 0;
+            printf("  [%u] %-20s  uuid %02x%02x%02x%02x…  cycles %lu"
+                   "  missed %lu  diffs %lu\n", i, nm,
+                   ss->program_uuid[0], ss->program_uuid[1],
+                   ss->program_uuid[2], ss->program_uuid[3],
+                   (unsigned long)ss->cycles,
+                   (unsigned long)ss->missed,
+                   (unsigned long)ss->diff_count);
+            q += sizeof(TplcCtlShadowStatus);
         }
     }
     else if (op == TPLC_OP_SHADOW_STATUS) {

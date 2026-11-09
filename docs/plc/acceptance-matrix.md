@@ -71,8 +71,9 @@ swap injects no measurable pause, watchdog trip+escalation verified.
 | gating: observer 401 on mutating ops | `shadow_e2e` observer section | green |
 | lifecycle: stop/swap/unload/prepare drops; stopped-load → -501 | `shadow_e2e` (swap drop, stopped refusal, drop journal) | green |
 | bit-identical `%Q` vs solo run | `shadow_bitidentical` (solo vs shadowed `--dump-q` traces, 10 steps byte-identical) | green |
-| sim parity L1/L2 | `sim_shadow` (L1 `shadow` vector key + L2 `--shadow`/directives; deterministic via `--stopped`) | green |
-| UI flow | TetherWebUI shadow card: deploy-as-shadow, diff table, `SHADOW.` watch/read, confirm-with-summary promote, drop/reset | green |
+| sim parity L1/L2 | `sim_shadow` (L1 `shadow`/`shadows` vector keys + L2 repeated `--shadow`/indexed directives; deterministic via `--stopped`) | green |
+| multi-shadow: ≤4 candidates, per-candidate ops | `shadow_e2e` multi section (cap, slots-full, duplicate-uuid, selector-required, uuid status/compare/image, `SHADOW[2].`/`dbg-read sel`/`fields sel`, drop+promote peer cleanup); `sim_shadow` `shadow.multi`/`shadow.multi2` vectors | green |
+| UI flow | TetherWebUI shadow card: deploy-as-shadow, diff table, `SHADOW.` watch/read, confirm-with-summary promote, drop/reset (single-candidate picker; indexed wire ready) | green |
 
 ## Pending chapters (not yet implemented — spec exists)
 

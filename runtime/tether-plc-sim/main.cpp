@@ -7,25 +7,31 @@
  * step-file line format:
  *   step <idx> time=<ns> [in <off>=<hex>[,<hex>..]] [expect <off>=<hex>..]
  *              [expectf <blob_off>=<hex>..]
- *              [shadow_load] [shadow_promote]
- *              [expect_shadow <off>=<hex>..]
+ *              [shadow_load[@N]] [shadow_promote[@N]]
+ *              [shadow_drop@N]
+ *              [expect_shadow[@N] <off>=<hex>..]
  *   `expect` compares process-image %Q bytes; `expectf` reads back
  *   program-blob bytes through the ctl channel (DBG_READ), so field
  *   expectations like timer ET/CV values can be checked. expectf
  *   requires --ctl to point at a real socket path.
- *   Shadow directives (doc 19 §6): `shadow_load` loads the package
- *   given by --shadow as a shadow candidate at the step boundary;
- *   `expect_shadow` reconstructs the candidate's would-be %Q from
- *   the image plus the newest SHADOW_COMPARE entries; `shadow_promote`
- *   commits the candidate (task suspension survives promotion, so
- *   the step-per-cycle contract holds across it).
+ *   Shadow directives (doc 19 §6): `shadow_load@N` loads the Nth
+ *   --shadow package as a shadow candidate at the step boundary
+ *   (bare `shadow_load` = @0); `expect_shadow@N` reconstructs that
+ *   candidate's would-be %Q from the image plus the newest
+ *   SHADOW_COMPARE entries (N is the SHADOW_LIST position, resolved
+ *   to a uuid selector; bare = no selector, single-shadow only);
+ *   `shadow_promote@N` commits the Nth candidate and drops its peers
+ *   (bare = no selector, single-shadow only). Task suspension
+ *   survives promotion, so the step-per-cycle contract holds.
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
 #include <tplc/tplc_image.h>
 #include "../../tools/ctl_client.h"
 
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -63,13 +69,22 @@ static int ctl_call(int fd, uint16_t type, const void* pl, uint32_t plen,
     return -1;
 }
 
+struct ShadowExpect {
+    int idx = -1;   /* SHADOW_LIST position; -1 = no selector */
+    uint32_t off = 0;
+    std::vector<uint8_t> bytes;
+};
+
 struct Step {
     uint32_t idx = 0;
     uint64_t time_ns = 0;
-    bool shadow_load = false, shadow_promote = false;
+    int shadow_load = -1;          /* --shadow arg index, -1 = none */
+    bool shadow_promote = false;
+    int shadow_promote_idx = -1;   /* SHADOW_LIST pos, -1 = no sel */
+    int shadow_drop = -1;          /* SHADOW_LIST pos, -1 = none */
     std::vector<std::pair<uint32_t,std::vector<uint8_t>>> in, expect,
-                                                          expectf,
-                                                          expect_shadow;
+                                                          expectf;
+    std::vector<ShadowExpect> expect_shadow;
 };
 
 /* hex bytes, with or without separators: "0600" and "06,00" both
@@ -119,12 +134,20 @@ static bool parse_steps(const std::string& path,
             std::string& w2 = t[i];
             if (w2.compare(0, 5, "time=") == 0) {
                 cur.time_ns = strtoull(w2.c_str() + 5, 0, 0);
-            } else if (w2 == "shadow_load") {
-                cur.shadow_load = true;
-            } else if (w2 == "shadow_promote") {
+            } else if (w2 == "shadow_load" ||
+                       w2.compare(0, 12, "shadow_load@") == 0) {
+                cur.shadow_load = w2.size() > 12
+                    ? atoi(w2.c_str() + 12) : 0;
+            } else if (w2 == "shadow_promote" ||
+                       w2.compare(0, 15, "shadow_promote@") == 0) {
                 cur.shadow_promote = true;
+                cur.shadow_promote_idx = w2.size() > 15
+                    ? atoi(w2.c_str() + 15) : -1;
+            } else if (w2.compare(0, 12, "shadow_drop@") == 0) {
+                cur.shadow_drop = atoi(w2.c_str() + 12);
             } else if (w2 == "in" || w2 == "expect" || w2 == "expectf" ||
-                       w2 == "expect_shadow") {
+                       w2 == "expect_shadow" ||
+                       w2.compare(0, 14, "expect_shadow@") == 0) {
                 if (i + 1 >= t.size()) return false;
                 std::string spec = t[++i];
                 size_t eq = spec.find('=');
@@ -135,11 +158,19 @@ static bool parse_steps(const std::string& path,
                     fprintf(stderr, "line %u: bad hex\n", ln);
                     return false;
                 }
-                auto& dst = w2 == "in" ? cur.in
-                          : w2 == "expect" ? cur.expect
-                          : w2 == "expectf" ? cur.expectf
-                          : cur.expect_shadow;
-                dst.push_back({off, bytes});
+                if (w2 == "in") {
+                    cur.in.push_back({off, bytes});
+                } else if (w2 == "expect") {
+                    cur.expect.push_back({off, bytes});
+                } else if (w2 == "expectf") {
+                    cur.expectf.push_back({off, bytes});
+                } else {
+                    ShadowExpect se;
+                    se.idx = w2.size() > 14 ? atoi(w2.c_str() + 14) : -1;
+                    se.off = off;
+                    se.bytes = std::move(bytes);
+                    cur.expect_shadow.push_back(std::move(se));
+                }
             }
         }
     }
@@ -147,9 +178,35 @@ static bool parse_steps(const std::string& path,
     return true;
 }
 
+/* resolve SHADOW_LIST[idx] to its 16-byte program uuid so the sim
+   can address a specific candidate through the [sel] tail        */
+static bool shadow_uuid(int fd, int idx, uint8_t uuid[16]) {
+    uint8_t rb[64 * 1024];
+    int n = ctl_call(fd, TPLC_OP_SHADOW_LIST, nullptr, 0,
+                     rb, sizeof rb);
+    if (n < 4) return false;
+    uint32_t cnt;
+    memcpy(&cnt, rb, 4);
+    size_t esz = sizeof(TplcCtlShadowStatus);
+    if ((size_t)n < 4 + (size_t)cnt * esz ||
+        idx < 0 || (uint32_t)idx >= cnt)
+        return false;
+    memcpy(uuid, rb + 4 + (size_t)idx * esz, 16);
+    return true;
+}
+
+/* append the {u16 slen=16, uuid} selector tail to a request      */
+static void append_uuid_sel(std::vector<uint8_t>& rq,
+                            const uint8_t uuid[16]) {
+    uint16_t sl = 16;
+    rq.insert(rq.end(), (uint8_t*)&sl, (uint8_t*)&sl + 2);
+    rq.insert(rq.end(), uuid, uuid + 16);
+}
+
 int main(int argc, char** argv) {
     std::string image_path, pkg_path, steps_path, plc_bin;
-    std::string shadow_pkg, dump_q_path, ctl_path = "none";
+    std::vector<std::string> shadow_pkgs;
+    std::string dump_q_path, ctl_path = "none";
     uint32_t in_size = 64, out_size = 64;
     int wait_running_ms = 5000;
     int hold_ms = 0;
@@ -162,7 +219,7 @@ int main(int argc, char** argv) {
         else if (a == "--steps")  steps_path  = argv[++i];
         else if (a == "--plc")    plc_bin     = argv[++i];
         else if (a == "--ctl")    ctl_path    = argv[++i];
-        else if (a == "--shadow") shadow_pkg  = argv[++i];
+        else if (a == "--shadow") shadow_pkgs.push_back(argv[++i]);
         else if (a == "--dump-q") dump_q_path = argv[++i];
         else if (a == "--hold-ms") hold_ms    = atoi(argv[++i]);
         else if (a == "--settle-ms") settle_ms = atoi(argv[++i]);
@@ -172,7 +229,7 @@ int main(int argc, char** argv) {
         else if (a == "--help" || a == "-h") {
             fprintf(stderr,
                 "usage: %s --image X --package P --steps F "
-                "[--plc PATH] [--ctl PATH] [--shadow PKG] "
+                "[--plc PATH] [--ctl PATH] [--shadow PKG]... "
                 "[--in N] [--out N] [--dump-q FILE] "
                 "[--scan] [--settle-ms N] [--hold-ms N]\n",
                 argv[0]);
@@ -289,17 +346,19 @@ int main(int argc, char** argv) {
                advances: the plc loop is free-running, so publishing
                the new instant first would let it scan the shadow at
                that instant ahead of a promote meant for it        */
-            if (s.shadow_load) {
-                if (shadow_pkg.empty() || ctl_ensure() < 0) {
+            if (s.shadow_load >= 0) {
+                if ((size_t)s.shadow_load >= shadow_pkgs.size() ||
+                    ctl_ensure() < 0) {
                     fprintf(stderr, "step %u: shadow_load needs "
-                            "--shadow and --ctl\n", s.idx);
+                            "--shadow[@N] and --ctl\n", s.idx);
                     divergent++;
                     continue;
                 }
-                uint16_t plen = (uint16_t)shadow_pkg.size();
+                const std::string& sp = shadow_pkgs[s.shadow_load];
+                uint16_t plen = (uint16_t)sp.size();
                 std::vector<uint8_t> rq(2 + plen), rb(512);
                 memcpy(rq.data(), &plen, 2);
-                memcpy(rq.data() + 2, shadow_pkg.data(), plen);
+                memcpy(rq.data() + 2, sp.data(), plen);
                 if (ctl_call(ctl_fd, TPLC_OP_SHADOW_LOAD, rq.data(),
                              (uint32_t)rq.size(), rb.data(),
                              (uint32_t)rb.size()) < 0) {
@@ -311,8 +370,24 @@ int main(int argc, char** argv) {
             }
             if (s.shadow_promote) {
                 uint8_t rb[128];
+                std::vector<uint8_t> rq;
+                if (s.shadow_promote_idx >= 0) {
+                    uint8_t uuid[16];
+                    if (ctl_ensure() < 0 ||
+                        !shadow_uuid(ctl_fd, s.shadow_promote_idx,
+                                     uuid)) {
+                        fprintf(stderr, "step %u: shadow_promote@%d "
+                                "cannot resolve SHADOW_LIST\n",
+                                s.idx, s.shadow_promote_idx);
+                        divergent++;
+                        continue;
+                    }
+                    append_uuid_sel(rq, uuid);
+                }
                 if (ctl_ensure() < 0 ||
-                    ctl_call(ctl_fd, TPLC_OP_SHADOW_PROMOTE, nullptr, 0,
+                    ctl_call(ctl_fd, TPLC_OP_SHADOW_PROMOTE,
+                             rq.empty() ? nullptr : rq.data(),
+                             (uint32_t)rq.size(),
                              rb, sizeof rb) < 0) {
                     fprintf(stderr, "step %u: SHADOW_PROMOTE failed\n",
                             s.idx);
@@ -321,6 +396,28 @@ int main(int argc, char** argv) {
                 }
                 /* adoption carries the suspended-task set across —
                    the next TASK_STEP stays exactly one cycle       */
+            }
+            if (s.shadow_drop >= 0) {
+                uint8_t rb[128];
+                std::vector<uint8_t> rq;
+                uint8_t uuid[16];
+                if (ctl_ensure() < 0 ||
+                    !shadow_uuid(ctl_fd, s.shadow_drop, uuid)) {
+                    fprintf(stderr, "step %u: shadow_drop@%d cannot "
+                            "resolve SHADOW_LIST\n",
+                            s.idx, s.shadow_drop);
+                    divergent++;
+                    continue;
+                }
+                append_uuid_sel(rq, uuid);
+                if (ctl_call(ctl_fd, TPLC_OP_SHADOW_DROP,
+                             rq.data(), (uint32_t)rq.size(),
+                             rb, sizeof rb) < 0) {
+                    fprintf(stderr, "step %u: SHADOW_DROP failed\n",
+                            s.idx);
+                    divergent++;
+                    continue;
+                }
             }
             tplc_image_sim_set_now(&img, s.time_ns);
             tplc_image_master_heartbeat(&img, mono_ns());
@@ -377,59 +474,93 @@ int main(int argc, char** argv) {
             }
             /* shadow %Q reconstruction (doc 19 §6): the candidate's
                would-be outputs = image %Q overlaid with the newest
-               compare-cycle diff entries                        */
+               compare-cycle diff entries. Entries group by SHADOW_LIST
+               index; each group gets its own SELECTed compare.     */
             if (!s.expect_shadow.empty()) {
-                uint8_t rb[64 * 1024];
-                uint32_t mx = 256;
                 if (ctl_ensure() < 0) {
                     fprintf(stderr, "step %u: expect_shadow needs "
                                     "--ctl\n", s.idx);
                     divergent += (uint32_t)s.expect_shadow.size();
                 } else {
-                    int clen = ctl_call(ctl_fd, TPLC_OP_SHADOW_COMPARE,
-                                        &mx, 4, rb, sizeof rb);
-                    uint32_t nd = 0;
-                    if (clen >= 4) memcpy(&nd, rb, 4);
-                    if (clen < 4 ||
-                        clen < (int)(4 + nd * 84)) {
-                        fprintf(stderr, "step %u: SHADOW_COMPARE "
-                                "rc=%d\n", s.idx, clen);
-                        divergent += (uint32_t)s.expect_shadow.size();
-                        nd = 0;
-                    }
-                    /* entries past the newest compare cycle are
-                       stale — keep only cycle == max              */
-                    uint64_t maxc = 0;
-                    for (uint32_t k = 0; k < nd; k++) {
-                        uint64_t c;
-                        memcpy(&c, rb + 4 + k * 84, 8);
-                        if (c > maxc) maxc = c;
-                    }
-                    for (auto& [off, exp] : s.expect_shadow) {
-                        for (size_t j = 0; j < exp.size(); j++) {
-                            if (off + j >= out_size) break;
-                            uint8_t got = obuf[off + j];
-                            for (uint32_t k = 0; k < nd; k++) {
-                                const uint8_t* e = rb + 4 + k * 84;
-                                uint64_t c, io; uint32_t l;
-                                memcpy(&c, e, 8);
-                                memcpy(&io, e + 8, 8);
-                                memcpy(&l, e + 16, 4);
-                                if (c != maxc ||
-                                    off + j < io ||
-                                    off + j >= io + l)
-                                    continue;
-                                got = e[20 + 32 + (off + j - io)];
-                                break;
-                            }
-                            if (got != exp[j]) {
+                    std::vector<int> idxs;
+                    for (auto& se : s.expect_shadow)
+                        if (std::find(idxs.begin(), idxs.end(),
+                                      se.idx) == idxs.end())
+                            idxs.push_back(se.idx);
+                    std::sort(idxs.begin(), idxs.end());
+                    for (int eidx : idxs) {
+                        uint8_t uuid[16];
+                        std::vector<uint8_t> rq(4);
+                        uint32_t mx = 256;
+                        memcpy(rq.data(), &mx, 4);
+                        if (eidx >= 0) {
+                            if (!shadow_uuid(ctl_fd, eidx, uuid)) {
+                                fprintf(stderr, "step %u: "
+                                        "expect_shadow@%d cannot "
+                                        "resolve SHADOW_LIST\n",
+                                        s.idx, eidx);
                                 divergent++;
-                                fprintf(stderr, "step %u: DIVERGENT "
-                                        "shadow[%u] expected %02x "
-                                        "got %02x\n",
-                                        s.idx, off + (uint32_t)j,
-                                        exp[j], got);
-                                break;
+                                continue;
+                            }
+                            append_uuid_sel(rq, uuid);
+                        }
+                        uint8_t rb[64 * 1024];
+                        int clen = ctl_call(ctl_fd,
+                                            TPLC_OP_SHADOW_COMPARE,
+                                            rq.data(),
+                                            (uint32_t)rq.size(),
+                                            rb, sizeof rb);
+                        uint32_t nd = 0;
+                        if (clen >= 4) memcpy(&nd, rb, 4);
+                        uint32_t ngrp = 0;
+                        for (auto& se : s.expect_shadow)
+                            if (se.idx == eidx) ngrp++;
+                        if (clen < 4 ||
+                            clen < (int)(4 + nd * 84)) {
+                            fprintf(stderr, "step %u: SHADOW_COMPARE"
+                                    "@%d rc=%d\n", s.idx, eidx,
+                                    clen);
+                            divergent += ngrp;
+                            continue;
+                        }
+                        /* entries past the newest compare cycle are
+                           stale — keep only cycle == max          */
+                        uint64_t maxc = 0;
+                        for (uint32_t k = 0; k < nd; k++) {
+                            uint64_t c;
+                            memcpy(&c, rb + 4 + k * 84, 8);
+                            if (c > maxc) maxc = c;
+                        }
+                        for (auto& se : s.expect_shadow) {
+                            if (se.idx != eidx) continue;
+                            uint32_t off = se.off;
+                            auto& exp = se.bytes;
+                            for (size_t j = 0; j < exp.size(); j++) {
+                                if (off + j >= out_size) break;
+                                uint8_t got = obuf[off + j];
+                                for (uint32_t k = 0; k < nd; k++) {
+                                    const uint8_t* e = rb + 4 + k * 84;
+                                    uint64_t c, io; uint32_t l;
+                                    memcpy(&c, e, 8);
+                                    memcpy(&io, e + 8, 8);
+                                    memcpy(&l, e + 16, 4);
+                                    if (c != maxc ||
+                                        off + j < io ||
+                                        off + j >= io + l)
+                                        continue;
+                                    got = e[20 + 32 + (off + j - io)];
+                                    break;
+                                }
+                                if (got != exp[j]) {
+                                    divergent++;
+                                    fprintf(stderr, "step %u: "
+                                            "DIVERGENT shadow@%d[%u]"
+                                            " expected %02x got %02x\n",
+                                            s.idx, eidx,
+                                            off + (uint32_t)j,
+                                            exp[j], got);
+                                    break;
+                                }
                             }
                         }
                     }
