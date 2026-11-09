@@ -110,6 +110,18 @@ elif mode == 'smaprange':
                 struct.pack_into('<Q', d, e + 12, 0x00FFFFFFFFFFFFFF)
                 break
             break
+elif mode == 'hidden':
+    # swap target_obj for a crafted ELF carrying .data/.bss globals
+    evil = open(sys.argv[4], 'rb').read()
+    for i in range(toc_n):
+        o, (t, fl, off, sz, sv, pd) = ent(i)
+        if t == 0x10:
+            if len(evil) > sz:
+                sys.exit('evil object larger than target_obj slot')
+            d[off:off+len(evil)] = evil
+            for k in range(len(evil), sz):
+                d[off+k] = 0
+            break
 elif mode == 'retaglast':
     o, (t, fl, off, sz, sv, pd) = ent(toc_n - 1)
     nt = t + 1
@@ -349,6 +361,19 @@ out=$(run_pkg "$WORK/srange.tplc")
 echo "$out" | grep -q '(-211)' \
     && ok "TPLC_E_SYMMAP_RANGE on out-of-blob leaf" \
     || bad "SYMMAP_RANGE: $out"
+
+# hidden state: target_obj ELF carrying program globals in .data/.bss
+cat > "$WORK/evil.c" <<'EOF'
+int g_hidden_state = 42;
+int g_hidden_bss;
+EOF
+"$CC" -shared -fPIC -nostdlib -s -o "$WORK/evil.so" "$WORK/evil.c"
+python3 "$WORK/pkgmut.py" "$WORK/a.tplc" "$WORK/hidden.tplc" \
+    hidden "$WORK/evil.so"
+out=$(run_pkg "$WORK/hidden.tplc")
+echo "$out" | grep -q '(-210)' \
+    && ok "TPLC_E_PKG_HIDDEN_STATE on .data/.bss globals" \
+    || bad "PKG_HIDDEN_STATE: $out"
 
 # signature tamper (sig section bytes; content_hash excludes it)
 "$TPLCC" sign keygen --dir "$WORK/trust" --name dev >/dev/null 2>&1

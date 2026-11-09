@@ -5,6 +5,8 @@
 #include <tplc/pkg/Package.hpp>
 #include <tplc/pkg/Sha256.hpp>
 
+#include "HiddenState.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -256,6 +258,13 @@ Status Package::validateForLoad(bool irStripped) const {
                                 "symmap leaf outside state blob");
             }
         }
+    }
+    /* hidden-state check: the execution image must not carry
+       program mutable state in .data/.bss; all state lives in
+       the runtime-allocated blob (TPLC_E_PKG_HIDDEN_STATE) */
+    if (section(TPLC_SEC_TARGET_OBJ, s) && s.data && s.size) {
+        Status hs = pkgCheckHiddenState(s.data, (size_t)s.size);
+        if (!hs.ok()) return hs;
     }
     return Status::Ok();
 }

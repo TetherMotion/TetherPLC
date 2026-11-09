@@ -10,7 +10,10 @@
 > `target_obj` is a linked `.so` for the host triple; for a non-host
 > `--target` triple it is the raw relocatable ELF object and the
 > manifest carries `target_triple` (plan 18 §7.1).
-> NEEDED/hidden-state ELF checks remain future work.
+> `validateForLoad` scans `target_obj` for hidden state: defined,
+> sized symbols in writable allocated `.data`/`.bss`-family sections
+> must be known runtime/crt symbols or the package is rejected with
+> `TPLC_E_PKG_HIDDEN_STATE`. NEEDED-entry checks remain future work.
 
 ## Implemented
 

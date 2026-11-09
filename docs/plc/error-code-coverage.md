@@ -29,7 +29,7 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 61 emitted by runtime/tools | 69 test-hit (~92%)
+75 declared codes | 62 emitted by runtime/tools | 70 test-hit (~93%)
 
 Every code that has a host/tool emit site is covered except
 `IMG_EPOCH`; the remainder are declared-but-unemitted reservations.
@@ -80,11 +80,13 @@ or the wire reply:
   instead of faulting; reserved for a checked-arithmetic mode.
   (`TASK_E_PANIC`/`TASK_E_BOUNDS` are now emitted by `REFERENCE TO`
   derefs — null and out-of-range — and covered by the JIT test.)
-- `TPLC_E_PKG_HIDDEN_STATE` (-210), `TPLC_E_REQUIRES_UNMET` (-214) —
-  ELF hidden-state and manifest `requires` checks are still
-  unimplemented (declared reservations). (`SYMMAP_RANGE` -211 and
-  `PKG_ABI_MISMATCH` -213 are emitted by `validateForLoad` and
-  covered by `error_paths`.)
+- `TPLC_E_REQUIRES_UNMET` (-214) — manifest `requires` check is
+  still unimplemented (declared reservation; no producer schema
+  exists yet). (`SYMMAP_RANGE` -211, `PKG_ABI_MISMATCH` -213, and
+  `PKG_HIDDEN_STATE` -210 are emitted by `validateForLoad` and
+  covered by `error_paths` — the hidden-state check scans
+  `target_obj` for program symbols in writable allocated
+  `.data`/`.bss`-family sections.)
 - (The former `-500` alias between `TPLC_E_MGMT_*` and
   `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
   MGMT codes are now emitted by the object dictionary, covered by

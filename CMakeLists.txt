@@ -44,6 +44,7 @@ target_link_libraries(tplc_host PUBLIC tplc_image dl)
 # ------------------------------------------------------------------ #
 add_library(tplc_pkg STATIC
   runtime/pkg/src/Package.cpp
+  runtime/pkg/src/HiddenState.cpp
   runtime/pkg/src/Signature.cpp)
 target_include_directories(tplc_pkg PUBLIC
   runtime/pkg/include runtime/host/include)
