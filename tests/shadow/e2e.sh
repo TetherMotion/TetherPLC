@@ -84,6 +84,11 @@ sleep 0.3
 s=$($BUILD/tplc-ctl $CTL shadow-status 2>&1)
 echo "$s" | grep -q "none" && ok "shadow-status empty" \
     || bad "shadow-status empty ($s)"
+# shadow-image preview with no shadow loaded → MGMT_STATE error
+r=$($BUILD/tplc-ctl $CTL shadow-image 0 4 2>&1)
+echo "$r" | grep -qi "no shadow" \
+    && ok "shadow-image refused with no shadow" \
+    || bad "shadow-image no-shadow ($r)"
 $BUILD/tplc-ctl $CTL shadow-load $WORK/cand.tplc >/dev/null \
     || bad "shadow-load"
 sleep 0.5
@@ -98,6 +103,23 @@ c=$($BUILD/tplc-ctl $CTL shadow-compare 8 2>&1)
 echo "$c" | grep -q "img+0x04" \
     && ok "shadow-compare reports %QD4 divergence" \
     || bad "shadow-compare ($c)"
+
+# shadow→image preview: the candidate's would-be %Q is readable live.
+# candidate doubles, so shadow %QD4 ≈ 2× the active's %QD4 (the two
+# cnt states can skew by a cycle — ratio band absorbs it)
+simg32() { # u32 LE at shadow %Q byte offset $1
+    $BUILD/tplc-ctl $CTL shadow-image "$1" 4 2>&1 | tail -1 \
+      | python3 -c "import sys;print(int.from_bytes(bytes.fromhex(sys.stdin.read().split(None,1)[1].replace(' ','')),'little'))"
+}
+sv=$(simg32 4); av=$(qd 4)
+[ "$sv" -gt $((av * 3 / 2)) ] && [ "$sv" -lt $((av * 5 / 2)) ] \
+    && ok "shadow-image shows candidate's doubled %Q ($sv vs $av)" \
+    || bad "shadow-image preview ($sv vs active $av)"
+# out-of-range read → DBG_ACCESS
+r=$($BUILD/tplc-ctl $CTL shadow-image 0 0x7fffffff 2>&1)
+echo "$r" | grep -qi "outside\|error" \
+    && ok "shadow-image range checked" \
+    || bad "shadow-image range ($r)"
 
 # §7.1 no steering: image %QD4 keeps the active's ramp (cnt), not
 # the candidate's doubled value — the two compare streams prove

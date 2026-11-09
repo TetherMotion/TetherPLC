@@ -45,6 +45,7 @@ memories) carries over with no cold restart.
 | `SHADOW_LOAD` | commissioner | `{u16 len, path}` (same uuid-or-path rule as swap) → program uuid |
 | `SHADOW_STATUS` | observer | → `TplcCtlShadowStatus` (uuid, name, state, cycles, missed, diff_count, last_diff_cycle, task runs) |
 | `SHADOW_COMPARE` | observer | `{u32 max}` → `{u32 n} + TplcCtlShadowDiff[]` (cycle, img offset, len ≤32, active bytes, shadow bytes) |
+| `SHADOW_IMAGE` | observer | `{u64 off, u32 len}` → raw bytes of the shadow's image-%Q region (`image_out_bytes` bound; `DBG_ACCESS` outside, `MGMT_STATE` with no shadow) — live preview of what the candidate would drive, without promoting |
 | `SHADOW_PROMOTE` | commissioner | → adopted program uuid + new mgmt epoch |
 | `SHADOW_DROP` | commissioner | → void |
 | `SHADOW_RESET` | commissioner | → migrate result (`out_status`) |
@@ -153,5 +154,7 @@ solo and with a divergent candidate shadowed produces byte-identical
 
 ## Open items
 
-- Multiple-shadow, per-channel promote, shadow→image preview:
-  explicit non-goals, unchanged.
+- Multiple simultaneous shadows and per-channel promote remain
+  non-goals. Shadow→image preview landed as `SHADOW_IMAGE`: observers
+  read the candidate's live image-%Q region (bounded by
+  `image_out_bytes`) without promoting.

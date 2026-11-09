@@ -111,7 +111,8 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_RT_STATUS:      case TPLC_OP_PKG_LIST:
     case TPLC_OP_PKG_INFO:       case TPLC_OP_MAP_GET:
     case TPLC_OP_JOURNAL_TAIL:   case TPLC_OP_SHADOW_STATUS:
-    case TPLC_OP_SHADOW_COMPARE: case TPLC_OP_OD_READ:
+    case TPLC_OP_SHADOW_COMPARE: case TPLC_OP_SHADOW_IMAGE:
+    case TPLC_OP_OD_READ:
     case TPLC_OP_OD_LIST:
         return tplc::TPLC_ROLE_OBSERVER;
     case TPLC_OP_DBG_WATCH_ADD:
@@ -2538,6 +2539,32 @@ int main(int argc, char** argv) {
             w.bytes(df.shadow_bytes, 32);
         }
         ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    /* shadow→image preview: read the candidate's would-be %Q region
+       live, without promoting — same range/bounds rules as DBG_READ */
+    ctl.on(TPLC_OP_SHADOW_IMAGE, [&](int fd, uint16_t t,
+                                     const uint8_t* p, uint32_t n,
+                                     uint64_t req) {
+        if (n != 12) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u64 off, u32 len}", req);
+            return;
+        }
+        if (!shadow || !shadow->prog) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no shadow",
+                           req);
+            return;
+        }
+        uint64_t off; uint32_t rl;
+        memcpy(&off, p, 8); memcpy(&rl, p + 8, 4);
+        const uint64_t outb = shadow->prog->desc().image_out_bytes;
+        if (off > outb || rl > outb - off) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "range outside shadow image", req);
+            return;
+        }
+        ctl.reply(fd, t, shadow->prog->imageOut() + off, rl, req);
     });
 
     ctl.on(TPLC_OP_SHADOW_DROP, [&](int fd, uint16_t t,

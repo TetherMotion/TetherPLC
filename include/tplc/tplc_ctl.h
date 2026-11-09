@@ -161,6 +161,7 @@ enum TplcCtlOp {
     TPLC_OP_SHADOW_PROMOTE = 0x0804,  /* ∅ → post-promote status     */
     TPLC_OP_SHADOW_DROP    = 0x0805,  /* ∅                           */
     TPLC_OP_SHADOW_RESET   = 0x0806,  /* ∅ → migrate result          */
+    TPLC_OP_SHADOW_IMAGE   = 0x0807,  /* {u64 off,u32 len} → shadow %Q */
     /* runtime 0x0900 */
     TPLC_OP_RT_STATUS      = 0x0901,  /* P0 */
     TPLC_OP_RT_SHUTDOWN    = 0x0905,  /* P0 {u8 mode}                */

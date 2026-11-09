@@ -252,6 +252,7 @@ int main(int argc, char** argv) {
             "|watch-rm [H|all]|watch-list|events [SEC]"
             "|map-get|journal-tail [N]|od-read IDX [SUB]|od-list|od-write IDX SUB HEX"
             "|shadow-load X|shadow-status|shadow-compare [N]"
+            "|shadow-image OFF LEN"
             "|shadow-promote|shadow-drop|shadow-reset\n", argv[0]);
         return 2;
     }
@@ -351,6 +352,17 @@ int main(int argc, char** argv) {
         uint32_t mx = arg ? (uint32_t)strtoul(arg, NULL, 0) : 32;
         memcpy(pre, &mx, 4);
         pre_len = 4;
+    }
+    else if (!strcmp(cmd, "shadow-image")) {
+        if (!arg || argc < 5) {
+            fprintf(stderr, "shadow-image <off> <len>\n"); return 2;
+        }
+        op = TPLC_OP_SHADOW_IMAGE;
+        uint64_t off = strtoull(arg, NULL, 0);
+        uint32_t rl = (uint32_t)strtoul(argv[4], NULL, 0);
+        memcpy(pre, &off, 8);
+        memcpy(pre + 8, &rl, 4);
+        pre_len = 12;
     }
     else if (!strcmp(cmd, "shadow-promote")) op = TPLC_OP_SHADOW_PROMOTE;
     else if (!strcmp(cmd, "shadow-drop"))    op = TPLC_OP_SHADOW_DROP;
@@ -933,7 +945,7 @@ int main(int argc, char** argv) {
                    (unsigned long)ro, (unsigned long)rl, sc);
         }
     }
-    else if (op == TPLC_OP_DBG_READ) {
+    else if (op == TPLC_OP_DBG_READ || op == TPLC_OP_SHADOW_IMAGE) {
         for (uint32_t i = 0; i < len; i++) {
             if (i % 16 == 0) printf("%08x  ", i);
             printf("%02x%s", pl[i],
