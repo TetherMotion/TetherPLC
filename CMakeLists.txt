@@ -439,6 +439,12 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(mcu_target PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+  # ARM target_obj links into a bare-metal ELF (arm-none-eabi-gcc)
+  add_test(NAME mcu_link
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/abi/mcu_link.sh)
+  set_tests_properties(mcu_link PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

@@ -145,6 +145,13 @@ A no_std-ish embeddable runtime crate/C-lib implementing:
    §2.1 remains open.
 2. A mini-loader on that target loads + runs the ABI conformance
    subset (init/cycle/migrate) in <N KB RAM.
+   **Partial:** `tests/abi/mcu_link.sh` (ctest `mcu_link`) proves the
+   emitted ARM `target_obj` links into a bare-metal ELF32 EXEC with
+   `arm-none-eabi-gcc`, resolves all six `tplc_*` exports, and needs
+   only the `__aeabi_unwind_cpp_pr0` stub (LLVM emits `.ARM.exidx`
+   unconditionally for ARM EHABI; the mini-loader provides it).
+   Execution on-target/QEMU remains open — no ARM runtime on the dev
+   host.
 3. The MCU-shim conformance host (runtime-abi.md §11.7) stays green — ABI
    never regressed toward Linux-only assumptions.
    **Landed:** `tests/abi/mcu_shim_host.c` + ctest `mcu_shim` — both
