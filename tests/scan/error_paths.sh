@@ -257,7 +257,7 @@ echo "$out" | grep -q '(-102)' \
 
 # ============ map-validator errors (bridge; -600..-609 domain) ============
 # every violation a bad map can hit: RANGE, TYPE, SAFE, OWNER, SAFETY,
-# AT, BIND (MAP_DIR/PDO/EPOCH are declared but have no emit site)
+# AT, BIND, DIR (MAP_PDO/EPOCH are declared but have no emit site)
 cat > "$WORK/bad.map" <<'EOF'
 image in 64 out 64
 in  off=0 size=4 key=sensor1
@@ -266,6 +266,7 @@ out off=0 size=2 key=v1 type=u32
 out off=1 size=4 key=v2 safe=zero
 safety v2
 bind %QD100 v1
+bind %ID0 v1
 bind %QD4 ghost
 EOF
 if [ -x "$BUILD/tether-plc-bridge" ]; then
@@ -274,7 +275,7 @@ if [ -x "$BUILD/tether-plc-bridge" ]; then
     # rule → numeric (MapRunner.hpp); full literals so the coverage
     # report's test-hit heuristic counts them
     for rc in "RANGE -602" "TYPE -603" "SAFE -608" "OWNER -600" \
-              "SAFETY -605" "AT -606" "BIND -607"; do
+              "SAFETY -605" "AT -606" "BIND -607" "DIR -601"; do
         set -- $rc
         echo "$out" | grep -q "MAP_$1 ($2)" \
             && ok "TPLC_E_MAP_$1 validation finding" \

@@ -172,13 +172,25 @@ std::vector<MapViolation> validate_map(const IoMap& m) {
                     " lands outside any channel");
         }
         if (b.key != "*") {
-            bool found = false;
+            const MapChannel* ch = nullptr;
             for (auto& c : m.channels)
-                if (c.key == b.key) found = true;
-            if (!found)
+                if (c.key == b.key) ch = &c;
+            if (!ch)
                 add(TPLC_E_MAP_BIND, "MAP_BIND",
                     "bind " + b.at_name + " → missing channel " +
                     b.key);
+            else if (sp == 'I' || sp == 'Q' || sp == 'M') {
+                /* direction: %I channels are inputs (written by the
+                   bridge/master side), %Q channels are outputs; %M
+                   markers are program scratch with no image channel */
+                bool dir_ok = sp == 'I' ? ch->is_input
+                                        : sp == 'Q' ? !ch->is_input
+                                                    : false;
+                if (!dir_ok)
+                    add(TPLC_E_MAP_DIR, "MAP_DIR",
+                        "bind " + b.at_name + " → channel " + b.key +
+                        " direction mismatch");
+            }
         }
     }
     return v;

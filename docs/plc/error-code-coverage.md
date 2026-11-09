@@ -29,7 +29,7 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 62 emitted by runtime/tools | 70 test-hit (~93%)
+75 declared codes | 63 emitted by runtime/tools | 71 test-hit (~94%)
 
 Every code that has a host/tool emit site is covered except
 `IMG_EPOCH`; the remainder are declared-but-unemitted reservations.
@@ -91,6 +91,10 @@ or the wire reply:
   `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
   MGMT codes are now emitted by the object dictionary, covered by
   `od_surface`.)
-- `TPLC_E_MAP_DIR`, `MAP_PDO`, `MAP_EPOCH` (-601/-604/-609) —
-  declared in the bridge validator's block for map checks v1 does
-  not implement (direction/PDO/epoch rules).
+- `TPLC_E_MAP_PDO`, `MAP_EPOCH` (-604/-609) — declared in the
+  bridge validator's block for checks that need context
+  `validate_map` does not have: PDO existence against the live bus
+  config, and the `map.hash` skew check (canonical-hash field not
+  yet in the map format). `MAP_DIR` (-601) is emitted: a `bind`
+  whose AT space contradicts the channel direction (%I↔in,
+  %Q↔out, %M has no channel) is a violation.
