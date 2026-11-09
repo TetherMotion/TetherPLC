@@ -2,5 +2,6 @@
 //! Feature `llvm` gates inkwell/LLVM-21 so the default workspace build
 //! stays link-light.
 
+pub mod elf_blob;
 #[cfg(feature = "llvm")]
 pub mod llvm_emit;

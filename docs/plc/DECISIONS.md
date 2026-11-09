@@ -617,3 +617,36 @@ addressed by uuid — `SHADOW_LOAD`'s reply carries it. The sim and
 L1 vectors address candidates by load-order index and resolve to
 uuids through `SHADOW_LIST`, keeping the wire selector as the only
 stable identity across drops.
+
+## D-IMPL-35 — TPLB loadable blob: emit-time PC-relative fixups, runtime absolute fixups
+
+**Plan:** doc 18's MCU path listed a PIC/loadable-blob variant as
+the gap between "relocatable ET_REL for link-time placement" and a
+loader that needs no target-side linker.
+**Implemented:** `tplc-codegen/src/elf_blob.rs` parses the ARM
+ET_REL with a minimal bounds-checked ELF reader (ELF32/ELF64,
+REL/RELA) and emits a TPLB v1 image: allocatable PROGBITS/NOBITS
+sections at aligned blob offsets (`.ARM.exidx`/`.ARM.attributes`
+dropped — blob targets never unwind), exported globals in a symbol
+table with `st_value` preserved (Thumb bit included), undefined
+symbols as named imports, and a fixup table. The split follows the
+relocation semantics verified empirically against `ld`: PC-relative
+fields (`REL32`, `THM_CALL` on defined symbols) are patched at emit
+time because the blob base cancels (`field = S + A - P` in blob
+offsets); absolute fields (`ABS32`, `GLOB_DAT`, `JUMP_SLOT`,
+`RELATIVE`, `MOVW/MOVT_ABS_NC`) become runtime fixups
+`{place_off, type, value, addend}` where `value` is a blob offset or
+`F_IMPORT|index`. `tplcc build --target <foreign> --pic-blob`
+stores the blob in `target_obj` and records
+`"target_obj_format":"tplb"` in the manifest.
+
+**Consequence:** a ~150-line C loader (`tests/abi/tplb_load.c`)
+places the image and applies fixups — no linker, no ELF on target.
+Two encoding traps are pinned by tests: Thumb-2 `MOVW/MOVT`
+split their imm16 as `imm4:i:imm3:imm8` (not the ARM-state
+`imm4:imm12`), and `THM_CALL` fixups to imports must land within
+the ±16 MiB BL range of the blob, which the loader range-checks.
+NOBITS sections are materialized as zero bytes in the blob for v1
+(simplicity over size). `mcu_blob.sh` proves the path end-to-end
+under qemu-arm when available; the host-side loader test validates
+fixup math on a real blob without executing ARM code.

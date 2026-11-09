@@ -508,6 +508,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(mcu_shim_arm PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+  # TPLB PIC blob: tplcc --pic-blob → loader places + fixes up the
+  # image with no target linker; module runs under qemu-arm
+  add_test(NAME mcu_blob
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/abi/mcu_blob.sh)
+  set_tests_properties(mcu_blob PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

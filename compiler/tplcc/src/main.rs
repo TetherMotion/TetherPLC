@@ -653,6 +653,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut task_period_ns: u64 = 10_000_000;
     let mut prog_version = String::from("0");
     let mut checked_arith = false;
+    let mut pic_blob = false;
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
@@ -690,6 +691,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 i += 1;
             }
             "--checked-arith" => checked_arith = true,
+            "--pic-blob" => pic_blob = true,
             f => files.push(f.into()),
         }
         i += 1;
@@ -983,6 +985,10 @@ fn cmd_build(args: &[String]) -> ExitCode {
     The package's target_obj is a monolithic object for non-host
     targets (the .so link is native-only) */
     let triple = target.unwrap_or_else(host_triple);
+    if pic_blob && triple == host_triple() {
+        eprintln!("tplcc: --pic-blob requires a foreign --target (host builds link a .so)");
+        return ExitCode::FAILURE;
+    }
 
     let lctx = Context::create();
     let llmod = match emit_program_for_target(
@@ -1093,8 +1099,22 @@ fn cmd_build(args: &[String]) -> ExitCode {
         std::fs::read(&so).unwrap()
     } else {
         /* bare-metal/foreign target: target_obj is the raw object,
-        not a linked .so — the MCU shim consumes it statically */
-        std::fs::read(&obj).unwrap()
+        not a linked .so — the MCU shim consumes it statically.
+        --pic-blob converts the ET_REL to a TPLB loadable image:
+        PC-relative relocs resolved at emit time, absolute/import
+        refs carried as a runtime fixup table (no target linker) */
+        let raw = std::fs::read(&obj).unwrap();
+        if pic_blob {
+            match tplc_codegen::elf_blob::build_blob(&raw) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("tplcc: --pic-blob failed: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else {
+            raw
+        }
     };
 
     // retain hash → hex for manifest
@@ -1139,8 +1159,13 @@ fn cmd_build(args: &[String]) -> ExitCode {
     } else {
         ""
     };
+    let objfmt_json = if pic_blob {
+        ",\"target_obj_format\":\"tplb\""
+    } else {
+        ""
+    };
     let manifest = format!(
-        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\",\"target_triple\":\"{triple}\",\"requires\":{{\"image_in_bytes\":{},\"image_out_bytes\":{},\"marker_bytes\":{},\"retain_bytes\":{},\"state_blob_bytes\":{}}}{checked_json}}}",
+        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\",\"target_triple\":\"{triple}\",\"requires\":{{\"image_in_bytes\":{},\"image_out_bytes\":{},\"marker_bytes\":{},\"retain_bytes\":{},\"state_blob_bytes\":{}}}{checked_json}{objfmt_json}}}",
         img_need(AtRegion::I),
         img_need(AtRegion::Q),
         img_need(AtRegion::M),

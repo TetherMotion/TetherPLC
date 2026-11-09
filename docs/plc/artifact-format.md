@@ -9,7 +9,10 @@
 > readers, signature, zstd compression, manifest schema validation, and
 > `target_obj` is a linked `.so` for the host triple; for a non-host
 > `--target` triple it is the raw relocatable ELF object and the
-> manifest carries `target_triple` (plan 18 §7.1).
+> manifest carries `target_triple` (plan 18 §7.1). `--pic-blob`
+> swaps the raw object for a TPLB v1 loadable image (see
+> `mcu-path.md`) and the manifest records
+> `"target_obj_format":"tplb"`.
 > `validateForLoad` scans `target_obj` for hidden state: defined,
 > sized symbols in writable allocated `.data`/`.bss`-family sections
 > must be known runtime/crt symbols or the package is rejected with
@@ -110,6 +113,23 @@ Wire constants + error codes shared by both implementations:
   The flag is baked into the generated code (bitcode and `.so`
   both carry the guarded div/mod), so the manifest field is
   provenance for tools, not a runtime switch.
+- `tplcc build --target <foreign> --pic-blob` stores a TPLB v1
+  image in `target_obj` instead of the raw ET_REL and records
+  `"target_obj_format":"tplb"` in the manifest (absent means the
+  legacy raw-object/`.so` payload). TPLB layout: 32-byte header
+  (magic `TPLB`, version, section/symbol/import/fixup counts),
+  then section records (24 B: name_off, load_off, size, align,
+  flags, reserved — flags bit0 writable, bit1 executable),
+  symbol records (16 B: name_off, value_off, size, info, pad),
+  import records (8 B: name_off, reserved), fixup records
+  (16 B: place_off, type, value, addend), a deduplicated string
+  table, then section contents — each section's `load_off` is also
+  its offset from the RAM base the loader chooses. Fixup types: `ABS32/ABS64`
+  store `S+A`, `MOVW/MOVT` patch the Thumb-2 imm field,
+  `THM_CALL` re-encodes the BL pair, `REL32` stores `S+A-P`;
+  `value` bit31 set means the low 31 bits index the import table
+  and `S` is the loader-resolved import address. Full contract in
+  `mcu-path.md` and `tests/abi/tplb_load.h`.
 - Manifest is carried as opaque JSON bytes; schema validation is a
   P1-era concern (`tplcc` owns the producer side).
 

@@ -30,6 +30,9 @@ that leaves the type's range or signed `INT_MIN / -1` a
 instead of the default saturating/wrapping/truncating; the choice
 is baked into the generated code and recorded as
 `"checked_arith":true` in the package manifest.
+`build` also takes `--target <triple>` for foreign-target objects
+and `--pic-blob` (foreign targets only) to store a TPLB loadable
+image instead of the raw ET_REL — see `mcu-path.md`.
 St spans carry
 `file/offset/len/line/col`;
 Fbd spans carry `sheet/node/pin`; non-frontend failures (LLVM verify,
