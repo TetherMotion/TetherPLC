@@ -68,7 +68,8 @@ LTIME rides the i64-ns Time representation, the standard function
 library landed, and `REFERENCE TO` is a blob offset that online change
 preserves when the layout is unchanged and resets when it moved));
 collaborative editing; visual diff; OPC-UA adapter; safety FB subset
-(certification program).
+(certification program); crypto authentication for updates — accept
+only signed execution images (`20-crypto-auth.md`).
 Shadow-run extension candidates (all currently non-goals):
 multiple simultaneous shadows, per-channel promote, shadow→image
 preview.
