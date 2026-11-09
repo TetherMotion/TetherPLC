@@ -804,7 +804,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
                     if *ref_reset {
                         ref_resets += 1;
                         eprintln!(
-                            "warning: online change: reference field                              {name} will be reset to null — references                              do not survive a layout change"
+                            "warning: online change: reference field {name} will be reset to null — the referenced layout moved"
                         );
                     } else {
                         eprintln!(
@@ -821,11 +821,17 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 _ => {}
             }
         }
+        for (name, _) in &plan.refs_preserved {
+            eprintln!(
+                "note: online change: reference field {name} preserved \
+                 (referenced layout unchanged)"
+            );
+        }
         if ref_resets > 0 {
             eprintln!(
-                "warning: online change cannot preserve references — \
-                 {ref_resets} reference field(s) reset to null; \
-                 re-arm them in the program after the swap"
+                "warning: online change resets {ref_resets} reference \
+                 field(s) to null — re-arm them in the program after \
+                 the swap"
             );
         }
         if plan.deny || deny_errs > 0 {
@@ -848,6 +854,8 @@ fn cmd_build(args: &[String]) -> ExitCode {
         )
         .into();
         // rule table for migrate_desc — field indices as emitted
+        let preserved_refs: std::collections::HashSet<u32> =
+            plan.refs_preserved.iter().map(|(_, i)| *i).collect();
         let rules = plan
             .rules
             .iter()
@@ -862,7 +870,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
                     transform_id: 0,
                     old_field: *old_field,
                     new_field: *new_field,
-                    aux: 0,
+                    /* bit2: this copy carries a reference that the
+                       runtime may keep (layout unchanged) */
+                    aux: if preserved_refs.contains(new_field) { 4 } else { 0 },
                 },
                 mig::Rule::Transform {
                     id,

@@ -449,13 +449,20 @@ checks null (`-17` `TPLC_TASK_E_PANIC`) and range (`-18`
 `TPLC_TASK_E_BOUNDS`) before the load; the interpreter latches the same
 fault so L1 and L2 agree. `ISVALIDREF` reports null.
 
-**Migration:** a surviving ref field would carry an offset into the
-predecessor's layout, so the planner never copies it — it emits a
-`Dropped` rule with `ref_reset` set (MIGD `aux` bit1). `tplcc build
---change-against` prints a per-field warning plus a summary
-("online change cannot preserve references"), and the runtime swap logs
-`online change reset N reference field(s)`. The new program re-arms its
-refs when it runs.
+**Migration — preserved vs reset:** a ref stores a *blob offset*, so
+it stays valid exactly when the referenced layout did not move. The
+planner discriminates: if every surviving field keeps its offset, size
+and type signature and nothing is dropped (`layout_stable`), the ref
+field is **copied** like any other value (MIGD `aux` bit2 marks it as a
+kept reference); if anything moved or vanished, the ref is
+**reset** to null (Dropped rule, `aux` bit1) and the change is marked
+degraded. `tplcc build --change-against` says which: per-field
+`note: reference field r preserved (referenced layout unchanged)` or
+`warning: reference field r will be reset to null — the referenced
+layout moved`, plus a reset summary. The runtime swap logs
+`online change: N reference field(s) preserved (layout unchanged),
+M reset (layout moved)`, so an operator can tell whether re-arming is
+needed.
 
 **Also fixed:** the L1 interpreter never applied declaration
 initializers (`x : DINT := 42`), so any initialized variable diverged

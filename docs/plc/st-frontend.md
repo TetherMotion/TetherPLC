@@ -37,9 +37,11 @@ Status: as-built for `compiler/tplc-st`.
   (`"…"`) carry `is_wide`, and narrow↔wide assignment is a type error
   rather than a silent re-encode. Same `=`/`<>`-only comparison rule.
 - `REFERENCE TO T` / `REF_TO T`: a reference is a `u64` blob offset
-  (pointer-free by construction), so it survives relocation but **not**
-  a layout change — `tplcc build --change-against` warns and the
-  migrate plan resets the field to null. `r REF= x` (and `&x`) binds,
+  (pointer-free by construction), so it survives relocation and an
+  *offset-preserving* online change (append-only edits keep every
+  existing field where it was). When the layout actually moves, the
+  migrate plan resets the field to null and both `tplcc
+  --change-against` and the runtime swap say so. `r REF= x` (and `&x`) binds,
   `r^` dereferences, references auto-deref where the pointee is
   expected (`y := r`, `r = 42`), and `ISVALIDREF(r)` reports null. A
   null deref faults `TPLC_TASK_E_PANIC` (-17); an offset past the blob

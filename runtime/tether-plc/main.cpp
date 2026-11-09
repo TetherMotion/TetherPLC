@@ -1959,18 +1959,21 @@ int main(int argc, char** argv) {
             at += (4 - (at % 4)) % 4;
             if (at + 4 <= migd.size) {
                 uint32_t nr; memcpy(&nr, m + at, 4); at += 4;
-                uint32_t refs = 0;
+                uint32_t refs = 0, kept = 0;
                 for (uint32_t i = 0; i < nr && at + 16 <= migd.size;
                      i++, at += 16) {
                     uint8_t kind = m[at];
                     uint32_t aux; memcpy(&aux, m + at + 12, 4);
                     if (kind == 3 && (aux & 2)) refs++;
+                    /* bit2: a reference copy the planner kept because
+                       the referenced layout did not move */
+                    if (kind == 0 && (aux & 4)) kept++;
                 }
-                if (refs)
+                if (refs || kept)
                     fprintf(stderr,
-                            "tether-plc: online change reset %u "
-                            "reference field(s) — references do not "
-                            "survive a layout change\n", refs);
+                            "tether-plc: online change: %u reference "
+                            "field(s) preserved (layout unchanged), "
+                            "%u reset (layout moved)\n", kept, refs);
             }
         }
         pk.section(TPLC_SEC_LAYOUT_DESC, layd);
@@ -2209,18 +2212,21 @@ int main(int argc, char** argv) {
             at += (4 - (at % 4)) % 4;
             if (at + 4 <= migd.size) {
                 uint32_t nr; memcpy(&nr, m + at, 4); at += 4;
-                uint32_t refs = 0;
+                uint32_t refs = 0, kept = 0;
                 for (uint32_t i = 0; i < nr && at + 16 <= migd.size;
                      i++, at += 16) {
                     uint8_t kind = m[at];
                     uint32_t aux; memcpy(&aux, m + at + 12, 4);
                     if (kind == 3 && (aux & 2)) refs++;
+                    /* bit2: a reference copy the planner kept because
+                       the referenced layout did not move */
+                    if (kind == 0 && (aux & 4)) kept++;
                 }
-                if (refs)
+                if (refs || kept)
                     fprintf(stderr,
-                            "tether-plc: online change reset %u "
-                            "reference field(s) — references do not "
-                            "survive a layout change\n", refs);
+                            "tether-plc: online change: %u reference "
+                            "field(s) preserved (layout unchanged), "
+                            "%u reset (layout moved)\n", kept, refs);
             }
         }
         pk.section(TPLC_SEC_LAYOUT_DESC, layd);

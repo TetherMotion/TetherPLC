@@ -392,6 +392,33 @@ pub struct Plan {
     pub rules: Vec<Rule>,
     pub degraded: bool,
     pub deny: bool,
+    /// reference fields whose offsets stay valid (layout unchanged):
+    /// (name, new field index)
+    pub refs_preserved: Vec<(String, u32)>,
+    /// reference fields that must be nulled (layout moved)
+    pub refs_reset: Vec<(String, u32)>,
+}
+
+/// true when every field that survives by name keeps its exact offset,
+/// size and type signature, and no field was dropped — a reference
+/// offset stays valid across such a change
+fn layout_stable(old: &Side, new: &Side) -> bool {
+    let new_by: std::collections::HashMap<&str, &Leaf> =
+        new.leaves.iter().map(|l| (l.name.as_str(), l)).collect();
+    for ol in &old.leaves {
+        match new_by.get(ol.name.as_str()) {
+            Some(nl) => {
+                if nl.abs_off != ol.abs_off
+                    || nl.size != ol.size
+                    || nl.sig != ol.sig
+                {
+                    return false;
+                }
+            }
+            None => return false,
+        }
+    }
+    true
 }
 
 pub struct Side {
@@ -437,6 +464,8 @@ pub fn diff(old: &Side, new: &Side, renames: &[(String, String)], allow_retain_l
         .iter()
         .map(|(a, b)| (a.as_str(), b.as_str()))
         .collect();
+    /* a reference offset stays valid only when nothing moved */
+    let stable = layout_stable(old, new);
 
     for nl in &new.leaves {
         let lookup = renames
@@ -455,16 +484,33 @@ pub fn diff(old: &Side, new: &Side, renames: &[(String, String)], allow_retain_l
                         new_field: nl.field_idx,
                     });
                 }
-                /* references never survive: a copied offset would
-                   point into the predecessor's layout */
+                /* a reference stores a blob offset: it survives when
+                   the referenced layout did not move (every surviving
+                   field keeps its offset and nothing was dropped), and
+                   must be nulled otherwise — a stale offset would point
+                   into the predecessor's layout */
                 if ol.tag == TAG_REF || nl.tag == TAG_REF {
-                    plan.degraded = true;
-                    plan.rules.push(Rule::Dropped {
-                        name: nl.name.clone(),
-                        retain: ol.retain,
-                        old_field: ol.field_idx,
-                        ref_reset: true,
-                    });
+                    if stable && ol.sig == nl.sig && ol.size == nl.size {
+                        plan.refs_preserved
+                            .push((nl.name.clone(), nl.field_idx));
+                        plan.rules.push(Rule::Copy {
+                            old_off: ol.abs_off,
+                            new_off: nl.abs_off,
+                            size: nl.size,
+                            old_field: ol.field_idx,
+                            new_field: nl.field_idx,
+                        });
+                    } else {
+                        plan.degraded = true;
+                        plan.refs_reset
+                            .push((nl.name.clone(), nl.field_idx));
+                        plan.rules.push(Rule::Dropped {
+                            name: nl.name.clone(),
+                            retain: ol.retain,
+                            old_field: ol.field_idx,
+                            ref_reset: true,
+                        });
+                    }
                     continue;
                 }
                 if ol.sig == nl.sig && ol.size == nl.size {
