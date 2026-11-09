@@ -332,6 +332,38 @@ EOF
     echo "$out" | grep -q "MAP_PDO (-604)" \
         && ok "TPLC_E_MAP_PDO size mismatch" \
         || bad "MAP_PDO size: $out"
+
+    # MAP_EPOCH (-609): a `hash <sha256>` stamp pins the map's
+    # canonical content hash; drift after stamping is a violation.
+    cat > "$WORK/epoch.map" <<'EOF'
+image in 8 out 8
+in  off=0 size=1 key=a.tx
+out off=0 size=1 key=b.rx safe=zero
+EOF
+    EH=$("$BUILD"/tether-plc-bridge --map-hash "$WORK/epoch.map")
+    [ -n "$EH" ] || bad "map-hash produced no digest"
+    # correctly stamped → validates clean (dedicated image: the bridge
+    # unlinks its shm on shutdown)
+    cp "$WORK/epoch.map" "$WORK/epoch_ok.map"
+    echo "hash $EH" >> "$WORK/epoch_ok.map"
+    out=$(timeout 2 "$BUILD"/tether-plc-bridge --image /tplc_ep_epoch \
+          --map "$WORK/epoch_ok.map" --simdir "$WORK/sim_ep" \
+          --no-plc 2>&1 || true)
+    echo "$out" | grep -q "MAP_EPOCH" \
+        && bad "MAP_EPOCH false positive on fresh stamp: $out" \
+        || { echo "$out" | grep -q "bridge: image" \
+             && ok "MAP_EPOCH clean stamped map" \
+             || bad "MAP_EPOCH stamped map never reached run: $out"; }
+    # content drifted after stamping → MAP_EPOCH
+    sed 's/size=1 key=a/size=2 key=a/' "$WORK/epoch.map" \
+        > "$WORK/epoch_drift.map"
+    echo "hash $EH" >> "$WORK/epoch_drift.map"
+    out=$("$BUILD"/tether-plc-bridge --image /tplc_ep_epoch2 \
+          --map "$WORK/epoch_drift.map" --simdir "$WORK/sim_ep2" \
+          --no-plc 2>&1)
+    echo "$out" | grep -q "MAP_EPOCH (-609)" \
+        && ok "TPLC_E_MAP_EPOCH on content drift" \
+        || bad "MAP_EPOCH drift: $out"
 fi
 
 # ============ module loader errors ============

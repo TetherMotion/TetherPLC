@@ -36,11 +36,28 @@ static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --image <shm_path> --map <file> [options]\n"
         "       %s --catalog <pkg.tplc> [--out FILE]\n"
+        "       %s --map-hash <file>\n"
         "  --simdir DIR      sim transport directory (default /tmp/tplc_sim)\n"
         "  --hz N            map cycle rate (default 1000)\n"
         "  --plc ARGS…       spawn tether-plc with ARGS (everything after)\n"
         "  --no-plc          no child process (image+map only)\n",
-        a0);
+        a0, a0, a0);
+}
+
+/* --map-hash <file>: print the canonical map hash for stamping —
+   insert it as a `hash <hex>` line to pin the map's epoch         */
+static int do_map_hash(const std::string& map_path) {
+    std::ifstream mf(map_path);
+    if (!mf) { fprintf(stderr, "map %s unreadable\n", map_path.c_str());
+               return 1; }
+    std::stringstream ss; ss << mf.rdbuf();
+    auto mres = tplc::parse_map(ss.str());
+    if (!mres.ok()) {
+        fprintf(stderr, "map parse: %s\n", mres.st.msg.c_str());
+        return 1;
+    }
+    printf("%s\n", tplc::map_hash(mres.value).c_str());
+    return 0;
 }
 
 /* --catalog <pkg>: extract symmap+typc+descriptor → JSON catalog  */
@@ -107,7 +124,7 @@ static int do_catalog(const std::string& pkg_path,
 
 int main(int argc, char** argv) {
     std::string image_path, map_path, sim_dir = "/tmp/tplc_sim";
-    std::string catalog_pkg, out_path;
+    std::string catalog_pkg, map_hash_path, out_path;
     uint64_t hz = 1000;
     std::vector<std::string> plc_args;
     for (int i = 1; i < argc; i++) {
@@ -121,6 +138,7 @@ int main(int argc, char** argv) {
         else if (a == "--simdir")   sim_dir    = argv[++i];
         else if (a == "--hz")       hz = strtoull(argv[++i], 0, 0);
         else if (a == "--catalog")  catalog_pkg = argv[++i];
+        else if (a == "--map-hash") map_hash_path = argv[++i];
         else if (a == "--out")      out_path    = argv[++i];
         else if (a == "--no-plc")   { /* marker */ }
         else if (a == "--help" || a == "-h") { usage(argv[0]); return 0; }
@@ -128,6 +146,8 @@ int main(int argc, char** argv) {
     }
     if (!catalog_pkg.empty())
         return do_catalog(catalog_pkg, out_path);
+    if (!map_hash_path.empty())
+        return do_map_hash(map_hash_path);
     if (image_path.empty() || map_path.empty()) {
         usage(argv[0]); return 2;
     }

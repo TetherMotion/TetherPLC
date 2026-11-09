@@ -42,6 +42,7 @@ struct IoMap {
     std::vector<MapChannel> channels;
     std::vector<MapBinding> bindings;
     std::vector<std::string> safety_keys;  /* safety-classified eps */
+    std::string hash;               /* declared `hash <sha256>` stamp */
 };
 
 /* map validation (doc 09 §2.2): each violation is reported with its
@@ -83,6 +84,13 @@ struct BusCatalog {
 
 Result<BusCatalog> parse_bus_catalog(const std::string& text);
 
+/* Canonical map hash (TPLC_E_MAP_EPOCH): SHA-256 over a canonical
+   serialization of {image, channels, bindings, safety} — cosmetic
+   formatting and the `hash` directive itself are excluded.  Stamp a
+   map by inserting `hash <map_hash output>`; validate_map then
+   rejects the map when its content drifts from the stamp.        */
+std::string map_hash(const IoMap& m);
+
 /* @p bus may be nullptr: pdo= channels then always violate MAP_PDO
    (no live bus config to validate against).                        */
 std::vector<MapViolation> validate_map(const IoMap& m,
@@ -93,6 +101,7 @@ std::vector<MapViolation> validate_map(const IoMap& m,
      in  off=<n> size=<n> key=<name> [safe=zero|last|defined <hex>]
      out off=<n> size=<n> key=<name> [safe=…]
      in|out off=<n> size=<n> pdo=<endpoint> [safe=…]   (bus channel)
+     hash <sha256-hex>                  (epoch stamp, optional)
    '#' comments; %Q writer overlap + range checked (doc 09 §2.2).
    pdo= and key= are mutually exclusive on a channel.               */
 Result<IoMap> parse_map(const std::string& text);

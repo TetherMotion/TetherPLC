@@ -29,11 +29,12 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 65 emitted by runtime/tools | 73 test-hit (~97%)
+75 declared codes | 66 emitted by runtime/tools | 74 test-hit (~99%)
 
 Every code with a real emit site is covered except race-only
-`IMG_EPOCH` and saturating `DIVZERO`; the remainder are
-declared-but-unemitted reservations (`MAP_EPOCH`).
+`IMG_EPOCH` and saturating `DIVZERO`; the only remaining
+emitted-but-uncovered code is `DIVZERO` itself (reserved for a
+checked-arithmetic mode — generated code saturates instead).
 
 ## Induced-error conformance test
 
@@ -92,12 +93,13 @@ or the wire reply:
   `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
   MGMT codes are now emitted by the object dictionary, covered by
   `od_surface`.)
-- `TPLC_E_MAP_EPOCH` (-609) — declared in the bridge validator's
-  block for the `map.hash` skew check; the canonical-hash field is
-  not yet in the map format.
-- (`TPLC_E_MAP_PDO` -604 is now emitted: `pdo=` map channels are
+- (`TPLC_E_MAP_PDO` -604 is emitted: `pdo=` map channels are
   validated against the bus catalog the EtherCAT pump publishes as
   `<simdir>/.bus` — unknown endpoint, wrong direction, size
-  mismatch, or missing catalog are all violations. `MAP_DIR` -601 is
-  emitted: a `bind` whose AT space contradicts the channel direction
-  (%I↔in, %Q↔out, %M has no channel) is a violation.)
+  mismatch, or missing catalog are all violations. `MAP_EPOCH`
+  -609 is emitted: a `hash <sha256>` directive pins the map's
+  canonical content hash — `tether-plc-bridge --map-hash` prints it
+  for stamping, and content drift after stamping is a violation.
+  `MAP_DIR` -601 is emitted: a `bind` whose AT space contradicts
+  the channel direction (%I↔in, %Q↔out, %M has no channel) is a
+  violation.)

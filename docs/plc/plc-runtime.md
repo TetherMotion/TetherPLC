@@ -208,20 +208,27 @@ CAP_NET_ADMIN is unavailable).
 ## Map validator (io-mapping.md §2.2)
 
 - Map schema v1: `image`/`in`/`out` channels + `type=` (bool/u8…f64),
-  `safe=` policy, `bind <at> <key|*>` program bindings, and `safety
-  <key>` endpoint classification. A channel names its transport either
+  `safe=` policy, `bind <at> <key|*>` program bindings,
+  `safety <key>` endpoint classification, and an optional
+  `hash <sha256>` epoch stamp. A channel names its transport either
   with `key=<file>` (any simdir file) or `pdo=<endpoint>` (a live bus
   PDO, mutually exclusive with `key=`); `pdo=` resolves to
   `<endpoint>.tx` for `in` and `<endpoint>.rx` for `out`.
+- `map_hash` is SHA-256 over a canonical serialization of the map's
+  semantic content (image sizes, channels, bindings, safety keys —
+  formatting and the stamp itself excluded). `tether-plc-bridge
+  --map-hash <file>` prints it; inserting the result as a `hash`
+  line pins the map's epoch so later content drift is caught.
 - `validate_map` reports every violation with a stable
   `TPLC_E_MAP_*` code: RANGE (channel outside image), OWNER (%Q
   overlap), TYPE (view wider than range), SAFE (missing policy on a
   %Q channel), SAFETY (classified endpoint bound to %Q), AT (fixed
   AT outside any channel), BIND (missing channel key), DIR (bind AT
   space contradicts channel direction), PDO (`pdo=` endpoint absent
-  from the bus catalog, wrong direction, or size mismatch). The
-  bridge refuses to start on any violation; parse is permissive so
-  all violations surface in one pass.
+  from the bus catalog, wrong direction, or size mismatch), EPOCH
+  (declared `hash` stamp no longer matches content). The bridge
+  refuses to start on any violation; parse is permissive so all
+  violations surface in one pass.
 
 ## Online change (online-change.md)
 
