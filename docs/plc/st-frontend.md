@@ -77,10 +77,12 @@ Warning codes (`diag::wcodes`, also stable API):
   gives us; no extra recovery layer.
 - §10 prohibition table (pointers, recursion, …) — rejected today only
   as `UNSUPPORTED` when ruSTy parses them; no dedicated reason strings.
-- Builtin *scalar* functions (`ABS`/`MIN`/`SEL`) — sema knows
-  FUNCTION POUs only. The string builtins `LEN`/`CONCAT` are
-  implemented in sema, both engines, and codegen (`tplc_mir::ty::
-  builtin_fn` is the shared dispatch).
+- Standard function library: `LEN`/`CONCAT` (string) and
+  `ABS`/`MIN`/`MAX`/`SEL`/`LIMIT` (scalar) are implemented in sema,
+  both engines, and codegen via `tplc_mir::ty::builtin_fn`. Still
+  absent: the remaining string functions (`LEFT`/`RIGHT`/`MID`/
+  `INSERT`/`DELETE`/`REPLACE`/`FIND`), `MUX`, type-conversion
+  functions (`INT_TO_REAL` …), and `TRUNC`/`ROUND`.
 - `VAR_EXTERNAL` semantics beyond the lint: the decl links to GVL vars
   by name but is not yet a checked binding.
 - Multi-line span rendering (a span crossing lines renders only the

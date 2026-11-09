@@ -431,6 +431,60 @@ impl<'a> Rt<'a> {
                 };
                 Value::I(n as i64)
             }
+            BuiltinFn::Abs => {
+                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                match v {
+                    Value::F(x) => Value::F(x.abs()),
+                    Value::U(x) => Value::U(if (x as i64) < 0 {
+                        (x as i64).wrapping_neg() as u64
+                    } else {
+                        x
+                    }),
+                    Value::Time(x) => Value::Time(x.wrapping_abs()),
+                    Value::I(x) => Value::I(x.wrapping_abs()),
+                    other => other,
+                }
+            }
+            BuiltinFn::Min | BuiltinFn::Max => {
+                let a = args.first().map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                let b2 = args.get(1).map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                let take_a = if matches!(a, Value::F(_)) || matches!(b2, Value::F(_)) {
+                    let (x, y) = (a.as_f64(), b2.as_f64());
+                    if b == BuiltinFn::Min { x <= y } else { x >= y }
+                } else {
+                    let (x, y) = (a.as_i64(), b2.as_i64());
+                    if b == BuiltinFn::Min { x <= y } else { x >= y }
+                };
+                if take_a { a } else { b2 }
+            }
+            BuiltinFn::Sel => {
+                let g = args.first().map(|(_, e)| self.eval(caller, e))
+                    .map(|v| v.truthy())
+                    .unwrap_or(false);
+                let idx = if g { 2 } else { 1 };
+                args.get(idx)
+                    .map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0))
+            }
+            BuiltinFn::Limit => {
+                let mn = args.first().map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                let v = args.get(1).map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                let mx = args.get(2).map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                if matches!(v, Value::F(_)) || matches!(mn, Value::F(_))
+                    || matches!(mx, Value::F(_)) {
+                    let (lo, x, hi) = (mn.as_f64(), v.as_f64(), mx.as_f64());
+                    Value::F(if x < lo { lo } else if x > hi { hi } else { x })
+                } else {
+                    let (lo, x, hi) = (mn.as_i64(), v.as_i64(), mx.as_i64());
+                    Value::I(if x < lo { lo } else if x > hi { hi } else { x })
+                }
+            }
             BuiltinFn::Concat => {
                 let a = args.first().map(|(_, e)| self.eval(caller, e));
                 let b2 = args.get(1).map(|(_, e)| self.eval(caller, e));

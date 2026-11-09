@@ -409,6 +409,80 @@ impl<'e> Checker<'e> {
                     }
                 }
             }
+            BuiltinFn::Abs => {
+                if args.len() != 1 {
+                    self.err(codes::TYPE, "ABS takes exactly one value", prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                let t = self.expr(&mut args[0].1);
+                match t {
+                    Type::Int { .. } | Type::Real { .. } | Type::Time => t,
+                    _ => {
+                        self.err(codes::TYPE, "ABS expects a numeric value", prov);
+                        Type::Int { signed: true, bits: 32 }
+                    }
+                }
+            }
+            BuiltinFn::Min | BuiltinFn::Max => {
+                let name = if b == BuiltinFn::Min { "MIN" } else { "MAX" };
+                if args.len() != 2 {
+                    self.err(codes::TYPE,
+                             format!("{name} takes exactly two values"), prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                let t1 = self.expr(&mut args[0].1);
+                let t2 = self.expr(&mut args[1].1);
+                let r = unify_num(&t1, &t2);
+                if !is_numeric(&r) {
+                    self.err(codes::TYPE,
+                             format!("{name} expects numeric values"), prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                self.coerce(&mut args[0].1, &t1, &r);
+                self.coerce(&mut args[1].1, &t2, &r);
+                r
+            }
+            BuiltinFn::Sel => {
+                if args.len() != 3 {
+                    self.err(codes::TYPE,
+                             "SEL takes G, IN0, IN1", prov);
+                    return Type::Bool;
+                }
+                let tg = self.expr(&mut args[0].1);
+                self.coerce(&mut args[0].1, &tg, &Type::Bool);
+                let t0 = self.expr(&mut args[1].1);
+                let t1 = self.expr(&mut args[2].1);
+                let r = unify_num(&t0, &t1);
+                if !is_numeric(&r) && !compatible(&t0, &t1) {
+                    self.err(codes::TYPE,
+                             "SEL branches must share a type", prov);
+                    return t0;
+                }
+                let r = if is_numeric(&r) { r } else { t0.clone() };
+                self.coerce(&mut args[1].1, &t0, &r);
+                self.coerce(&mut args[2].1, &t1, &r);
+                r
+            }
+            BuiltinFn::Limit => {
+                if args.len() != 3 {
+                    self.err(codes::TYPE,
+                             "LIMIT takes MN, IN, MX", prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                let a = self.expr(&mut args[0].1);
+                let i = self.expr(&mut args[1].1);
+                let x = self.expr(&mut args[2].1);
+                let r = unify_num(&unify_num(&a, &i), &x);
+                if !is_numeric(&r) {
+                    self.err(codes::TYPE,
+                             "LIMIT expects numeric values", prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                self.coerce(&mut args[0].1, &a, &r);
+                self.coerce(&mut args[1].1, &i, &r);
+                self.coerce(&mut args[2].1, &x, &r);
+                r
+            }
             BuiltinFn::Concat => {
                 if args.len() != 2 {
                     self.err(codes::TYPE,

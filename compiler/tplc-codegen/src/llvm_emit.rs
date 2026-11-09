@@ -803,6 +803,116 @@ impl<'ctx> Gen<'ctx> {
                     len.into()
                 }
             }
+            BuiltinFn::Abs => {
+                let v = self.expr(ctx, &args[0].1);
+                if v.is_float_value() {
+                    let f = v.into_float_value();
+                    let neg = self.b.build_float_neg(f, "an").unwrap();
+                    let lt = self
+                        .b
+                        .build_float_compare(
+                            inkwell::FloatPredicate::OLT,
+                            f,
+                            self.ctx.f64_type().const_zero(),
+                            "ac",
+                        )
+                        .unwrap();
+                    // compare in the value's own width
+                    let lt = if f.get_type() == self.ctx.f32_type() {
+                        self.b
+                            .build_float_compare(
+                                inkwell::FloatPredicate::OLT,
+                                f,
+                                self.ctx.f32_type().const_zero(),
+                                "ac",
+                            )
+                            .unwrap()
+                    } else {
+                        lt
+                    };
+                    self.b.build_select(lt, neg, f, "abs").unwrap()
+                } else {
+                    let i = v.into_int_value();
+                    let neg = self.b.build_int_neg(i, "an").unwrap();
+                    let lt = self
+                        .b
+                        .build_int_compare(
+                            IntPredicate::SLT,
+                            i,
+                            i.get_type().const_zero(),
+                            "ac",
+                        )
+                        .unwrap();
+                    self.b.build_select(lt, neg, i, "abs").unwrap()
+                }
+            }
+            BuiltinFn::Min | BuiltinFn::Max => {
+                let a = self.expr(ctx, &args[0].1);
+                let b2 = self.expr(ctx, &args[1].1);
+                let is_min = b == BuiltinFn::Min;
+                let pick = if a.is_float_value() {
+                    let (x, y) = (a.into_float_value(), b2.into_float_value());
+                    let p = if is_min {
+                        inkwell::FloatPredicate::OLE
+                    } else {
+                        inkwell::FloatPredicate::OGE
+                    };
+                    self.b.build_float_compare(p, x, y, "cmp").unwrap()
+                } else {
+                    let (x, y) = (a.into_int_value(), b2.into_int_value());
+                    let signed = matches!(ret_ty, Type::Int { signed: true, .. });
+                    let p = match (is_min, signed) {
+                        (true, true) => IntPredicate::SLE,
+                        (true, false) => IntPredicate::ULE,
+                        (false, true) => IntPredicate::SGE,
+                        (false, false) => IntPredicate::UGE,
+                    };
+                    self.b.build_int_compare(p, x, y, "cmp").unwrap()
+                };
+                self.b.build_select(pick, a, b2, "mm").unwrap()
+            }
+            BuiltinFn::Sel => {
+                let g = self.expr(ctx, &args[0].1);
+                let a = self.expr(ctx, &args[1].1);
+                let b2 = self.expr(ctx, &args[2].1);
+                self.b.build_select(g.into_int_value(), b2, a, "sel").unwrap()
+            }
+            BuiltinFn::Limit => {
+                let mn = self.expr(ctx, &args[0].1);
+                let v = self.expr(ctx, &args[1].1);
+                let mx = self.expr(ctx, &args[2].1);
+                if v.is_float_value() {
+                    let (lo, x, hi) = (mn.into_float_value(), v.into_float_value(),
+                                       mx.into_float_value());
+                    let below = self.b
+                        .build_float_compare(inkwell::FloatPredicate::OLT, x, lo, "lb")
+                        .unwrap();
+                    let above = self.b
+                        .build_float_compare(inkwell::FloatPredicate::OGT, x, hi, "la")
+                        .unwrap();
+                    let lo_sel = self.b
+                        .build_select(below, lo, x, "ll")
+                        .unwrap()
+                        .into_float_value();
+                    self.b.build_select(above, hi, lo_sel, "lim").unwrap()
+                } else {
+                    let (lo, x, hi) = (mn.into_int_value(), v.into_int_value(),
+                                       mx.into_int_value());
+                    let signed = matches!(ret_ty, Type::Int { signed: true, .. });
+                    let (bl, ab) = if signed {
+                        (IntPredicate::SLT, IntPredicate::SGT)
+                    } else {
+                        (IntPredicate::ULT, IntPredicate::UGT)
+                    };
+                    let below = self.b.build_int_compare(bl, x, lo, "lb").unwrap();
+                    let above = self.b.build_int_compare(ab, x, hi, "la").unwrap();
+                    let lo_sel = self.b
+                        .build_select(below, lo, x, "ll")
+                        .unwrap()
+                        .into_int_value();
+                    self.b.build_select(above, hi, lo_sel, "lim").unwrap()
+                }
+            }
             BuiltinFn::Concat => {
                 let av = self.expr(ctx, &args[0].1).into_array_value();
                 let bv = self.expr(ctx, &args[1].1).into_array_value();

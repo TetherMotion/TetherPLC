@@ -58,12 +58,44 @@ L1=$(wc -l < "$WORK/audit.log")
 pass "commissioner ops journaled with uid/pid/ahash/rc=0"
 
 # -- 3: uid-keyed rate limit ----------------------------------------
-DENIED=0
-for i in $(seq 60); do
-    "$CTL" "$SOCK" suspend 0 2>&1 | grep -q "error 413" \
-        && DENIED=$((DENIED+1))
-done
-[ "$DENIED" -gt 0 ] || fail "rate limit never tripped over 60 suspends"
+# one connection, 60 SUSPEND frames back-to-back: the limiter is
+# 20 ops/s with burst 40, so a per-op process spawn loop (≈1 s of
+# wall time on a loaded box) can refill the bucket and never trip.
+DENIED=$(python3 - "$SOCK" <<'PYEOF'
+import socket, struct, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+def frame(mt, pl, req):
+    return struct.pack('<HHIQ', mt, 0, len(pl), req) + pl
+def recv():
+    h = b''
+    while len(h) < 16:
+        c = s.recv(16 - len(h))
+        if not c:
+            return None
+        h += c
+    mt, fl, pl, rq = struct.unpack('<HHIQ', h)
+    d = b''
+    while len(d) < pl:
+        c = s.recv(pl - len(d))
+        if not c:
+            break
+        d += c
+    return mt, fl, d
+s.sendall(frame(0x0101, struct.pack('<HHIH', 3, 0, 0, 1) + b't', 1))
+recv()
+denied = 0
+for i in range(60):
+    s.sendall(frame(0x0402, struct.pack('<I', 0), 2 + i))
+    r = recv()
+    if r and (r[1] & 0x8000) and len(r[2]) >= 4:
+        if struct.unpack('<I', r[2][:4])[0] == 413:
+            denied += 1
+s.close()
+print(denied)
+PYEOF
+)
+[ "${DENIED:-0}" -gt 0 ] || fail "rate limit never tripped over 60 suspends"
 grep -q "rc=-413" "$WORK/audit.log" \
     || fail "journal lacks rate-limit denial"
 "$CTL" "$SOCK" resume 0 >/dev/null 2>&1

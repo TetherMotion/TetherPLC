@@ -360,3 +360,18 @@ jit` (narrow+wide, truncation clamp) and `string_builtins_are_typed`.
 **Still open:** the remaining string functions (`LEFT`/`RIGHT`/`MID`/
 `INSERT`/`DELETE`/`REPLACE`/`FIND`) and scalar builtins
 (`ABS`/`MIN`/`SEL`) — the dispatch table makes each a small addition.
+
+## D-IMPL-25 — scalar builtins `ABS`/`MIN`/`MAX`/`SEL`/`LIMIT`
+
+**Implemented:** added to the same `builtin_fn` dispatch as the string
+builtins. Typing follows IEC: `ABS` preserves its argument type
+(int/real/time), `MIN`/`MAX`/`LIMIT` unify numerically and coerce
+their operands to the result type (so `MIN(3, 7.5)` is `LREAL`),
+`SEL(G, IN0, IN1)` requires a `BOOL` selector and branches of one
+type. Codegen uses compare+select (signed/unsigned/float predicates
+chosen from the result type), so no libc math calls reach the scan
+path; `ABS` on the most-negative value wraps (IEC leaves it
+undefined).
+
+Coverage: `scalar.builtins` (L1 + sim parity),
+`scalar_builtins_through_jit`, `scalar_builtins_are_typed`.

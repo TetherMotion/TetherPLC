@@ -938,3 +938,139 @@ fn string_builtins_through_jit() {
         assert_eq!(blob[scope["eq"].0 as usize], 1, "c = 'abcxyz'");
     }
 }
+
+/// Scalar builtins: ABS/MIN/MAX/SEL/LIMIT on ints (and ABS on LREAL).
+#[test]
+fn scalar_builtins_through_jit() {
+    fn d(v: i64) -> Expr {
+        Expr {
+            ty: Type::Int {
+                signed: true,
+                bits: 32,
+            },
+            kind: ExprKind::Lit(Lit::Int(v)),
+            prov: Prov::None,
+        }
+    }
+    fn call(fun: &str, args: Vec<Expr>, ty: Type) -> Expr {
+        Expr {
+            ty,
+            kind: ExprKind::Call {
+                fun: fun.into(),
+                args: args.into_iter().map(|e| (String::new(), e)).collect(),
+            },
+            prov: Prov::None,
+        }
+    }
+    let dt = Type::Int {
+        signed: true,
+        bits: 32,
+    };
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+    };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "S".into(),
+        iface: vec![
+            vd("a", dt.clone(), None),
+            vd("b", dt.clone(), None),
+            vd("c", dt.clone(), None),
+            vd("d", dt.clone(), None),
+            vd("e", dt.clone(), None),
+        ],
+        body: Body::Stmts(vec![
+            assign(Ref::Var("a".into()), call("ABS", vec![d(-5)], dt.clone())),
+            assign(
+                Ref::Var("b".into()),
+                call("MIN", vec![d(3), d(7)], dt.clone()),
+            ),
+            assign(
+                Ref::Var("c".into()),
+                call("MAX", vec![d(3), d(7)], dt.clone()),
+            ),
+            assign(
+                Ref::Var("d".into()),
+                call(
+                    "SEL",
+                    vec![
+                        Expr {
+                            ty: Type::Bool,
+                            kind: ExprKind::Lit(Lit::Bool(false)),
+                            prov: Prov::None,
+                        },
+                        d(11),
+                        d(22),
+                    ],
+                    dt.clone(),
+                ),
+            ),
+            assign(
+                Ref::Var("e".into()),
+                call("LIMIT", vec![d(10), d(42), d(20)], dt.clone()),
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx, m, l, program, &[], "sc", [0x53; 16], [0xEE; 32], None, 10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        assert_eq!(run(&mut tctx), 0);
+        let get = |n: &str| (blob.as_ptr().add(scope[n].0 as usize) as *const i32).read();
+        assert_eq!(get("a"), 5, "ABS(-5)");
+        assert_eq!(get("b"), 3, "MIN(3,7)");
+        assert_eq!(get("c"), 7, "MAX(3,7)");
+        assert_eq!(get("d"), 11, "SEL(FALSE,11,22)");
+        assert_eq!(get("e"), 20, "LIMIT(10,42,20)");
+    }
+}

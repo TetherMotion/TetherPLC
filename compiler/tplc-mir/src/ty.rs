@@ -34,12 +34,22 @@ pub fn same_class(a: &Type, b: &Type) -> bool {
 pub enum BuiltinFn {
     Len,
     Concat,
+    Abs,
+    Min,
+    Max,
+    Sel,
+    Limit,
 }
 
 pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
     match name.to_ascii_uppercase().as_str() {
         "LEN" => Some(BuiltinFn::Len),
         "CONCAT" => Some(BuiltinFn::Concat),
+        "ABS" => Some(BuiltinFn::Abs),
+        "MIN" => Some(BuiltinFn::Min),
+        "MAX" => Some(BuiltinFn::Max),
+        "SEL" => Some(BuiltinFn::Sel),
+        "LIMIT" => Some(BuiltinFn::Limit),
         _ => None,
     }
 }

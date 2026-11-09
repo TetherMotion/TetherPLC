@@ -232,6 +232,41 @@ END_PROGRAM
 }
 
 #[test]
+fn scalar_builtins_are_typed() {
+    let ok = r#"
+PROGRAM P
+VAR a : DINT; b : DINT; c : DINT; d : LREAL; e : BOOL; END_VAR
+    a := ABS(-5);
+    b := MIN(3, 7);
+    c := LIMIT(10, 42, 20);
+    d := MAX(1.5, 2);
+    e := (SEL(TRUE, 1, 2) = 2);
+END_PROGRAM
+"#;
+    let out = compile(&[("ok.st", ok)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        !diags.iter().any(|d| d.severity == tplc_st::Severity::Error),
+        "scalar builtin sema errors: {diags:?}"
+    );
+
+    let bad = r#"
+PROGRAM P
+VAR s : STRING[16]; a : DINT; END_VAR
+    a := ABS(s);
+END_PROGRAM
+"#;
+    let out = compile(&[("bad.st", bad)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        diags.iter().any(|d| d.code == tplc_st::codes::TYPE),
+        "expected ABS-on-string diag, got {diags:?}"
+    );
+}
+
+#[test]
 fn lints_fire_and_render() {
     let src = r#"
 PROGRAM P

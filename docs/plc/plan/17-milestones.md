@@ -63,7 +63,7 @@ CiA-405 OD endpoint; MCU loader path (`18-mcu-path.md` — the
 static-link ABI shim criterion landed as ctest `mcu_shim`; a
 cross-compiled Cortex-M loader remains open);
 WSTRING/LTIME/REF dialect extensions (WSTRING is a real UTF-16 type
-and LTIME rides the i64-ns Time representation; `LEN`/`CONCAT` landed,
+and LTIME rides the i64-ns Time representation; `LEN`/`CONCAT` and `ABS`/`MIN`/`MAX`/`SEL`/`LIMIT` landed,
 remaining string functions + REF still open); collaborative editing; visual
 diff; OPC-UA adapter; safety FB subset (certification program).
 Shadow-run extension candidates (all currently non-goals):

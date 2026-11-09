@@ -9,3 +9,4 @@
 {"id":"str.compare","program":"str_case.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"0e","expect_fields":{"eq1":"FALSE","eq2":"TRUE","eq3":"TRUE","eq4":"TRUE","eq5":"FALSE"}}]}
 {"id":"wstr.compare","program":"wstr_case.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"06","expect_fields":{"eq1":"FALSE","eq2":"TRUE","eq3":"TRUE"}}]}
 {"id":"str.builtins","program":"fn_case.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"0600000007000000","expect_fields":{"n1":"6","flags":"7"}}]}
+{"id":"scalar.builtins","program":"scalar_fn.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"0500000003000000070000000b0000001400000005000000","expect_fields":{"a":"5","b":"3","c":"7","d":"11","e":"20","f":"5"}}]}
