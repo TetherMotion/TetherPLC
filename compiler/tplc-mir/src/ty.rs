@@ -49,6 +49,7 @@ pub enum BuiltinFn {
     Trunc,
     Round,
     Mux,
+    IsValidRef,
 }
 
 pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
@@ -70,6 +71,7 @@ pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
         "TRUNC" => Some(BuiltinFn::Trunc),
         "ROUND" => Some(BuiltinFn::Round),
         "MUX" => Some(BuiltinFn::Mux),
+        "ISVALIDREF" => Some(BuiltinFn::IsValidRef),
         _ => None,
     }
 }

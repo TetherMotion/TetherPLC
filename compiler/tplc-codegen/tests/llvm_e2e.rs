@@ -1431,3 +1431,168 @@ fn conversions_and_mux_through_jit() {
         assert_eq!(rf, 42.0, "REAL→LREAL widened to f64");
     }
 }
+
+/// REFERENCE TO: REF= binds a blob offset, auto-deref reads through,
+/// ISVALIDREF reports null, and a null deref faults with -17.
+#[test]
+fn reference_semantics_through_jit() {
+    fn d(v: i64) -> Expr {
+        Expr {
+            ty: Type::Int { signed: true, bits: 32 },
+            kind: ExprKind::Lit(Lit::Int(v)),
+            prov: Prov::None,
+        }
+    }
+    let dt = Type::Int { signed: true, bits: 32 };
+    let rt = Type::Ref { to: Box::new(dt.clone()) };
+    let mut m = Module { pous: Vec::new(), gvls: Vec::new(), tasks: Vec::new() };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "R".into(),
+        iface: vec![
+            vd("x", dt.clone(), Some(d(42))),
+            vd("r", rt.clone(), None),
+            vd("n", rt.clone(), None),
+            vd("out", dt.clone(), None),
+            vd("ok", Type::Bool, None),
+            vd("valid", Type::Bool, None),
+            vd(
+                "bind",
+                Type::Bool,
+                Some(Expr {
+                    ty: Type::Bool,
+                    kind: ExprKind::Lit(Lit::Bool(true)),
+                    prov: Prov::None,
+                }),
+            ),
+        ],
+        body: Body::Stmts(vec![
+            stmt(StmtKind::If {
+                branches: vec![(
+                    Expr {
+                        ty: Type::Bool,
+                        kind: ExprKind::Ref(Ref::Var("bind".into())),
+                        prov: Prov::None,
+                    },
+                    vec![assign(
+                        Ref::Var("r".into()),
+                        Expr {
+                            ty: rt.clone(),
+                            kind: ExprKind::RefTo { r: Ref::Var("x".into()) },
+                            prov: Prov::None,
+                        },
+                    )],
+                )],
+                else_: vec![],
+            }),
+            assign(
+                Ref::Var("out".into()),
+                Expr {
+                    ty: dt.clone(),
+                    kind: ExprKind::Ref(Ref::Deref(Box::new(Ref::Var("r".into())))),
+                    prov: Prov::None,
+                },
+            ),
+            assign(
+                Ref::Var("ok".into()),
+                bin(
+                    BinOp::Eq,
+                    Expr {
+                        ty: dt.clone(),
+                        kind: ExprKind::Ref(Ref::Deref(Box::new(Ref::Var("r".into())))),
+                        prov: Prov::None,
+                    },
+                    d(42),
+                    Type::Bool,
+                ),
+            ),
+            assign(
+                Ref::Var("valid".into()),
+                Expr {
+                    ty: Type::Bool,
+                    kind: ExprKind::Call {
+                        fun: "ISVALIDREF".into(),
+                        args: vec![(
+                            String::new(),
+                            Expr {
+                                ty: rt.clone(),
+                                kind: ExprKind::Ref(Ref::Var("r".into())),
+                                prov: Prov::None,
+                            },
+                        )],
+                    },
+                    prov: Prov::None,
+                },
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx, m, l, program, &[], "rf", [0x52; 16], [0x77; 32], None, 10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        assert_eq!(run(&mut tctx), 0);
+        let gi = |n: &str| (blob.as_ptr().add(scope[n].0 as usize) as *const i32).read();
+        assert_eq!(gi("out"), 42, "auto-deref read");
+        assert_eq!(blob[scope["ok"].0 as usize], 1, "r^ = 42");
+        assert_eq!(blob[scope["valid"].0 as usize], 1, "ISVALIDREF");
+        let r_off = (blob.as_ptr().add(scope["r"].0 as usize) as *const u64).read();
+        assert_eq!(r_off, scope["x"].0, "ref holds x's blob offset");
+
+        /* a ref past the blob end faults BOUNDS (-18); null faults
+           PANIC (-17) — both are checked before the load */
+        blob[scope["bind"].0 as usize] = 0;   /* stop re-binding */
+        let rp = blob.as_mut_ptr().add(scope["r"].0 as usize) as *mut u64;
+        rp.write(l.total_size);
+        assert_eq!(run(&mut tctx), -18, "out-of-range deref → BOUNDS");
+        rp.write(u64::MAX);
+        assert_eq!(run(&mut tctx), -17, "null deref → PANIC");
+    }
+}

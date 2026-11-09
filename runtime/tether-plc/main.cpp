@@ -1950,6 +1950,29 @@ int main(int argc, char** argv) {
             return;
         }
         bool has_migd = pk.section(TPLC_SEC_MIGRATE_DESC, migd);
+        /* references are layout-relative: the migrate plan resets them
+           (kind=3 dropped, aux bit1) and the swap says so loudly    */
+        if (has_migd && migd.size >= 38) {
+            const uint8_t* m = migd.data;
+            uint16_t vlen; memcpy(&vlen, m + 32, 2);
+            size_t at = 34 + vlen;
+            at += (4 - (at % 4)) % 4;
+            if (at + 4 <= migd.size) {
+                uint32_t nr; memcpy(&nr, m + at, 4); at += 4;
+                uint32_t refs = 0;
+                for (uint32_t i = 0; i < nr && at + 16 <= migd.size;
+                     i++, at += 16) {
+                    uint8_t kind = m[at];
+                    uint32_t aux; memcpy(&aux, m + at + 12, 4);
+                    if (kind == 3 && (aux & 2)) refs++;
+                }
+                if (refs)
+                    fprintf(stderr,
+                            "tether-plc: online change reset %u "
+                            "reference field(s) — references do not "
+                            "survive a layout change\n", refs);
+            }
+        }
         pk.section(TPLC_SEC_LAYOUT_DESC, layd);
         pk.section(TPLC_SEC_SYMMAP, smap);
         pk.section(TPLC_SEC_DEPLOY_MAP, imap);
@@ -2177,6 +2200,29 @@ int main(int argc, char** argv) {
             return;
         }
         bool has_migd = pk.section(TPLC_SEC_MIGRATE_DESC, migd);
+        /* references are layout-relative: the migrate plan resets them
+           (kind=3 dropped, aux bit1) and the swap says so loudly    */
+        if (has_migd && migd.size >= 38) {
+            const uint8_t* m = migd.data;
+            uint16_t vlen; memcpy(&vlen, m + 32, 2);
+            size_t at = 34 + vlen;
+            at += (4 - (at % 4)) % 4;
+            if (at + 4 <= migd.size) {
+                uint32_t nr; memcpy(&nr, m + at, 4); at += 4;
+                uint32_t refs = 0;
+                for (uint32_t i = 0; i < nr && at + 16 <= migd.size;
+                     i++, at += 16) {
+                    uint8_t kind = m[at];
+                    uint32_t aux; memcpy(&aux, m + at + 12, 4);
+                    if (kind == 3 && (aux & 2)) refs++;
+                }
+                if (refs)
+                    fprintf(stderr,
+                            "tether-plc: online change reset %u "
+                            "reference field(s) — references do not "
+                            "survive a layout change\n", refs);
+            }
+        }
         pk.section(TPLC_SEC_LAYOUT_DESC, layd);
         pk.section(TPLC_SEC_SYMMAP, smap);
         pk.section(TPLC_SEC_DEPLOY_MAP, imap);

@@ -74,6 +74,8 @@ pub const TAG_ARRAY: u8 = 18;
 pub const TAG_STRUCT: u8 = 19;
 pub const TAG_ENUM: u8 = 20;
 pub const TAG_FB: u8 = 21;
+/// REFERENCE TO: u64 blob offset (never survives a layout change)
+pub const TAG_REF: u8 = 17;
 
 #[derive(Debug, Clone)]
 pub struct TypeInfo {
@@ -358,6 +360,9 @@ pub enum Rule {
         name: String,
         retain: bool,
         old_field: u32,
+        /// the field is a REFERENCE: its offset is layout-relative,
+        /// so a surviving ref is reset to null, never copied
+        ref_reset: bool,
     },
     Deny {
         reason: u32,
@@ -450,6 +455,18 @@ pub fn diff(old: &Side, new: &Side, renames: &[(String, String)], allow_retain_l
                         new_field: nl.field_idx,
                     });
                 }
+                /* references never survive: a copied offset would
+                   point into the predecessor's layout */
+                if ol.tag == TAG_REF || nl.tag == TAG_REF {
+                    plan.degraded = true;
+                    plan.rules.push(Rule::Dropped {
+                        name: nl.name.clone(),
+                        retain: ol.retain,
+                        old_field: ol.field_idx,
+                        ref_reset: true,
+                    });
+                    continue;
+                }
                 if ol.sig == nl.sig && ol.size == nl.size {
                     plan.rules.push(Rule::Copy {
                         old_off: ol.abs_off,
@@ -534,6 +551,7 @@ pub fn diff(old: &Side, new: &Side, renames: &[(String, String)], allow_retain_l
                 name: ol.name.clone(),
                 retain: ol.retain,
                 old_field: ol.field_idx,
+                ref_reset: ol.tag == TAG_REF,
             });
         }
     }

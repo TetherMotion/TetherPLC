@@ -436,3 +436,31 @@ so handlers can enforce entry-level floors below the op gate.
 **Deliberately not done:** the CANopen wire binding (SDO/PDO framing)
 — this is the dictionary the adapter binds to; entry values are
 computed per request, so nothing is cached.
+
+## D-IMPL-29 — `REFERENCE TO` as a blob offset; refs never survive migration
+
+**Design:** a reference is an 8-byte `u64` blob offset
+(`u64::MAX` = null) — pointer-free, so it survives blob *relocation*
+(`moveBlob`) and the MCU static-placement story, but not a layout
+change. `REF(x)`/`&x` lowers to `ExprKind::RefTo` (constant offset for
+vars/fields, runtime for array indices and rebinding through another
+ref); `r^` and auto-deref read/write through `Ref::Deref`. Codegen
+checks null (`-17` `TPLC_TASK_E_PANIC`) and range (`-18`
+`TPLC_TASK_E_BOUNDS`) before the load; the interpreter latches the same
+fault so L1 and L2 agree. `ISVALIDREF` reports null.
+
+**Migration:** a surviving ref field would carry an offset into the
+predecessor's layout, so the planner never copies it — it emits a
+`Dropped` rule with `ref_reset` set (MIGD `aux` bit1). `tplcc build
+--change-against` prints a per-field warning plus a summary
+("online change cannot preserve references"), and the runtime swap logs
+`online change reset N reference field(s)`. The new program re-arms its
+refs when it runs.
+
+**Also fixed:** the L1 interpreter never applied declaration
+initializers (`x : DINT := 42`), so any initialized variable diverged
+from the compiled path; `Rt::run_inits` now runs them once at cycle 0
+in the vector runner, matching `tplc_init`.
+
+Coverage: `ref.deref` (L1 + sim parity), `reference_semantics_through_
+jit`, and `ref_migration` (warning, swap log, program stays running).

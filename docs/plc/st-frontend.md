@@ -36,6 +36,14 @@ Status: as-built for `compiler/tplc-st`.
   `u16[cap]` code units (surrogate pairs preserved), wide literals
   (`"…"`) carry `is_wide`, and narrow↔wide assignment is a type error
   rather than a silent re-encode. Same `=`/`<>`-only comparison rule.
+- `REFERENCE TO T` / `REF_TO T`: a reference is a `u64` blob offset
+  (pointer-free by construction), so it survives relocation but **not**
+  a layout change — `tplcc build --change-against` warns and the
+  migrate plan resets the field to null. `r REF= x` (and `&x`) binds,
+  `r^` dereferences, references auto-deref where the pointee is
+  expected (`y := r`, `r = 42`), and `ISVALIDREF(r)` reports null. A
+  null deref faults `TPLC_TASK_E_PANIC` (-17); an offset past the blob
+  faults `TPLC_TASK_E_BOUNDS` (-18).
 - `FUNCTION` inputs without defaults are required; missing bindings
   error `TPLC_E_ST_TYPE`. FB-call args are checked against the FB
   iface (or builtin member layout); all FB inputs optional.

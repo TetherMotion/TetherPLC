@@ -15,7 +15,7 @@ Coverage status (which codes are emitted and test-exercised):
 | Range | Owner | Prefix | Meaning |
 |---|---|---|---|
 | `-1..-4` | `include/tplc/tplc_abi.h` | `TPLC_E_INIT_*` | `tplc_init` failures: bad layout, invalid descriptor, bad initial value, resource exhaustion |
-| `-16..-23` | `tplc_abi.h` | `TPLC_TASK_E_*` | task-cycle faults raised by *generated code*: fault, panic, bounds, div-zero, overflow, range, aborted, overrun |
+| `-16..-23` | `tplc_abi.h` | `TPLC_TASK_E_*` | task-cycle faults raised by *generated code*: fault, panic (`-17`, null `REF` deref), bounds (`-18`, `REF` offset past the blob), div-zero, overflow, range, aborted, overrun |
 | `-32..-35` | `tplc_abi.h` | `TPLC_E_MIGRATE_*` | migrate failures: layout mismatch, denied rule, invalid descriptor, blob out of range |
 | `-64/-65` | `tplc_abi.h` | `TPLC_E_ABI_*` | ABI version mismatch / extension unmet |
 | `-100..-107` | `include/tplc/tplc_image.h` | `TPLC_E_IMG_*` | SHM image: magic, version, size, seq exhaustion, epoch, range, I/O, state |

@@ -274,6 +274,17 @@ impl<'e> Checker<'e> {
                     }
                 }
             }
+            Ref::Deref(inner) => match self.ref_ty(inner, prov)? {
+                Type::Ref { to } => Some(*to),
+                other => {
+                    self.err(
+                        codes::TYPE,
+                        format!("deref of non-reference {other:?}"),
+                        prov,
+                    );
+                    None
+                }
+            },
             Ref::Index(base, idx) => {
                 let bt = self.ref_ty(base, prov)?;
                 self.expr(idx);
@@ -338,8 +349,27 @@ impl<'e> Checker<'e> {
                 }
             }
             ExprKind::Bin(op, a, b) => {
-                let ta = self.expr(a);
-                let tb = self.expr(b);
+                let mut ta = self.expr(a);
+                let mut tb = self.expr(b);
+                /* a reference participates as its pointee */
+                if let Type::Ref { to } = ta.clone() {
+                    if compatible(&to, &tb)
+                        || (is_numeric(&to) && is_numeric(&tb))
+                    {
+                        if let Some(t) = self.insert_deref(a) {
+                            ta = t;
+                        }
+                    }
+                }
+                if let Type::Ref { to } = tb.clone() {
+                    if compatible(&to, &ta)
+                        || (is_numeric(&to) && is_numeric(&ta))
+                    {
+                        if let Some(t) = self.insert_deref(b) {
+                            tb = t;
+                        }
+                    }
+                }
                 use BinOp::*;
                 match op {
                     // untyped literal adopts the other operand's type —
@@ -377,6 +407,12 @@ impl<'e> Checker<'e> {
                         Type::Bool
                     }
                     And | Or | Xor | AndThen | OrElse => Type::Bool,
+                }
+            }
+            ExprKind::RefTo { r } => {
+                let t = self.ref_ty(r, &e.prov.clone());
+                Type::Ref {
+                    to: Box::new(t.unwrap_or(Type::Bool)),
                 }
             }
             ExprKind::Conv { to, e } => {
@@ -514,6 +550,17 @@ impl<'e> Checker<'e> {
                 self.coerce(&mut args[1].1, &i, &r);
                 self.coerce(&mut args[2].1, &x, &r);
                 r
+            }
+            BuiltinFn::IsValidRef => {
+                if args.len() != 1 {
+                    self.err(codes::TYPE, "ISVALIDREF takes one reference", prov);
+                    return Type::Bool;
+                }
+                let t = self.expr(&mut args[0].1);
+                if !matches!(t, Type::Ref { .. }) {
+                    self.err(codes::TYPE, "ISVALIDREF expects a REFERENCE", prov);
+                }
+                Type::Bool
             }
             BuiltinFn::Trunc => {
                 if args.len() != 1 {
@@ -770,12 +817,36 @@ impl<'e> Checker<'e> {
         pou.ret_ty.clone().unwrap_or(Type::Bool)
     }
 
+    /// Rewrite a reference expression into an explicit deref read
+    /// (`r` → `r^`) — IEC auto-deref in value contexts
+    fn insert_deref(&mut self, e: &mut Expr) -> Option<Type> {
+        let to = match &e.ty {
+            Type::Ref { to } => (**to).clone(),
+            _ => return None,
+        };
+        if let ExprKind::Ref(r) = &mut e.kind {
+            let inner = std::mem::replace(r, Ref::Var("?".into()));
+            *r = Ref::Deref(Box::new(inner));
+            e.ty = to.clone();
+            Some(to)
+        } else {
+            None
+        }
+    }
+
     /// Insert a Conv node around `e` if the matrix allows implicit
     /// conversion from→to; narrowing conversions also lint.
     fn coerce(&mut self, e: &mut Expr, from: &Type, to: &Type) {
         // untyped literals fold at codegen — legal wherever they fit
         if compatible(from, to) || literal_fits(e, to) {
             return;
+        }
+        /* auto-deref (IEC REFERENCE TO): a reference used where its
+           pointee is expected reads through the reference */
+        if let Type::Ref { to: pointee } = from {
+            if **pointee == *to && self.insert_deref(e).is_some() {
+                return;
+            }
         }
         if convertible(from, to) {
             if narrows(from, to) {

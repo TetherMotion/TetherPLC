@@ -1470,6 +1470,10 @@ impl<'a> Cx<'a> {
                 Type::Bool
             }
             Ref::Index(inner, _) => self.ref_ty(inner),
+            Ref::Deref(inner) => match self.ref_ty(inner) {
+                Type::Ref { to } => *to,
+                _ => Type::Bool,
+            },
         }
     }
 

@@ -29,7 +29,7 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 56 emitted by runtime/tools | 65 test-hit (~86%)
+75 declared codes | 59 emitted by runtime/tools | 67 test-hit (~89%)
 
 Every code that has a host/tool emit site is covered except
 `IMG_EPOCH`; the remainder are declared-but-unemitted reservations.
@@ -52,6 +52,8 @@ or the wire reply:
   `pkgmut.py` helper repatches `content_hash`/`header_hash` so
   surgical corruptions survive the integrity checks)
 - image: `IMG_VERSION`, `IMG_TOO_SMALL` via crafted shm headers
+- reference faults: `TASK_E_PANIC` (-17) and `TASK_E_BOUNDS` (-18)
+  via `reference_semantics_through_jit` (null / past-end deref)
 - object dictionary: `MGMT_OP`/`MGMT_SCHEMA`/`MGMT_AUTHZ` via
   `tests/scan/od_surface.sh` (unknown index, read-only write, entry
   below the session role)
@@ -70,9 +72,10 @@ or the wire reply:
 
 **Declared but never emitted** (reserved — wire or prune):
 
-- `TPLC_TASK_E_PANIC`, `TASK_E_BOUNDS`, `TASK_E_DIVZERO`
-  (-17/-18/-19) — generated code saturates arithmetic and has no
-  bounds-check aborts today; reserved for checked-code modes.
+- `TPLC_TASK_E_DIVZERO` (-19) — generated code saturates division
+  instead of faulting; reserved for a checked-arithmetic mode.
+  (`TASK_E_PANIC`/`TASK_E_BOUNDS` are now emitted by `REFERENCE TO`
+  derefs — null and out-of-range — and covered by the JIT test.)
 - (The former `-500` alias between `TPLC_E_MGMT_*` and
   `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
   MGMT codes are now emitted by the object dictionary, covered by

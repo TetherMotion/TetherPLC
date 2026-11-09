@@ -97,6 +97,9 @@ pub struct Gen<'ctx> {
     mir: &'static Module,
     abort_bb: Option<BasicBlock<'ctx>>,
     overrun_bb: Option<BasicBlock<'ctx>>,
+    /// null-reference deref → -17, out-of-range deref → -18
+    panic_bb: Option<BasicBlock<'ctx>>,
+    bounds_bb: Option<BasicBlock<'ctx>>,
     loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>, // (cond, exit)
     ctx_ptr: PointerValue<'ctx>,
     this_ptr: PointerValue<'ctx>,
@@ -114,6 +117,7 @@ fn llty<'c>(ctx: &'c Context, t: &Type) -> BasicTypeEnum<'c> {
         Type::Time | Type::Enum { .. } => ctx.i64_type().into(),
         Type::Str { cap } => ctx.i8_type().array_type(1 + *cap as u32).into(),
         Type::WStr { cap } => ctx.i16_type().array_type(1 + *cap as u32).into(),
+        Type::Ref { .. } => ctx.i64_type().into(),
         _ => ctx.i8_type().into(), // aggregates addressed, not valued
     }
 }
@@ -163,6 +167,59 @@ impl<'ctx> Gen<'ctx> {
 
     fn resolve(&mut self, ctx: &Ctx, r: &Ref) -> (PointerValue<'ctx>, Type) {
         match r {
+            /* r^: the slot holds a blob offset; null → -17, out of
+               range → -18. The pointee type comes from the slot's
+               declared Ref type. */
+            Ref::Deref(inner) => {
+                let (slot, ty) = self.resolve(ctx, inner);
+                let to = match &ty {
+                    Type::Ref { to } => (**to).clone(),
+                    _ => Type::Bool,
+                };
+                let i64t = self.ctx.i64_type();
+                let off = self.b.build_load(i64t, slot, "ro").unwrap().into_int_value();
+                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                let ok_bb = self.ctx.append_basic_block(f, "ref.ok");
+                let null = self
+                    .b
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        off,
+                        i64t.const_int(u64::MAX, false),
+                        "rn",
+                    )
+                    .unwrap();
+                let cur = self.b.get_insert_block().unwrap();
+                self.b
+                    .build_conditional_branch(null, self.panic_bb.unwrap(), ok_bb)
+                    .unwrap();
+                self.b.position_at_end(ok_bb);
+                let blob_sz = i64t.const_int(self.layout.total_size, false);
+                let end = self
+                    .b
+                    .build_int_add(off, i64t.const_int(to.size(), false), "re")
+                    .unwrap();
+                let over = self
+                    .b
+                    .build_int_compare(IntPredicate::UGT, end, blob_sz, "rb")
+                    .unwrap();
+                let ok2 = self.ctx.append_basic_block(f, "ref.ok2");
+                self.b
+                    .build_conditional_branch(over, self.bounds_bb.unwrap(), ok2)
+                    .unwrap();
+                self.b.position_at_end(ok2);
+                let _ = cur;
+                let base8 = self
+                    .b
+                    .build_pointer_cast(self.blob_ptr(), self.i8p(), "b8")
+                    .unwrap();
+                let p = unsafe {
+                    self.b
+                        .build_gep(self.ctx.i8_type(), base8, &[off], "rd")
+                        .unwrap()
+                };
+                (p, to)
+            }
             Ref::Var(name) => {
                 let (o, t) = ctx
                     .get(name.as_str())
@@ -307,6 +364,77 @@ impl<'ctx> Gen<'ctx> {
         acc.into()
     }
 
+    /// blob offset of an lvalue as an i64 value (REF(x) / `&x`):
+    /// constant for vars/fields, runtime for array indices and for
+    /// re-binding through an existing reference
+    fn ref_offset(&mut self, ctx: &Ctx, r: &Ref) -> inkwell::values::IntValue<'ctx> {
+        let i64t = self.ctx.i64_type();
+        match r {
+            Ref::Var(name) => {
+                let (o, _) = ctx
+                    .get(name.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| panic!("unresolved var {name}"));
+                i64t.const_int(o, false)
+            }
+            Ref::Field(inner, name) => {
+                let (_, ty) = self.resolve(ctx, inner);
+                let moff = match &ty {
+                    Type::Fb { name: fb } => {
+                        let fbl = tplc_mir::layout::builtin_fb_layout(fb)
+                            .or_else(|| {
+                                self.layout.fb_types.get(fb).cloned()
+                            })
+                            .unwrap_or_else(|| panic!("no FB layout {fb}"));
+                        fbl.members
+                            .get(name.as_str())
+                            .map(|(o, _)| *o)
+                            .unwrap_or_else(|| panic!("{fb} has no member {name}"))
+                    }
+                    Type::Struct { fields, .. } => {
+                        let mut o = 0u64;
+                        let mut found = None;
+                        for (n, t) in fields {
+                            o = (o + t.align() - 1) & !(t.align() - 1);
+                            if n == name {
+                                found = Some(o);
+                                break;
+                            }
+                            o += t.size();
+                        }
+                        found.unwrap_or_else(|| panic!("struct has no field {name}"))
+                    }
+                    _ => panic!("field on non-aggregate"),
+                };
+                let base = self.ref_offset(ctx, inner);
+                self.b
+                    .build_int_add(base, i64t.const_int(moff, false), "fo")
+                    .unwrap()
+            }
+            Ref::Index(inner, idx) => {
+                let (_, ty) = self.resolve(ctx, inner);
+                let (lo, elem) = match &ty {
+                    Type::Array { elem, lo, .. } => (*lo, (**elem).clone()),
+                    _ => panic!("index on non-array"),
+                };
+                let iv = self.expr(ctx, idx).into_int_value();
+                let iv = self
+                    .b
+                    .build_int_sub(iv, i64t.const_int(lo as u64, true), "ri")
+                    .unwrap();
+                let esz = self.b
+                    .build_int_mul(iv, i64t.const_int(elem.size(), false), "re")
+                    .unwrap();
+                let base = self.ref_offset(ctx, inner);
+                self.b.build_int_add(base, esz, "ra").unwrap()
+            }
+            Ref::Deref(inner) => {
+                let (slot, _) = self.resolve(ctx, inner);
+                self.b.build_load(i64t, slot, "rl").unwrap().into_int_value()
+            }
+        }
+    }
+
     // ---- expressions ----
     fn expr(&mut self, ctx: &Ctx, e: &Expr) -> BasicValueEnum<'ctx> {
         match &e.kind {
@@ -363,6 +491,7 @@ impl<'ctx> Gen<'ctx> {
                     }
                 }
             }
+            ExprKind::RefTo { r } => self.ref_offset(ctx, r).into(),
             ExprKind::Ref(r) => self.read(ctx, r),
             ExprKind::Un(op, a) => {
                 let v = self.expr(ctx, a);
@@ -1185,6 +1314,19 @@ impl<'ctx> Gen<'ctx> {
                     self.b.build_select(above, hi, lo_sel, "lim").unwrap()
                 }
             }
+            BuiltinFn::IsValidRef => {
+                let v = self.expr(ctx, &args[0].1).into_int_value();
+                let null = self
+                    .b
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        v,
+                        v.get_type().const_int(u64::MAX, false),
+                        "iv",
+                    )
+                    .unwrap();
+                self.b.build_not(null, "ivn").unwrap().into()
+            }
             BuiltinFn::Trunc => {
                 /* sema rewrites TRUNC into a real→int Conv; a direct
                    MIR use still lands here (fptosi truncates) */
@@ -2004,6 +2146,19 @@ impl<'ctx> Gen<'ctx> {
         self.b
             .build_return(Some(&self.ctx.i32_type().const_int((-23i64) as u64, true)))
             .unwrap();
+        /* reference faults (TPLC_TASK_E_PANIC / _BOUNDS) */
+        let pb = self.ctx.append_basic_block(f, "ref.panic");
+        self.panic_bb = Some(pb);
+        self.b.position_at_end(pb);
+        self.b
+            .build_return(Some(&self.ctx.i32_type().const_int((-17i64) as u64, true)))
+            .unwrap();
+        let bb = self.ctx.append_basic_block(f, "ref.bounds");
+        self.bounds_bb = Some(bb);
+        self.b.position_at_end(bb);
+        self.b
+            .build_return(Some(&self.ctx.i32_type().const_int((-18i64) as u64, true)))
+            .unwrap();
         self.b.position_at_end(entry);
         self.abort_check();
         if let Body::Stmts(ss) = &pou.body {
@@ -2299,6 +2454,8 @@ pub fn emit_program<'ctx>(
         mir,
         abort_bb: None,
         overrun_bb: None,
+        panic_bb: None,
+        bounds_bb: None,
         loop_stack: Vec::new(),
         ctx_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
         this_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),

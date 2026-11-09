@@ -34,6 +34,12 @@ pub enum Type {
     WStr {
         cap: u16,
     },
+    /// REFERENCE TO T: blob = u64 byte offset into the same blob
+    /// (u64::MAX = null). Pointer-free by construction — the offset
+    /// survives relocation but not a layout change (see migrate).
+    Ref {
+        to: Box<Type>,
+    },
     Array {
         elem: Box<Type>,
         lo: i64,
@@ -63,6 +69,7 @@ impl Type {
             Type::Time => 8,
             Type::Str { cap } => align2(1 + *cap as u64),
             Type::WStr { cap } => align2(2 + 2 * *cap as u64),
+            Type::Ref { .. } => 8,
             Type::Array { elem, lo, hi } => elem.size() * (*hi - *lo + 1).max(0) as u64,
             Type::Struct { fields, .. } => {
                 let mut sz = 0u64;
@@ -81,6 +88,7 @@ impl Type {
             Type::Int { bits, .. } | Type::Real { bits } => ((*bits as u64) / 8).min(8),
             Type::Time => 8,
             Type::Str { .. } | Type::WStr { .. } => 2,
+            Type::Ref { .. } => 8,
             Type::Array { elem, .. } => elem.align(),
             Type::Struct { fields, .. } => fields.iter().map(|(_, t)| t.align()).max().unwrap_or(1),
             Type::Enum { .. } => 4,
@@ -229,6 +237,8 @@ pub enum Ref {
     Field(Box<Ref>, String),
     /// array element (`arr[i]`)
     Index(Box<Ref>, Box<Expr>),
+    /// dereference a REF (`r^`, or auto-deref on read)
+    Deref(Box<Ref>),
 }
 
 #[derive(Debug, Clone)]
@@ -249,12 +259,24 @@ pub enum ExprKind {
         fun: String,
         args: Vec<(String, Expr)>,
     },
+    /// REF(x) / `&x`: the blob offset of an lvalue (type Ref)
+    RefTo {
+        r: Ref,
+    },
     /// explicit conversion inserted by sema — codegen never guesses
     Conv {
         to: Type,
         e: Box<Expr>,
     },
 }
+
+/// task return codes (mirror of tplc_abi.h TPLC_TASK_E_*)
+pub const TPLC_TASK_E_FAULT: i32 = -2;
+pub const TPLC_TASK_E_PANIC: i32 = -17;
+pub const TPLC_TASK_E_BOUNDS: i32 = -18;
+pub const TPLC_TASK_E_DIVZERO: i32 = -19;
+pub const TPLC_TASK_E_ABORTED: i32 = -22;
+pub const TPLC_TASK_E_OVERRUN: i32 = -23;
 
 #[derive(Debug, Clone)]
 pub enum Lit {

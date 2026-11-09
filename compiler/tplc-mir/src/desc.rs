@@ -98,6 +98,7 @@ fn tag_of(ty: &Type) -> u8 {
         Type::Time => 11,
         Type::Str { .. } => 15,
         Type::WStr { .. } => 16, /* UTF-16 wide string */
+        Type::Ref { .. } => 17, /* REFERENCE TO: u64 blob offset */
         Type::Array { .. } => 18,
         Type::Struct { .. } => 19,
         Type::Enum { .. } => 20,

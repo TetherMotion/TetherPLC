@@ -169,6 +169,15 @@ impl Ctx {
                 auto_deref: Some(plc_ast::ast::AutoDerefType::Alias),
                 ..
             } => self.ty_of(referenced_type, at),
+            /* REFERENCE TO T / REF_TO T: a blob-offset reference
+               (pointer-free by construction) */
+            DataType::PointerType {
+                referenced_type,
+                auto_deref: Some(plc_ast::ast::AutoDerefType::Reference),
+                ..
+            } => mir::Type::Ref {
+                to: Box::new(self.ty_of(referenced_type, at)),
+            },
             _ => {
                 self.err_at(
                     codes::UNSUPPORTED,
@@ -202,6 +211,13 @@ impl Ctx {
                         }
                     }
                 }
+                ReferenceAccess::Deref => match base {
+                    Some(b) => mir::Ref::Deref(Box::new(self.ref_of(b))),
+                    None => {
+                        self.err(codes::UNSUPPORTED, "deref without base", n);
+                        mir::Ref::Var("?".into())
+                    }
+                },
                 _ => {
                     self.err(codes::UNSUPPORTED, "unsupported ref access", n);
                     mir::Ref::Var("?".into())
@@ -242,6 +258,16 @@ impl Ctx {
                 // explicit Conv nodes are inserted by sema (P1-03)
                 return self.expr(inner);
             }
+            AstStatement::ReferenceExpr(ReferenceExpr {
+                access: ReferenceAccess::Address,
+                base,
+            }) => match base {
+                Some(b) => mir::ExprKind::RefTo { r: self.ref_of(b) },
+                None => {
+                    self.err(codes::UNSUPPORTED, "address-of without base", n);
+                    mir::ExprKind::Lit(mir::Lit::Int(0))
+                }
+            },
             AstStatement::Identifier(_) | AstStatement::ReferenceExpr(_) => {
                 mir::ExprKind::Ref(self.ref_of(n))
             }
@@ -319,6 +345,19 @@ impl Ctx {
             AstStatement::Assignment(a) => mir::StmtKind::Assign {
                 lhs: self.ref_of(&a.left),
                 rhs: self.expr(&a.right),
+            },
+            /* `r REF= x`: bind the reference to x's blob offset */
+            AstStatement::RefAssignment(a) => mir::StmtKind::Assign {
+                lhs: self.ref_of(&a.left),
+                rhs: mir::Expr {
+                    ty: mir::Type::Ref {
+                        to: Box::new(mir::Type::Bool),
+                    },
+                    kind: mir::ExprKind::RefTo {
+                        r: self.ref_of(&a.right),
+                    },
+                    prov: self.prov(n),
+                },
             },
             AstStatement::CallStatement(c) => mir::StmtKind::Call {
                 inst: self.ref_of(&c.operator),

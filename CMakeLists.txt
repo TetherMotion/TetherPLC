@@ -427,6 +427,14 @@ if(NOT CMAKE_CROSSCOMPILING)
 
   # flight recorder: an induced task fault freezes the ring and the
   # pre-fault channel scans survive for TRACE_READ (doc 12 §10.5)
+  # REFERENCE TO: online change must warn and reset, never copy
+  add_test(NAME ref_migration
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/online_change/ref_migration.sh)
+  set_tests_properties(ref_migration PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60 RESOURCE_LOCK plc_scan)
+
   add_test(NAME flight_recorder
     COMMAND ${CMAKE_COMMAND} -E env
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"

@@ -788,16 +788,31 @@ fn cmd_build(args: &[String]) -> ExitCode {
         let plan = mig::diff(&old_side, &new_side, &renames, allow_retain_loss);
         // report every rule; denies are compile errors
         let mut deny_errs = 0;
+        let mut ref_resets = 0usize;
         for r in &plan.rules {
             match r {
                 mig::Rule::Deny { reason, detail, .. } => {
                     deny_errs += 1;
                     eprintln!("error[CHANGE-DENY{reason}]: {detail}");
                 }
-                mig::Rule::Dropped { name, retain, .. } => eprintln!(
-                    "note: field {name} dropped{}",
-                    if *retain { " (retain value lost)" } else { "" }
-                ),
+                mig::Rule::Dropped {
+                    name,
+                    retain,
+                    ref_reset,
+                    ..
+                } => {
+                    if *ref_reset {
+                        ref_resets += 1;
+                        eprintln!(
+                            "warning: online change: reference field                              {name} will be reset to null — references                              do not survive a layout change"
+                        );
+                    } else {
+                        eprintln!(
+                            "note: field {name} dropped{}",
+                            if *retain { " (retain value lost)" } else { "" }
+                        )
+                    }
+                }
                 mig::Rule::Alias {
                     old_name, new_name, ..
                 } => {
@@ -805,6 +820,13 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 }
                 _ => {}
             }
+        }
+        if ref_resets > 0 {
+            eprintln!(
+                "warning: online change cannot preserve references — \
+                 {ref_resets} reference field(s) reset to null; \
+                 re-arm them in the program after the swap"
+            );
         }
         if plan.deny || deny_errs > 0 {
             if json_mode {
@@ -871,14 +893,18 @@ fn cmd_build(args: &[String]) -> ExitCode {
                     aux: 0,
                 },
                 mig::Rule::Dropped {
-                    old_field, retain, ..
+                    old_field,
+                    retain,
+                    ref_reset,
+                    ..
                 } => tplc_pkg::sections::MigdRule {
                     kind: 3,
                     severity: 1,
                     transform_id: 0,
                     old_field: *old_field,
                     new_field: u32::MAX,
-                    aux: *retain as u32,
+                    /* bit0 retain-lost, bit1 reference reset */
+                    aux: (*retain as u32) | ((*ref_reset as u32) << 1),
                 },
                 mig::Rule::Alias {
                     old_field,
@@ -1331,6 +1357,11 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
             let mut rt = Rt::new(blob, layout, &out.module, 0);
             rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
             rt.cycle = ci as u64;
+            /* declaration initializers run once at program start, as
+               tplc_init does on the compiled path */
+            if ci == 0 {
+                rt.run_inits(ctx);
+            }
             for b in &out.io_bindings {
                 if b.at.region == AtRegion::I {
                     let val = img_get(&img_in, b);
@@ -1417,6 +1448,11 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
             let mut rt = Rt::new(blob, layout, &out.module, 0);
             rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
             rt.cycle = ci as u64;
+            /* declaration initializers run once at program start, as
+               tplc_init does on the compiled path */
+            if ci == 0 {
+                rt.run_inits(ctx);
+            }
             for b in &out.io_bindings {
                 if b.at.region == AtRegion::I {
                     let val = img_get(&img_in, b);

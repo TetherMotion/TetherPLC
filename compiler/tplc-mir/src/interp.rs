@@ -24,6 +24,8 @@ pub enum Value {
     Str(Vec<u8>),
     /// wide string: UTF-16 code units
     WStr(Vec<u16>),
+    /// reference: blob byte offset (u64::MAX = null)
+    Ref(u64),
 }
 
 impl Value {
@@ -37,7 +39,7 @@ impl Value {
             Value::F(v) => *v as i64,
             Value::Time(v) => *v,
             Value::Bool(v) => *v as i64,
-            Value::Str(_) | Value::WStr(_) => 0,
+            Value::Str(_) | Value::WStr(_) | Value::Ref(_) => 0,
         }
     }
     pub fn as_f64(&self) -> f64 {
@@ -90,6 +92,9 @@ pub struct Rt<'a> {
     pub cycle: u64,
     pub abort_flag: Option<&'a dyn Fn() -> bool>,
     scratch: Vec<u8>,
+    /// latched runtime fault (null/OOB reference deref); exec turns
+    /// it into Flow::Abort so the sim faults like the runtime does
+    fault: Option<i32>,
 }
 
 impl<'a> Rt<'a> {
@@ -102,6 +107,7 @@ impl<'a> Rt<'a> {
             cycle: 0,
             abort_flag: None,
             scratch: Vec::new(),
+            fault: None,
         }
     }
 
@@ -149,6 +155,9 @@ impl<'a> Rt<'a> {
             Type::Str { cap } => {
                 let len = (b[0] as usize).min(*cap as usize);
                 Value::Str(b[1..1 + len].to_vec())
+            }
+            Type::Ref { .. } => {
+                Value::Ref(u64::from_le_bytes(b[..8].try_into().unwrap()))
             }
             Type::WStr { cap } => {
                 let len = (u16::from_le_bytes([b[0], b[1]]) as usize)
@@ -224,6 +233,9 @@ impl<'a> Rt<'a> {
             (Type::Time, Value::Time(x)) | (Type::Time, Value::I(x)) => {
                 b[..8].copy_from_slice(&x.to_le_bytes())
             }
+            (Type::Ref { .. }, Value::Ref(o)) => {
+                b[..8].copy_from_slice(&o.to_le_bytes());
+            }
             (Type::Str { cap }, Value::Str(s)) => {
                 let n = (*cap as usize).min(s.len());
                 b[0] = n as u8;
@@ -243,6 +255,22 @@ impl<'a> Rt<'a> {
             }
             (Type::Enum { .. }, Value::I(x)) => b[..4].copy_from_slice(&(*x as i32).to_le_bytes()),
             _ => {}
+        }
+    }
+
+    /// Apply declaration initializers (`x : DINT := 42`) to the blob —
+    /// the compiled path runs these in `tplc_init`; the interpreter
+    /// must do the same or L1 diverges from L2 on any initialized var.
+    pub fn run_inits(&mut self, ctx: &Ctx) {
+        for p in &self.module.pous {
+            for v in &p.iface {
+                let Some(init) = &v.init else { continue };
+                let Some((off, ty)) = ctx.get(v.name.as_str()).cloned() else {
+                    continue;
+                };
+                let val = self.eval(ctx, init);
+                self.wr(off, &ty, &val);
+            }
         }
     }
 
@@ -279,6 +307,25 @@ impl<'a> Rt<'a> {
 
     fn resolve(&mut self, ctx: &Ctx, r: &Ref) -> (u64, Type) {
         match r {
+            Ref::Deref(inner) => {
+                let (slot, ty) = self.resolve(ctx, inner);
+                let to = match &ty {
+                    Type::Ref { to } => (**to).clone(),
+                    _ => Type::Bool,
+                };
+                let off = match self.rd(slot, &Type::Ref {
+                    to: Box::new(to.clone()),
+                }) {
+                    Value::Ref(o) => o,
+                    _ => u64::MAX,
+                };
+                if off == u64::MAX {
+                    self.fault = Some(TPLC_TASK_E_PANIC);
+                } else if off + to.size() > self.blob.len() as u64 {
+                    self.fault = Some(TPLC_TASK_E_BOUNDS);
+                }
+                (if off == u64::MAX { 0 } else { off }, to)
+            }
             Ref::Var(name) => ctx
                 .get(name.as_str())
                 .map(|(o, t)| (*o, t.clone()))
@@ -409,6 +456,10 @@ impl<'a> Rt<'a> {
                     Type::Time => Value::Time(v.as_i64()),
                     _ => v,
                 }
+            }
+            ExprKind::RefTo { r } => {
+                let (off, _) = self.resolve(ctx, r);
+                Value::Ref(off)
             }
             ExprKind::Call { fun, args } => self.fn_call(ctx, fun, args),
         }
@@ -572,6 +623,14 @@ impl<'a> Rt<'a> {
                 };
                 Value::I(pos as i64)
             }
+            BuiltinFn::IsValidRef => {
+                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::Ref(u64::MAX));
+                Value::Bool(match v {
+                    Value::Ref(o) => o != u64::MAX,
+                    _ => false,
+                })
+            }
             BuiltinFn::Trunc => {
                 let v = args.first().map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
@@ -659,6 +718,14 @@ impl<'a> Rt<'a> {
 
     // ---- statements ----
     pub fn exec(&mut self, ctx: &Ctx, s: &Stmt) -> Flow {
+        let f = self.exec_inner(ctx, s);
+        match self.fault {
+            Some(code) => Flow::Abort(code),
+            None => f,
+        }
+    }
+
+    fn exec_inner(&mut self, ctx: &Ctx, s: &Stmt) -> Flow {
         use StmtKind::*;
         match &s.kind {
             Assign { lhs, rhs } => {
