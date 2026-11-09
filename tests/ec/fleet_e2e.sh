@@ -139,16 +139,18 @@ ao_c2_3 := 7;
 END_PROGRAM
 EOF
 cat > $WORK/map.txt <<'EOF'
-# fleet TxPDO (.tx) -> %I, %Q -> fleet RxPDO (.rx)
+# fleet TxPDO -> %I, %Q -> fleet RxPDO.  pdo= channels are validated
+# against the pump's <simdir>/.bus catalog (TPLC_E_MAP_PDO) and resolve
+# to the same <endpoint>.tx/.rx files the pump writes/reads.
 image in 18 out 18
-in  off=0  size=1 key=el1004.c1.tx
-in  off=1  size=1 key=el1004.c2.tx
-in  off=2  size=8 key=el3104.c1.tx
-in  off=10 size=8 key=el3104.c2.tx
-out off=0  size=1 key=el2004.c1.rx safe=zero
-out off=1  size=1 key=el2004.c2.rx safe=zero
-out off=2  size=8 key=el4104.c1.rx safe=zero
-out off=10 size=8 key=el4104.c2.rx safe=zero
+in  off=0  size=1 pdo=el1004.c1
+in  off=1  size=1 pdo=el1004.c2
+in  off=2  size=8 pdo=el3104.c1
+in  off=10 size=8 pdo=el3104.c2
+out off=0  size=1 pdo=el2004.c1 safe=zero
+out off=1  size=1 pdo=el2004.c2 safe=zero
+out off=2  size=8 pdo=el4104.c1 safe=zero
+out off=10 size=8 pdo=el4104.c2 safe=zero
 EOF
 
 $TPLCC build $WORK/ecfleet.st -o $WORK/ecfleet.tplc >/dev/null \

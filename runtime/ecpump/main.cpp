@@ -170,6 +170,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "--simdir required, --hz must be > 0\n");
         return 2;
     }
+    /* the pump owns the directory it publishes into — the bridge only
+       mkdirs lazily at MapRunner construction, which is too late for
+       the one-shot .bus catalog write below                      */
+    std::error_code ec;
+    std::filesystem::create_directories(simdir, ec);
+    if (ec) {
+        std::fprintf(stderr, "tplc-ec-pump: simdir %s: %s\n",
+                     simdir.c_str(), ec.message().c_str());
+        return 1;
+    }
 
     signal(SIGINT, onSigint);
     signal(SIGTERM, onSigint);
@@ -234,6 +244,24 @@ int main(int argc, char** argv) {
                 return 1;
             }
             links.push_back({inf.key, tx, e, size});
+        }
+    }
+
+    // Bus catalog for map validation (TPLC_E_MAP_PDO): the bridge's
+    // pdo= channels are checked against <simdir>/.bus.  Static for the
+    // life of the pump — the fleet topology does not change.
+    {
+        std::string cat = "# tplc-ec-pump bus catalog v1\n";
+        for (const auto& l : links) {
+            cat += l.txpdo ? "tx " : "rx ";
+            cat += l.key + " " + std::to_string(l.size) + "\n";
+        }
+        const auto busPath = std::filesystem::path(simdir) / ".bus";
+        const auto tmp = busPath.string() + ".tmp";
+        if (FILE* f = std::fopen(tmp.c_str(), "wb")) {
+            std::fwrite(cat.data(), 1, cat.size(), f);
+            std::fclose(f);
+            std::rename(tmp.c_str(), busPath.c_str());
         }
     }
 

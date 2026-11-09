@@ -67,11 +67,13 @@ Result<IoMap> parse_map(const std::string& text) {
             return bad("expected image|in|out|bind|safety");
         MapChannel c;
         c.is_input = t[0] == "in";
+        bool saw_key = false, saw_pdo = false;
         for (size_t k = 1; k < t.size(); k++) {
             std::string v;
             if      (tok(t[k], "off=", v))  c.image_off = (uint32_t)strtoul(v.c_str(),0,0);
             else if (tok(t[k], "size=", v)) c.size      = (uint32_t)strtoul(v.c_str(),0,0);
-            else if (tok(t[k], "key=", v))  c.key = v;
+            else if (tok(t[k], "key=", v))  { c.key = v; saw_key = true; }
+            else if (tok(t[k], "pdo=", v))  { c.pdo = v; saw_pdo = true; }
             else if (tok(t[k], "type=", v)) c.type = v;
             else if (tok(t[k], "safe=", v)) {
                 c.has_safe = true;
@@ -82,6 +84,14 @@ Result<IoMap> parse_map(const std::string& text) {
                     c.safe_value = strtoull(t[++k].c_str(), 0, 0);
                 }
             }
+        }
+        if (saw_key && saw_pdo)
+            return bad("channel takes key= or pdo=, not both");
+        if (saw_pdo) {
+            /* bus channel: the simdir file is the pump's PDO image —
+               TxPDO (.tx) feeds %I, RxPDO (.rx) is fed by %Q        */
+            if (c.pdo.empty()) return bad("pdo= needs an endpoint name");
+            c.key = c.pdo + (c.is_input ? ".tx" : ".rx");
         }
         if (c.size == 0 || c.key.empty())
             return bad("channel needs size>0 and key");
@@ -120,7 +130,39 @@ static bool at_offset(const std::string& at, char& space,
     return true;
 }
 
-std::vector<MapViolation> validate_map(const IoMap& m) {
+Result<BusCatalog> parse_bus_catalog(const std::string& text) {
+    BusCatalog cat;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t eol = text.find('\n', pos);
+        if (eol == std::string::npos) eol = text.size();
+        std::string line = text.substr(pos, eol - pos);
+        pos = eol + 1;
+        size_t h = line.find('#');
+        if (h != std::string::npos) line.resize(h);
+        std::vector<std::string> t;
+        size_t i = 0;
+        while (i < line.size()) {
+            while (i < line.size() && isspace((unsigned char)line[i])) i++;
+            size_t b = i;
+            while (i < line.size() && !isspace((unsigned char)line[i])) i++;
+            if (b < i) t.push_back(line.substr(b, i - b));
+        }
+        if (t.empty()) continue;
+        if ((t[0] != "tx" && t[0] != "rx") || t.size() != 3)
+            return Result<BusCatalog>::Err(Status::Err(
+                -1, "bus catalog: expected 'tx|rx <endpoint> <size>'"));
+        PdoEndpoint e;
+        e.is_tx = t[0] == "tx";
+        e.key   = t[1];
+        e.size  = (uint32_t)strtoul(t[2].c_str(), 0, 0);
+        cat.endpoints.push_back(std::move(e));
+    }
+    return Result<BusCatalog>::Ok(std::move(cat));
+}
+
+std::vector<MapViolation> validate_map(const IoMap& m,
+                                       const BusCatalog* bus) {
     std::vector<MapViolation> v;
     auto add = [&](int code, const char* rule,
                    const std::string& detail) {
@@ -153,6 +195,25 @@ std::vector<MapViolation> validate_map(const IoMap& m) {
                     add(TPLC_E_MAP_OWNER, "MAP_OWNER",
                         "%Q range of " + c.key +
                         " overlaps another writer");
+        /* pdo= channels must name an endpoint that exists on the live
+           bus with the matching direction and payload size — the pump's
+           .bus catalog is the authority (TPLC_E_MAP_PDO).            */
+        if (!c.pdo.empty()) {
+            const PdoEndpoint* ep = nullptr;
+            if (bus)
+                for (auto& e : bus->endpoints)
+                    if (e.key == c.pdo && e.is_tx == c.is_input)
+                        ep = &e;
+            if (!ep)
+                add(TPLC_E_MAP_PDO, "MAP_PDO",
+                    "channel " + c.key + " pdo endpoint " + c.pdo +
+                    (bus ? " not on bus" : " has no bus catalog"));
+            else if (ep->size != c.size)
+                add(TPLC_E_MAP_PDO, "MAP_PDO",
+                    "channel " + c.key + " size " +
+                    std::to_string(c.size) + " != pdo " + c.pdo +
+                    " size " + std::to_string(ep->size));
+        }
     }
     for (auto& b : m.bindings) {
         char sp = 0;

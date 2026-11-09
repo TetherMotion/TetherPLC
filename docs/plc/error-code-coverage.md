@@ -29,11 +29,11 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 64 emitted by runtime/tools | 72 test-hit (~96%)
+75 declared codes | 65 emitted by runtime/tools | 73 test-hit (~97%)
 
 Every code with a real emit site is covered except race-only
 `IMG_EPOCH` and saturating `DIVZERO`; the remainder are
-declared-but-unemitted reservations (`MAP_PDO`, `MAP_EPOCH`).
+declared-but-unemitted reservations (`MAP_EPOCH`).
 
 ## Induced-error conformance test
 
@@ -92,10 +92,12 @@ or the wire reply:
   `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
   MGMT codes are now emitted by the object dictionary, covered by
   `od_surface`.)
-- `TPLC_E_MAP_PDO`, `MAP_EPOCH` (-604/-609) — declared in the
-  bridge validator's block for checks that need context
-  `validate_map` does not have: PDO existence against the live bus
-  config, and the `map.hash` skew check (canonical-hash field not
-  yet in the map format). `MAP_DIR` (-601) is emitted: a `bind`
-  whose AT space contradicts the channel direction (%I↔in,
-  %Q↔out, %M has no channel) is a violation.
+- `TPLC_E_MAP_EPOCH` (-609) — declared in the bridge validator's
+  block for the `map.hash` skew check; the canonical-hash field is
+  not yet in the map format.
+- (`TPLC_E_MAP_PDO` -604 is now emitted: `pdo=` map channels are
+  validated against the bus catalog the EtherCAT pump publishes as
+  `<simdir>/.bus` — unknown endpoint, wrong direction, size
+  mismatch, or missing catalog are all violations. `MAP_DIR` -601 is
+  emitted: a `bind` whose AT space contradicts the channel direction
+  (%I↔in, %Q↔out, %M has no channel) is a violation.)

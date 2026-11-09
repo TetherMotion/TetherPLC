@@ -141,7 +141,23 @@ int main(int argc, char** argv) {
         return 1;
     }
     tplc::IoMap map = std::move(mres.value);
-    auto viol = tplc::validate_map(map);
+
+    /* pdo= channels validate against the live bus catalog the pump
+       publishes as <simdir>/.bus; absent file = no bus config, so any
+       pdo channel violates MAP_PDO while plain key= maps still pass */
+    tplc::BusCatalog bus;
+    const tplc::BusCatalog* busp = nullptr;
+    {
+        std::ifstream bf(sim_dir + "/.bus");
+        if (bf) {
+            std::stringstream bs; bs << bf.rdbuf();
+            auto bres = tplc::parse_bus_catalog(bs.str());
+            if (bres.ok()) { bus = std::move(bres.value); busp = &bus; }
+            else fprintf(stderr, "bridge: .bus catalog ignored: %s\n",
+                         bres.st.msg.c_str());
+        }
+    }
+    auto viol = tplc::validate_map(map, busp);
     if (!viol.empty()) {
         for (auto& x : viol)
             fprintf(stderr, "map: %s (%d): %s\n",

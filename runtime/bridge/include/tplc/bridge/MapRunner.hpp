@@ -23,6 +23,7 @@ struct MapChannel {
     uint32_t    image_off = 0;
     uint32_t    size = 0;
     std::string key;                  /* sim transport: file name   */
+    std::string pdo;                  /* bus endpoint name (pdo=)   */
     std::string type;                 /* image view type (bool/u8…) */
     SafePolicy  safe = SAFE_ZERO;
     uint64_t    safe_value = 0;       /* SAFE_DEFINED byte pattern  */
@@ -63,13 +64,37 @@ constexpr int TPLC_E_MAP_BIND   = -607;
 constexpr int TPLC_E_MAP_SAFE   = -608;
 constexpr int TPLC_E_MAP_EPOCH  = -609;
 
-std::vector<MapViolation> validate_map(const IoMap& m);
+/* Bus catalog: the live bus configuration a `pdo=` channel is
+   validated against (TPLC_E_MAP_PDO).  Published by the master-side
+   pump as <simdir>/.bus:
+       tx <endpoint> <size>     TxPDO, slave -> master (map `in`)
+       rx <endpoint> <size>     RxPDO, master -> slave (map `out`)
+   <endpoint> is the pump's PDO key (e.g. "el1004.c1"); a map channel
+   `in … pdo=el1004.c1` resolves to file key "el1004.c1.tx".          */
+struct PdoEndpoint {
+    bool        is_tx;                /* true: TxPDO (in), false: Rx */
+    std::string key;
+    uint32_t    size = 0;
+};
+
+struct BusCatalog {
+    std::vector<PdoEndpoint> endpoints;
+};
+
+Result<BusCatalog> parse_bus_catalog(const std::string& text);
+
+/* @p bus may be nullptr: pdo= channels then always violate MAP_PDO
+   (no live bus config to validate against).                        */
+std::vector<MapViolation> validate_map(const IoMap& m,
+                                       const BusCatalog* bus = nullptr);
 
 /* line format (v1 dev map):
      image in <in_size> out <out_size>
      in  off=<n> size=<n> key=<name> [safe=zero|last|defined <hex>]
      out off=<n> size=<n> key=<name> [safe=…]
-   '#' comments; %Q writer overlap + range checked (doc 09 §2.2).   */
+     in|out off=<n> size=<n> pdo=<endpoint> [safe=…]   (bus channel)
+   '#' comments; %Q writer overlap + range checked (doc 09 §2.2).
+   pdo= and key= are mutually exclusive on a channel.               */
 Result<IoMap> parse_map(const std::string& text);
 
 class MapRunner {

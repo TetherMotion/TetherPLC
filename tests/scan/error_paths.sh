@@ -281,6 +281,57 @@ if [ -x "$BUILD/tether-plc-bridge" ]; then
             && ok "TPLC_E_MAP_$1 validation finding" \
             || bad "MAP_$1: $out"
     done
+
+    # MAP_PDO (-604): pdo= channels validate against <simdir>/.bus —
+    # the catalog the master pump publishes.  Missing catalog, missing
+    # endpoint, wrong direction, and size mismatch all violate.
+    cat > "$WORK/pdo.map" <<'EOF'
+image in 4 out 4
+in  off=0 size=1 pdo=el1004.c1
+out off=0 size=1 pdo=el2004.c1 safe=zero
+EOF
+    SIMPDO=$WORK/sim_pdo; mkdir -p "$SIMPDO"
+    out=$("$BUILD"/tether-plc-bridge --image "$IMG" --map "$WORK/pdo.map" \
+          --simdir "$SIMPDO" --no-plc 2>&1)
+    echo "$out" | grep -q "MAP_PDO (-604)" \
+        && ok "TPLC_E_MAP_PDO without bus catalog" \
+        || bad "MAP_PDO no-catalog: $out"
+
+    printf 'tx el1004.c1 1\nrx el2004.c1 1\n' > "$SIMPDO/.bus"
+    # valid catalog → no MAP_PDO.  The bridge creates + unlinks its own
+    # image shm on shutdown, so it gets a dedicated path — reusing $IMG
+    # would delete the image every later module test attaches to.
+    out=$(timeout 2 "$BUILD"/tether-plc-bridge --image /tplc_ep_bus \
+          --map "$WORK/pdo.map" --simdir "$SIMPDO" --no-plc 2>&1 || true)
+    echo "$out" | grep -q "MAP_PDO" \
+        && bad "MAP_PDO false positive on valid catalog: $out" \
+        || { echo "$out" | grep -q "bridge: image" \
+             && ok "MAP_PDO clean map against catalog" \
+             || bad "MAP_PDO clean map never reached run: $out"; }
+
+    # endpoint absent from catalog
+    printf 'tx el1004.c2 1\nrx el2004.c1 1\n' > "$SIMPDO/.bus"
+    out=$("$BUILD"/tether-plc-bridge --image "$IMG" --map "$WORK/pdo.map" \
+          --simdir "$SIMPDO" --no-plc 2>&1)
+    echo "$out" | grep -q "MAP_PDO (-604)" \
+        && ok "TPLC_E_MAP_PDO endpoint not on bus" \
+        || bad "MAP_PDO missing-endpoint: $out"
+
+    # direction mismatch: el1004.c1 exists but only as rx (master->slave)
+    printf 'rx el1004.c1 1\nrx el2004.c1 1\n' > "$SIMPDO/.bus"
+    out=$("$BUILD"/tether-plc-bridge --image "$IMG" --map "$WORK/pdo.map" \
+          --simdir "$SIMPDO" --no-plc 2>&1)
+    echo "$out" | grep -q "MAP_PDO (-604)" \
+        && ok "TPLC_E_MAP_PDO direction mismatch" \
+        || bad "MAP_PDO direction: $out"
+
+    # size mismatch
+    printf 'tx el1004.c1 8\nrx el2004.c1 1\n' > "$SIMPDO/.bus"
+    out=$("$BUILD"/tether-plc-bridge --image "$IMG" --map "$WORK/pdo.map" \
+          --simdir "$SIMPDO" --no-plc 2>&1)
+    echo "$out" | grep -q "MAP_PDO (-604)" \
+        && ok "TPLC_E_MAP_PDO size mismatch" \
+        || bad "MAP_PDO size: $out"
 fi
 
 # ============ module loader errors ============

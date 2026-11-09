@@ -155,8 +155,17 @@ sibling Tether checkout (`examples/beckhoff_slave_chain` +
   EL2004/EL3104/EL4104 per coupler), verifies SII identities, then
   pumps at `--hz`: `<key>.rx` file → RxPDO entry storage →
   `exchangeAll()` → TxPDO entry storage → `<key>.tx` file (atomic
-  rename). The bridge's `in`/`out` channels key on the same filenames,
-  e.g. `in off=0 size=1 key=el1004.c1.tx`.
+  rename). The bridge's `in`/`out` channels key on the same filenames —
+  either explicitly (`in off=0 size=1 key=el1004.c1.tx`) or via the
+  bus-binding form `in off=0 size=1 pdo=el1004.c1`, which resolves to
+  the same `.tx`/`.rx` file pair.
+- After bring-up the pump publishes `<simdir>/.bus`, a catalog of the
+  live PDO endpoints (`tx <key> <size>` slave→master, `rx <key> <size>`
+  master→slave). The bridge loads it and `validate_map` checks every
+  `pdo=` channel against it — unknown endpoint, wrong direction, or
+  size mismatch is `TPLC_E_MAP_PDO` (-604); a `pdo=` channel with no
+  catalog at all violates too. Plain `key=` maps need no bus and are
+  unaffected.
 - Exposes the master-side PDO views over tether_io (`--io-port`):
   signals `<key>.di<g>`/`.ai<c>` (TxPDO, slave→master) and
   `.do<g>`/`.ao<c>` (RxPDO, master→slave) plus `link`/`cycles`/
@@ -200,14 +209,19 @@ CAP_NET_ADMIN is unavailable).
 
 - Map schema v1: `image`/`in`/`out` channels + `type=` (bool/u8…f64),
   `safe=` policy, `bind <at> <key|*>` program bindings, and `safety
-  <key>` endpoint classification.
+  <key>` endpoint classification. A channel names its transport either
+  with `key=<file>` (any simdir file) or `pdo=<endpoint>` (a live bus
+  PDO, mutually exclusive with `key=`); `pdo=` resolves to
+  `<endpoint>.tx` for `in` and `<endpoint>.rx` for `out`.
 - `validate_map` reports every violation with a stable
   `TPLC_E_MAP_*` code: RANGE (channel outside image), OWNER (%Q
   overlap), TYPE (view wider than range), SAFE (missing policy on a
   %Q channel), SAFETY (classified endpoint bound to %Q), AT (fixed
-  AT outside any channel), BIND (missing channel key). The bridge
-  refuses to start on any violation; parse is permissive so all
-  violations surface in one pass.
+  AT outside any channel), BIND (missing channel key), DIR (bind AT
+  space contradicts channel direction), PDO (`pdo=` endpoint absent
+  from the bus catalog, wrong direction, or size mismatch). The
+  bridge refuses to start on any violation; parse is permissive so
+  all violations surface in one pass.
 
 ## Online change (online-change.md)
 
