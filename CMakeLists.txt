@@ -173,9 +173,58 @@ if(EXISTS "${TETHER_DIR}/include/tether/io/Server.hpp" AND
   set_target_properties(tplc-io-probe PROPERTIES
     CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+  # generic tether_io client: list/get/set catalog entries on any
+  # tether_io TCP server (slave chain, ec-pump, tplc-io)
+  add_executable(tplc-io-cli runtime/tplc-io/cli.cpp)
+  target_link_libraries(tplc-io-cli PRIVATE tplc_tether_io)
+  target_include_directories(tplc-io-cli PRIVATE runtime/tplc-io)
+  set_target_properties(tplc-io-cli PROPERTIES
+    CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
   message(STATUS "tplc-io: tether_io provider enabled (TETHER_DIR=${TETHER_DIR})")
 else()
   message(STATUS "tplc-io: skipped (set TETHER_DIR to a Tether checkout)")
+endif()
+
+# ------------------------------------------------------------------ #
+# tplc-ec-pump: EtherCAT master pump bridging the emulated Beckhoff
+# fleet's PDO entries to the bridge simdir transport.  Includes the
+# fleet/master helpers from the sibling Tether checkout's examples/
+# and links its shared component libraries, so it needs a configured
+# Tether build tree (build/include + build/lib).
+# ------------------------------------------------------------------ #
+set(TETHER_BUILD_DIR "${TETHER_DIR}/build" CACHE PATH
+    "Tether build tree (for tplc-ec-pump)")
+set(_ec_pump_ok FALSE)
+if(TETHER_DIR AND IS_DIRECTORY "${TETHER_DIR}/examples/common" AND
+   EXISTS "${TETHER_BUILD_DIR}/include/tether/TetherConfig.hpp" AND
+   EXISTS "${TETHER_BUILD_DIR}/lib/libtether_ethercat_master_shared.so")
+  set(_ec_pump_ok TRUE)
+endif()
+if(_ec_pump_ok AND TARGET tplc_tether_io)
+  add_executable(tplc-ec-pump runtime/ecpump/main.cpp)
+  target_include_directories(tplc-ec-pump PRIVATE
+    ${TETHER_DIR}/include
+    ${TETHER_DIR}/include/tether
+    ${TETHER_DIR}/build/include
+    ${TETHER_DIR}/examples
+    ${TETHER_DIR}/dependencies/blake3/c
+    ${TETHER_DIR}/dependencies/libSLIPspeed/include
+    ${TETHER_DIR}/dependencies/atomic_queue/include
+    runtime/tplc-io)
+  target_link_libraries(tplc-ec-pump PRIVATE tplc_tether_io)
+  foreach(lib ethercat_master ethercat_common hal common)
+    target_link_libraries(tplc-ec-pump PRIVATE
+      ${TETHER_BUILD_DIR}/lib/libtether_${lib}_shared.so)
+  endforeach()
+  set_target_properties(tplc-ec-pump PROPERTIES
+    CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    BUILD_RPATH "${TETHER_BUILD_DIR}/lib")
+  message(STATUS "tplc-ec-pump: EtherCAT fleet pump enabled (TETHER_DIR=${TETHER_DIR})")
+elseif(TETHER_DIR)
+  message(STATUS "tplc-ec-pump: skipped (build Tether first or set TETHER_BUILD_DIR)")
 endif()
 
 # ------------------------------------------------------------------ #
@@ -541,6 +590,18 @@ if(NOT CMAKE_CROSSCOMPILING)
        python3 ${CMAKE_SOURCE_DIR}/tools/oracle-matiec/diff_fuzz.py")
   set_tests_properties(matiec_fuzz PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 900)
+
+  # EtherCAT fleet e2e: TetherPLC master + PLC against the emulated
+  # Beckhoff chain (sibling Tether beckhoff_slave_chain over UDP);
+  # Tether IO stimuli/observations on both endpoints
+  if(TARGET tplc-ec-pump AND TARGET tplc-io-cli)
+    add_test(NAME ec_fleet_e2e
+      COMMAND ${CMAKE_COMMAND} -E env
+        "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+        bash ${CMAKE_SOURCE_DIR}/tests/ec/fleet_e2e.sh)
+    set_tests_properties(ec_fleet_e2e PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 240 RESOURCE_LOCK plc_scan)
+  endif()
 
   # determinism contract (doc 14 §2): same input sequence twice must
   # give identical traces at both legs

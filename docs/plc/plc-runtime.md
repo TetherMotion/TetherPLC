@@ -138,6 +138,35 @@ driver process:
 - `plc_ok` uses `tplc_image_hb_stale` (a hb newer than `now` counts
   as fresh — unsigned-underflow bug fixed).
 
+## EtherCAT fleet integration (`runtime/ecpump`, `tplc-ec-pump`)
+
+`tplc-ec-pump` is a master-side transport for the bridge's `sim`
+simdir contract, proven against the emulated Beckhoff fleet in the
+sibling Tether checkout (`examples/beckhoff_slave_chain` +
+`examples/ethercat_fleet_probe` helpers):
+
+- Connects as EtherCAT master over `UdpEthercatLink` — UDP datagrams
+  carry whole Ethernet frames, so no CAP_NET_RAW/kernel interface is
+  needed. Runs `FleetMaster::bringUp` (discovery → mailbox → PREOP →
+  SM/PDO → SAFEOP → OP) against `fleetInfos()` (2×EK1100 + EL1004/
+  EL2004/EL3104/EL4104 per coupler), verifies SII identities, then
+  pumps at `--hz`: `<key>.rx` file → RxPDO entry storage →
+  `exchangeAll()` → TxPDO entry storage → `<key>.tx` file (atomic
+  rename). The bridge's `in`/`out` channels key on the same filenames,
+  e.g. `in off=0 size=1 key=el1004.c1.tx`.
+- Exposes the master-side PDO views over tether_io (`--io-port`):
+  signals `<key>.di<g>`/`.ai<c>` (TxPDO, slave→master) and
+  `.do<g>`/`.ao<c>` (RxPDO, master→slave) plus `link`/`cycles`/
+  `errors` — the TetherPLC-side observation surface.
+- `tplc-io-cli <port> list|get|set` is a generic tether_io client used
+  by the test to stimulate slave params and read both endpoints.
+
+`tests/ec/fleet_e2e.sh` (ctest `ec_fleet_e2e`, skips without a Tether
+build) runs the whole chain: slave-chain + pump + bridge/PLC, then
+drives DI/AI stimuli through the slave's IO params and asserts DO/AO
+responses on the slave's IO signals — digital pass-through across
+couplers and analog arithmetic (%I→PLC→%Q) on both EK1100 segments.
+
 ## Simulation (doc 14)
 
 - `sim_time_ns` in the image header (carved from reserved) — master
