@@ -376,6 +376,80 @@ impl<'a> Rt<'a> {
         self.wr(off, &ty, v);
     }
 
+    /// checked-arith: int Add/Sub/Mul must keep the mathematical
+    /// result inside the expr type's range — latches -20 on overflow
+    fn chk_int_op(&mut self, op: BinOp, l: &Value, r: &Value, ty: &Type) -> bool {
+        if !self.module.checked_arith || !matches!(ty, Type::Int { .. }) {
+            return false;
+        }
+        if matches!(l, Value::F(_) | Value::Time(_)) || matches!(r, Value::F(_) | Value::Time(_)) {
+            return false;
+        }
+        let (x, y) = (val_i128(l), val_i128(r));
+        let v = match op {
+            BinOp::Add => x.checked_add(y),
+            BinOp::Sub => x.checked_sub(y),
+            BinOp::Mul => x.checked_mul(y),
+            _ => return false,
+        };
+        let Some((lo, hi)) = int_range(ty) else {
+            return false;
+        };
+        match v {
+            Some(v) if v >= lo && v <= hi => false,
+            _ => {
+                self.fault = Some(TPLC_TASK_E_OVERFLOW);
+                true
+            }
+        }
+    }
+
+    /// checked-arith: signed INT_MIN / -1 overflows — latches -20
+    fn chk_div_overflow(&mut self, l: &Value, r: &Value, ty: &Type) -> bool {
+        if !self.module.checked_arith {
+            return false;
+        }
+        let Some((lo, _)) = int_range(ty) else {
+            return false;
+        };
+        if !matches!(ty, Type::Int { signed: true, .. })
+            || matches!(l, Value::F(_) | Value::Time(_))
+            || matches!(r, Value::F(_) | Value::Time(_))
+            || r.as_i64() != -1
+        {
+            return false;
+        }
+        if val_i128(l) == lo {
+            self.fault = Some(TPLC_TASK_E_OVERFLOW);
+            return true;
+        }
+        false
+    }
+
+    /// checked-arith: does `v` fall outside `to`'s representable
+    /// range? covers int→int (width/signedness) and real→int;
+    /// other conversion pairs never fault
+    fn conv_out_of_range(&self, v: &Value, to: &Type) -> bool {
+        let Type::Int { .. } = to else {
+            return false;
+        };
+        let Some((lo, hi)) = int_range(to) else {
+            return false;
+        };
+        match v {
+            Value::F(x) => {
+                /* f64 bounds [lo, hi+1): hi+1 is a power-of-two
+                boundary, exact in f64; NaN fails both compares */
+                !x.is_finite() || *x < lo as f64 || *x >= (hi + 1) as f64
+            }
+            Value::Str(_) | Value::WStr(_) | Value::Ref(_) => false,
+            _ => {
+                let x = val_i128(v);
+                x < lo || x > hi
+            }
+        }
+    }
+
     // ---- expressions ----
     pub fn eval(&mut self, ctx: &Ctx, e: &Expr) -> Value {
         match &e.kind {
@@ -395,7 +469,18 @@ impl<'a> Rt<'a> {
                 match op {
                     UnOp::Neg => match v {
                         Value::F(x) => Value::F(-x),
-                        x => Value::I(-x.as_i64()),
+                        x => {
+                            if self.module.checked_arith {
+                                if let Some((lo, hi)) = int_range(&e.ty) {
+                                    let nv = -val_i128(&x);
+                                    if nv < lo || nv > hi {
+                                        self.fault = Some(TPLC_TASK_E_OVERFLOW);
+                                        return Value::I(0);
+                                    }
+                                }
+                            }
+                            Value::I(x.as_i64().wrapping_neg())
+                        }
                     },
                     UnOp::Not => Value::Bool(!v.truthy()),
                 }
@@ -420,9 +505,17 @@ impl<'a> Rt<'a> {
                 let l = self.eval(ctx, a);
                 let r = self.eval(ctx, b);
                 match op {
-                    Add => arith(l, r, |x, y| x.wrapping_add(y), |x, y| x + y),
-                    Sub => arith(l, r, |x, y| x.wrapping_sub(y), |x, y| x - y),
-                    Mul => arith(l, r, |x, y| x.wrapping_mul(y), |x, y| x * y),
+                    Add | Sub | Mul => {
+                        if self.chk_int_op(*op, &l, &r, &e.ty) {
+                            Value::I(0)
+                        } else {
+                            match op {
+                                Add => arith(l, r, |x, y| x.wrapping_add(y), |x, y| x + y),
+                                Sub => arith(l, r, |x, y| x.wrapping_sub(y), |x, y| x - y),
+                                _ => arith(l, r, |x, y| x.wrapping_mul(y), |x, y| x * y),
+                            }
+                        }
+                    }
                     Div => {
                         if r.as_i64() == 0 && !matches!(l, Value::F(_)) && !matches!(r, Value::F(_))
                         {
@@ -433,8 +526,23 @@ impl<'a> Rt<'a> {
                                 self.fault = Some(TPLC_TASK_E_DIVZERO);
                             }
                             Value::I(0)
+                        } else if self.chk_div_overflow(&l, &r, &e.ty) {
+                            Value::I(0)
                         } else {
-                            arith(l, r, |x, y| x / y, |x, y| x / y)
+                            /* U/U divides in u64 — as_i64 would wrap
+                            large dividends (matches udiv codegen) */
+                            match (&l, &r) {
+                                (Value::U(a), Value::U(b))
+                                    if matches!(e.ty, Type::Int { signed: false, .. }) =>
+                                {
+                                    Value::U(if *op == Div {
+                                        a.wrapping_div(*b)
+                                    } else {
+                                        a.wrapping_rem(*b)
+                                    })
+                                }
+                                _ => arith(l, r, |x, y| x.wrapping_div(y), |x, y| x / y),
+                            }
                         }
                     }
                     Mod => {
@@ -446,8 +554,17 @@ impl<'a> Rt<'a> {
                                 self.fault = Some(TPLC_TASK_E_DIVZERO);
                             }
                             Value::I(0)
+                        } else if self.chk_div_overflow(&l, &r, &e.ty) {
+                            Value::I(0)
                         } else {
-                            arith(l, r, |x, y| x.wrapping_rem(y), |x, y| x % y)
+                            match (&l, &r) {
+                                (Value::U(a), Value::U(b))
+                                    if matches!(e.ty, Type::Int { signed: false, .. }) =>
+                                {
+                                    Value::U(a.wrapping_rem(*b))
+                                }
+                                _ => arith(l, r, |x, y| x.wrapping_rem(y), |x, y| x % y),
+                            }
                         }
                     }
                     Eq => Value::Bool(cmp(&l, &r) == 0),
@@ -467,6 +584,10 @@ impl<'a> Rt<'a> {
             }
             ExprKind::Conv { to, e } => {
                 let v = self.eval(ctx, e);
+                if self.module.checked_arith && self.conv_out_of_range(&v, to) {
+                    self.fault = Some(TPLC_TASK_E_RANGE);
+                    return Value::I(0);
+                }
                 match to {
                     Type::Bool => Value::Bool(v.truthy()),
                     Type::Int { signed: true, .. } => Value::I(v.as_i64()),
@@ -1124,6 +1245,34 @@ fn arith(l: Value, r: Value, fi: fn(i64, i64) -> i64, ff: fn(f64, f64) -> f64) -
         (Value::Time(_), _) | (_, Value::Time(_)) => Value::Time(fi(l.as_i64(), r.as_i64())),
         (Value::U(_), Value::U(_)) => Value::U(fi(l.as_i64(), r.as_i64()) as u64),
         _ => Value::I(fi(l.as_i64(), r.as_i64())),
+    }
+}
+
+/// inclusive (lo, hi) of an int type as i128 — checked-arith range
+/// tests compare mathematical results against this
+fn int_range(ty: &Type) -> Option<(i128, i128)> {
+    match ty {
+        Type::Int { signed: true, bits } => {
+            let b = *bits as u32;
+            Some((-(1i128 << (b - 1)), (1i128 << (b - 1)) - 1))
+        }
+        Type::Int {
+            signed: false,
+            bits,
+        } => Some((0, (1i128 << *bits as u32) - 1)),
+        _ => None,
+    }
+}
+
+/// mathematical value of an int-family Value widened to i128 —
+/// Value::U keeps its unsigned magnitude, the rest go through i64
+fn val_i128(v: &Value) -> i128 {
+    match v {
+        Value::U(x) => *x as i128,
+        Value::I(x) | Value::Time(x) => *x as i128,
+        Value::Bool(x) => *x as i128,
+        Value::F(x) => *x as i128,
+        _ => 0,
     }
 }
 

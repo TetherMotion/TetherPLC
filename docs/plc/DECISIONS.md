@@ -557,9 +557,33 @@ divisor to a provably nonzero value (`select(dz, 1, r)`), divides,
 then selects 0, defined on every input, no trap possible. Checked
 mode keeps real control flow (the zero arm exits the function, so no
 merge exists for instcombine to fold). `INT_MIN / -1` overflow remains
-UB on the hardware path in both modes, matching prior behavior.
+UB on the hardware path in saturating mode; checked mode guards it
+(see D-IMPL-34).
 Coverage: `saturating_arith_divmod_jit`, `checked_arith_divzero_jit`,
 and the `div.zero.sat`/`div.zero.checked` vectors through L1+L2.
+
+## D-IMPL-34: checked arithmetic emits OVERFLOW (-20) and RANGE (-21)
+
+**Decision:** `--checked-arith` extends past div-by-zero. Int
+`Add`/`Sub`/`Mul`/`Neg` results that leave the type's range latch
+`TPLC_TASK_E_OVERFLOW` (-20); signed `INT_MIN / -1` joins -20;
+conversions whose result cannot fit the target type (narrowing
+int, real→int, incl. NaN) latch `TPLC_TASK_E_RANGE` (-21).
+
+**Why:** the three codes were reserved together in the task-error
+block for exactly this mode; emitting only -19 left -20/-21 as dead
+reservations while real wraparound faults went unreported.
+
+**Consequence:** LLVM checked `bin`/`Un` use `llvm.*.with.overflow`
+intrinsics and checked `conv` emits an i128 range compare before the
+truncate/`fptosi`; saturating mode keeps wrapping `nsw`-free ops and
+truncating converts unchanged. The div path now selects a provably
+nonzero divisor *and* guards the `INT_MIN/-1` case in both modes,
+so saturating `INT_MIN / -1` yields `INT_MIN` instead of UB.
+Real→int checked mode compares against the int range as f64 before
+`fptosi`, which also removes the NaN/inf poison case. Coverage:
+`checked_arith_overflow_range_jit`/`saturating_arith_overflow_range_jit`
+and the `ovf.*`/`rng.*` vectors through L1+L2.
 
 ## D-IMPL-33 — multi-shadow: capped candidate slots with uuid/name selectors
 

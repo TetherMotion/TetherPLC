@@ -1828,3 +1828,290 @@ fn checked_arith_divzero_jit() {
 fn saturating_arith_divmod_jit() {
     divmod_scenario(false);
 }
+
+/// Checked-arithmetic overflow (-20) and conversion range (-21):
+/// int Add/Sub/Mul/Neg leaving the type's range, signed INT_MIN/-1
+/// division, and narrowing or real→int conversions fault the scan.
+/// Saturating mode wraps/truncates as before.
+fn ovf_rng_scenario(checked: bool) {
+    let i16 = Type::Int {
+        signed: true,
+        bits: 16,
+    };
+    let i32 = Type::Int {
+        signed: true,
+        bits: 32,
+    };
+    let f64t = Type::Real { bits: 64 };
+    let ev = |n: &str, t: Type| Expr {
+        ty: t.clone(),
+        kind: ExprKind::Ref(Ref::Var(n.into())),
+        prov: Prov::None,
+    };
+    let el = |v: i64, t: Type| Expr {
+        ty: t,
+        kind: ExprKind::Lit(Lit::Int(v)),
+        prov: Prov::None,
+    };
+    let conv = |to: Type, inner: Expr| Expr {
+        ty: to.clone(),
+        kind: ExprKind::Conv {
+            to,
+            e: Box::new(inner),
+        },
+        prov: Prov::None,
+    };
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+        checked_arith: checked,
+    };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "O".into(),
+        iface: vec![
+            vd("a", i32.clone(), None),
+            vd("b", i32.clone(), None),
+            vd("c", i32.clone(), None),
+            vd("d", i32.clone(), None),
+            vd("s", i16.clone(), None),
+            vd("n", i16.clone(), None),
+            vd("r", f64t.clone(), None),
+            vd("qa", i32.clone(), None),
+            vd("qb", i32.clone(), None),
+            vd("qd", i16.clone(), None),
+            vd("qe", i32.clone(), None),
+            vd("qf", i32.clone(), None),
+            vd("qg", i32.clone(), None),
+        ],
+        body: Body::Stmts(vec![
+            assign(
+                Ref::Var("qa".into()),
+                bin(
+                    BinOp::Add,
+                    ev("a", i32.clone()),
+                    ev("b", i32.clone()),
+                    i32.clone(),
+                ),
+            ),
+            assign(
+                Ref::Var("qb".into()),
+                conv(
+                    i32.clone(),
+                    bin(
+                        BinOp::Mul,
+                        ev("s", i16.clone()),
+                        el(1000, i16.clone()),
+                        i16.clone(),
+                    ),
+                ),
+            ),
+            assign(
+                Ref::Var("qd".into()),
+                Expr {
+                    ty: i16.clone(),
+                    kind: ExprKind::Un(UnOp::Neg, Box::new(ev("n", i16.clone()))),
+                    prov: Prov::None,
+                },
+            ),
+            assign(
+                Ref::Var("qe".into()),
+                conv(i32.clone(), conv(i16.clone(), ev("a", i32.clone()))),
+            ),
+            assign(
+                Ref::Var("qf".into()),
+                conv(i32.clone(), ev("r", f64t.clone())),
+            ),
+            assign(
+                Ref::Var("qg".into()),
+                bin(
+                    BinOp::Div,
+                    ev("c", i32.clone()),
+                    ev("d", i32.clone()),
+                    i32.clone(),
+                ),
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "ov",
+        [0x44; 16],
+        [0xDD; 32],
+        None,
+        10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        let bp = blob.as_mut_ptr();
+        macro_rules! p32 {
+            ($n:expr, $v:expr) => {
+                (bp.add(scope[$n].0 as usize) as *mut i32).write($v)
+            };
+        }
+        macro_rules! p16 {
+            ($n:expr, $v:expr) => {
+                (bp.add(scope[$n].0 as usize) as *mut i16).write($v)
+            };
+        }
+        macro_rules! pf {
+            ($n:expr, $v:expr) => {
+                (bp.add(scope[$n].0 as usize) as *mut f64).write($v)
+            };
+        }
+        macro_rules! g32 {
+            ($n:expr) => {
+                (bp.add(scope[$n].0 as usize) as *const i32).read()
+            };
+        }
+        macro_rules! g16 {
+            ($n:expr) => {
+                (bp.add(scope[$n].0 as usize) as *const i16).read()
+            };
+        }
+
+        p32!("a", 10);
+        p32!("b", 3);
+        p32!("c", 20);
+        p32!("d", 4);
+        p16!("s", 2);
+        p16!("n", 5);
+        pf!("r", 3.7);
+        assert_eq!(run(&mut tctx), 0);
+        assert_eq!(g32!("qa"), 13);
+        assert_eq!(g32!("qb"), 2000);
+        assert_eq!(g16!("qd"), -5);
+        assert_eq!(g32!("qe"), 10);
+        assert_eq!(g32!("qf"), 3);
+        assert_eq!(g32!("qg"), 5);
+
+        if checked {
+            /* DINT add overflow → -20; the store never lands */
+            p32!("a", 0x40000000);
+            p32!("b", 0x40000000);
+            assert_eq!(run(&mut tctx), -20, "i32 add overflow");
+            assert_eq!(g32!("qa"), 13, "faulted store kept old value");
+
+            /* INT mul overflow → -20 (earlier stmts still ran) */
+            p32!("a", 10);
+            p32!("b", 3);
+            p16!("s", 100);
+            assert_eq!(run(&mut tctx), -20, "i16 mul overflow");
+            assert_eq!(g32!("qa"), 13);
+
+            /* INT_MIN negation → -20 */
+            p16!("s", 2);
+            p16!("n", -32768);
+            assert_eq!(run(&mut tctx), -20, "i16 neg overflow");
+
+            /* DINT→INT out of range → -21 */
+            p16!("n", 5);
+            p32!("a", 70000);
+            assert_eq!(run(&mut tctx), -21, "narrowing conv range");
+            assert_eq!(g32!("qa"), 70003, "earlier stmts ran");
+
+            /* LREAL→DINT out of range → -21 */
+            p32!("a", 10);
+            pf!("r", 1e20);
+            assert_eq!(run(&mut tctx), -21, "real→int range");
+
+            /* signed INT_MIN / -1 → -20 */
+            pf!("r", 3.7);
+            p32!("c", i32::MIN);
+            p32!("d", -1);
+            assert_eq!(run(&mut tctx), -20, "MIN/-1 div overflow");
+
+            /* per-scan, not sticky */
+            p32!("c", 20);
+            p32!("d", 4);
+            assert_eq!(run(&mut tctx), 0, "recovered");
+            assert_eq!(g32!("qg"), 5);
+        } else {
+            /* saturating mode: wrap/truncate, never fault */
+            p32!("a", 0x40000000);
+            p32!("b", 0x40000000);
+            p16!("s", 100);
+            p16!("n", -32768);
+            pf!("r", -5.9);
+            p32!("c", i32::MIN);
+            p32!("d", -1);
+            assert_eq!(run(&mut tctx), 0, "saturating mode never faults");
+            assert_eq!(g32!("qa"), i32::MIN, "add wrapped");
+            assert_eq!(g32!("qb"), -31072, "mul wrapped to i16");
+            assert_eq!(g16!("qd"), -32768, "neg wrapped");
+            assert_eq!(g32!("qf"), -5, "real→int trunc");
+            assert_eq!(g32!("qg"), i32::MIN, "MIN/-1 wrapped to MIN");
+            /* narrowing conv truncates: 70000 → i16 4464 */
+            p32!("a", 70000);
+            p32!("b", 3);
+            p32!("c", 20);
+            p32!("d", 4);
+            p16!("s", 2);
+            p16!("n", 5);
+            assert_eq!(run(&mut tctx), 0);
+            assert_eq!(g32!("qe"), 4464, "conv truncated to i16");
+        }
+    }
+}
+
+#[test]
+fn checked_arith_overflow_range_jit() {
+    ovf_rng_scenario(true);
+}
+
+#[test]
+fn saturating_arith_overflow_range_jit() {
+    ovf_rng_scenario(false);
+}

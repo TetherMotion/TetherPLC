@@ -39,15 +39,17 @@ routed through the io_bindings (same addressing as runtime); field
 expects accept `T#500ms`, `TRUE`, `16#…`, ints, floats.
 `checked_arith: true` compiles every leg (active and `shadow`
 candidate) with `--checked-arith` semantics: integer div/mod by
-zero aborts the scan with `expect_fault: -19` instead of
-saturating. `expect_fault` asserts the task rc; on the L2 leg
+zero aborts the scan with `expect_fault: -19`, int
+add/sub/mul/neg overflow and `INT_MIN / -1` with `-20`, and
+out-of-range conversions with `-21`, instead of saturating,
+wrapping, or truncating. `expect_fault` asserts the task rc; on the L2 leg
 `vector_run.py` additionally greps the runtime's
 `program fault rc=` line and keeps `%Q` frozen after the faulted
 scan.
 
 Corpus: `tools/oracle/corpus/` (spec-derived vectors incl. TON,
-CTU, string/conv/ref cases and the `div.zero.*` arithmetic pair,
-all green). `tools/oracle-matiec/`
+CTU, string/conv/ref cases and the `div.zero.*`/`ovf.*`/`rng.*`
+arithmetic trio, all green). `tools/oracle-matiec/`
 holds the quarantined GPL adapter skeleton per doc 14 §3 (subprocess
 only, outputs = data); matiec isn't installed — `source:"spec"`
 vectors stand in until `iec2c` produces real traces.

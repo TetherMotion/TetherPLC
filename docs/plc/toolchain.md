@@ -23,9 +23,13 @@ emit one JSON line `{ok, errors, diags:[…]}` on stdout (build adds
 `"package"` on success). `build` also takes `--task-period-ns <ns>` to
 override the cyclic MAIN task period (default 10 ms) and
 `--checked-arith` to make integer div/mod by zero a
-`TPLC_TASK_E_DIVZERO` (-19) task fault instead of the default
-saturating-to-0; the choice is baked into the generated code and
-recorded as `"checked_arith":true` in the package manifest.
+`TPLC_TASK_E_DIVZERO` (-19) task fault, integer add/sub/mul/neg
+that leaves the type's range or signed `INT_MIN / -1` a
+`TPLC_TASK_E_OVERFLOW` (-20) fault, and out-of-range conversions
+(narrowing int, real→int) a `TPLC_TASK_E_RANGE` (-21) fault,
+instead of the default saturating/wrapping/truncating; the choice
+is baked into the generated code and recorded as
+`"checked_arith":true` in the package manifest.
 St spans carry
 `file/offset/len/line/col`;
 Fbd spans carry `sheet/node/pin`; non-frontend failures (LLVM verify,

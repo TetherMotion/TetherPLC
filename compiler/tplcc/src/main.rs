@@ -1298,6 +1298,25 @@ fn img_get(img: &[u8], b: &IoBind) -> tplc_mir::interp::Value {
                 Value::U(v)
             }
         }
+        tplc_mir::ir::Type::Real { bits } => {
+            let n = (*bits as usize) / 8;
+            let mut buf = [0u8; 8];
+            for i in 0..n.min(8) {
+                buf[i] = *img.get(b.at.byte as usize + i).unwrap_or(&0);
+            }
+            Value::F(if *bits == 32 {
+                f32::from_le_bytes(buf[..4].try_into().unwrap()) as f64
+            } else {
+                f64::from_le_bytes(buf[..8].try_into().unwrap())
+            })
+        }
+        tplc_mir::ir::Type::Time => {
+            let mut v: u64 = 0;
+            for i in 0..8 {
+                v |= (*img.get(b.at.byte as usize + i).unwrap_or(&0) as u64) << (8 * i);
+            }
+            Value::Time(v as i64)
+        }
         _ => Value::I(0),
     }
 }
@@ -1321,6 +1340,22 @@ fn img_put(img: &mut [u8], b: &IoBind, v: &tplc_mir::interp::Value) {
             let n = (*bits as usize) / 8;
             for i in 0..n.min(8) {
                 img[b.at.byte as usize + i] = (x >> (8 * i)) as u8;
+            }
+        }
+        (tplc_mir::ir::Type::Real { bits }, Value::F(x)) => {
+            let n = (*bits as usize) / 8;
+            let bytes = if *bits == 32 {
+                (*x as f32).to_le_bytes().to_vec()
+            } else {
+                x.to_le_bytes().to_vec()
+            };
+            for i in 0..n.min(8) {
+                img[b.at.byte as usize + i] = bytes[i];
+            }
+        }
+        (tplc_mir::ir::Type::Time, Value::Time(x)) => {
+            for i in 0..8 {
+                img[b.at.byte as usize + i] = (*x as u64 >> (8 * i)) as u8;
             }
         }
         _ => {}
@@ -1377,9 +1412,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
     // Candidate indices are load order, matching SHADOW_LIST.
     let shadow_file = v["shadow"].as_str().map(|s| s.to_string());
     let shadow_files: Vec<String> = match &v["shadows"] {
-        serde_json::Value::Array(a) => {
-            a.iter().map(|p| p.as_str().unwrap().to_string()).collect()
-        }
+        serde_json::Value::Array(a) => a.iter().map(|p| p.as_str().unwrap().to_string()).collect(),
         _ => shadow_file.map(|f| vec![f]).unwrap_or_default(),
     };
     if !shadow_files.is_empty() && files.len() != 1 {
@@ -1412,21 +1445,18 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
         // "shadow_load": true → file 0, integer N → file N
         let sload = match &c["shadow_load"] {
             serde_json::Value::Bool(b) if *b => Some(0usize),
-            serde_json::Value::Number(n) => {
-                n.as_u64().map(|x| x as usize)
-            }
+            serde_json::Value::Number(n) => n.as_u64().map(|x| x as usize),
             _ => None,
         };
         if let Some(fi) = sload {
-            let f = shadow_files.get(fi).ok_or(format!(
-                "{id} cycle {ci}: shadow_load@{fi} w/o shadow file"))?;
+            let f = shadow_files
+                .get(fi)
+                .ok_or(format!("{id} cycle {ci}: shadow_load@{fi} w/o shadow file"))?;
             if shadows.len() >= 4 {
-                return Err(format!(
-                    "{id} cycle {ci}: shadow slots full (4)"));
+                return Err(format!("{id} cycle {ci}: shadow slots full (4)"));
             }
             if shadows.iter().any(|(si, _)| *si == fi) {
-                return Err(format!(
-                    "{id} cycle {ci}: shadow already loaded"));
+                return Err(format!("{id} cycle {ci}: shadow already loaded"));
             }
             let mut sh = compile_run(f, src_dir, id)?;
             sh.0.module.checked_arith = checked;
@@ -1457,15 +1487,12 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
         // adoption drops every peer candidate
         let spr = match &c["shadow_promote"] {
             serde_json::Value::Bool(b) if *b => Some(0usize),
-            serde_json::Value::Number(n) => {
-                n.as_u64().map(|x| x as usize)
-            }
+            serde_json::Value::Number(n) => n.as_u64().map(|x| x as usize),
             _ => None,
         };
         if let Some(pi) = spr {
             if pi >= shadows.len() {
-                return Err(format!(
-                    "{id} cycle {ci}: promote@{pi} w/o shadow"));
+                return Err(format!("{id} cycle {ci}: promote@{pi} w/o shadow"));
             }
             runs[0] = shadows.remove(pi).1;
             shadows.clear();
@@ -1473,8 +1500,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
         if let Some(di) = c["shadow_drop"].as_u64() {
             let di = di as usize;
             if di >= shadows.len() {
-                return Err(format!(
-                    "{id} cycle {ci}: drop@{di} w/o shadow"));
+                return Err(format!("{id} cycle {ci}: drop@{di} w/o shadow"));
             }
             shadows.remove(di);
         }
@@ -1624,14 +1650,13 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
             serde_json::Value::String(s) => sh_expect.push((0, s.clone())),
             serde_json::Value::Object(o) => {
                 for (k, val) in o {
-                    let i = k.parse::<usize>().map_err(|_| {
-                        format!("{id} cycle {ci}: bad shadow idx {k}")
-                    })?;
+                    let i = k
+                        .parse::<usize>()
+                        .map_err(|_| format!("{id} cycle {ci}: bad shadow idx {k}"))?;
                     sh_expect.push((
                         i,
                         val.as_str()
-                            .ok_or(format!(
-                                "{id} cycle {ci}: expect_shadow_q[{k}]"))?
+                            .ok_or(format!("{id} cycle {ci}: expect_shadow_q[{k}]"))?
                             .to_string(),
                     ));
                 }
@@ -1640,8 +1665,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
         }
         for (i, _) in &sh_expect {
             if *i >= shadows.len() {
-                return Err(format!(
-                    "{id} cycle {ci}: expect_shadow_q@{i} w/o shadow"));
+                return Err(format!("{id} cycle {ci}: expect_shadow_q@{i} w/o shadow"));
             }
         }
         // shadow scans on the same inputs; each candidate's %Q
@@ -1650,11 +1674,8 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
         let mut si = 0;
         while si < shadows.len() {
             let (aborted, sh_img) = {
-                let (out, program, layout, ctx, blob) =
-                    &mut shadows[si].1;
-                let tplc_mir::ir::Body::Stmts(stmts) =
-                    &program.body
-                else {
+                let (out, program, layout, ctx, blob) = &mut shadows[si].1;
+                let tplc_mir::ir::Body::Stmts(stmts) = &program.body else {
                     return Err("shadow body not stmts".into());
                 };
                 let mut rt = Rt::new(blob, layout, &out.module, 0);
@@ -1663,8 +1684,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                 for b in &out.io_bindings {
                     if b.at.region == AtRegion::I {
                         let val = img_get(&img_in, b);
-                        let short =
-                            b.name.rsplit('.').next().unwrap_or(&b.name);
+                        let short = b.name.rsplit('.').next().unwrap_or(&b.name);
                         rt.write_field(short, &val);
                     }
                 }
@@ -1672,8 +1692,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                 let mut sh_img = vec![0u8; 64];
                 for b in &out.io_bindings {
                     if b.at.region == AtRegion::Q {
-                        let short =
-                            b.name.rsplit('.').next().unwrap_or(&b.name);
+                        let short = b.name.rsplit('.').next().unwrap_or(&b.name);
                         let val = rt.read_field(short);
                         img_put(&mut sh_img, b, &val);
                     }

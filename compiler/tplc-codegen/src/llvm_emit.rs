@@ -16,6 +16,7 @@
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
+use inkwell::intrinsics::Intrinsic;
 use inkwell::module::{Linkage, Module as LlvmModule};
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
@@ -238,10 +239,35 @@ pub struct Gen<'ctx> {
     /// checked-arith int div/mod by zero → -19 (saturating mode
     /// never branches here)
     divzero_bb: Option<BasicBlock<'ctx>>,
+    /// checked-arith int overflow → -20, conversion range → -21
+    overflow_bb: Option<BasicBlock<'ctx>>,
+    range_bb: Option<BasicBlock<'ctx>>,
     loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>, // (cond, exit)
     ctx_ptr: PointerValue<'ctx>,
     this_ptr: PointerValue<'ctx>,
     abi: AbiOffsets,
+}
+
+/// inclusive (lo, hi) of an int type as i128 — checked-arith
+/// conversion range tests compare widened values against this
+fn int128_range(t: &Type) -> Option<(i128, i128)> {
+    match t {
+        Type::Int { signed: true, bits } => {
+            let b = *bits as u32;
+            Some((-(1i128 << (b - 1)), (1i128 << (b - 1)) - 1))
+        }
+        Type::Int {
+            signed: false,
+            bits,
+        } => Some((0, (1i128 << *bits as u32) - 1)),
+        _ => None,
+    }
+}
+
+/// i128 constant from two's-complement 64-bit limbs (lo, hi)
+fn i128_const<'c>(ctx: &'c Context, v: i128) -> IntValue<'c> {
+    ctx.i128_type()
+        .const_int_arbitrary_precision(&[v as u64, (v >> 64) as u64])
 }
 
 fn llty<'c>(ctx: &'c Context, t: &Type) -> BasicTypeEnum<'c> {
@@ -642,10 +668,50 @@ impl<'ctx> Gen<'ctx> {
                                 .unwrap()
                                 .into()
                         } else {
-                            self.b
-                                .build_int_neg(v.into_int_value(), "n")
-                                .unwrap()
-                                .into()
+                            let iv = v.into_int_value();
+                            /* checked-arith: negating the signed
+                            minimum (or any nonzero unsigned)
+                            leaves the type's range → -20 */
+                            if self.mir.checked_arith {
+                                if let Type::Int { signed, bits } = &e.ty {
+                                    let bad = if *signed {
+                                        let minv = if *bits >= 64 {
+                                            i64::MIN
+                                        } else {
+                                            -(1i64 << (*bits as u32 - 1))
+                                        };
+                                        self.b
+                                            .build_int_compare(
+                                                IntPredicate::EQ,
+                                                iv,
+                                                iv.get_type().const_int(minv as u64, true),
+                                                "mn",
+                                            )
+                                            .unwrap()
+                                    } else {
+                                        self.b
+                                            .build_int_compare(
+                                                IntPredicate::NE,
+                                                iv,
+                                                iv.get_type().const_zero(),
+                                                "nz",
+                                            )
+                                            .unwrap()
+                                    };
+                                    let f =
+                                        self.b.get_insert_block().unwrap().get_parent().unwrap();
+                                    let ok_bb = self.ctx.append_basic_block(f, "neg.ok");
+                                    self.b
+                                        .build_conditional_branch(
+                                            bad,
+                                            self.overflow_bb.unwrap(),
+                                            ok_bb,
+                                        )
+                                        .unwrap();
+                                    self.b.position_at_end(ok_bb);
+                                }
+                            }
+                            self.b.build_int_neg(iv, "n").unwrap().into()
                         }
                     }
                     UnOp::Not => self.b.build_not(v.into_int_value(), "not").unwrap().into(),
@@ -698,15 +764,51 @@ impl<'ctx> Gen<'ctx> {
                         .into()
                 }
             }
-            (Type::Real { .. }, Type::Int { .. }) => self
-                .b
-                .build_float_to_signed_int(
-                    v.into_float_value(),
-                    llty(self.ctx, to).into_int_type(),
-                    "c",
-                )
-                .unwrap()
-                .into(),
+            (Type::Real { .. }, Type::Int { signed: ts, .. }) => {
+                let f = v.into_float_value();
+                let dt = llty(self.ctx, to).into_int_type();
+                if self.mir.checked_arith {
+                    if let Some((lo, hi)) = int128_range(to) {
+                        /* [lo, hi+1) as f64 bounds — hi+1 is a
+                        power-of-two boundary, exact; NaN fails both
+                        ordered compares */
+                        let ft = f.get_type();
+                        let ge = self
+                            .b
+                            .build_float_compare(
+                                FloatPredicate::OGE,
+                                f,
+                                ft.const_float(lo as f64),
+                                "rlo",
+                            )
+                            .unwrap();
+                        let lt = self
+                            .b
+                            .build_float_compare(
+                                FloatPredicate::OLT,
+                                f,
+                                ft.const_float((hi + 1) as f64),
+                                "rhi",
+                            )
+                            .unwrap();
+                        let ok = self.b.build_and(ge, lt, "rok").unwrap();
+                        let fr = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                        let cont = self.ctx.append_basic_block(fr, "cv.ok");
+                        self.b
+                            .build_conditional_branch(ok, cont, self.range_bb.unwrap())
+                            .unwrap();
+                        self.b.position_at_end(cont);
+                    }
+                }
+                if *ts {
+                    self.b.build_float_to_signed_int(f, dt, "c").unwrap().into()
+                } else {
+                    self.b
+                        .build_float_to_unsigned_int(f, dt, "c")
+                        .unwrap()
+                        .into()
+                }
+            }
             (Type::Real { bits: fb }, Type::Real { bits: tb }) if fb != tb => {
                 let dt = llty(self.ctx, to).into_float_type();
                 if tb > fb {
@@ -721,22 +823,62 @@ impl<'ctx> Gen<'ctx> {
                         .into()
                 }
             }
-            (Type::Int { signed: s, .. }, Type::Int { .. }) => {
+            (Type::Int { signed: s, .. }, Type::Int { signed: d, .. }) => {
                 let dt = llty(self.ctx, to).into_int_type();
                 let iv = v.into_int_value();
                 let sw = iv.get_type().get_bit_width();
                 let dw = dt.get_bit_width();
-                if dw > sw {
+                let res = if dw > sw {
                     if *s {
-                        self.b.build_int_s_extend(iv, dt, "c").unwrap().into()
+                        self.b.build_int_s_extend(iv, dt, "c").unwrap()
                     } else {
-                        self.b.build_int_z_extend(iv, dt, "c").unwrap().into()
+                        self.b.build_int_z_extend(iv, dt, "c").unwrap()
                     }
                 } else if dw < sw {
-                    self.b.build_int_truncate(iv, dt, "c").unwrap().into()
+                    self.b.build_int_truncate(iv, dt, "c").unwrap()
                 } else {
-                    v
+                    iv
+                };
+                /* checked-arith: the mathematical value (source
+                signedness) must fit the target range — widening to
+                i128 makes the compare exact for every width pair,
+                including same-width signedness flips */
+                if self.mir.checked_arith && (*s != *d || sw != dw) {
+                    if let Some((lo, hi)) = int128_range(to) {
+                        let i128t = self.ctx.i128_type();
+                        let wide = if *s {
+                            self.b.build_int_s_extend(iv, i128t, "cv").unwrap()
+                        } else {
+                            self.b.build_int_z_extend(iv, i128t, "cv").unwrap()
+                        };
+                        let lok = self
+                            .b
+                            .build_int_compare(
+                                IntPredicate::SGE,
+                                wide,
+                                i128_const(self.ctx, lo),
+                                "rlo",
+                            )
+                            .unwrap();
+                        let hik = self
+                            .b
+                            .build_int_compare(
+                                IntPredicate::SLE,
+                                wide,
+                                i128_const(self.ctx, hi),
+                                "rhi",
+                            )
+                            .unwrap();
+                        let ok = self.b.build_and(lok, hik, "rok").unwrap();
+                        let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                        let cont = self.ctx.append_basic_block(f, "cv.ok");
+                        self.b
+                            .build_conditional_branch(ok, cont, self.range_bb.unwrap())
+                            .unwrap();
+                        self.b.position_at_end(cont);
+                    }
                 }
+                res.into()
             }
             (Type::Real { .. }, Type::Real { bits }) => {
                 let dt = llty(self.ctx, to).into_float_type();
@@ -930,24 +1072,65 @@ impl<'ctx> Gen<'ctx> {
             };
         }
         let (l, r) = (l.into_int_value(), r.into_int_value());
+        if self.mir.checked_arith
+            && matches!(op, Add | Sub | Mul)
+            && matches!(target, Type::Int { .. })
+        {
+            if let Some(v) = self.checked_bin(&target, op, l, r) {
+                return v;
+            }
+        }
         match op {
             Add => self.b.build_int_add(l, r, "i").unwrap().into(),
             Sub => self.b.build_int_sub(l, r, "i").unwrap().into(),
             Mul => self.b.build_int_mul(l, r, "i").unwrap().into(),
             Div | Mod => {
-                /* sdiv/srem by zero is UB: a select guard cannot
-                protect the op, and neither can a branch→phi merge:
-                instcombine folds that back into `select(dz, 0,
-                sdiv)` which x86 lowers to an unconditional idiv
-                that still traps. Clamp the divisor to a provably
-                nonzero value, divide, then select 0 on dz. Checked
-                mode keeps real control flow to the -19 exit (no
-                merge, so nothing folds the div loose). */
+                /* div/rem by zero is UB for both signed and unsigned
+                variants, and sdiv/srem INT_MIN/-1 is poison too: a
+                select guard cannot protect the op, and neither can
+                a branch→phi merge: instcombine folds that back
+                into `select(dz, 0, sdiv)` which x86 lowers to an
+                unconditional idiv that still traps. Clamp the
+                divisor to a provably safe value, divide, then
+                select 0 on dz — for MIN/-1 the clamped divisor 1
+                yields the wrapped results (MIN / 0) for free.
+                Checked mode keeps real control flow to the -19/-20
+                exits (no merge, so nothing folds the div loose). */
+                let unsigned = matches!(target, Type::Int { signed: false, .. });
                 let zero = r.get_type().const_zero();
                 let dz = self
                     .b
                     .build_int_compare(IntPredicate::EQ, r, zero, "dz")
                     .unwrap();
+                let ominus1 = if unsigned {
+                    None
+                } else {
+                    let minv = match target {
+                        Type::Int { signed: true, bits } if bits < 64 => {
+                            -(1i64 << (bits as u32 - 1))
+                        }
+                        _ => i64::MIN, // 64-bit ints, Time, Enum ride i64
+                    };
+                    let is_min = self
+                        .b
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            l,
+                            r.get_type().const_int(minv as u64, true),
+                            "mn",
+                        )
+                        .unwrap();
+                    let is_neg1 = self
+                        .b
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            r,
+                            r.get_type().const_int((-1i64) as u64, true),
+                            "n1",
+                        )
+                        .unwrap();
+                    Some(self.b.build_and(is_min, is_neg1, "o1").unwrap())
+                };
                 if self.mir.checked_arith {
                     let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
                     let ok_bb = self.ctx.append_basic_block(f, "div.ok");
@@ -955,21 +1138,57 @@ impl<'ctx> Gen<'ctx> {
                         .build_conditional_branch(dz, self.divzero_bb.unwrap(), ok_bb)
                         .unwrap();
                     self.b.position_at_end(ok_bb);
+                    if let Some(o1) = ominus1 {
+                        let f2 = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                        let ok2 = self.ctx.append_basic_block(f2, "div.ok2");
+                        self.b
+                            .build_conditional_branch(o1, self.overflow_bb.unwrap(), ok2)
+                            .unwrap();
+                        self.b.position_at_end(ok2);
+                    }
                     return (if op == Div {
-                        self.b.build_int_signed_div(l, r, "d").unwrap()
+                        if unsigned {
+                            self.b.build_int_unsigned_div(l, r, "d").unwrap()
+                        } else {
+                            self.b.build_int_signed_div(l, r, "d").unwrap()
+                        }
                     } else {
-                        self.b.build_int_signed_rem(l, r, "m").unwrap()
+                        if unsigned {
+                            self.b.build_int_unsigned_rem(l, r, "m").unwrap()
+                        } else {
+                            self.b.build_int_signed_rem(l, r, "m").unwrap()
+                        }
                     })
                     .into();
                 }
                 let one: BasicValueEnum = r.get_type().const_int(1, false).into();
                 let rv: BasicValueEnum = r.into();
-                let sr = self.b.build_select(dz, one, rv, "sd").unwrap();
-                let sr = sr.into_int_value();
+                let mut sr = self
+                    .b
+                    .build_select(dz, one, rv, "sd")
+                    .unwrap()
+                    .into_int_value();
+                if let Some(o1) = ominus1 {
+                    let one2: BasicValueEnum = sr.get_type().const_int(1, false).into();
+                    let srv: BasicValueEnum = sr.into();
+                    sr = self
+                        .b
+                        .build_select(o1, one2, srv, "sd2")
+                        .unwrap()
+                        .into_int_value();
+                }
                 let q = if op == Div {
-                    self.b.build_int_signed_div(l, sr, "d").unwrap()
+                    if unsigned {
+                        self.b.build_int_unsigned_div(l, sr, "d").unwrap()
+                    } else {
+                        self.b.build_int_signed_div(l, sr, "d").unwrap()
+                    }
                 } else {
-                    self.b.build_int_signed_rem(l, sr, "m").unwrap()
+                    if unsigned {
+                        self.b.build_int_unsigned_rem(l, sr, "m").unwrap()
+                    } else {
+                        self.b.build_int_signed_rem(l, sr, "m").unwrap()
+                    }
                 };
                 let z: BasicValueEnum = q.get_type().const_zero().into();
                 let qv: BasicValueEnum = q.into();
@@ -989,6 +1208,50 @@ impl<'ctx> Gen<'ctx> {
             Rol | Ror => l.into(),
             AndThen | OrElse => unreachable!(),
         }
+    }
+
+    /// checked-arith: int Add/Sub/Mul via the *.with.overflow
+    /// intrinsic — branches to the -20 exit on overflow and returns
+    /// the wrapped result on the fallthrough path. None when the
+    /// intrinsic is unavailable (caller emits the plain op).
+    fn checked_bin(
+        &mut self,
+        target: &Type,
+        op: BinOp,
+        l: IntValue<'ctx>,
+        r: IntValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let signed = matches!(target, Type::Int { signed: true, .. });
+        let name = match (op, signed) {
+            (BinOp::Add, true) => "llvm.sadd.with.overflow",
+            (BinOp::Add, false) => "llvm.uadd.with.overflow",
+            (BinOp::Sub, true) => "llvm.ssub.with.overflow",
+            (BinOp::Sub, false) => "llvm.usub.with.overflow",
+            (BinOp::Mul, true) => "llvm.smul.with.overflow",
+            _ => "llvm.umul.with.overflow",
+        };
+        let it = l.get_type();
+        let intr =
+            Intrinsic::find(name).and_then(|i| i.get_declaration(&self.module, &[it.into()]))?;
+        let call = self.b.build_call(intr, &[l.into(), r.into()], "ov").ok()?;
+        let bve = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(b) => b,
+            _ => return None,
+        };
+        let sv = bve.into_struct_value();
+        let res = self.b.build_extract_value(sv, 0, "ovr").ok()?;
+        let flag = self
+            .b
+            .build_extract_value(sv, 1, "ovf")
+            .ok()?
+            .into_int_value();
+        let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+        let ok_bb = self.ctx.append_basic_block(f, "ovf.ok");
+        self.b
+            .build_conditional_branch(flag, self.overflow_bb?, ok_bb)
+            .ok()?;
+        self.b.position_at_end(ok_bb);
+        Some(res)
     }
 
     fn icmp(
@@ -2435,6 +2698,30 @@ impl<'ctx> Gen<'ctx> {
                     .const_int((TPLC_TASK_E_DIVZERO as i64) as u64, true),
             ))
             .unwrap();
+        /* checked-arith overflow (TPLC_TASK_E_OVERFLOW) and
+        conversion range (TPLC_TASK_E_RANGE) */
+        let ov = self.ctx.append_basic_block(f, "arith.ovf");
+        self.overflow_bb = Some(ov);
+        self.b.position_at_end(ov);
+        self.b
+            .build_return(Some(
+                &self
+                    .ctx
+                    .i32_type()
+                    .const_int((TPLC_TASK_E_OVERFLOW as i64) as u64, true),
+            ))
+            .unwrap();
+        let rg = self.ctx.append_basic_block(f, "conv.rng");
+        self.range_bb = Some(rg);
+        self.b.position_at_end(rg);
+        self.b
+            .build_return(Some(
+                &self
+                    .ctx
+                    .i32_type()
+                    .const_int((TPLC_TASK_E_RANGE as i64) as u64, true),
+            ))
+            .unwrap();
         self.b.position_at_end(entry);
         self.abort_check();
         if let Body::Stmts(ss) = &pou.body {
@@ -2780,6 +3067,8 @@ pub fn emit_program_for_target<'ctx>(
         panic_bb: None,
         bounds_bb: None,
         divzero_bb: None,
+        overflow_bb: None,
+        range_bb: None,
         loop_stack: Vec::new(),
         ctx_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
         this_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),

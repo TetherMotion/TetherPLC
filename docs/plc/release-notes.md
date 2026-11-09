@@ -51,10 +51,12 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   (see error-code-coverage.md).
 - **Arithmetic fault policy is opt-in**: `tplcc --checked-arith`
   makes integer div/mod by zero a `TPLC_TASK_E_DIVZERO` (-19)
-  task fault; the default keeps saturating to 0. `TASK_E_OVERFLOW`
-  (-20) and `TASK_E_RANGE` (-21) remain declared-but-unemitted
-  reservations, as do the `tplc_init` contract codes
-  `INIT_LAYOUT`/`INIT_INVALID`/`INIT_VALUE` (-1..-3).
+  task fault, int add/sub/mul/neg overflow and `INT_MIN / -1` a
+  `TPLC_TASK_E_OVERFLOW` (-20) fault, and out-of-range conversions
+  a `TPLC_TASK_E_RANGE` (-21) fault; the default keeps saturating,
+  wrapping, and truncating. The `tplc_init` contract codes
+  `INIT_LAYOUT`/`INIT_INVALID`/`INIT_VALUE` (-1..-3) remain
+  declared-but-unemitted reservations.
 - **`debug_stress` lateness flake**: under a 6-way ctl-flood on a
   loaded host, the 5 ms lateness bound occasionally trips at
   ~18 ms. Cadence holds; the bound assumes an unloaded host.

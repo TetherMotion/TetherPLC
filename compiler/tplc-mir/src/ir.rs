@@ -275,6 +275,8 @@ pub const TPLC_TASK_E_FAULT: i32 = -2;
 pub const TPLC_TASK_E_PANIC: i32 = -17;
 pub const TPLC_TASK_E_BOUNDS: i32 = -18;
 pub const TPLC_TASK_E_DIVZERO: i32 = -19;
+pub const TPLC_TASK_E_OVERFLOW: i32 = -20;
+pub const TPLC_TASK_E_RANGE: i32 = -21;
 pub const TPLC_TASK_E_ABORTED: i32 = -22;
 pub const TPLC_TASK_E_OVERRUN: i32 = -23;
 
@@ -350,6 +352,9 @@ pub struct Module {
     pub tasks: Vec<TaskDecl>,
     /// checked-arithmetic mode (`tplcc build --checked-arith`):
     /// integer div/mod by zero faults the scan with
-    /// TPLC_TASK_E_DIVZERO instead of saturating to 0.
+    /// TPLC_TASK_E_DIVZERO, int arithmetic overflow with
+    /// TPLC_TASK_E_OVERFLOW, and out-of-range narrowing
+    /// conversions with TPLC_TASK_E_RANGE, instead of the
+    /// default wrap/saturate behavior.
     pub checked_arith: bool,
 }
