@@ -46,6 +46,9 @@ pub enum BuiltinFn {
     Insert,
     Delete,
     Replace,
+    Trunc,
+    Round,
+    Mux,
 }
 
 pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
@@ -64,8 +67,39 @@ pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
         "INSERT" => Some(BuiltinFn::Insert),
         "DELETE" => Some(BuiltinFn::Delete),
         "REPLACE" => Some(BuiltinFn::Replace),
+        "TRUNC" => Some(BuiltinFn::Trunc),
+        "ROUND" => Some(BuiltinFn::Round),
+        "MUX" => Some(BuiltinFn::Mux),
         _ => None,
     }
+}
+
+/// scalar type by IEC name (conversion functions `X_TO_Y` and
+/// explicit casts share this table)
+pub fn type_from_name(name: &str) -> Option<Type> {
+    Some(match name.to_ascii_uppercase().as_str() {
+        "BOOL" => Type::Bool,
+        "SINT" => Type::Int { signed: true, bits: 8 },
+        "INT" => Type::Int { signed: true, bits: 16 },
+        "DINT" => Type::Int { signed: true, bits: 32 },
+        "LINT" => Type::Int { signed: true, bits: 64 },
+        "USINT" | "BYTE" => Type::Int { signed: false, bits: 8 },
+        "UINT" | "WORD" => Type::Int { signed: false, bits: 16 },
+        "UDINT" | "DWORD" => Type::Int { signed: false, bits: 32 },
+        "ULINT" | "LWORD" => Type::Int { signed: false, bits: 64 },
+        "REAL" => Type::Real { bits: 32 },
+        "LREAL" => Type::Real { bits: 64 },
+        "TIME" | "LTIME" => Type::Time,
+        _ => return None,
+    })
+}
+
+/// `X_TO_Y` conversion function → (from, to); `to` also covers the
+/// truncating real→int forms TRUNC/ROUND's callers expect
+pub fn conversion_fn(name: &str) -> Option<(Type, Type)> {
+    let up = name.to_ascii_uppercase();
+    let (a, b) = up.split_once("_TO_")?;
+    Some((type_from_name(a)?, type_from_name(b)?))
 }
 
 pub fn compatible(a: &Type, b: &Type) -> bool {
@@ -93,6 +127,7 @@ pub fn convertible(a: &Type, b: &Type) -> bool {
             | (Type::Int { .. }, Type::Real { .. })
             | (Type::Int { .. }, Type::Time)
             | (Type::Real { .. }, Type::Int { .. }) // IEC allows w/ rounding
+            | (Type::Real { .. }, Type::Real { .. }) // REAL↔LREAL
             | (Type::Int { .. }, Type::Bool) // nonzero → true (permissive v1)
             | (Type::Bool, Type::Int { .. })
             | (Type::Time, Type::Int { .. })

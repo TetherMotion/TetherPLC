@@ -1277,3 +1277,157 @@ fn string_functions_through_jit() {
         );
     }
 }
+
+/// TRUNC/ROUND and MUX through the compiled path, plus a REAL→LREAL
+/// conversion (fpext) so a chained X_TO_Y assignment stores 8 bytes.
+#[test]
+fn conversions_and_mux_through_jit() {
+    fn d(v: i64) -> Expr {
+        Expr {
+            ty: Type::Int {
+                signed: true,
+                bits: 32,
+            },
+            kind: ExprKind::Lit(Lit::Int(v)),
+            prov: Prov::None,
+        }
+    }
+    fn real(v: f64, bits: u8) -> Expr {
+        Expr {
+            ty: Type::Real { bits },
+            kind: ExprKind::Lit(Lit::Real(v)),
+            prov: Prov::None,
+        }
+    }
+    fn call(fun: &str, args: Vec<Expr>, ty: Type) -> Expr {
+        Expr {
+            ty,
+            kind: ExprKind::Call {
+                fun: fun.into(),
+                args: args.into_iter().map(|e| (String::new(), e)).collect(),
+            },
+            prov: Prov::None,
+        }
+    }
+    let dt = Type::Int {
+        signed: true,
+        bits: 32,
+    };
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+    };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "C".into(),
+        iface: vec![
+            vd("t1", dt.clone(), None),
+            vd("t2", dt.clone(), None),
+            vd("ro", dt.clone(), None),
+            vd("m1", dt.clone(), None),
+            vd("m2", dt.clone(), None),
+            vd("r", Type::Real { bits: 64 }, None),
+        ],
+        body: Body::Stmts(vec![
+            assign(
+                Ref::Var("t1".into()),
+                call("TRUNC", vec![real(3.9, 64)], dt.clone()),
+            ),
+            assign(
+                Ref::Var("t2".into()),
+                call("TRUNC", vec![real(-3.9, 64)], dt.clone()),
+            ),
+            assign(
+                Ref::Var("ro".into()),
+                call("ROUND", vec![real(2.5, 64)], dt.clone()),
+            ),
+            assign(
+                Ref::Var("m1".into()),
+                call("MUX", vec![d(1), d(10), d(20), d(30)], dt.clone()),
+            ),
+            assign(
+                Ref::Var("m2".into()),
+                call("MUX", vec![d(2), d(10), d(20), d(30)], dt.clone()),
+            ),
+            // REAL → LREAL conversion as sema emits it: nested Convs
+            assign(
+                Ref::Var("r".into()),
+                Expr {
+                    ty: Type::Real { bits: 64 },
+                    kind: ExprKind::Conv {
+                        to: Type::Real { bits: 64 },
+                        e: Box::new(Expr {
+                            ty: Type::Real { bits: 32 },
+                            kind: ExprKind::Lit(Lit::Real(42.0)),
+                            prov: Prov::None,
+                        }),
+                    },
+                    prov: Prov::None,
+                },
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx, m, l, program, &[], "cv", [0x43; 16], [0x11; 32], None, 10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        assert_eq!(run(&mut tctx), 0);
+        let gi = |n: &str| (blob.as_ptr().add(scope[n].0 as usize) as *const i32).read();
+        assert_eq!(gi("t1"), 3, "TRUNC(3.9)");
+        assert_eq!(gi("t2"), -3, "TRUNC(-3.9)");
+        assert_eq!(gi("ro"), 3, "ROUND(2.5)");
+        assert_eq!(gi("m1"), 20, "MUX(1,..)");
+        assert_eq!(gi("m2"), 30, "MUX(2,..)");
+        let rf = (blob.as_ptr().add(scope["r"].0 as usize) as *const f64).read();
+        assert_eq!(rf, 42.0, "REAL→LREAL widened to f64");
+    }
+}

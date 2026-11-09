@@ -82,9 +82,13 @@ Warning codes (`diag::wcodes`, also stable API):
   `MAX`/`SEL`/`LIMIT` are implemented in sema, both engines, and
   codegen via `tplc_mir::ty::builtin_fn`. String positions are
   1-based (IEC) and clamped; `L<=0` is the empty string; a result
-  wider than the target truncates and clamps its len element. Still
-  absent: `MUX`, type-conversion functions (`INT_TO_REAL` …), and
-  `TRUNC`/`ROUND`.
+  wider than the target truncates and clamps its len element.
+- `X_TO_Y` conversion functions (`DINT_TO_REAL`, `INT_TO_UDINT`, …)
+  lower to a `Conv` node in sema, so both engines share one conversion
+  path; the argument is first coerced to `X` (a mismatched source
+  lints as narrowing, as IEC requires). `TRUNC`/`ROUND` return `DINT`
+  (round-half-away-from-zero for `ROUND`); `MUX(K, IN0…)` is 0-based
+  and out-of-range selects `IN0`.
 - `VAR_EXTERNAL` semantics beyond the lint: the decl links to GVL vars
   by name but is not yet a checked binding.
 - Multi-line span rendering (a span crossing lines renders only the

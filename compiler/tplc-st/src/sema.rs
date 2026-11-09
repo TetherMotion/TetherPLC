@@ -383,7 +383,39 @@ impl<'e> Checker<'e> {
                 self.expr(e);
                 to.clone()
             }
-            ExprKind::Call { fun, args } => self.fn_ty(fun, args, &e.prov),
+            ExprKind::Call { fun, args } => {
+                /* X_TO_Y conversion functions become a Conv node so
+                   both engines share one conversion path */
+                if let Some((from, to)) = tplc_mir::ty::conversion_fn(fun) {
+                    if args.len() != 1 {
+                        self.err(codes::TYPE,
+                                 format!("{fun} takes exactly one value"),
+                                 &e.prov);
+                        return to;
+                    }
+                    let t = self.expr(&mut args[0].1);
+                    if !compatible(&t, &from)
+                        && !literal_fits(&args[0].1, &from)
+                    {
+                        self.coerce(&mut args[0].1, &t, &from);
+                    }
+                    let inner = std::mem::replace(
+                        &mut args[0].1,
+                        Expr {
+                            kind: ExprKind::Lit(Lit::Int(0)),
+                            ty: Type::Bool,
+                            prov: Prov::None,
+                        },
+                    );
+                    e.kind = ExprKind::Conv {
+                        to: to.clone(),
+                        e: Box::new(inner),
+                    };
+                    e.ty = to.clone();
+                    return to;
+                }
+                self.fn_ty(fun, args, &e.prov)
+            }
         };
         e.ty.clone()
     }
@@ -481,6 +513,56 @@ impl<'e> Checker<'e> {
                 self.coerce(&mut args[0].1, &a, &r);
                 self.coerce(&mut args[1].1, &i, &r);
                 self.coerce(&mut args[2].1, &x, &r);
+                r
+            }
+            BuiltinFn::Trunc => {
+                if args.len() != 1 {
+                    self.err(codes::TYPE, "TRUNC takes one value", prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                let t = self.expr(&mut args[0].1);
+                if !matches!(t, Type::Real { .. }) {
+                    self.coerce(&mut args[0].1, &t, &Type::Real { bits: 64 });
+                }
+                Type::Int { signed: true, bits: 32 }
+            }
+            BuiltinFn::Round => {
+                if args.len() != 1 {
+                    self.err(codes::TYPE, "ROUND takes one value", prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                let t = self.expr(&mut args[0].1);
+                if !matches!(t, Type::Real { .. }) {
+                    self.coerce(&mut args[0].1, &t, &Type::Real { bits: 64 });
+                }
+                Type::Int { signed: true, bits: 32 }
+            }
+            BuiltinFn::Mux => {
+                if args.len() < 2 {
+                    self.err(codes::TYPE, "MUX takes K and at least one input", prov);
+                    return Type::Int { signed: true, bits: 32 };
+                }
+                let k = self.expr(&mut args[0].1);
+                self.coerce(&mut args[0].1, &k, &Type::Int {
+                    signed: true,
+                    bits: 32,
+                });
+                let mut r: Option<Type> = None;
+                for i in 1..args.len() {
+                    let t = self.expr(&mut args[i].1);
+                    r = Some(match r {
+                        None => t,
+                        Some(prev) => {
+                            let u = unify_num(&prev, &t);
+                            if is_numeric(&u) { u } else { prev }
+                        }
+                    });
+                }
+                let r = r.unwrap_or(Type::Bool);
+                for i in 1..args.len() {
+                    let t = args[i].1.ty.clone();
+                    self.coerce(&mut args[i].1, &t, &r);
+                }
                 r
             }
             BuiltinFn::Left | BuiltinFn::Right => {

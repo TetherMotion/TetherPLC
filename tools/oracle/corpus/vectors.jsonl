@@ -11,3 +11,4 @@
 {"id":"str.builtins","program":"fn_case.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"0600000007000000","expect_fields":{"n1":"6","flags":"7"}}]}
 {"id":"scalar.builtins","program":"scalar_fn.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"0500000003000000070000000b0000001400000005000000","expect_fields":{"a":"5","b":"3","c":"7","d":"11","e":"20","f":"5"}}]}
 {"id":"str.functions","program":"strfn_case.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"3f00000003000000","expect_fields":{"ok":"63","n1":"3"}}]}
+{"id":"conv.functions","program":"conv_case.st","source":"spec","cycles":[{"t_ns":0,"expect_q":"fdffffff03000000140000001e00000007000000","expect_fields":{"t1":"-3","ro":"3","m1":"20","m2":"30","u1":"7"}}]}

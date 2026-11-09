@@ -312,6 +312,52 @@ END_PROGRAM
 }
 
 #[test]
+fn conversions_round_and_mux_are_typed() {
+    let ok = r#"
+PROGRAM P
+VAR i : DINT; r : LREAL; t : DINT; u : UDINT; m : DINT; END_VAR
+    r := DINT_TO_REAL(i);
+    t := TRUNC(3.9);
+    t := ROUND(2.5);
+    m := MUX(1, 10, 20, 30);
+    u := DINT_TO_UDINT(7);
+END_PROGRAM
+"#;
+    let out = compile(&[("ok.st", ok)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        !diags.iter().any(|d| d.severity == tplc_st::Severity::Error),
+        "conversion sema errors: {diags:?}"
+    );
+    // the conversion is a Conv node, not a call: one conversion path
+    let program = module.pous.iter().find(|p| p.name == "P").unwrap();
+    let has_conv = match &program.body {
+        tplc_mir::Body::Stmts(ss) => ss.iter().any(|s| matches!(
+            &s.kind,
+            tplc_mir::StmtKind::Assign { rhs, .. }
+                if matches!(rhs.kind, tplc_mir::ExprKind::Conv { .. })
+        )),
+        _ => false,
+    };
+    assert!(has_conv, "DINT_TO_REAL should lower to a Conv node");
+
+    let bad = r#"
+PROGRAM P
+VAR s : STRING[16]; r : LREAL; END_VAR
+    r := STRING_TO_REAL(s);
+END_PROGRAM
+"#;
+    let out = compile(&[("bad.st", bad)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        diags.iter().any(|d| d.code == tplc_st::codes::TYPE),
+        "expected STRING→REAL rejection, got {diags:?}"
+    );
+}
+
+#[test]
 fn lints_fire_and_render() {
     let src = r#"
 PROGRAM P

@@ -439,6 +439,20 @@ impl<'ctx> Gen<'ctx> {
                 )
                 .unwrap()
                 .into(),
+            (Type::Real { bits: fb }, Type::Real { bits: tb }) if fb != tb => {
+                let dt = llty(self.ctx, to).into_float_type();
+                if tb > fb {
+                    self.b
+                        .build_float_ext(v.into_float_value(), dt, "c")
+                        .unwrap()
+                        .into()
+                } else {
+                    self.b
+                        .build_float_trunc(v.into_float_value(), dt, "c")
+                        .unwrap()
+                        .into()
+                }
+            }
             (Type::Int { signed: s, .. }, Type::Int { .. }) => {
                 let dt = llty(self.ctx, to).into_int_type();
                 let iv = v.into_int_value();
@@ -1170,6 +1184,71 @@ impl<'ctx> Gen<'ctx> {
                         .into_int_value();
                     self.b.build_select(above, hi, lo_sel, "lim").unwrap()
                 }
+            }
+            BuiltinFn::Trunc => {
+                /* sema rewrites TRUNC into a real→int Conv; a direct
+                   MIR use still lands here (fptosi truncates) */
+                let v = self.expr(ctx, &args[0].1);
+                let want = llty(self.ctx, ret_ty).into_int_type();
+                self.b
+                    .build_float_to_signed_int(v.into_float_value(), want, "tr")
+                    .unwrap()
+                    .into()
+            }
+            BuiltinFn::Round => {
+                /* round half away from zero: fptosi(x ± 0.5) */
+                let f = self.expr(ctx, &args[0].1).into_float_value();
+                let f64t = self.ctx.f64_type();
+                let v = if f.get_type() == self.ctx.f32_type() {
+                    self.b
+                        .build_float_ext(f, f64t, "rw")
+                        .unwrap()
+                } else {
+                    f
+                };
+                let pos = self
+                    .b
+                    .build_float_compare(
+                        inkwell::FloatPredicate::OGE,
+                        v,
+                        f64t.const_zero(),
+                        "rp",
+                    )
+                    .unwrap();
+                let half = self
+                    .b
+                    .build_select(
+                        pos,
+                        f64t.const_float(0.5),
+                        f64t.const_float(-0.5),
+                        "rh",
+                    )
+                    .unwrap()
+                    .into_float_value();
+                let adj = self.b.build_float_add(v, half, "ra").unwrap();
+                let want = llty(self.ctx, ret_ty).into_int_type();
+                self.b
+                    .build_float_to_signed_int(adj, want, "rr")
+                    .unwrap()
+                    .into()
+            }
+            BuiltinFn::Mux => {
+                let k = self.expr(ctx, &args[0].1).into_int_value();
+                let mut r = self.expr(ctx, &args[1].1);
+                for i in 1..args.len() - 1 {
+                    let cand = self.expr(ctx, &args[i + 1].1);
+                    let cond = self
+                        .b
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            k,
+                            k.get_type().const_int(i as u64, false),
+                            "mc",
+                        )
+                        .unwrap();
+                    r = self.b.build_select(cond, cand, r, "ms").unwrap();
+                }
+                r
             }
             BuiltinFn::Concat => {
                 let av = self.expr(ctx, &args[0].1).into_array_value();

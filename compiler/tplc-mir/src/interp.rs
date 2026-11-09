@@ -572,6 +572,25 @@ impl<'a> Rt<'a> {
                 };
                 Value::I(pos as i64)
             }
+            BuiltinFn::Trunc => {
+                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                Value::I(v.as_f64().trunc() as i64)
+            }
+            BuiltinFn::Round => {
+                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0));
+                Value::I(v.as_f64().round() as i64)
+            }
+            BuiltinFn::Mux => {
+                let k = args.first()
+                    .map(|(_, e)| self.eval(caller, e).as_i64())
+                    .unwrap_or(0);
+                let idx = 1 + k as usize;
+                args.get(idx)
+                    .map(|(_, e)| self.eval(caller, e))
+                    .unwrap_or(Value::I(0))
+            }
             BuiltinFn::Concat => {
                 let a = args.first().map(|(_, e)| self.eval(caller, e));
                 let b2 = args.get(1).map(|(_, e)| self.eval(caller, e));

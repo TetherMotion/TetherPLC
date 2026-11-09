@@ -394,3 +394,25 @@ free; FIND is a two-level loop with early exit on the first match.
 Coverage: `str.functions` (L1 + sim parity),
 `string_functions_through_jit` (narrow + wide + FIND miss),
 `string_functions_are_typed`.
+
+## D-IMPL-27 — conversion functions, TRUNC/ROUND, MUX
+
+**Implemented:** `X_TO_Y` names are parsed by `tplc_mir::ty::
+conversion_fn` (scalar table shared with the frontend) and rewritten
+in sema into a `Conv` node — the call disappears, so interp and codegen
+need no new path. The argument is coerced to `X` first, which is what
+makes `INT_TO_REAL(dint_var)` lint as narrowing instead of silently
+widening. `TRUNC` returns `DINT` via `fptosi` (truncation toward zero);
+`ROUND` adds ±0.5 before the same conversion (half away from zero).
+`MUX(K, IN0…)` is 0-based, unifies its inputs numerically, and selects
+`IN0` when `K` is out of range.
+
+Two latent gaps surfaced and are fixed: `convertible` lacked
+`REAL↔LREAL` (so `r : LREAL := DINT_TO_REAL(x)` was a type error) and
+codegen's `conv` had no float-widening arm (the value stayed `f32`
+inside an 8-byte slot). The sema rewrite also has to set the node's
+`ty`, not just its kind, or codegen sees `from = Bool`.
+
+Coverage: `conv.functions` (L1 + sim parity),
+`conversions_and_mux_through_jit`, `conversions_round_and_mux_are_
+typed`.
