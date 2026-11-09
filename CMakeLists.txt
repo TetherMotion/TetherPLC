@@ -445,6 +445,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(mcu_link PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 60)
 
+  # ARM module executes init/task/io under qemu-arm user mode
+  # (QEMU_ARM env or qemu-arm on PATH; skips without it)
+  add_test(NAME mcu_exec
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/abi/mcu_exec.sh)
+  set_tests_properties(mcu_exec PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

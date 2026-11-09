@@ -315,7 +315,7 @@ fn llvm_lowering_executes_through_jit() {
     let dir = std::env::temp_dir().join("tplc_codegen_test");
     std::fs::create_dir_all(&dir).unwrap();
     let obj = dir.join("prog.o");
-    emit_object(&module, &obj).unwrap();
+    emit_object(&module, &obj, "").unwrap();
     let hdr = std::fs::read(&obj).unwrap();
     assert_eq!(&hdr[..4], b"\x7fELF", "ELF object emitted");
     let bc = dir.join("prog.bc");
@@ -558,7 +558,16 @@ fn string_assign_and_compare_through_jit() {
 
     let lctx = Context::create();
     let module = emit_program(
-        &lctx, m, l, program, &[], "str", [0x52; 16], [0xBB; 32], None, 10_000_000,
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "str",
+        [0x52; 16],
+        [0xBB; 32],
+        None,
+        10_000_000,
     );
     module
         .verify()
@@ -673,7 +682,16 @@ fn wide_string_is_utf16_through_jit() {
 
     let lctx = Context::create();
     let module = emit_program(
-        &lctx, m, l, program, &[], "wstr", [0x57; 16], [0xCC; 32], None, 10_000_000,
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "wstr",
+        [0x57; 16],
+        [0xCC; 32],
+        None,
+        10_000_000,
     );
     module
         .verify()
@@ -789,10 +807,7 @@ fn string_builtins_through_jit() {
                     ty: Type::Str { cap: 32 },
                     kind: ExprKind::Call {
                         fun: "CONCAT".into(),
-                        args: vec![
-                            (String::new(), sl("abc")),
-                            (String::new(), sl("xyz")),
-                        ],
+                        args: vec![(String::new(), sl("abc")), (String::new(), sl("xyz"))],
                     },
                     prov: Prov::None,
                 },
@@ -803,10 +818,7 @@ fn string_builtins_through_jit() {
                     ty: Type::WStr { cap: 32 },
                     kind: ExprKind::Call {
                         fun: "CONCAT".into(),
-                        args: vec![
-                            (String::new(), wl("aä")),
-                            (String::new(), wl("aä")),
-                        ],
+                        args: vec![(String::new(), wl("aä")), (String::new(), wl("aä"))],
                     },
                     prov: Prov::None,
                 },
@@ -872,7 +884,16 @@ fn string_builtins_through_jit() {
 
     let lctx = Context::create();
     let module = emit_program(
-        &lctx, m, l, program, &[], "fns", [0x46; 16], [0xDD; 32], None, 10_000_000,
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "fns",
+        [0x46; 16],
+        [0xDD; 32],
+        None,
+        10_000_000,
     );
     module
         .verify()
@@ -1022,7 +1043,16 @@ fn scalar_builtins_through_jit() {
 
     let lctx = Context::create();
     let module = emit_program(
-        &lctx, m, l, program, &[], "sc", [0x53; 16], [0xEE; 32], None, 10_000_000,
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "sc",
+        [0x53; 16],
+        [0xEE; 32],
+        None,
+        10_000_000,
     );
     module
         .verify()
@@ -1176,15 +1206,19 @@ fn string_functions_through_jit() {
             assign(Ref::Var("w".into()), wl("aä€z")),
             assign(
                 Ref::Var("wc".into()),
-                call("MID", vec![
-                    Expr {
-                        ty: wt.clone(),
-                        kind: ExprKind::Ref(Ref::Var("w".into())),
-                        prov: Prov::None,
-                    },
-                    d(2),
-                    d(2),
-                ], wt.clone()),
+                call(
+                    "MID",
+                    vec![
+                        Expr {
+                            ty: wt.clone(),
+                            kind: ExprKind::Ref(Ref::Var("w".into())),
+                            prov: Prov::None,
+                        },
+                        d(2),
+                        d(2),
+                    ],
+                    wt.clone(),
+                ),
             ),
             assign(
                 Ref::Var("n1".into()),
@@ -1205,7 +1239,16 @@ fn string_functions_through_jit() {
 
     let lctx = Context::create();
     let module = emit_program(
-        &lctx, m, l, program, &[], "sf", [0x53; 16], [0xEF; 32], None, 10_000_000,
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "sf",
+        [0x53; 16],
+        [0xEF; 32],
+        None,
+        10_000_000,
     );
     module
         .verify()
@@ -1377,7 +1420,16 @@ fn conversions_and_mux_through_jit() {
 
     let lctx = Context::create();
     let module = emit_program(
-        &lctx, m, l, program, &[], "cv", [0x43; 16], [0x11; 32], None, 10_000_000,
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "cv",
+        [0x43; 16],
+        [0x11; 32],
+        None,
+        10_000_000,
     );
     module
         .verify()
@@ -1438,14 +1490,26 @@ fn conversions_and_mux_through_jit() {
 fn reference_semantics_through_jit() {
     fn d(v: i64) -> Expr {
         Expr {
-            ty: Type::Int { signed: true, bits: 32 },
+            ty: Type::Int {
+                signed: true,
+                bits: 32,
+            },
             kind: ExprKind::Lit(Lit::Int(v)),
             prov: Prov::None,
         }
     }
-    let dt = Type::Int { signed: true, bits: 32 };
-    let rt = Type::Ref { to: Box::new(dt.clone()) };
-    let mut m = Module { pous: Vec::new(), gvls: Vec::new(), tasks: Vec::new() };
+    let dt = Type::Int {
+        signed: true,
+        bits: 32,
+    };
+    let rt = Type::Ref {
+        to: Box::new(dt.clone()),
+    };
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+    };
     m.pous.push(Pou {
         kind: PouKind::Program,
         name: "R".into(),
@@ -1478,7 +1542,9 @@ fn reference_semantics_through_jit() {
                         Ref::Var("r".into()),
                         Expr {
                             ty: rt.clone(),
-                            kind: ExprKind::RefTo { r: Ref::Var("x".into()) },
+                            kind: ExprKind::RefTo {
+                                r: Ref::Var("x".into()),
+                            },
                             prov: Prov::None,
                         },
                     )],
@@ -1535,7 +1601,16 @@ fn reference_semantics_through_jit() {
 
     let lctx = Context::create();
     let module = emit_program(
-        &lctx, m, l, program, &[], "rf", [0x52; 16], [0x77; 32], None, 10_000_000,
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "rf",
+        [0x52; 16],
+        [0x77; 32],
+        None,
+        10_000_000,
     );
     module
         .verify()
@@ -1587,8 +1662,8 @@ fn reference_semantics_through_jit() {
         assert_eq!(r_off, scope["x"].0, "ref holds x's blob offset");
 
         /* a ref past the blob end faults BOUNDS (-18); null faults
-           PANIC (-17) — both are checked before the load */
-        blob[scope["bind"].0 as usize] = 0;   /* stop re-binding */
+        PANIC (-17) — both are checked before the load */
+        blob[scope["bind"].0 as usize] = 0; /* stop re-binding */
         let rp = blob.as_mut_ptr().add(scope["r"].0 as usize) as *mut u64;
         rp.write(l.total_size);
         assert_eq!(run(&mut tctx), -18, "out-of-range deref → BOUNDS");

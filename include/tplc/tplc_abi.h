@@ -229,7 +229,8 @@ typedef struct TplcServices {
 
     void*    host;                /* cookie — first arg of the above   */
 } TplcServices;
-_Static_assert(offsetof(TplcServices, host) == 7 * sizeof(void*),
+_Static_assert(offsetof(TplcServices, host) ==
+                   2 * sizeof(uint32_t) + 6 * sizeof(void*),
                "TplcServices layout");
 
 /* ------------------------------------------------------------------ */

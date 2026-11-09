@@ -76,9 +76,8 @@ swap injects no measurable pause, watchdog trip+escalation verified.
 
 ## Pending chapters (not yet implemented — spec exists)
 
-| chapter | scope |
-|---|---|
-| `plan/18-mcu-path` | no-`dlopen` MCU targets — designed-for material, v1 ships none |
+None — all plan chapters are retired; `docs/plc/mcu-path.md` records
+the no-`dlopen` target state and its open items.
 
 ## Known acceptance gaps (owned, not hidden)
 

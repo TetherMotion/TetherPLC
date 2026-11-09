@@ -513,3 +513,24 @@ Coverage: `update_auth` (ctest) — strict rejection of unsigned and
 untrusted packages on swap and shadow-load, trusted acceptance,
 rotation, revocation, per-channel trust roots, startup rejection of
 weaker maps, and the raw-`.so` rejection.
+
+## D-IMPL-31 — ABI struct offsets computed from the target data layout
+
+**Decision:** generated code no longer hardcodes `TplcCtx`/`TplcTaskCtx`/
+`TplcServices`/`TplcMigrateCtx` member offsets. `AbiOffsets` derives them
+from the target's LLVM data layout (pointer size + i64 alignment) at
+emission time, so the same MIR produces correct GEPs on LP64 hosts and
+AAPCS32 Cortex-M targets.
+
+**Why:** the first `--target armv7em-none-eabihf` object ran under
+qemu-arm but faulted — the hardcoded offsets assumed 64-bit pointers,
+so `ctx.svc`, `ctx.abort_flag`, and the deadline reads landed on the
+wrong members. C `offsetof` on both ABIs confirmed the computed values.
+
+**Consequence:** `tplcc` resolves the triple *before* emission
+(`emit_program_for_target`), and the manifest records `target_triple`.
+A target whose layout the parser cannot read falls back to LP64 —
+acceptable because bare-metal ABIs in scope are LP64 and AAPCS32.
+Coverage: `abi_offsets_lp64`/`abi_offsets_aapcs32` unit tests pin the
+values against `offsetof()` output; `mcu_exec` exercises the AAPCS32
+path end to end.

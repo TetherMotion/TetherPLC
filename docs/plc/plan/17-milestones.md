@@ -43,7 +43,7 @@ Still open (acceptance-matrix "Known acceptance gaps"):
 2. ~~Flight-recorder induced-fault trace~~ — closed: `flight_recorder`
    induces a hang→abort freeze and reads pre-fault samples.
 3. ~~Error-code coverage~~ — closed: `error_paths` induces every
-   reachable code; 62/75 test-hit, all emitted codes covered except
+   reachable code; 69/75 test-hit, all emitted codes covered except
    race-only `IMG_EPOCH`; reservations documented.
 4. Multi-tenant/cross-instance interference — not load-tested;
    marked v1 non-goal in the threat-model signoff.
@@ -60,9 +60,11 @@ DECISIONS.md updated for every deviation.
 
 SFC language + editor; LD view/editor; multi-program IDE flows;
 CiA-405 OD endpoint (landed as ctl `OD_*`; a CANopen wire
-binding remains); MCU loader path (`18-mcu-path.md` — the
-static-link ABI shim criterion landed as ctest `mcu_shim`; a
-cross-compiled Cortex-M loader remains open);
+binding remains); MCU loader path (`docs/plc/mcu-path.md` —
+`--target` emission, bare-metal link, qemu-arm execution, and the
+static-link ABI shim all landed as ctest `mcu_target`/`mcu_link`/
+`mcu_exec`/`mcu_shim`; a production mini-loader, PIC-blob variant,
+and on-target run remain open);
 WSTRING/LTIME/REF dialect extensions (WSTRING is a real UTF-16 type,
 LTIME rides the i64-ns Time representation, the standard function
 library landed, and `REFERENCE TO` is a blob offset that online change

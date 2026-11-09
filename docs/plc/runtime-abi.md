@@ -60,7 +60,7 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
 | `moving_host` | done (`moveBlob`) |
 | `panic_module` | partial — abort-flag path done; panic-handler is a codegen/`tplc-rt` feature (P1) |
 | `migrate_sim` | done for copy/dropped/default/deny/desc-invalid |
-| armv6 qemu module | not yet (needs cross toolchain in CI) |
+| Cortex-M module under qemu-arm | done (`tests/abi/mcu_exec.sh`, ctest `mcu_exec`): `tplcc --target armv7em-none-eabihf` object + harness linked bare-metal, runs init/task/io; skips without qemu-arm |
 | MCU static-link shim | done (`tests/abi/mcu_shim_host.c`, ctest `mcu_shim`): both module images linked into one binary, ABI resolved through a static table — no dlopen/mmap/files/threads; asserts the undefined-symbol set stays Linux-free |
 | `bad_*` prohibition series | blocked on the post-link scanner (P8-04) |
 

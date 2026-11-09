@@ -82,15 +82,13 @@ or the wire reply:
   derefs — null and out-of-range — and covered by the JIT test.)
 - `TPLC_E_PKG_HIDDEN_STATE` (-210), `TPLC_E_REQUIRES_UNMET` (-214) —
   ELF hidden-state and manifest `requires` checks are still
-  unimplemented (declared reservations).
+  unimplemented (declared reservations). (`SYMMAP_RANGE` -211 and
+  `PKG_ABI_MISMATCH` -213 are emitted by `validateForLoad` and
+  covered by `error_paths`.)
 - (The former `-500` alias between `TPLC_E_MGMT_*` and
   `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
   MGMT codes are now emitted by the object dictionary, covered by
   `od_surface`.)
-- `TPLC_E_PKG_HIDDEN_STATE`, `SYMMAP_RANGE`, `PKG_ABI_MISMATCH`,
-  `REQUIRES_UNMET` (-210/-211/-213/-214) — declared in
-  `tplc-pkg`'s `PkgError` but no site returns them yet (manifest
-  validation depth not implemented).
 - `TPLC_E_MAP_DIR`, `MAP_PDO`, `MAP_EPOCH` (-601/-604/-609) —
   declared in the bridge validator's block for map checks v1 does
   not implement (direction/PDO/epoch rules).

@@ -4,8 +4,10 @@
 //! and the state blob — identical addressing to the interpreter
 //! (interp.rs), so oracle/sim parity is structural, not aspirational.
 //!
-//! Ctx layout (tplc_abi.h): state_blob@8, now_ns@48, abort_flag@88,
-//! budget_deadline_ns@96. TplcTaskCtx: prog@0, task_index@8.
+//! Ctx layout (tplc_abi.h): member offsets are computed per target
+//! from the data layout (AbiOffsets) — state_blob@8 on both LP64 and
+//! AAPCS32, but svc/abort/deadline shift on 32-bit targets.
+//! TplcTaskCtx: prog@0, task_index@ptr_size.
 //!
 //! Generated pou fns: `__tplc_pou_<NAME>(u8* ctx, u8* this) -> i32`
 //! rc<0 = abort/fault propagation. Program `this` = state_blob base;
@@ -25,11 +27,144 @@ use tplc_mir::ir::*;
 use tplc_mir::layout::{builtin_fb_layout, Layout};
 use tplc_mir::migrate::{MigOp, MigrateEmit};
 
-const CTX_STATE_BLOB: u64 = 8;
-const CTX_SVC: u64 = 72;
-const CTX_ABORT: u64 = 88;
-const CTX_DEADLINE: u64 = 96;
-const TCTX_PROG: u64 = 0;
+/// Member offsets into the host-allocated ABI structs (tplc_abi.h),
+/// computed from the target data layout so generated GEPs match the C
+/// layout on 32- and 64-bit targets alike. Field order mirrors the
+/// headers; only the members codegen touches are named.
+#[derive(Clone, Copy)]
+struct AbiOffsets {
+    ctx_state_blob: u64,
+    ctx_flags: u64,
+    ctx_svc: u64,
+    ctx_abort: u64,
+    ctx_deadline: u64,
+    tctx_prog: u64,
+    tctx_index: u64,
+    svc_steady_ns: u64,
+    svc_host: u64,
+    mctx_new_prog: u64,
+    mctx_old_blob: u64,
+    mctx_old_blob_size: u64,
+    mctx_old_layout_hash: u64,
+    mctx_out_status: u64,
+    mctx_out_first_err: u64,
+}
+
+/// C-layout member placement: align offset up, record, advance.
+fn place(off: &mut u64, size: u64, align: u64) -> u64 {
+    *off = (*off).div_ceil(align) * align;
+    let at = *off;
+    *off += size;
+    at
+}
+
+fn abi_offsets(ptr: u64, i64a: u64) -> AbiOffsets {
+    // TplcCtx: u32 size, u32 flags, 5 ptrs, 3 i64s, 2 ptrs, u32, u32, i64
+    let mut o = 0;
+    place(&mut o, 4, 4);
+    let ctx_flags = place(&mut o, 4, 4);
+    let ctx_state_blob = place(&mut o, ptr, ptr);
+    place(&mut o, ptr, ptr);
+    place(&mut o, ptr, ptr);
+    place(&mut o, ptr, ptr);
+    place(&mut o, ptr, ptr);
+    place(&mut o, 8, i64a);
+    place(&mut o, 8, i64a);
+    place(&mut o, 8, i64a);
+    let ctx_svc = place(&mut o, ptr, ptr);
+    place(&mut o, ptr, ptr);
+    let ctx_abort = place(&mut o, 4, 4);
+    place(&mut o, 4, 4);
+    let ctx_deadline = place(&mut o, 8, i64a);
+
+    // TplcServices: u32, u32, 6 ptrs, ptr
+    let mut s = 0;
+    place(&mut s, 4, 4);
+    place(&mut s, 4, 4);
+    place(&mut s, ptr, ptr);
+    place(&mut s, ptr, ptr);
+    let svc_steady_ns = place(&mut s, ptr, ptr);
+    place(&mut s, ptr, ptr);
+    place(&mut s, ptr, ptr);
+    place(&mut s, ptr, ptr);
+    let svc_host = place(&mut s, ptr, ptr);
+
+    // TplcTaskCtx: ptr, u32, u32, ptr, 3×i64
+    let mut t = 0;
+    let tctx_prog = place(&mut t, ptr, ptr);
+    let tctx_index = place(&mut t, 4, 4);
+    place(&mut t, 4, 4);
+    place(&mut t, ptr, ptr);
+    place(&mut t, 8, i64a);
+    place(&mut t, 8, i64a);
+    place(&mut t, 8, i64a);
+
+    // TplcMigrateCtx: 2 ptrs, i64, u8[32], u32, u32, ptr, i64, 2×u32
+    let mut m = 0;
+    let mctx_new_prog = place(&mut m, ptr, ptr);
+    let mctx_old_blob = place(&mut m, ptr, ptr);
+    let mctx_old_blob_size = place(&mut m, 8, i64a);
+    let mctx_old_layout_hash = place(&mut m, 32, 1);
+    place(&mut m, 4, 4);
+    place(&mut m, 4, 4);
+    place(&mut m, ptr, ptr);
+    place(&mut m, 8, i64a);
+    let mctx_out_status = place(&mut m, 4, 4);
+    let mctx_out_first_err = place(&mut m, 4, 4);
+
+    AbiOffsets {
+        ctx_state_blob,
+        ctx_flags,
+        ctx_svc,
+        ctx_abort,
+        ctx_deadline,
+        tctx_prog,
+        tctx_index,
+        svc_steady_ns,
+        svc_host,
+        mctx_new_prog,
+        mctx_old_blob,
+        mctx_old_blob_size,
+        mctx_old_layout_hash,
+        mctx_out_status,
+        mctx_out_first_err,
+    }
+}
+
+/// Pointer size (bytes) and i64 ABI alignment (bytes) from an LLVM
+/// data-layout string ("e-m:e-p:32:32-Fi8-i64:64-…"). Unparseable →
+/// LP64 defaults, matching the previous hardcoded offsets.
+fn layout_geom(dl: &str) -> (u64, u64) {
+    let (mut ptr, mut i64a) = (0u64, 0u64);
+    for spec in dl.split('-') {
+        let rest = if let Some(r) = spec.strip_prefix("p:") {
+            Some(r)
+        } else {
+            spec.strip_prefix("p0:")
+        };
+        if let Some(r) = rest {
+            if let Ok(bits) = r.split(':').next().unwrap_or("").parse::<u64>() {
+                ptr = bits / 8;
+            }
+        } else if let Some(r) = spec.strip_prefix("i64:") {
+            if let Ok(bits) = r.split(':').next().unwrap_or("").parse::<u64>() {
+                i64a = bits / 8;
+            }
+        }
+    }
+    if ptr == 0 || i64a == 0 {
+        (8, 8)
+    } else {
+        (ptr, i64a)
+    }
+}
+
+fn abi_offsets_for_triple(triple: &str) -> Result<AbiOffsets, String> {
+    let tm = target_machine(triple)?;
+    let dl = tm.get_target_data().get_data_layout();
+    let (ptr, i64a) = layout_geom(dl.as_str().to_str().unwrap_or(""));
+    Ok(abi_offsets(ptr, i64a))
+}
 
 /// Type → TplcIoType code (tplc_abi.h §enum TplcIoType); unit = bit idx.
 fn io_codes(at: &At, ty: &Type) -> (u8, u8, u8) {
@@ -103,6 +238,7 @@ pub struct Gen<'ctx> {
     loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>, // (cond, exit)
     ctx_ptr: PointerValue<'ctx>,
     this_ptr: PointerValue<'ctx>,
+    abi: AbiOffsets,
 }
 
 fn llty<'c>(ctx: &'c Context, t: &Type) -> BasicTypeEnum<'c> {
@@ -168,8 +304,8 @@ impl<'ctx> Gen<'ctx> {
     fn resolve(&mut self, ctx: &Ctx, r: &Ref) -> (PointerValue<'ctx>, Type) {
         match r {
             /* r^: the slot holds a blob offset; null → -17, out of
-               range → -18. The pointee type comes from the slot's
-               declared Ref type. */
+            range → -18. The pointee type comes from the slot's
+            declared Ref type. */
             Ref::Deref(inner) => {
                 let (slot, ty) = self.resolve(ctx, inner);
                 let to = match &ty {
@@ -177,17 +313,16 @@ impl<'ctx> Gen<'ctx> {
                     _ => Type::Bool,
                 };
                 let i64t = self.ctx.i64_type();
-                let off = self.b.build_load(i64t, slot, "ro").unwrap().into_int_value();
+                let off = self
+                    .b
+                    .build_load(i64t, slot, "ro")
+                    .unwrap()
+                    .into_int_value();
                 let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
                 let ok_bb = self.ctx.append_basic_block(f, "ref.ok");
                 let null = self
                     .b
-                    .build_int_compare(
-                        IntPredicate::EQ,
-                        off,
-                        i64t.const_int(u64::MAX, false),
-                        "rn",
-                    )
+                    .build_int_compare(IntPredicate::EQ, off, i64t.const_int(u64::MAX, false), "rn")
                     .unwrap();
                 let cur = self.b.get_insert_block().unwrap();
                 self.b
@@ -326,8 +461,7 @@ impl<'ctx> Gen<'ctx> {
             return av.into();
         }
         let elem = av.get_type().get_element_type().into_int_type();
-        let zeros: Vec<inkwell::values::IntValue<'ctx>> =
-            vec![elem.const_zero(); want as usize];
+        let zeros: Vec<inkwell::values::IntValue<'ctx>> = vec![elem.const_zero(); want as usize];
         let mut acc = elem.const_array(&zeros);
         for i in 0..want.min(have) {
             let el = self.b.build_extract_value(av, i, "se").unwrap();
@@ -339,7 +473,7 @@ impl<'ctx> Gen<'ctx> {
         }
         if have > want {
             /* truncating store: the len element must not claim data
-               that no longer fits (a len > cap is a malformed string) */
+            that no longer fits (a len > cap is a malformed string) */
             let len = self
                 .b
                 .build_extract_value(acc, 0, "tl")
@@ -382,9 +516,7 @@ impl<'ctx> Gen<'ctx> {
                 let moff = match &ty {
                     Type::Fb { name: fb } => {
                         let fbl = tplc_mir::layout::builtin_fb_layout(fb)
-                            .or_else(|| {
-                                self.layout.fb_types.get(fb).cloned()
-                            })
+                            .or_else(|| self.layout.fb_types.get(fb).cloned())
                             .unwrap_or_else(|| panic!("no FB layout {fb}"));
                         fbl.members
                             .get(name.as_str())
@@ -422,7 +554,8 @@ impl<'ctx> Gen<'ctx> {
                     .b
                     .build_int_sub(iv, i64t.const_int(lo as u64, true), "ri")
                     .unwrap();
-                let esz = self.b
+                let esz = self
+                    .b
                     .build_int_mul(iv, i64t.const_int(elem.size(), false), "re")
                     .unwrap();
                 let base = self.ref_offset(ctx, inner);
@@ -430,7 +563,10 @@ impl<'ctx> Gen<'ctx> {
             }
             Ref::Deref(inner) => {
                 let (slot, _) = self.resolve(ctx, inner);
-                self.b.build_load(i64t, slot, "rl").unwrap().into_int_value()
+                self.b
+                    .build_load(i64t, slot, "rl")
+                    .unwrap()
+                    .into_int_value()
             }
         }
     }
@@ -715,19 +851,44 @@ impl<'ctx> Gen<'ctx> {
             let bv = self.expr(ctx, b).into_array_value();
             let cap = av.get_type().len().min(bv.get_type().len()) as usize;
             let elem = av.get_type().get_element_type().into_int_type();
-            let la = self.b.build_extract_value(av, 0, "la").unwrap().into_int_value();
-            let lb = self.b.build_extract_value(bv, 0, "lb").unwrap().into_int_value();
+            let la = self
+                .b
+                .build_extract_value(av, 0, "la")
+                .unwrap()
+                .into_int_value();
+            let lb = self
+                .b
+                .build_extract_value(bv, 0, "lb")
+                .unwrap()
+                .into_int_value();
             let mut neq = self
                 .b
                 .build_int_compare(IntPredicate::NE, la, lb, "lneq")
                 .unwrap();
             for i in 1..cap {
-                let ca = self.b.build_extract_value(av, i as u32, "ca").unwrap().into_int_value();
-                let cb = self.b.build_extract_value(bv, i as u32, "cb").unwrap().into_int_value();
-                let d = self.b.build_int_compare(IntPredicate::NE, ca, cb, "cd").unwrap();
+                let ca = self
+                    .b
+                    .build_extract_value(av, i as u32, "ca")
+                    .unwrap()
+                    .into_int_value();
+                let cb = self
+                    .b
+                    .build_extract_value(bv, i as u32, "cb")
+                    .unwrap()
+                    .into_int_value();
+                let d = self
+                    .b
+                    .build_int_compare(IntPredicate::NE, ca, cb, "cd")
+                    .unwrap();
                 let idx = elem.const_int((i - 1) as u64, false);
-                let ina = self.b.build_int_compare(IntPredicate::ULT, idx, la, "ia").unwrap();
-                let inb = self.b.build_int_compare(IntPredicate::ULT, idx, lb, "ib").unwrap();
+                let ina = self
+                    .b
+                    .build_int_compare(IntPredicate::ULT, idx, la, "ia")
+                    .unwrap();
+                let inb = self
+                    .b
+                    .build_int_compare(IntPredicate::ULT, idx, lb, "ib")
+                    .unwrap();
                 let act = self.b.build_and(ina, inb, "act").unwrap();
                 let m = self.b.build_and(d, act, "m").unwrap();
                 neq = self.b.build_or(neq, m, "no").unwrap();
@@ -904,8 +1065,12 @@ impl<'ctx> Gen<'ctx> {
     /// FUNCTION call: caller-side scratch alloca, bind inputs, invoke,
     /// read the name-var back.
     /// byte-indexed element pointer over a typed array pointer
-    fn elem_ptr(&mut self, base: PointerValue<'ctx>,
-                idx: inkwell::values::IntValue<'ctx>, esz: u64) -> PointerValue<'ctx> {
+    fn elem_ptr(
+        &mut self,
+        base: PointerValue<'ctx>,
+        idx: inkwell::values::IntValue<'ctx>,
+        esz: u64,
+    ) -> PointerValue<'ctx> {
         let i64t = self.ctx.i64_type();
         let idx64 = if idx.get_type().get_bit_width() < 64 {
             self.b.build_int_z_extend(idx, i64t, "i64").unwrap()
@@ -925,8 +1090,7 @@ impl<'ctx> Gen<'ctx> {
     }
 
     /// extend/truncate an int value to i32 (position/length maths)
-    fn as_i32(&mut self, v: inkwell::values::IntValue<'ctx>)
-        -> inkwell::values::IntValue<'ctx> {
+    fn as_i32(&mut self, v: inkwell::values::IntValue<'ctx>) -> inkwell::values::IntValue<'ctx> {
         let w = v.get_type().get_bit_width();
         let i32t = self.ctx.i32_type();
         if w < 32 {
@@ -939,25 +1103,45 @@ impl<'ctx> Gen<'ctx> {
     }
 
     /// clamp `v` into [lo, hi] (all i32)
-    fn clamp32(&mut self, v: inkwell::values::IntValue<'ctx>,
-               lo: i64, hi: inkwell::values::IntValue<'ctx>)
-        -> inkwell::values::IntValue<'ctx> {
+    fn clamp32(
+        &mut self,
+        v: inkwell::values::IntValue<'ctx>,
+        lo: i64,
+        hi: inkwell::values::IntValue<'ctx>,
+    ) -> inkwell::values::IntValue<'ctx> {
         let i32t = self.ctx.i32_type();
         let lov = i32t.const_int(lo as u64, true);
-        let below = self.b.build_int_compare(IntPredicate::SLT, v, lov, "cb").unwrap();
-        let v = self.b.build_select(below, lov, v, "cl").unwrap().into_int_value();
-        let above = self.b.build_int_compare(IntPredicate::SGT, v, hi, "ca").unwrap();
-        self.b.build_select(above, hi, v, "ch").unwrap().into_int_value()
+        let below = self
+            .b
+            .build_int_compare(IntPredicate::SLT, v, lov, "cb")
+            .unwrap();
+        let v = self
+            .b
+            .build_select(below, lov, v, "cl")
+            .unwrap()
+            .into_int_value();
+        let above = self
+            .b
+            .build_int_compare(IntPredicate::SGT, v, hi, "ca")
+            .unwrap();
+        self.b
+            .build_select(above, hi, v, "ch")
+            .unwrap()
+            .into_int_value()
     }
 
     /// one runtime-bound unit copy: dst[dst_idx..] <- src[src_idx..]
-    fn copy_units(&mut self, dst: PointerValue<'ctx>,
-                  dst_idx: inkwell::values::IntValue<'ctx>,
-                  src: PointerValue<'ctx>,
-                  src_idx: inkwell::values::IntValue<'ctx>,
-                  count: inkwell::values::IntValue<'ctx>,
-                  elem: inkwell::types::IntType<'ctx>, esz: u64,
-                  name: &str) {
+    fn copy_units(
+        &mut self,
+        dst: PointerValue<'ctx>,
+        dst_idx: inkwell::values::IntValue<'ctx>,
+        src: PointerValue<'ctx>,
+        src_idx: inkwell::values::IntValue<'ctx>,
+        count: inkwell::values::IntValue<'ctx>,
+        elem: inkwell::types::IntType<'ctx>,
+        esz: u64,
+        name: &str,
+    ) {
         let i32t = self.ctx.i32_type();
         let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
         let pre = self.b.get_insert_block().unwrap();
@@ -969,8 +1153,13 @@ impl<'ctx> Gen<'ctx> {
         let i = self.b.build_phi(i32t, "i").unwrap();
         i.add_incoming(&[(&i32t.const_zero(), pre)]);
         let iv = i.as_basic_value().into_int_value();
-        let done = self.b.build_int_compare(IntPredicate::SGE, iv, count, "cd").unwrap();
-        self.b.build_conditional_branch(done, end_bb, body_bb).unwrap();
+        let done = self
+            .b
+            .build_int_compare(IntPredicate::SGE, iv, count, "cd")
+            .unwrap();
+        self.b
+            .build_conditional_branch(done, end_bb, body_bb)
+            .unwrap();
         self.b.position_at_end(body_bb);
         let di = self.b.build_int_add(dst_idx, iv, "di").unwrap();
         let si = self.b.build_int_add(src_idx, iv, "si").unwrap();
@@ -978,7 +1167,10 @@ impl<'ctx> Gen<'ctx> {
         let sp = self.elem_ptr(src, si, esz);
         let v = self.b.build_load(elem, sp, name).unwrap();
         self.b.build_store(dp, v).unwrap();
-        let next = self.b.build_int_add(iv, i32t.const_int(1, false), "in").unwrap();
+        let next = self
+            .b
+            .build_int_add(iv, i32t.const_int(1, false), "in")
+            .unwrap();
         i.add_incoming(&[(&next, body_bb)]);
         self.b.build_unconditional_branch(cond_bb).unwrap();
         self.b.position_at_end(end_bb);
@@ -986,9 +1178,13 @@ impl<'ctx> Gen<'ctx> {
 
     /// LEFT/RIGHT/MID/INSERT/DELETE/REPLACE/FIND on narrow and wide
     /// strings. Positions are 1-based (IEC), clamped; L<=0 is empty.
-    fn str_slice_call(&mut self, ctx: &Ctx, b: tplc_mir::ty::BuiltinFn,
-                      args: &[(String, Expr)], ret_ty: &Type)
-        -> BasicValueEnum<'ctx> {
+    fn str_slice_call(
+        &mut self,
+        ctx: &Ctx,
+        b: tplc_mir::ty::BuiltinFn,
+        args: &[(String, Expr)],
+        ret_ty: &Type,
+    ) -> BasicValueEnum<'ctx> {
         use tplc_mir::ty::BuiltinFn;
         let i32t = self.ctx.i32_type();
         let av = self.expr(ctx, &args[0].1).into_array_value();
@@ -1015,7 +1211,7 @@ impl<'ctx> Gen<'ctx> {
             let lb = self.b.build_load(elem, pb, "lb").unwrap().into_int_value();
             let lb32 = self.as_i32(lb);
             /* result starts at 0 (not found); outer scan i in 1..=la-lb+1,
-               inner compare of lb units with an early exit             */
+            inner compare of lb units with an early exit             */
             let found = self.b.build_alloca(i32t, "fd").unwrap();
             self.b.build_store(found, zero).unwrap();
             let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
@@ -1030,8 +1226,14 @@ impl<'ctx> Gen<'ctx> {
             let iv = i.as_basic_value().into_int_value();
             let last = self.b.build_int_sub(la32, lb32, "lm").unwrap();
             let last = self.b.build_int_add(last, one, "lmp").unwrap();
-            let past = self.b.build_int_compare(IntPredicate::SGT, iv, last, "fp").unwrap();
-            let empty = self.b.build_int_compare(IntPredicate::SLE, lb32, zero, "fe").unwrap();
+            let past = self
+                .b
+                .build_int_compare(IntPredicate::SGT, iv, last, "fp")
+                .unwrap();
+            let empty = self
+                .b
+                .build_int_compare(IntPredicate::SLE, lb32, zero, "fe")
+                .unwrap();
             let stop = self.b.build_or(past, empty, "fs").unwrap();
             self.b.build_conditional_branch(stop, oend, obody).unwrap();
             self.b.position_at_end(obody);
@@ -1039,15 +1241,27 @@ impl<'ctx> Gen<'ctx> {
             let jbody = self.ctx.append_basic_block(f, "fd.jb");
             let jnext = self.ctx.append_basic_block(f, "fd.jn");
             let ok = self.b.build_alloca(self.ctx.bool_type(), "ok").unwrap();
-            self.b.build_store(ok, self.ctx.bool_type().const_all_ones()).unwrap();
+            self.b
+                .build_store(ok, self.ctx.bool_type().const_all_ones())
+                .unwrap();
             self.b.build_unconditional_branch(jcond).unwrap();
             self.b.position_at_end(jcond);
             let j = self.b.build_phi(i32t, "j").unwrap();
             j.add_incoming(&[(&one, obody)]);
             let jv = j.as_basic_value().into_int_value();
-            let jdone = self.b.build_int_compare(IntPredicate::SGT, jv, lb32, "jd").unwrap();
-            let cur_ok = self.b.build_load(self.ctx.bool_type(), ok, "ol").unwrap().into_int_value();
-            let quit = self.b.build_or(jdone, self.b.build_not(cur_ok, "on").unwrap(), "q").unwrap();
+            let jdone = self
+                .b
+                .build_int_compare(IntPredicate::SGT, jv, lb32, "jd")
+                .unwrap();
+            let cur_ok = self
+                .b
+                .build_load(self.ctx.bool_type(), ok, "ol")
+                .unwrap()
+                .into_int_value();
+            let quit = self
+                .b
+                .build_or(jdone, self.b.build_not(cur_ok, "on").unwrap(), "q")
+                .unwrap();
             self.b.build_conditional_branch(quit, jnext, jbody).unwrap();
             self.b.position_at_end(jbody);
             let si = self.b.build_int_add(iv, jv, "si").unwrap();
@@ -1056,13 +1270,20 @@ impl<'ctx> Gen<'ctx> {
             let dp = self.elem_ptr(pb, jv, esz);
             let va = self.b.build_load(elem, sp, "va").unwrap().into_int_value();
             let vb = self.b.build_load(elem, dp, "vb").unwrap().into_int_value();
-            let eq = self.b.build_int_compare(IntPredicate::EQ, va, vb, "eq").unwrap();
+            let eq = self
+                .b
+                .build_int_compare(IntPredicate::EQ, va, vb, "eq")
+                .unwrap();
             self.b.build_store(ok, eq).unwrap();
             let jn = self.b.build_int_add(jv, one, "jn").unwrap();
             j.add_incoming(&[(&jn, jbody)]);
             self.b.build_unconditional_branch(jcond).unwrap();
             self.b.position_at_end(jnext);
-            let fin = self.b.build_load(self.ctx.bool_type(), ok, "fl").unwrap().into_int_value();
+            let fin = self
+                .b
+                .build_load(self.ctx.bool_type(), ok, "fl")
+                .unwrap()
+                .into_int_value();
             let hit = self.ctx.append_basic_block(f, "fd.hit");
             let miss = self.ctx.append_basic_block(f, "fd.miss");
             self.b.build_conditional_branch(fin, hit, miss).unwrap();
@@ -1074,7 +1295,11 @@ impl<'ctx> Gen<'ctx> {
             i.add_incoming(&[(&inext, miss)]);
             self.b.build_unconditional_branch(ocond).unwrap();
             self.b.position_at_end(oend);
-            let res = self.b.build_load(i32t, found, "fr").unwrap().into_int_value();
+            let res = self
+                .b
+                .build_load(i32t, found, "fr")
+                .unwrap()
+                .into_int_value();
             let want = llty(self.ctx, ret_ty).into_int_type();
             return if want.get_bit_width() < 32 {
                 self.b.build_int_truncate(res, want, "frt").unwrap().into()
@@ -1111,8 +1336,7 @@ impl<'ctx> Gen<'ctx> {
             BuiltinFn::Mid => {
                 let l = arg_i32(self, 1);
                 let p = arg_i32(self, 2);
-                let start0 = self.clamp32(
-                    self.b.build_int_sub(p, one, "m0").unwrap(), 0, la32);
+                let start0 = self.clamp32(self.b.build_int_sub(p, one, "m0").unwrap(), 0, la32);
                 let avail = self.b.build_int_sub(la32, start0, "ma").unwrap();
                 let n = self.clamp32(l, 0, avail);
                 let si = self.b.build_int_add(start0, one, "ms").unwrap();
@@ -1165,8 +1389,15 @@ impl<'ctx> Gen<'ctx> {
             _ => unreachable!(),
         };
         /* result length: clamped to the target cap */
-        let over = self.b.build_int_compare(IntPredicate::SGT, total, cap32, "ov").unwrap();
-        let tcl = self.b.build_select(over, cap32, total, "tc").unwrap().into_int_value();
+        let over = self
+            .b
+            .build_int_compare(IntPredicate::SGT, total, cap32, "ov")
+            .unwrap();
+        let tcl = self
+            .b
+            .build_select(over, cap32, total, "tc")
+            .unwrap()
+            .into_int_value();
         let tel = if elem.get_bit_width() < 32 {
             self.b.build_int_truncate(tcl, elem, "te").unwrap()
         } else {
@@ -1180,12 +1411,21 @@ impl<'ctx> Gen<'ctx> {
     }
 
     /// LEN/CONCAT over narrow and wide strings (IEC string functions)
-    fn builtin_call(&mut self, ctx: &Ctx, b: tplc_mir::ty::BuiltinFn,
-                    args: &[(String, Expr)], ret_ty: &Type) -> BasicValueEnum<'ctx> {
+    fn builtin_call(
+        &mut self,
+        ctx: &Ctx,
+        b: tplc_mir::ty::BuiltinFn,
+        args: &[(String, Expr)],
+        ret_ty: &Type,
+    ) -> BasicValueEnum<'ctx> {
         use tplc_mir::ty::BuiltinFn;
         match b {
-            BuiltinFn::Left | BuiltinFn::Right | BuiltinFn::Mid
-            | BuiltinFn::Find | BuiltinFn::Insert | BuiltinFn::Delete
+            BuiltinFn::Left
+            | BuiltinFn::Right
+            | BuiltinFn::Mid
+            | BuiltinFn::Find
+            | BuiltinFn::Insert
+            | BuiltinFn::Delete
             | BuiltinFn::Replace => self.str_slice_call(ctx, b, args, ret_ty),
             BuiltinFn::Len => {
                 let av = self.expr(ctx, &args[0].1).into_array_value();
@@ -1237,12 +1477,7 @@ impl<'ctx> Gen<'ctx> {
                     let neg = self.b.build_int_neg(i, "an").unwrap();
                     let lt = self
                         .b
-                        .build_int_compare(
-                            IntPredicate::SLT,
-                            i,
-                            i.get_type().const_zero(),
-                            "ac",
-                        )
+                        .build_int_compare(IntPredicate::SLT, i, i.get_type().const_zero(), "ac")
                         .unwrap();
                     self.b.build_select(lt, neg, i, "abs").unwrap()
                 }
@@ -1276,29 +1511,37 @@ impl<'ctx> Gen<'ctx> {
                 let g = self.expr(ctx, &args[0].1);
                 let a = self.expr(ctx, &args[1].1);
                 let b2 = self.expr(ctx, &args[2].1);
-                self.b.build_select(g.into_int_value(), b2, a, "sel").unwrap()
+                self.b
+                    .build_select(g.into_int_value(), b2, a, "sel")
+                    .unwrap()
             }
             BuiltinFn::Limit => {
                 let mn = self.expr(ctx, &args[0].1);
                 let v = self.expr(ctx, &args[1].1);
                 let mx = self.expr(ctx, &args[2].1);
                 if v.is_float_value() {
-                    let (lo, x, hi) = (mn.into_float_value(), v.into_float_value(),
-                                       mx.into_float_value());
-                    let below = self.b
+                    let (lo, x, hi) = (
+                        mn.into_float_value(),
+                        v.into_float_value(),
+                        mx.into_float_value(),
+                    );
+                    let below = self
+                        .b
                         .build_float_compare(inkwell::FloatPredicate::OLT, x, lo, "lb")
                         .unwrap();
-                    let above = self.b
+                    let above = self
+                        .b
                         .build_float_compare(inkwell::FloatPredicate::OGT, x, hi, "la")
                         .unwrap();
-                    let lo_sel = self.b
+                    let lo_sel = self
+                        .b
                         .build_select(below, lo, x, "ll")
                         .unwrap()
                         .into_float_value();
                     self.b.build_select(above, hi, lo_sel, "lim").unwrap()
                 } else {
-                    let (lo, x, hi) = (mn.into_int_value(), v.into_int_value(),
-                                       mx.into_int_value());
+                    let (lo, x, hi) =
+                        (mn.into_int_value(), v.into_int_value(), mx.into_int_value());
                     let signed = matches!(ret_ty, Type::Int { signed: true, .. });
                     let (bl, ab) = if signed {
                         (IntPredicate::SLT, IntPredicate::SGT)
@@ -1307,7 +1550,8 @@ impl<'ctx> Gen<'ctx> {
                     };
                     let below = self.b.build_int_compare(bl, x, lo, "lb").unwrap();
                     let above = self.b.build_int_compare(ab, x, hi, "la").unwrap();
-                    let lo_sel = self.b
+                    let lo_sel = self
+                        .b
                         .build_select(below, lo, x, "ll")
                         .unwrap()
                         .into_int_value();
@@ -1329,7 +1573,7 @@ impl<'ctx> Gen<'ctx> {
             }
             BuiltinFn::Trunc => {
                 /* sema rewrites TRUNC into a real→int Conv; a direct
-                   MIR use still lands here (fptosi truncates) */
+                MIR use still lands here (fptosi truncates) */
                 let v = self.expr(ctx, &args[0].1);
                 let want = llty(self.ctx, ret_ty).into_int_type();
                 self.b
@@ -1342,29 +1586,17 @@ impl<'ctx> Gen<'ctx> {
                 let f = self.expr(ctx, &args[0].1).into_float_value();
                 let f64t = self.ctx.f64_type();
                 let v = if f.get_type() == self.ctx.f32_type() {
-                    self.b
-                        .build_float_ext(f, f64t, "rw")
-                        .unwrap()
+                    self.b.build_float_ext(f, f64t, "rw").unwrap()
                 } else {
                     f
                 };
                 let pos = self
                     .b
-                    .build_float_compare(
-                        inkwell::FloatPredicate::OGE,
-                        v,
-                        f64t.const_zero(),
-                        "rp",
-                    )
+                    .build_float_compare(inkwell::FloatPredicate::OGE, v, f64t.const_zero(), "rp")
                     .unwrap();
                 let half = self
                     .b
-                    .build_select(
-                        pos,
-                        f64t.const_float(0.5),
-                        f64t.const_float(-0.5),
-                        "rh",
-                    )
+                    .build_select(pos, f64t.const_float(0.5), f64t.const_float(-0.5), "rh")
                     .unwrap()
                     .into_float_value();
                 let adj = self.b.build_float_add(v, half, "ra").unwrap();
@@ -1411,13 +1643,18 @@ impl<'ctx> Gen<'ctx> {
                 let pr = self.b.build_alloca(elem.array_type(want), "pr").unwrap();
 
                 /* a's whole array (len byte + data) lands first — fixed
-                   size — then b's units shift in after a's live length */
+                size — then b's units shift in after a's live length */
                 let bytes = aty.len() as u64 * esz;
                 let dst8 = self.b.build_pointer_cast(pr, self.i8p(), "d8").unwrap();
                 let src8 = self.b.build_pointer_cast(pa, self.i8p(), "s8").unwrap();
                 self.b
-                    .build_memcpy(dst8, 1, src8, 1,
-                                  self.ctx.i64_type().const_int(bytes, false))
+                    .build_memcpy(
+                        dst8,
+                        1,
+                        src8,
+                        1,
+                        self.ctx.i64_type().const_int(bytes, false),
+                    )
                     .unwrap();
 
                 let la = self.b.build_load(elem, pa, "la").unwrap().into_int_value();
@@ -1449,7 +1686,9 @@ impl<'ctx> Gen<'ctx> {
                     .b
                     .build_int_compare(IntPredicate::ULE, jv, lb, "jc")
                     .unwrap();
-                self.b.build_conditional_branch(jc, body_bb, end_bb).unwrap();
+                self.b
+                    .build_conditional_branch(jc, body_bb, end_bb)
+                    .unwrap();
                 self.b.position_at_end(body_bb);
                 let di = self.b.build_int_add(la, jv, "di").unwrap();
                 let dp = self.elem_ptr(pr, di, esz);
@@ -1474,8 +1713,13 @@ impl<'ctx> Gen<'ctx> {
         }
     }
 
-    fn fn_call(&mut self, ctx: &Ctx, fun: &str, args: &[(String, Expr)],
-               ret_ty: &Type) -> BasicValueEnum<'ctx> {
+    fn fn_call(
+        &mut self,
+        ctx: &Ctx,
+        fun: &str,
+        args: &[(String, Expr)],
+        ret_ty: &Type,
+    ) -> BasicValueEnum<'ctx> {
         if let Some(b) = tplc_mir::ty::builtin_fn(fun) {
             return self.builtin_call(ctx, b, args, ret_ty);
         }
@@ -1543,7 +1787,7 @@ impl<'ctx> Gen<'ctx> {
         let cont = self.ctx.append_basic_block(f, "ck.cont");
         let dlck = self.ctx.append_basic_block(f, "ck.dl");
         let af = {
-            let p = self.off_ptr(self.ctx_ptr, CTX_ABORT);
+            let p = self.off_ptr(self.ctx_ptr, self.abi.ctx_abort);
             let l = self.b.build_load(self.ctx.i32_type(), p, "af").unwrap();
             l.as_instruction_value()
                 .unwrap()
@@ -1561,7 +1805,7 @@ impl<'ctx> Gen<'ctx> {
         // deadline armed? then read the host clock once
         self.b.position_at_end(dlck);
         let dl = self
-            .ctx_load(CTX_DEADLINE, self.ctx.i64_type().into(), "dl")
+            .ctx_load(self.abi.ctx_deadline, self.ctx.i64_type().into(), "dl")
             .into_int_value();
         let armed = self
             .b
@@ -1588,19 +1832,19 @@ impl<'ctx> Gen<'ctx> {
         self.b.position_at_end(cont);
     }
 
-    /// svc->steady_ns(svc->host) — TplcServices offsets: steady_ns@24,
-    /// host cookie@56; TplcCtx.svc@72.
+    /// svc->steady_ns(svc->host) — TplcServices/TplcCtx offsets come
+    /// from AbiOffsets (32/64-bit safe).
     fn steady_ns(&mut self) -> IntValue<'ctx> {
         let i8p = self.ctx.ptr_type(inkwell::AddressSpace::default());
         let svc = self
-            .ctx_load(CTX_SVC, i8p.into(), "svc")
+            .ctx_load(self.abi.ctx_svc, i8p.into(), "svc")
             .into_pointer_value();
         let fpp = unsafe {
             self.b
                 .build_gep(
                     self.ctx.i8_type(),
                     svc,
-                    &[self.ctx.i64_type().const_int(24, false)],
+                    &[self.ctx.i64_type().const_int(self.abi.svc_steady_ns, false)],
                     "sfp",
                 )
                 .unwrap()
@@ -1615,7 +1859,7 @@ impl<'ctx> Gen<'ctx> {
                 .build_gep(
                     self.ctx.i8_type(),
                     svc,
-                    &[self.ctx.i64_type().const_int(56, false)],
+                    &[self.ctx.i64_type().const_int(self.abi.svc_host, false)],
                     "hp",
                 )
                 .unwrap()
@@ -1750,14 +1994,8 @@ impl<'ctx> Gen<'ctx> {
                     .map(|e| self.expr(ctx, e).into_int_value())
                     .unwrap_or(vt.const_int(1, true));
                 let end_v = self.expr(ctx, end).into_int_value();
-                let step_e = self
-                    .b
-                    .build_int_cast(step_e, vt, "fs")
-                    .unwrap();
-                let end_v = self
-                    .b
-                    .build_int_cast(end_v, vt, "fe")
-                    .unwrap();
+                let step_e = self.b.build_int_cast(step_e, vt, "fs").unwrap();
+                let end_v = self.b.build_int_cast(end_v, vt, "fe").unwrap();
                 let cond_bb = self.ctx.append_basic_block(f, "f.cond");
                 let body_bb = self.ctx.append_basic_block(f, "f.body");
                 let step_bb = self.ctx.append_basic_block(f, "f.step");
@@ -2082,7 +2320,7 @@ impl<'ctx> Gen<'ctx> {
         let bad_bb = lctx.append_basic_block(f, "bad");
         self.b.position_at_end(e_bb);
         let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
-        let idx_p = self.off_ptr(tctx, 8);
+        let idx_p = self.off_ptr(tctx, self.abi.tctx_index);
         let idx = self
             .b
             .build_load(lctx.i32_type(), idx_p, "idx")
@@ -2180,12 +2418,6 @@ impl<'ctx> Gen<'ctx> {
 
 /// Emit the module: abi_version, init, shutdown, task_run + per-POU fns.
 /// Field offsets in TplcMigrateCtx (doc 02 ABI).
-const MCTX_NEW_PROG: u64 = 0;
-const MCTX_OLD_BLOB: u64 = 8;
-const MCTX_OLD_BLOB_SIZE: u64 = 16;
-const MCTX_OLD_LAYOUT_HASH: u64 = 24;
-const MCTX_OUT_STATUS: u64 = 80;
-const MCTX_OUT_FIRST_ERR: u64 = 84;
 
 impl<'ctx> Gen<'ctx> {
     /// `i32 tplc_migrate(i8* mctx)` — baked rule table: verify the
@@ -2228,8 +2460,14 @@ impl<'ctx> Gen<'ctx> {
                     .try_into()
                     .unwrap(),
             );
-            let v =
-                ld(self, mctx, MCTX_OLD_LAYOUT_HASH + i * 8, i64t.into(), "hw").into_int_value();
+            let v = ld(
+                self,
+                mctx,
+                self.abi.mctx_old_layout_hash + i * 8,
+                i64t.into(),
+                "hw",
+            )
+            .into_int_value();
             let eq = self
                 .b
                 .build_int_compare(
@@ -2248,10 +2486,20 @@ impl<'ctx> Gen<'ctx> {
 
         // ok: per-op byte copies / widens
         self.b.position_at_end(ok_bb);
-        let new_ctx = ld(self, mctx, MCTX_NEW_PROG, i8p.into(), "nctx").into_pointer_value();
-        let new_blob = ld(self, new_ctx, CTX_STATE_BLOB, i8p.into(), "nblob").into_pointer_value();
-        let old_blob = ld(self, mctx, MCTX_OLD_BLOB, i8p.into(), "oblob").into_pointer_value();
-        let old_size = ld(self, mctx, MCTX_OLD_BLOB_SIZE, i64t.into(), "osize").into_int_value();
+        let new_ctx =
+            ld(self, mctx, self.abi.mctx_new_prog, i8p.into(), "nctx").into_pointer_value();
+        let new_blob =
+            ld(self, new_ctx, self.abi.ctx_state_blob, i8p.into(), "nblob").into_pointer_value();
+        let old_blob =
+            ld(self, mctx, self.abi.mctx_old_blob, i8p.into(), "oblob").into_pointer_value();
+        let old_size = ld(
+            self,
+            mctx,
+            self.abi.mctx_old_blob_size,
+            i64t.into(),
+            "osize",
+        )
+        .into_int_value();
         for op in &mig.ops {
             let (oo, no, need) = match op {
                 MigOp::Copy {
@@ -2337,13 +2585,13 @@ impl<'ctx> Gen<'ctx> {
         self.b.position_at_end(deny_bb);
         self.b
             .build_store(
-                out_ptr(self, mctx, MCTX_OUT_STATUS),
+                out_ptr(self, mctx, self.abi.mctx_out_status),
                 i32t.const_int(2, false),
             )
             .unwrap(); // TPLC_MIGRATE_DENY
         self.b
             .build_store(
-                out_ptr(self, mctx, MCTX_OUT_FIRST_ERR),
+                out_ptr(self, mctx, self.abi.mctx_out_first_err),
                 i32t.const_int(1, false),
             )
             .unwrap(); // SWAP_RACE
@@ -2354,7 +2602,7 @@ impl<'ctx> Gen<'ctx> {
         self.b.position_at_end(brange_bb);
         self.b
             .build_store(
-                out_ptr(self, mctx, MCTX_OUT_STATUS),
+                out_ptr(self, mctx, self.abi.mctx_out_status),
                 i32t.const_int(4, false),
             )
             .unwrap(); // ERR_BLOB_RANGE
@@ -2365,12 +2613,15 @@ impl<'ctx> Gen<'ctx> {
         self.b.position_at_end(done_bb);
         self.b
             .build_store(
-                out_ptr(self, mctx, MCTX_OUT_STATUS),
+                out_ptr(self, mctx, self.abi.mctx_out_status),
                 i32t.const_int(mig.degraded as u64, false),
             )
             .unwrap();
         self.b
-            .build_store(out_ptr(self, mctx, MCTX_OUT_FIRST_ERR), i32t.const_zero())
+            .build_store(
+                out_ptr(self, mctx, self.abi.mctx_out_first_err),
+                i32t.const_zero(),
+            )
             .unwrap();
         self.b.build_return(Some(&i32t.const_zero())).unwrap();
     }
@@ -2445,6 +2696,40 @@ pub fn emit_program<'ctx>(
     migrate: Option<&MigrateEmit>,
     task_period_ns: u64,
 ) -> LlvmModule<'ctx> {
+    emit_program_for_target(
+        lctx,
+        mir,
+        layout,
+        program,
+        io_binds,
+        program_name,
+        uuid,
+        layout_hash,
+        migrate,
+        task_period_ns,
+        "",
+    )
+    .expect("host target machine")
+}
+
+/// `emit_program` for an explicit LLVM triple ("" = host). The ABI
+/// context offsets are computed from that target's data layout, so
+/// 32-bit targets get correct struct member offsets.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_program_for_target<'ctx>(
+    lctx: &'ctx Context,
+    mir: &'static Module,
+    layout: &'static Layout,
+    program: &'static Pou,
+    io_binds: &[IoBind],
+    program_name: &str,
+    uuid: [u8; 16],
+    layout_hash: [u8; 32],
+    migrate: Option<&MigrateEmit>,
+    task_period_ns: u64,
+    triple: &str,
+) -> Result<LlvmModule<'ctx>, String> {
+    let abi = abi_offsets_for_triple(triple)?;
     let module = lctx.create_module("tplc_program");
     let mut g = Gen {
         ctx: lctx,
@@ -2459,6 +2744,7 @@ pub fn emit_program<'ctx>(
         loop_stack: Vec::new(),
         ctx_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
         this_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
+        abi,
     };
 
     let i8p = g.i8p();
@@ -2481,7 +2767,7 @@ pub fn emit_program<'ctx>(
     g.b.position_at_end(bb);
     g.ctx_ptr = f.get_nth_param(0).unwrap().into_pointer_value();
     let blob = g
-        .ctx_load(CTX_STATE_BLOB, i8p.into(), "blob")
+        .ctx_load(g.abi.ctx_state_blob, i8p.into(), "blob")
         .into_pointer_value();
     // zero the blob in two segments around the retain region; the
     // retain segment itself is zeroed only on a cold start — a warm
@@ -2527,7 +2813,9 @@ pub fn emit_program<'ctx>(
     // skipped when the host signals a warm restore
     let scope0 = program_ctx(layout);
     g.this_ptr = blob;
-    let cf = g.ctx_load(4, lctx.i32_type().into(), "cf").into_int_value();
+    let cf = g
+        .ctx_load(g.abi.ctx_flags, lctx.i32_type().into(), "cf")
+        .into_int_value();
     let restored =
         g.b.build_and(cf, lctx.i32_type().const_int(8, false), "rr")
             .unwrap();
@@ -2634,11 +2922,11 @@ pub fn emit_program<'ctx>(
     let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
     g.ctx_ptr = tctx;
     let prog = g
-        .ctx_load(TCTX_PROG, i8p.into(), "prog")
+        .ctx_load(g.abi.tctx_prog, i8p.into(), "prog")
         .into_pointer_value();
     g.ctx_ptr = prog;
     let blob = g
-        .ctx_load(CTX_STATE_BLOB, i8p.into(), "blob")
+        .ctx_load(g.abi.ctx_state_blob, i8p.into(), "blob")
         .into_pointer_value();
     let pf = g.pou_fn(&program.name);
     let cs =
@@ -2659,7 +2947,7 @@ pub fn emit_program<'ctx>(
         migrate.is_some(),
         task_period_ns,
     );
-    g.module
+    Ok(g.module)
 }
 
 /* ------------------------------------------------------------------ */
@@ -2676,8 +2964,7 @@ use std::path::Path;
 /// "aarch64-unknown-linux-gnu", "armv6-unknown-linux-gnueabihf").
 pub fn target_machine(triple: &str) -> Result<TargetMachine, String> {
     if triple.is_empty() {
-        Target::initialize_native(&InitializationConfig::default())
-            .map_err(|e| e.to_string())?;
+        Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
     } else {
         Target::initialize_all(&InitializationConfig::default());
     }
@@ -2688,7 +2975,7 @@ pub fn target_machine(triple: &str) -> Result<TargetMachine, String> {
     };
     let target = Target::from_triple(&triple_t).map_err(|e| e.to_string())?;
     /* PIC for hosted triples; bare-metal targets reject PIC, so fall
-       back to static reloc + small code model (Cortex-M objects) */
+    back to static reloc + small code model (Cortex-M objects) */
     target
         .create_target_machine(
             &triple_t,
@@ -2730,11 +3017,7 @@ pub fn set_target(module: &LlvmModule<'_>, triple: &str) -> Result<(), String> {
 }
 
 /// Emit an ELF object file for `triple` ("" = host).
-pub fn emit_object(
-    module: &LlvmModule<'_>,
-    path: &Path,
-    triple: &str,
-) -> Result<(), String> {
+pub fn emit_object(module: &LlvmModule<'_>, path: &Path, triple: &str) -> Result<(), String> {
     let tm = target_machine(triple)?;
     tm.write_to_file(module, FileType::Object, path)
         .map_err(|e| e.to_string())
@@ -2744,4 +3027,67 @@ pub fn emit_object(
 pub fn emit_bitcode(module: &LlvmModule<'_>, path: &Path) -> Result<(), String> {
     module.write_bitcode_to_path(path);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /* ABI offsets must match the C headers on both pointer widths —
+    verified against offsetof() compiled by gcc (LP64) and
+    arm-none-eabi-gcc (AAPCS32). */
+    #[test]
+    fn abi_offsets_lp64() {
+        let a = abi_offsets(8, 8);
+        assert_eq!(a.ctx_state_blob, 8);
+        assert_eq!(a.ctx_flags, 4);
+        assert_eq!(a.ctx_svc, 72);
+        assert_eq!(a.ctx_abort, 88);
+        assert_eq!(a.ctx_deadline, 96);
+        assert_eq!(a.tctx_prog, 0);
+        assert_eq!(a.tctx_index, 8);
+        assert_eq!(a.svc_steady_ns, 24);
+        assert_eq!(a.svc_host, 56);
+        assert_eq!(a.mctx_new_prog, 0);
+        assert_eq!(a.mctx_old_blob, 8);
+        assert_eq!(a.mctx_old_blob_size, 16);
+        assert_eq!(a.mctx_old_layout_hash, 24);
+        assert_eq!(a.mctx_out_status, 80);
+        assert_eq!(a.mctx_out_first_err, 84);
+    }
+
+    #[test]
+    fn abi_offsets_aapcs32() {
+        let a = abi_offsets(4, 8);
+        assert_eq!(a.ctx_state_blob, 8);
+        assert_eq!(a.ctx_flags, 4);
+        assert_eq!(a.ctx_svc, 56);
+        assert_eq!(a.ctx_abort, 64);
+        assert_eq!(a.ctx_deadline, 72);
+        assert_eq!(a.tctx_prog, 0);
+        assert_eq!(a.tctx_index, 4);
+        assert_eq!(a.svc_steady_ns, 16);
+        assert_eq!(a.svc_host, 32);
+        assert_eq!(a.mctx_new_prog, 0);
+        assert_eq!(a.mctx_old_blob, 4);
+        assert_eq!(a.mctx_old_blob_size, 8);
+        assert_eq!(a.mctx_old_layout_hash, 16);
+        assert_eq!(a.mctx_out_status, 72);
+        assert_eq!(a.mctx_out_first_err, 76);
+    }
+
+    #[test]
+    fn layout_geom_parses_ptr_and_i64() {
+        assert_eq!(
+            layout_geom(
+                "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+            ),
+            (8, 8)
+        );
+        assert_eq!(
+            layout_geom("e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64"),
+            (4, 8)
+        );
+        assert_eq!(layout_geom(""), (8, 8));
+    }
 }

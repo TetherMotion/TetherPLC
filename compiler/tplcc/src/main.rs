@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tplc_codegen::llvm_emit::{
-    emit_bitcode, emit_object, emit_program, host_triple, set_target,
+    emit_bitcode, emit_object, emit_program_for_target, host_triple, set_target,
 };
 use tplc_mir::desc;
 use tplc_mir::ir::{AtRegion, IoBind, Pou, PouKind, Prov};
@@ -878,8 +878,12 @@ fn cmd_build(args: &[String]) -> ExitCode {
                     old_field: *old_field,
                     new_field: *new_field,
                     /* bit2: this copy carries a reference that the
-                       runtime may keep (layout unchanged) */
-                    aux: if preserved_refs.contains(new_field) { 4 } else { 0 },
+                    runtime may keep (layout unchanged) */
+                    aux: if preserved_refs.contains(new_field) {
+                        4
+                    } else {
+                        0
+                    },
                 },
                 mig::Rule::Transform {
                     id,
@@ -968,8 +972,14 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let layout_ref: &'static _ = Box::leak(Box::new(layout));
     let prog_ref: &'static Pou = Box::leak(Box::new(program));
 
+    /* --target selects the backend triple; resolved before emission
+    so the ABI context offsets match the target's data layout.
+    The package's target_obj is a monolithic object for non-host
+    targets (the .so link is native-only) */
+    let triple = target.unwrap_or_else(host_triple);
+
     let lctx = Context::create();
-    let llmod = emit_program(
+    let llmod = match emit_program_for_target(
         &lctx,
         module_ref,
         layout_ref,
@@ -980,7 +990,14 @@ fn cmd_build(args: &[String]) -> ExitCode {
         layout_hash,
         mig_emit.as_ref(),
         task_period_ns,
-    );
+        &triple,
+    ) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("tplcc: bad target triple {triple}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if let Err(e) = llmod.verify() {
         if json_mode {
             println!("{}", stage_failure_json("verify", &e.to_string()));
@@ -989,10 +1006,6 @@ fn cmd_build(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    /* --target selects the backend triple; the package's
-       target_obj is a monolithic object for non-host targets (the
-       .so link is native-only) */
-    let triple = target.unwrap_or_else(host_triple);
     if let Err(e) = set_target(&llmod, &triple) {
         eprintln!("tplcc: bad target triple {triple}: {e}");
         return ExitCode::FAILURE;
@@ -1006,75 +1019,75 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let bc_bytes = std::fs::read(&bc).unwrap();
 
     /* link .o + tplc-rt → deployable .so (doc 01 §5: shared object) —
-       native triple only; a non-host target_obj is the raw object */
+    native triple only; a non-host target_obj is the raw object */
     let obj_bytes = if triple == host_triple() {
-    // The rt source is embedded; rustc produces a lean no_std
-    // staticlib (~10KB .so, only `tplc_*` exports + abort).
-    // TPLC_RT_LIB overrides for prebuilt archives.
-    let rt_lib = std::env::var("TPLC_RT_LIB")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            const RT_SRC: &str = include_str!("../../tplc-rt/src/lib.rs");
-            let src = tmp.join("tplc_rt.rs");
-            std::fs::write(&src, RT_SRC).unwrap();
-            let a = tmp.join("libtplc_rt.a");
-            let rc = std::process::Command::new("rustc")
-                .args([
-                    "--edition",
-                    "2021",
-                    "--crate-type",
-                    "staticlib",
-                    "-C",
-                    "panic=abort",
-                    "-C",
-                    "opt-level=2",
-                    "--cfg",
-                    "feature=\"nostd\"",
-                ])
-                .arg(&src)
-                .arg("-o")
-                .arg(&a)
-                .output()
-                .expect("rustc for tplc-rt");
-            if !rc.status.success() {
-                eprintln!("tplcc: rt build: {}", String::from_utf8_lossy(&rc.stderr));
-                std::process::exit(1);
-            }
-            a
-        });
-    let map = tmp.join("exports.map");
-    std::fs::write(
-        &map,
-        "{ global: tplc_*; local: *; };
+        // The rt source is embedded; rustc produces a lean no_std
+        // staticlib (~10KB .so, only `tplc_*` exports + abort).
+        // TPLC_RT_LIB overrides for prebuilt archives.
+        let rt_lib = std::env::var("TPLC_RT_LIB")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                const RT_SRC: &str = include_str!("../../tplc-rt/src/lib.rs");
+                let src = tmp.join("tplc_rt.rs");
+                std::fs::write(&src, RT_SRC).unwrap();
+                let a = tmp.join("libtplc_rt.a");
+                let rc = std::process::Command::new("rustc")
+                    .args([
+                        "--edition",
+                        "2021",
+                        "--crate-type",
+                        "staticlib",
+                        "-C",
+                        "panic=abort",
+                        "-C",
+                        "opt-level=2",
+                        "--cfg",
+                        "feature=\"nostd\"",
+                    ])
+                    .arg(&src)
+                    .arg("-o")
+                    .arg(&a)
+                    .output()
+                    .expect("rustc for tplc-rt");
+                if !rc.status.success() {
+                    eprintln!("tplcc: rt build: {}", String::from_utf8_lossy(&rc.stderr));
+                    std::process::exit(1);
+                }
+                a
+            });
+        let map = tmp.join("exports.map");
+        std::fs::write(
+            &map,
+            "{ global: tplc_*; local: *; };
 ",
-    )
-    .unwrap();
-    let so = tmp.join("prog.so");
-    let cc = std::process::Command::new("cc")
-        .args(["-shared", "-o"])
-        .arg(&so)
-        .arg(&obj)
-        .arg(&rt_lib)
-        .arg(format!("-Wl,--version-script={}", map.display()))
-        .output()
+        )
         .unwrap();
-    if !cc.status.success() {
-        if json_mode {
-            println!(
-                "{}",
-                stage_failure_json("link", &String::from_utf8_lossy(&cc.stderr))
+        let so = tmp.join("prog.so");
+        let cc = std::process::Command::new("cc")
+            .args(["-shared", "-o"])
+            .arg(&so)
+            .arg(&obj)
+            .arg(&rt_lib)
+            .arg(format!("-Wl,--version-script={}", map.display()))
+            .output()
+            .unwrap();
+        if !cc.status.success() {
+            if json_mode {
+                println!(
+                    "{}",
+                    stage_failure_json("link", &String::from_utf8_lossy(&cc.stderr))
+                );
+            }
+            eprintln!(
+                "tplcc: link failed: {}",
+                String::from_utf8_lossy(&cc.stderr)
             );
+            return ExitCode::FAILURE;
         }
-        eprintln!(
-            "tplcc: link failed: {}",
-            String::from_utf8_lossy(&cc.stderr)
-        );
-        return ExitCode::FAILURE;
-    }
         std::fs::read(&so).unwrap()
     } else {
         /* bare-metal/foreign target: target_obj is the raw object,
-           not a linked .so — the MCU shim consumes it statically */
+        not a linked .so — the MCU shim consumes it statically */
         std::fs::read(&obj).unwrap()
     };
 
@@ -1390,7 +1403,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
             rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
             rt.cycle = ci as u64;
             /* declaration initializers run once at program start, as
-               tplc_init does on the compiled path */
+            tplc_init does on the compiled path */
             if ci == 0 {
                 rt.run_inits(ctx);
             }
@@ -1481,7 +1494,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
             rt.now_ns = c["t_ns"].as_u64().unwrap_or(0);
             rt.cycle = ci as u64;
             /* declaration initializers run once at program start, as
-               tplc_init does on the compiled path */
+            tplc_init does on the compiled path */
             if ci == 0 {
                 rt.run_inits(ctx);
             }
