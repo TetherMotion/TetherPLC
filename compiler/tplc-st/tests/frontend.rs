@@ -267,6 +267,51 @@ END_PROGRAM
 }
 
 #[test]
+fn string_functions_are_typed() {
+    let ok = r#"
+PROGRAM P
+VAR s : STRING[16]; c : STRING[16]; w : WSTRING[16];
+    wc : WSTRING[16]; n : INT; END_VAR
+    s := 'abcdef';
+    c := LEFT(s, 3);
+    c := MID(s, 2, 3);
+    c := INSERT(s, 'XY', 4);
+    c := DELETE(s, 2, 3);
+    c := REPLACE(s, 'XY', 2, 3);
+    w := "aä€z";
+    wc := RIGHT(w, 2);
+    n := FIND(s, 'cd');
+END_PROGRAM
+"#;
+    let out = compile(&[("ok.st", ok)]);
+    let mut module = out.module;
+    let diags = tplc_st::sema::check(&mut module);
+    assert!(
+        !diags.iter().any(|d| d.severity == tplc_st::Severity::Error),
+        "string fn sema errors: {diags:?}"
+    );
+
+    for (name, src) in [
+        (
+            "find_mixed",
+            "PROGRAM P\nVAR s : STRING[16]; w : WSTRING[16]; n : INT; END_VAR\n n := FIND(s, w);\nEND_PROGRAM\n",
+        ),
+        (
+            "left_nonstring",
+            "PROGRAM P\nVAR x : INT; c : STRING[16]; END_VAR\n c := LEFT(x, 3);\nEND_PROGRAM\n",
+        ),
+    ] {
+        let out = compile(&[(name, src)]);
+        let mut module = out.module;
+        let diags = tplc_st::sema::check(&mut module);
+        assert!(
+            diags.iter().any(|d| d.code == tplc_st::codes::TYPE),
+            "{name}: expected TYPE diag, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn lints_fire_and_render() {
     let src = r#"
 PROGRAM P

@@ -416,6 +416,75 @@ impl<'a> Rt<'a> {
 
     /// FUNCTION invocation: inputs bind into scratch, body runs with
     /// call-scoped ctx, return value read from the name-var.
+    /// LEFT/RIGHT/MID/INSERT/DELETE/REPLACE over narrow and wide
+    /// strings. Positions are 1-based (IEC) and clamped; L<=0 yields
+    /// the empty string, P past the end clamps to the end.
+    fn str_op(&mut self, caller: &Ctx, b: BuiltinFn,
+              args: &[(String, Expr)]) -> Value {
+        let ev = |rt: &mut Self, i: usize| -> Value {
+            args.get(i)
+                .map(|(_, e)| rt.eval(caller, e))
+                .unwrap_or(Value::I(0))
+        };
+        match b {
+            BuiltinFn::Left | BuiltinFn::Right => {
+                let s = ev(self, 0);
+                let l = ev(self, 1).as_i64();
+                match s {
+                    Value::Str(x) => Value::Str(slice_lr(&x, l, b == BuiltinFn::Left)),
+                    Value::WStr(x) => Value::WStr(slice_lr(&x, l, b == BuiltinFn::Left)),
+                    o => o,
+                }
+            }
+            BuiltinFn::Mid => {
+                let s = ev(self, 0);
+                let l = ev(self, 1).as_i64();
+                let p = ev(self, 2).as_i64();
+                match s {
+                    Value::Str(x) => Value::Str(slice_mid(&x, l, p)),
+                    Value::WStr(x) => Value::WStr(slice_mid(&x, l, p)),
+                    o => o,
+                }
+            }
+            BuiltinFn::Insert => {
+                let s = ev(self, 0);
+                let ins = ev(self, 1);
+                let p = ev(self, 2).as_i64();
+                match (s, ins) {
+                    (Value::Str(a), Value::Str(i)) => Value::Str(insert_at(&a, &i, p)),
+                    (Value::WStr(a), Value::WStr(i)) => Value::WStr(insert_at(&a, &i, p)),
+                    _ => Value::Str(Vec::new()),
+                }
+            }
+            BuiltinFn::Delete => {
+                let s = ev(self, 0);
+                let l = ev(self, 1).as_i64();
+                let p = ev(self, 2).as_i64();
+                match s {
+                    Value::Str(x) => Value::Str(delete_at(&x, l, p)),
+                    Value::WStr(x) => Value::WStr(delete_at(&x, l, p)),
+                    o => o,
+                }
+            }
+            BuiltinFn::Replace => {
+                let s = ev(self, 0);
+                let ins = ev(self, 1);
+                let l = ev(self, 2).as_i64();
+                let p = ev(self, 3).as_i64();
+                match (s, ins) {
+                    (Value::Str(a), Value::Str(i)) => {
+                        Value::Str(insert_at(&delete_at(&a, l, p), &i, p))
+                    }
+                    (Value::WStr(a), Value::WStr(i)) => {
+                        Value::WStr(insert_at(&delete_at(&a, l, p), &i, p))
+                    }
+                    _ => Value::Str(Vec::new()),
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
     /// LEN/CONCAT over narrow and wide strings (IEC string functions)
     fn builtin_call(&mut self, caller: &Ctx, b: BuiltinFn,
                     args: &[(String, Expr)]) -> Value {
@@ -484,6 +553,24 @@ impl<'a> Rt<'a> {
                     let (lo, x, hi) = (mn.as_i64(), v.as_i64(), mx.as_i64());
                     Value::I(if x < lo { lo } else if x > hi { hi } else { x })
                 }
+            }
+            BuiltinFn::Left | BuiltinFn::Right | BuiltinFn::Mid
+            | BuiltinFn::Insert | BuiltinFn::Delete | BuiltinFn::Replace => {
+                self.str_op(caller, b, args)
+            }
+            BuiltinFn::Find => {
+                let a = args.first().map(|(_, e)| self.eval(caller, e));
+                let b2 = args.get(1).map(|(_, e)| self.eval(caller, e));
+                let pos = match (a, b2) {
+                    (Some(Value::Str(x)), Some(Value::Str(y))) => {
+                        find_sub(&x, &y)
+                    }
+                    (Some(Value::WStr(x)), Some(Value::WStr(y))) => {
+                        find_sub(&x, &y)
+                    }
+                    _ => 0,
+                };
+                Value::I(pos as i64)
             }
             BuiltinFn::Concat => {
                 let a = args.first().map(|(_, e)| self.eval(caller, e));
@@ -893,6 +980,56 @@ fn arith(l: Value, r: Value, fi: fn(i64, i64) -> i64, ff: fn(f64, f64) -> f64) -
         (Value::U(_), Value::U(_)) => Value::U(fi(l.as_i64(), r.as_i64()) as u64),
         _ => Value::I(fi(l.as_i64(), r.as_i64())),
     }
+}
+
+/// first 1-based position of `needle` in `hay`, 0 when absent
+fn find_sub<T: PartialEq>(hay: &[T], needle: &[T]) -> usize {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return 0;
+    }
+    for i in 0..=hay.len() - needle.len() {
+        if &hay[i..i + needle.len()] == needle {
+            return i + 1;
+        }
+    }
+    0
+}
+
+fn slice_lr<T: Copy>(s: &[T], l: i64, left: bool) -> Vec<T> {
+    if l <= 0 {
+        return Vec::new();
+    }
+    let n = (l as usize).min(s.len());
+    if left { s[..n].to_vec() } else { s[s.len() - n..].to_vec() }
+}
+
+fn slice_mid<T: Copy>(s: &[T], l: i64, p: i64) -> Vec<T> {
+    if l <= 0 || p < 1 {
+        return Vec::new();
+    }
+    let start = ((p - 1) as usize).min(s.len());
+    let n = (l as usize).min(s.len() - start);
+    s[start..start + n].to_vec()
+}
+
+fn insert_at<T: Copy>(s: &[T], ins: &[T], p: i64) -> Vec<T> {
+    let pos = ((p.max(1) - 1) as usize).min(s.len());
+    let mut out = Vec::with_capacity(s.len() + ins.len());
+    out.extend_from_slice(&s[..pos]);
+    out.extend_from_slice(ins);
+    out.extend_from_slice(&s[pos..]);
+    out
+}
+
+fn delete_at<T: Copy>(s: &[T], l: i64, p: i64) -> Vec<T> {
+    if l <= 0 || p < 1 {
+        return s.to_vec();
+    }
+    let start = ((p - 1) as usize).min(s.len());
+    let n = (l as usize).min(s.len() - start);
+    let mut out = s[..start].to_vec();
+    out.extend_from_slice(&s[start + n..]);
+    out
 }
 
 fn cmp(l: &Value, r: &Value) -> i8 {

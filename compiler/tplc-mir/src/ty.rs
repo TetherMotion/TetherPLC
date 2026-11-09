@@ -39,6 +39,13 @@ pub enum BuiltinFn {
     Max,
     Sel,
     Limit,
+    Left,
+    Right,
+    Mid,
+    Find,
+    Insert,
+    Delete,
+    Replace,
 }
 
 pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
@@ -50,6 +57,13 @@ pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
         "MAX" => Some(BuiltinFn::Max),
         "SEL" => Some(BuiltinFn::Sel),
         "LIMIT" => Some(BuiltinFn::Limit),
+        "LEFT" => Some(BuiltinFn::Left),
+        "RIGHT" => Some(BuiltinFn::Right),
+        "MID" => Some(BuiltinFn::Mid),
+        "FIND" => Some(BuiltinFn::Find),
+        "INSERT" => Some(BuiltinFn::Insert),
+        "DELETE" => Some(BuiltinFn::Delete),
+        "REPLACE" => Some(BuiltinFn::Replace),
         _ => None,
     }
 }

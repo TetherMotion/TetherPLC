@@ -781,11 +781,269 @@ impl<'ctx> Gen<'ctx> {
         }
     }
 
+    /// extend/truncate an int value to i32 (position/length maths)
+    fn as_i32(&mut self, v: inkwell::values::IntValue<'ctx>)
+        -> inkwell::values::IntValue<'ctx> {
+        let w = v.get_type().get_bit_width();
+        let i32t = self.ctx.i32_type();
+        if w < 32 {
+            self.b.build_int_z_extend(v, i32t, "e32").unwrap()
+        } else if w > 32 {
+            self.b.build_int_truncate(v, i32t, "t32").unwrap()
+        } else {
+            v
+        }
+    }
+
+    /// clamp `v` into [lo, hi] (all i32)
+    fn clamp32(&mut self, v: inkwell::values::IntValue<'ctx>,
+               lo: i64, hi: inkwell::values::IntValue<'ctx>)
+        -> inkwell::values::IntValue<'ctx> {
+        let i32t = self.ctx.i32_type();
+        let lov = i32t.const_int(lo as u64, true);
+        let below = self.b.build_int_compare(IntPredicate::SLT, v, lov, "cb").unwrap();
+        let v = self.b.build_select(below, lov, v, "cl").unwrap().into_int_value();
+        let above = self.b.build_int_compare(IntPredicate::SGT, v, hi, "ca").unwrap();
+        self.b.build_select(above, hi, v, "ch").unwrap().into_int_value()
+    }
+
+    /// one runtime-bound unit copy: dst[dst_idx..] <- src[src_idx..]
+    fn copy_units(&mut self, dst: PointerValue<'ctx>,
+                  dst_idx: inkwell::values::IntValue<'ctx>,
+                  src: PointerValue<'ctx>,
+                  src_idx: inkwell::values::IntValue<'ctx>,
+                  count: inkwell::values::IntValue<'ctx>,
+                  elem: inkwell::types::IntType<'ctx>, esz: u64,
+                  name: &str) {
+        let i32t = self.ctx.i32_type();
+        let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+        let pre = self.b.get_insert_block().unwrap();
+        let cond_bb = self.ctx.append_basic_block(f, "cp.cond");
+        let body_bb = self.ctx.append_basic_block(f, "cp.body");
+        let end_bb = self.ctx.append_basic_block(f, "cp.end");
+        self.b.build_unconditional_branch(cond_bb).unwrap();
+        self.b.position_at_end(cond_bb);
+        let i = self.b.build_phi(i32t, "i").unwrap();
+        i.add_incoming(&[(&i32t.const_zero(), pre)]);
+        let iv = i.as_basic_value().into_int_value();
+        let done = self.b.build_int_compare(IntPredicate::SGE, iv, count, "cd").unwrap();
+        self.b.build_conditional_branch(done, end_bb, body_bb).unwrap();
+        self.b.position_at_end(body_bb);
+        let di = self.b.build_int_add(dst_idx, iv, "di").unwrap();
+        let si = self.b.build_int_add(src_idx, iv, "si").unwrap();
+        let dp = self.elem_ptr(dst, di, esz);
+        let sp = self.elem_ptr(src, si, esz);
+        let v = self.b.build_load(elem, sp, name).unwrap();
+        self.b.build_store(dp, v).unwrap();
+        let next = self.b.build_int_add(iv, i32t.const_int(1, false), "in").unwrap();
+        i.add_incoming(&[(&next, body_bb)]);
+        self.b.build_unconditional_branch(cond_bb).unwrap();
+        self.b.position_at_end(end_bb);
+    }
+
+    /// LEFT/RIGHT/MID/INSERT/DELETE/REPLACE/FIND on narrow and wide
+    /// strings. Positions are 1-based (IEC), clamped; L<=0 is empty.
+    fn str_slice_call(&mut self, ctx: &Ctx, b: tplc_mir::ty::BuiltinFn,
+                      args: &[(String, Expr)], ret_ty: &Type)
+        -> BasicValueEnum<'ctx> {
+        use tplc_mir::ty::BuiltinFn;
+        let i32t = self.ctx.i32_type();
+        let av = self.expr(ctx, &args[0].1).into_array_value();
+        let aty = av.get_type();
+        let elem = aty.get_element_type().into_int_type();
+        let esz = (elem.get_bit_width() / 8) as u64;
+        let pa = self.b.build_alloca(aty, "sa").unwrap();
+        self.b.build_store(pa, av).unwrap();
+        let la = self.b.build_load(elem, pa, "la").unwrap().into_int_value();
+        let la32 = self.as_i32(la);
+        let zero = i32t.const_zero();
+        let one = i32t.const_int(1, false);
+
+        let arg_i32 = |g: &mut Self, i: usize| {
+            let v = g.expr(ctx, &args[i].1).into_int_value();
+            g.as_i32(v)
+        };
+
+        if b == BuiltinFn::Find {
+            let bv = self.expr(ctx, &args[1].1).into_array_value();
+            let bty = bv.get_type();
+            let pb = self.b.build_alloca(bty, "sb").unwrap();
+            self.b.build_store(pb, bv).unwrap();
+            let lb = self.b.build_load(elem, pb, "lb").unwrap().into_int_value();
+            let lb32 = self.as_i32(lb);
+            /* result starts at 0 (not found); outer scan i in 1..=la-lb+1,
+               inner compare of lb units with an early exit             */
+            let found = self.b.build_alloca(i32t, "fd").unwrap();
+            self.b.build_store(found, zero).unwrap();
+            let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+            let ocond = self.ctx.append_basic_block(f, "fd.oc");
+            let obody = self.ctx.append_basic_block(f, "fd.ob");
+            let oend = self.ctx.append_basic_block(f, "fd.oe");
+            let pre = self.b.get_insert_block().unwrap();
+            self.b.build_unconditional_branch(ocond).unwrap();
+            self.b.position_at_end(ocond);
+            let i = self.b.build_phi(i32t, "i").unwrap();
+            i.add_incoming(&[(&one, pre)]);
+            let iv = i.as_basic_value().into_int_value();
+            let last = self.b.build_int_sub(la32, lb32, "lm").unwrap();
+            let last = self.b.build_int_add(last, one, "lmp").unwrap();
+            let past = self.b.build_int_compare(IntPredicate::SGT, iv, last, "fp").unwrap();
+            let empty = self.b.build_int_compare(IntPredicate::SLE, lb32, zero, "fe").unwrap();
+            let stop = self.b.build_or(past, empty, "fs").unwrap();
+            self.b.build_conditional_branch(stop, oend, obody).unwrap();
+            self.b.position_at_end(obody);
+            let jcond = self.ctx.append_basic_block(f, "fd.jc");
+            let jbody = self.ctx.append_basic_block(f, "fd.jb");
+            let jnext = self.ctx.append_basic_block(f, "fd.jn");
+            let ok = self.b.build_alloca(self.ctx.bool_type(), "ok").unwrap();
+            self.b.build_store(ok, self.ctx.bool_type().const_all_ones()).unwrap();
+            self.b.build_unconditional_branch(jcond).unwrap();
+            self.b.position_at_end(jcond);
+            let j = self.b.build_phi(i32t, "j").unwrap();
+            j.add_incoming(&[(&one, obody)]);
+            let jv = j.as_basic_value().into_int_value();
+            let jdone = self.b.build_int_compare(IntPredicate::SGT, jv, lb32, "jd").unwrap();
+            let cur_ok = self.b.build_load(self.ctx.bool_type(), ok, "ol").unwrap().into_int_value();
+            let quit = self.b.build_or(jdone, self.b.build_not(cur_ok, "on").unwrap(), "q").unwrap();
+            self.b.build_conditional_branch(quit, jnext, jbody).unwrap();
+            self.b.position_at_end(jbody);
+            let si = self.b.build_int_add(iv, jv, "si").unwrap();
+            let si = self.b.build_int_sub(si, one, "si1").unwrap();
+            let sp = self.elem_ptr(pa, si, esz);
+            let dp = self.elem_ptr(pb, jv, esz);
+            let va = self.b.build_load(elem, sp, "va").unwrap().into_int_value();
+            let vb = self.b.build_load(elem, dp, "vb").unwrap().into_int_value();
+            let eq = self.b.build_int_compare(IntPredicate::EQ, va, vb, "eq").unwrap();
+            self.b.build_store(ok, eq).unwrap();
+            let jn = self.b.build_int_add(jv, one, "jn").unwrap();
+            j.add_incoming(&[(&jn, jbody)]);
+            self.b.build_unconditional_branch(jcond).unwrap();
+            self.b.position_at_end(jnext);
+            let fin = self.b.build_load(self.ctx.bool_type(), ok, "fl").unwrap().into_int_value();
+            let hit = self.ctx.append_basic_block(f, "fd.hit");
+            let miss = self.ctx.append_basic_block(f, "fd.miss");
+            self.b.build_conditional_branch(fin, hit, miss).unwrap();
+            self.b.position_at_end(hit);
+            self.b.build_store(found, iv).unwrap();
+            self.b.build_unconditional_branch(oend).unwrap();
+            self.b.position_at_end(miss);
+            let inext = self.b.build_int_add(iv, one, "inx").unwrap();
+            i.add_incoming(&[(&inext, miss)]);
+            self.b.build_unconditional_branch(ocond).unwrap();
+            self.b.position_at_end(oend);
+            let res = self.b.build_load(i32t, found, "fr").unwrap().into_int_value();
+            let want = llty(self.ctx, ret_ty).into_int_type();
+            return if want.get_bit_width() < 32 {
+                self.b.build_int_truncate(res, want, "frt").unwrap().into()
+            } else {
+                res.into()
+            };
+        }
+
+        let cap = match ret_ty {
+            Type::Str { cap } | Type::WStr { cap } => *cap,
+            _ => 0,
+        } as u32;
+        let want = 1 + cap;
+        let pr = self.b.build_alloca(elem.array_type(want), "sr").unwrap();
+        let p0 = self.b.build_pointer_cast(pr, self.i8p(), "p0").unwrap();
+        self.b.build_store(p0, elem.const_zero()).unwrap();
+        let cap32 = i32t.const_int(cap as u64, false);
+
+        let total: inkwell::values::IntValue<'ctx> = match b {
+            BuiltinFn::Left => {
+                let l = arg_i32(self, 1);
+                let n = self.clamp32(l, 0, la32);
+                self.copy_units(pr, one, pa, one, n, elem, esz, "u");
+                n
+            }
+            BuiltinFn::Right => {
+                let l = arg_i32(self, 1);
+                let n = self.clamp32(l, 0, la32);
+                let si = self.b.build_int_sub(la32, n, "rs").unwrap();
+                let si = self.b.build_int_add(si, one, "rs1").unwrap();
+                self.copy_units(pr, one, pa, si, n, elem, esz, "u");
+                n
+            }
+            BuiltinFn::Mid => {
+                let l = arg_i32(self, 1);
+                let p = arg_i32(self, 2);
+                let start0 = self.clamp32(
+                    self.b.build_int_sub(p, one, "m0").unwrap(), 0, la32);
+                let avail = self.b.build_int_sub(la32, start0, "ma").unwrap();
+                let n = self.clamp32(l, 0, avail);
+                let si = self.b.build_int_add(start0, one, "ms").unwrap();
+                self.copy_units(pr, one, pa, si, n, elem, esz, "u");
+                n
+            }
+            BuiltinFn::Insert | BuiltinFn::Replace => {
+                let bv = self.expr(ctx, &args[1].1).into_array_value();
+                let bty = bv.get_type();
+                let pb = self.b.build_alloca(bty, "sb").unwrap();
+                self.b.build_store(pb, bv).unwrap();
+                let lb = self.b.build_load(elem, pb, "lb").unwrap().into_int_value();
+                let lb32 = self.as_i32(lb);
+                let (d, p_arg) = if b == BuiltinFn::Insert {
+                    (zero, 2usize)
+                } else {
+                    (arg_i32(self, 2), 3usize)
+                };
+                let p = arg_i32(self, p_arg);
+                let last = self.b.build_int_add(la32, one, "lp").unwrap();
+                let p32 = self.clamp32(p, 1, last);
+                let start0 = self.b.build_int_sub(p32, one, "s0").unwrap();
+                let avail = self.b.build_int_sub(la32, start0, "av").unwrap();
+                let dcl = self.clamp32(d, 0, avail);
+                let tail = self.b.build_int_sub(avail, dcl, "tl").unwrap();
+                self.copy_units(pr, one, pa, one, start0, elem, esz, "p1");
+                self.copy_units(pr, p32, pb, one, lb32, elem, esz, "p2");
+                let si = self.b.build_int_add(p32, dcl, "ps").unwrap();
+                let di = self.b.build_int_add(start0, lb32, "pd").unwrap();
+                let di = self.b.build_int_add(di, one, "pd1").unwrap();
+                self.copy_units(pr, di, pa, si, tail, elem, esz, "p3");
+                let t = self.b.build_int_add(start0, lb32, "t1").unwrap();
+                self.b.build_int_add(t, tail, "t2").unwrap()
+            }
+            BuiltinFn::Delete => {
+                let l = arg_i32(self, 1);
+                let p = arg_i32(self, 2);
+                let last = self.b.build_int_add(la32, one, "lp").unwrap();
+                let p32 = self.clamp32(p, 1, last);
+                let start0 = self.b.build_int_sub(p32, one, "s0").unwrap();
+                let avail = self.b.build_int_sub(la32, start0, "av").unwrap();
+                let dcl = self.clamp32(l, 0, avail);
+                let tail = self.b.build_int_sub(avail, dcl, "tl").unwrap();
+                self.copy_units(pr, one, pa, one, start0, elem, esz, "p1");
+                let si = self.b.build_int_add(p32, dcl, "ps").unwrap();
+                let di = self.b.build_int_add(start0, one, "pd").unwrap();
+                self.copy_units(pr, di, pa, si, tail, elem, esz, "p2");
+                self.b.build_int_add(start0, tail, "t").unwrap()
+            }
+            _ => unreachable!(),
+        };
+        /* result length: clamped to the target cap */
+        let over = self.b.build_int_compare(IntPredicate::SGT, total, cap32, "ov").unwrap();
+        let tcl = self.b.build_select(over, cap32, total, "tc").unwrap().into_int_value();
+        let tel = if elem.get_bit_width() < 32 {
+            self.b.build_int_truncate(tcl, elem, "te").unwrap()
+        } else {
+            tcl
+        };
+        self.b.build_store(p0, tel).unwrap();
+        self.b
+            .build_load(elem.array_type(want), pr, "sl")
+            .unwrap()
+            .into()
+    }
+
     /// LEN/CONCAT over narrow and wide strings (IEC string functions)
     fn builtin_call(&mut self, ctx: &Ctx, b: tplc_mir::ty::BuiltinFn,
                     args: &[(String, Expr)], ret_ty: &Type) -> BasicValueEnum<'ctx> {
         use tplc_mir::ty::BuiltinFn;
         match b {
+            BuiltinFn::Left | BuiltinFn::Right | BuiltinFn::Mid
+            | BuiltinFn::Find | BuiltinFn::Insert | BuiltinFn::Delete
+            | BuiltinFn::Replace => self.str_slice_call(ctx, b, args, ret_ty),
             BuiltinFn::Len => {
                 let av = self.expr(ctx, &args[0].1).into_array_value();
                 let len = self

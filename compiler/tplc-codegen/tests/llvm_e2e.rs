@@ -1074,3 +1074,206 @@ fn scalar_builtins_through_jit() {
         assert_eq!(get("e"), 20, "LIMIT(10,42,20)");
     }
 }
+
+/// LEFT/RIGHT/MID/INSERT/DELETE/REPLACE/FIND on narrow strings,
+/// including wide variants and clamping.
+#[test]
+fn string_functions_through_jit() {
+    fn sl(s: &str) -> Expr {
+        Expr {
+            ty: Type::Str {
+                cap: s.len() as u16,
+            },
+            kind: ExprKind::Lit(Lit::Str(s.into())),
+            prov: Prov::None,
+        }
+    }
+    fn sv(n: &str) -> Expr {
+        Expr {
+            ty: Type::Str { cap: 16 },
+            kind: ExprKind::Ref(Ref::Var(n.into())),
+            prov: Prov::None,
+        }
+    }
+    fn wl(s: &str) -> Expr {
+        Expr {
+            ty: Type::WStr {
+                cap: s.encode_utf16().count() as u16,
+            },
+            kind: ExprKind::Lit(Lit::WStr(s.into())),
+            prov: Prov::None,
+        }
+    }
+    fn d(v: i64) -> Expr {
+        Expr {
+            ty: Type::Int {
+                signed: true,
+                bits: 32,
+            },
+            kind: ExprKind::Lit(Lit::Int(v)),
+            prov: Prov::None,
+        }
+    }
+    fn call(fun: &str, args: Vec<Expr>, ty: Type) -> Expr {
+        Expr {
+            ty,
+            kind: ExprKind::Call {
+                fun: fun.into(),
+                args: args.into_iter().map(|e| (String::new(), e)).collect(),
+            },
+            prov: Prov::None,
+        }
+    }
+    let st = Type::Str { cap: 16 };
+    let wt = Type::WStr { cap: 16 };
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+    };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "F".into(),
+        iface: vec![
+            vd("s", st.clone(), None),
+            vd("c1", st.clone(), None),
+            vd("c2", st.clone(), None),
+            vd("c3", st.clone(), None),
+            vd("c4", st.clone(), None),
+            vd("c5", st.clone(), None),
+            vd("c6", st.clone(), None),
+            vd("w", wt.clone(), None),
+            vd("wc", wt.clone(), None),
+            vd("n1", d(0).ty.clone(), None),
+            vd("n2", d(0).ty.clone(), None),
+        ],
+        body: Body::Stmts(vec![
+            assign(Ref::Var("s".into()), sl("abcdef")),
+            assign(
+                Ref::Var("c1".into()),
+                call("LEFT", vec![sv("s"), d(3)], st.clone()),
+            ),
+            assign(
+                Ref::Var("c2".into()),
+                call("RIGHT", vec![sv("s"), d(3)], st.clone()),
+            ),
+            assign(
+                Ref::Var("c3".into()),
+                call("MID", vec![sv("s"), d(2), d(3)], st.clone()),
+            ),
+            assign(
+                Ref::Var("c4".into()),
+                call("INSERT", vec![sv("s"), sl("XY"), d(4)], st.clone()),
+            ),
+            assign(
+                Ref::Var("c5".into()),
+                call("DELETE", vec![sv("s"), d(2), d(3)], st.clone()),
+            ),
+            assign(
+                Ref::Var("c6".into()),
+                call("REPLACE", vec![sv("s"), sl("XY"), d(2), d(3)], st.clone()),
+            ),
+            assign(Ref::Var("w".into()), wl("aä€z")),
+            assign(
+                Ref::Var("wc".into()),
+                call("MID", vec![
+                    Expr {
+                        ty: wt.clone(),
+                        kind: ExprKind::Ref(Ref::Var("w".into())),
+                        prov: Prov::None,
+                    },
+                    d(2),
+                    d(2),
+                ], wt.clone()),
+            ),
+            assign(
+                Ref::Var("n1".into()),
+                call("FIND", vec![sv("s"), sl("cd")], d(0).ty.clone()),
+            ),
+            assign(
+                Ref::Var("n2".into()),
+                call("FIND", vec![sv("s"), sl("zz")], d(0).ty.clone()),
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx, m, l, program, &[], "sf", [0x53; 16], [0xEF; 32], None, 10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        assert_eq!(run(&mut tctx), 0);
+        let s_of = |n: &str| scope[n].0 as usize;
+        let chk = |n: &str, want: &str| {
+            let o = s_of(n);
+            assert_eq!(blob[o] as usize, want.len(), "{n} len");
+            assert_eq!(&blob[o + 1..o + 1 + want.len()], want.as_bytes(), "{n}");
+        };
+        chk("c1", "abc");
+        chk("c2", "def");
+        chk("c3", "cd");
+        chk("c4", "abcXYdef");
+        chk("c5", "abef");
+        chk("c6", "abXYef");
+        let w = s_of("wc");
+        assert_eq!(u16::from_le_bytes([blob[w], blob[w + 1]]), 2, "wide len");
+        let u = |i: usize| u16::from_le_bytes([blob[w + 2 + i * 2], blob[w + 3 + i * 2]]);
+        assert_eq!(&[u(0), u(1)], &[0xE4, 0x20AC], "wide MID aä€z[2..4]");
+        assert_eq!(
+            (blob.as_ptr().add(s_of("n1")) as *const i32).read(),
+            3,
+            "FIND cd"
+        );
+        assert_eq!(
+            (blob.as_ptr().add(s_of("n2")) as *const i32).read(),
+            0,
+            "FIND zz"
+        );
+    }
+}

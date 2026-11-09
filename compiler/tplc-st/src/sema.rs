@@ -483,6 +483,123 @@ impl<'e> Checker<'e> {
                 self.coerce(&mut args[2].1, &x, &r);
                 r
             }
+            BuiltinFn::Left | BuiltinFn::Right => {
+                let name = if b == BuiltinFn::Left { "LEFT" } else { "RIGHT" };
+                if args.len() != 2 {
+                    self.err(codes::TYPE,
+                             format!("{name} takes IN, L"), prov);
+                    return Type::Str { cap: 0 };
+                }
+                let t = self.expr(&mut args[0].1);
+                let n = self.expr(&mut args[1].1);
+                self.coerce(&mut args[1].1, &n, &Type::Int {
+                    signed: true,
+                    bits: 32,
+                });
+                match t {
+                    Type::Str { cap } => Type::Str { cap },
+                    Type::WStr { cap } => Type::WStr { cap },
+                    _ => {
+                        self.err(codes::TYPE,
+                                 format!("{name} expects a string"), prov);
+                        Type::Str { cap: 0 }
+                    }
+                }
+            }
+            BuiltinFn::Mid => {
+                if args.len() != 3 {
+                    self.err(codes::TYPE, "MID takes IN, L, P", prov);
+                    return Type::Str { cap: 0 };
+                }
+                let t = self.expr(&mut args[0].1);
+                for k in 1..3 {
+                    let n = self.expr(&mut args[k].1);
+                    self.coerce(&mut args[k].1, &n, &Type::Int {
+                        signed: true,
+                        bits: 32,
+                    });
+                }
+                match t {
+                    Type::Str { cap } => Type::Str { cap },
+                    Type::WStr { cap } => Type::WStr { cap },
+                    _ => {
+                        self.err(codes::TYPE, "MID expects a string", prov);
+                        Type::Str { cap: 0 }
+                    }
+                }
+            }
+            BuiltinFn::Find => {
+                if args.len() != 2 {
+                    self.err(codes::TYPE, "FIND takes IN1, IN2", prov);
+                    return Type::Int { signed: true, bits: 16 };
+                }
+                let t1 = self.expr(&mut args[0].1);
+                let t2 = self.expr(&mut args[1].1);
+                let ok = matches!(
+                    (&t1, &t2),
+                    (Type::Str { .. }, Type::Str { .. })
+                        | (Type::WStr { .. }, Type::WStr { .. })
+                );
+                if !ok {
+                    self.err(codes::TYPE,
+                             "FIND expects two strings of the same kind",
+                             prov);
+                }
+                Type::Int { signed: true, bits: 16 }
+            }
+            BuiltinFn::Insert | BuiltinFn::Delete | BuiltinFn::Replace => {
+                let (name, nargs) = match b {
+                    BuiltinFn::Insert => ("INSERT", 3),
+                    BuiltinFn::Delete => ("DELETE", 3),
+                    _ => ("REPLACE", 4),
+                };
+                if args.len() != nargs {
+                    self.err(codes::TYPE,
+                             format!("{name} takes {nargs} arguments"), prov);
+                    return Type::Str { cap: 0 };
+                }
+                let t1 = self.expr(&mut args[0].1);
+                /* INSERT/REPLACE carry a second string at index 1 */
+                let ins_ty = if b == BuiltinFn::Delete {
+                    None
+                } else {
+                    Some(self.expr(&mut args[1].1))
+                };
+                let start = if b == BuiltinFn::Delete { 1 } else { 2 };
+                for k in start..nargs {
+                    let n = self.expr(&mut args[k].1);
+                    self.coerce(&mut args[k].1, &n, &Type::Int {
+                        signed: true,
+                        bits: 32,
+                    });
+                }
+                let (cap1, wide) = match &t1 {
+                    Type::Str { cap } => (*cap, false),
+                    Type::WStr { cap } => (*cap, true),
+                    _ => {
+                        self.err(codes::TYPE,
+                                 format!("{name} expects a string"), prov);
+                        return Type::Str { cap: 0 };
+                    }
+                };
+                let ins_cap = match &ins_ty {
+                    Some(Type::Str { cap }) | Some(Type::WStr { cap })
+                        if wide == matches!(ins_ty, Some(Type::WStr { .. })) => *cap,
+                    Some(_) => {
+                        self.err(codes::TYPE,
+                                 format!("{name}: second argument must be the same string kind"),
+                                 prov);
+                        0
+                    }
+                    None => 0,
+                };
+                let cap = if b == BuiltinFn::Delete {
+                    cap1
+                } else {
+                    cap1.saturating_add(ins_cap)
+                };
+                if wide { Type::WStr { cap } } else { Type::Str { cap } }
+            }
             BuiltinFn::Concat => {
                 if args.len() != 2 {
                     self.err(codes::TYPE,

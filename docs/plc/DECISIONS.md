@@ -375,3 +375,22 @@ undefined).
 
 Coverage: `scalar.builtins` (L1 + sim parity),
 `scalar_builtins_through_jit`, `scalar_builtins_are_typed`.
+
+## D-IMPL-26 — string functions LEFT/RIGHT/MID/INSERT/DELETE/REPLACE/FIND
+
+**Implemented** on the shared `builtin_fn` dispatch for narrow and
+wide strings. Semantics follow IEC 61131-3 §2.5.1.5 with the clamping
+the implementation can guarantee: positions are 1-based, `L <= 0`
+yields the empty string, `P` past the end clamps to the end, and
+`FIND` returns 0 for an empty needle or no match. Result caps are
+`cap(IN1)` for the slicing forms and `cap1 + cap2` for INSERT/REPLACE
+(so an insert cannot silently drop text); a narrower target truncates
+and clamps the len element, as with every string store.
+
+Codegen lowers each op to a composition of one runtime-bound unit
+copy loop over allocas (`copy_units`), so the scan path stays libc
+free; FIND is a two-level loop with early exit on the first match.
+
+Coverage: `str.functions` (L1 + sim parity),
+`string_functions_through_jit` (narrow + wide + FIND miss),
+`string_functions_are_typed`.
