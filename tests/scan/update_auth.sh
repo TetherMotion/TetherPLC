@@ -134,5 +134,79 @@ echo "$out" | grep -q 'out_status=0' \
 kill "$RT_PID" 2>/dev/null; RT_PID=
 wait 2>/dev/null
 
+# ---- per-channel update auth (--update-auth-map) -------------------
+# strict floors every channel at require-trusted: a weaker entry is
+# a startup error, never a silent bypass
+"$BUILD"/tether-plc --image "$IMG" --package "$WORK/a.tplc" \
+    --ctl "$CTL" --no-sandbox --sig-policy open \
+    --update-auth strict --trust-dir "$WORK/trust" \
+    --update-auth-map engineer=open >"$WORK/rt_bad.log" 2>&1
+rc=$?
+[ "$rc" -eq 2 ] \
+    && ok "strict: weaker per-channel policy rejected at startup" \
+    || bad "strict+weak map rc=$rc: $(cat "$WORK/rt_bad.log")"
+
+"$BUILD"/tether-plc --image "$IMG" --package "$WORK/a.tplc" \
+    --ctl "$CTL" --no-sandbox --sig-policy open \
+    --update-auth open --update-auth-map bogus=open \
+    >"$WORK/rt_bad2.log" 2>&1
+rc=$?
+[ "$rc" -eq 2 ] \
+    && ok "per-channel: unknown key rejected at startup" \
+    || bad "bad map key rc=$rc"
+
+# per-channel trust root: this client's uid maps to a second trust
+# dir; packages must be signed by a key in THAT root
+"$TPLCC" sign keygen --dir "$WORK/trustB" --name safety \
+    >/dev/null 2>&1 || exit 77
+"$TPLCC" sign sign "$WORK/b.tplc" --key "$WORK/trustB/safety.key" \
+    -o "$WORK/b_safe.tplc" >/dev/null 2>&1 || exit 77
+"$BUILD"/tether-plc --image "$IMG" --package "$WORK/a.tplc" \
+    --ctl "$CTL" --no-sandbox --sig-policy open \
+    --update-auth strict --trust-dir "$WORK/trust" \
+    --update-auth-map "$(id -u)=require-trusted@$WORK/trustB" \
+    >"$WORK/rt3.log" 2>&1 &
+RT_PID=$!
+for i in $(seq 1 50); do [ -S "$CTL" ] && break; sleep 0.1; done
+[ -S "$CTL" ] || { echo "SKIP ctl socket (map)"; exit 77; }
+
+out=$(swap "$WORK/a_ops.tplc")
+echo "$out" | grep -q 'error 209' \
+    && ok "per-channel: ops key rejected under channel trust root" \
+    || bad "channel-root ops swap: $out"
+
+out=$(swap "$WORK/b_safe.tplc")
+echo "$out" | grep -q 'out_status=0' \
+    && ok "per-channel: channel trust root accepts its signer" \
+    || bad "channel-root safety swap: $out"
+
+# shadow-load is an update op too: unsigned must fail under strict
+out=$("$BUILD"/tplc-ctl "$CTL" shadow-load "$WORK/a.tplc" 2>&1)
+echo "$out" | grep -q 'error 207' \
+    && ok "strict: unsigned shadow-load → SIG_REQUIRED" \
+    || bad "strict shadow-load: $out"
+kill "$RT_PID" 2>/dev/null; RT_PID=
+wait 2>/dev/null
+
+# raw .so prepare carries no signature — strict must reject it even
+# though the path loads fine under open
+if command -v cc >/dev/null; then
+    echo 'int tplc_fake;' | cc -shared -x c - -o "$WORK/fake.so" \
+        2>/dev/null || exit 77
+    "$BUILD"/tether-plc --image "$IMG" --package "$WORK/a.tplc" \
+        --ctl "$CTL" --no-sandbox --sig-policy open --stopped \
+        --update-auth strict --trust-dir "$WORK/trust" \
+        >"$WORK/rt4.log" 2>&1 &
+    RT_PID=$!
+    for i in $(seq 1 50); do [ -S "$CTL" ] && break; sleep 0.1; done
+    [ -S "$CTL" ] || { echo "SKIP ctl socket (.so)"; exit 77; }
+    out=$("$BUILD"/tplc-ctl "$CTL" prepare "$WORK/fake.so" 2>&1)
+    echo "$out" | grep -q 'error 207' \
+        && ok "strict: raw .so prepare rejected (SIG_REQUIRED)" \
+        || bad "strict .so prepare: $out"
+    kill "$RT_PID" 2>/dev/null; RT_PID=
+    wait 2>/dev/null
+fi
+
 echo "== $pass pass, $fail fail"
 [ "$fail" -eq 0 ]

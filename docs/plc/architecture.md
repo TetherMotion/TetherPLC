@@ -191,7 +191,7 @@ As-built specs (the normative layer): `artifact-format.md`,
 `st-frontend.md`, `fbd-model.md`, `ir-codegen.md`,
 `online-change.md`, `io-mapping.md`, `toolchain.md`, `web-ide.md`,
 `debugging.md`, `management.md`, `safety.md`, `security.md`,
-`simulation.md`, `testing.md`, `shadow-run.md`,
+`crypto-auth.md`, `simulation.md`, `testing.md`, `shadow-run.md`,
 `tether-io-attach.md`, `error-codes.md`.
 
 Reports/evidence: `acceptance-matrix.md` (criterion → test →
@@ -204,7 +204,7 @@ tag), `18-mcu-path.md` (post-v1 MCU loader design).
 
 > **Provenance note.** References of the form `doc NN` / `doc-NN`
 > (e.g. "doc 16 §3.2") cite the retired work-item chapters in
-> `docs/plc/plan/`. Chapters 01–16 were deleted as their as-built
+> `docs/plc/plan/`. Chapters 01–16 and 20 were deleted as their as-built
 > specs landed; the section references survive as provenance — the
 > authoritative content is the as-built doc containing the
 > reference. Historical text is in git history.

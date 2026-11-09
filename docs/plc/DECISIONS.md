@@ -471,3 +471,45 @@ in the vector runner, matching `tplc_init`.
 
 Coverage: `ref.deref` (L1 + sim parity), `reference_semantics_through_
 jit`, and `ref_migration` (warning, swap log, program stays running).
+
+## D-IMPL-30 — update authentication is a separate trust domain from boot
+
+**Design:** package signatures authenticate *updates*, not boot.
+`--sig-policy`/`--trust-dir` govern the boot package; `--update-auth`
+governs every update op (`PROG_PREPARE`, `PROG_SWAP`,
+`SHADOW_LOAD`). `open` (default) keeps development boot permissive;
+`strict` floors every update channel at `require-trusted` — signed by
+a non-revoked key present in the trust store — regardless of
+`--sig-policy`, and no flag or config can weaken it (a weaker
+per-channel entry is a startup error, not a silent bypass).
+
+**Per-channel policy:** `--update-auth-map key=policy[@trust-dir]`
+overrides the update policy per ctl channel. `key` is a role name
+(`observer|engineer|commissioner`) or a decimal peer uid; resolution
+is uid-entry > role-entry > global. `@dir` selects a different trust
+root (e.g. a safety-backed signing authority). Under `strict` every
+entry must itself be `require-trusted`.
+
+**Unsigned-module rejection:** a raw module path (`.so`, not
+`.tplc`) carries no signature section, so update ops reject it with
+`SIG_REQUIRED` unless the resolved policy is `open` — closes the
+bypass where an unsigned `.so` skipped package verification
+entirely.
+
+**Trust lifecycle:** rotation is additive (several `<keyid>.pub`
+files; any trusted key signs). Revocation is `<trust-dir>/revoked`,
+a whitespace-separated list of hex key-ids checked before the store
+lookup, so a revoked signer is rejected even while its `.pub`
+remains.
+
+**Boot vs update, stated:** first-boot package load uses
+`--sig-policy` only — trust is an update-time control. A device that
+must only ever run vendor-signed images should boot with
+`--sig-policy require-trusted`; a device that accepts field updates
+uses `--update-auth strict`. The two compose; neither weakens the
+other.
+
+Coverage: `update_auth` (ctest) — strict rejection of unsigned and
+untrusted packages on swap and shadow-load, trusted acceptance,
+rotation, revocation, per-channel trust roots, startup rejection of
+weaker maps, and the raw-`.so` rejection.

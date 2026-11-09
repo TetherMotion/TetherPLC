@@ -30,12 +30,24 @@ plane. Threat model and per-control test signoff:
     (file-based store, `tplcc sign keygen/sign`).
   - `--update-auth strict` upgrades every *update* op (prepare,
     swap, shadow-load) to `require-trusted` regardless of
-    `--sig-policy` — the update-authorization control from plan 20.
+    `--sig-policy` — the update-authorization control. Boot keeps
+    `--sig-policy`; updates are authenticated separately.
     The trust store supports rotation (multiple `<keyid>.pub` files;
     any trusted key signs) and revocation (`<trust-dir>/revoked`
     lists hex key-ids, checked before the store lookup).
+  - `--update-auth-map key=policy[@trust-dir]` overrides the update
+    policy per channel: `key` is a ctl role name or a decimal peer
+    uid, resolved uid-entry > role-entry > global. `@dir` selects a
+    different trust root for that channel (e.g. a safety-backed
+    signing authority). Under `strict` every entry is floored at
+    `require-trusted`; a weaker entry is a startup error.
+  - A raw module path (`.so`, not `.tplc`) carries no signature
+    section: update ops reject it with `SIG_REQUIRED` unless the
+    resolved policy is `open`.
 - Verification happens before `dlopen` (`sig_policy` test covers
-  all three policies + tamper paths).
+  all three policies + tamper paths; `update_auth` covers strict,
+  rotation, revocation, per-channel roots, and the raw-module
+  rejection).
 - Post-link scanner (`ElfScan`): rejects `.so` payloads containing
   raw `syscall`/`int80` instructions or forbidden imports
   (`module_scan` fixtures: evil syscall/int80/import/inet, good

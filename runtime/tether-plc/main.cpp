@@ -16,6 +16,7 @@
 #include <tplc/host/Sandbox.hpp>
 #include <tplc/host/AuditLog.hpp>
 
+#include <algorithm>
 #include <cerrno>
 #include <atomic>
 #include <csignal>
@@ -78,6 +79,8 @@ static void usage(const char* a0) {
         "          [--runbook DIR] [--instance NAME] [--packages DIR]\n"
         "          [--sig-policy open|require|require-trusted]\n"
         "          [--trust-dir DIR] [--no-sandbox]\n"
+        "          [--update-auth open|strict]\n"
+        "          [--update-auth-map role=policy[@trust-dir]]...\n"
         "          [--quarantine-cycles N] [--shadow-budget-ns N]\n"
         "          [--stopped] [--sim]\n"
         "       %s --supervise [--respawn always|on-fault|never]\n"
@@ -123,6 +126,25 @@ static int op_min_role(uint16_t t) {
     }
 }
 
+static int role_by_name(const std::string& role) {
+    return role == "observer"     ? tplc::TPLC_ROLE_OBSERVER
+         : role == "engineer"     ? tplc::TPLC_ROLE_ENGINEER
+         : role == "commissioner" ? tplc::TPLC_ROLE_COMMISSIONER
+         : tplc::TPLC_ROLE_NONE;
+}
+
+/* --update-auth-map key=policy[@trust-dir]: per-channel update
+   authentication. key is a ctl role name (observer|engineer|
+   commissioner) or a decimal peer uid; policy ∈
+   open|require|require-trusted. With --update-auth strict every
+   channel is floored at require-trusted (weaker entries are a
+   startup error); @dir overrides the trust root for that channel.
+   Resolution: uid entry > role entry > global update policy. */
+struct UpdateAuthRule {
+    std::string policy;
+    std::string trust_dir;
+};
+
 /* --authz file: "<uid> <role>" per line ('#' comments). Entries take
    precedence over the defaults (peer uid == server euid or root →
    commissioner, else observer), so a file can also downgrade.      */
@@ -138,10 +160,7 @@ load_authz(const std::string& path, bool* ok) {
         std::istringstream is(line);
         uint32_t uid; std::string role;
         if (!(is >> uid >> role)) continue;
-        int r = role == "observer"     ? tplc::TPLC_ROLE_OBSERVER
-              : role == "engineer"     ? tplc::TPLC_ROLE_ENGINEER
-              : role == "commissioner" ? tplc::TPLC_ROLE_COMMISSIONER
-              : tplc::TPLC_ROLE_NONE;
+        int r = role_by_name(role);
         if (r == tplc::TPLC_ROLE_NONE) { *ok = false; return m; }
         m[uid] = r;
     }
@@ -402,6 +421,7 @@ int main(int argc, char** argv) {
     std::string retain_dir, runbook_dir, instance_name, packages_dir;
     std::string sig_policy = "open";               /* doc 15 §4.1 */
     std::string update_auth = "open";              /* plan 20: strict = updates need trusted sigs */
+    std::vector<std::string> update_auth_specs;    /* --update-auth-map entries */
     std::string trust_dir  = "/etc/tether/trust";
     std::string authz_path, audit_path;            /* doc 15 §5   */
     uint64_t retain_flush_ms = 1000;
@@ -458,6 +478,8 @@ int main(int argc, char** argv) {
         else if (a == "--sig-policy") sig_policy = next();
         else if (a == "--trust-dir") trust_dir = next();
         else if (a == "--update-auth") update_auth = next();
+        else if (a == "--update-auth-map")
+            update_auth_specs.push_back(next());
         else if (a == "--no-sandbox") no_sandbox = true;
         else if (a == "--authz") authz_path = next();
         else if (a == "--audit-log") audit_path = next();
@@ -472,6 +494,49 @@ int main(int argc, char** argv) {
     if (packages_dir.empty()) packages_dir = "packages";
     if (ctl_path.empty()) ctl_path = image_path + ".ctl";
     const bool ctl_enabled = (ctl_path != "none");
+
+    /* per-channel update authentication: key=policy[@trust-dir];
+       strict floors every channel at require-trusted so a weaker
+       entry is a startup error, never a silent bypass. */
+    std::unordered_map<uint8_t, UpdateAuthRule> update_auth_map;
+    std::unordered_map<uint32_t, UpdateAuthRule> update_auth_uid;
+    for (const auto& spec : update_auth_specs) {
+        auto bad = [&]() {
+            fprintf(stderr,
+                    "tether-plc: bad --update-auth-map '%s' "
+                    "(want role-or-uid=policy[@trust-dir])\n",
+                    spec.c_str());
+        };
+        auto eq = spec.find('=');
+        if (eq == std::string::npos) { bad(); return 2; }
+        std::string key = spec.substr(0, eq);
+        std::string val = spec.substr(eq + 1);
+        auto at = val.find('@');
+        std::string pol = at == std::string::npos ? val : val.substr(0, at);
+        std::string tdir = at == std::string::npos ? "" : val.substr(at + 1);
+        if ((pol != "open" && pol != "require" &&
+             pol != "require-trusted") ||
+            (!tdir.empty() && tdir.front() != '/')) {
+            bad(); return 2;
+        }
+        if (update_auth == "strict" && pol != "require-trusted") {
+            fprintf(stderr,
+                    "tether-plc: --update-auth strict cannot be "
+                    "weakened per channel ('%s')\n", spec.c_str());
+            return 2;
+        }
+        bool numeric = !key.empty() &&
+            std::all_of(key.begin(), key.end(),
+                        [](char c) { return std::isdigit((unsigned char)c); });
+        if (numeric) {
+            update_auth_uid[(uint32_t)strtoul(key.c_str(), nullptr, 10)] =
+                {pol, tdir};
+        } else {
+            int role = role_by_name(key);
+            if (role == tplc::TPLC_ROLE_NONE) { bad(); return 2; }
+            update_auth_map[(uint8_t)role] = {pol, tdir};
+        }
+    }
 
     /* ---------------- attach image (plc role) ---------------- */
     TplcImage img;
@@ -1793,9 +1858,28 @@ int main(int argc, char** argv) {
        load (or swap to) a module — lands STOPPED; start runs init */
     /* plan 20: update ops authenticate against the update policy —
        strict upgrades every update to require-trusted regardless of
-       the boot --sig-policy */
+       the boot --sig-policy. --update-auth-map overrides per channel
+       (peer uid, then role) and may name a different trust root;
+       channels without an entry use the global policy. */
     const std::string update_policy =
         update_auth == "strict" ? "require-trusted" : sig_policy;
+    auto update_auth_for = [&](int fd)
+            -> std::pair<std::string, std::string> {
+        uint32_t pid, uid, gid;
+        if (ctl.peerCred(fd, &pid, &uid, &gid)) {
+            auto u = update_auth_uid.find(uid);
+            if (u != update_auth_uid.end())
+                return {u->second.policy,
+                        u->second.trust_dir.empty()
+                            ? trust_dir : u->second.trust_dir};
+        }
+        auto it = update_auth_map.find(ctl.roleOf(fd));
+        if (it == update_auth_map.end())
+            return {update_policy, trust_dir};
+        return {it->second.policy,
+                it->second.trust_dir.empty() ? trust_dir
+                                             : it->second.trust_dir};
+    };
     ctl.on(TPLC_OP_PROG_PREPARE, [&](int fd, uint16_t t,
                                      const uint8_t* payload,
                                      uint32_t len, uint64_t req) {
@@ -1825,7 +1909,8 @@ int main(int argc, char** argv) {
                 return;
             }
             tplc::Package pk = std::move(pres.value);
-            tplc::Status sgst = pk.verifySignature(update_policy, trust_dir);
+            auto ua = update_auth_for(fd);
+            tplc::Status sgst = pk.verifySignature(ua.first, ua.second);
             if (!sgst.ok()) {
                 ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
                 return;
@@ -1861,6 +1946,17 @@ int main(int argc, char** argv) {
             }
             close(tfd);
             tmp_so = tp; mpath = tmp_so;
+        } else {
+            /* a raw module path carries no signature section — only
+               the open policy may load it; require* needs a .tplc
+               package so the image is authenticated */
+            auto ua = update_auth_for(fd);
+            if (ua.first != "open") {
+                ctl.errorReply(fd, t, TPLC_E_SIG_REQUIRED,
+                               "unsigned module: .tplc package required",
+                               req);
+                return;
+            }
         }
         /* the program being replaced (if any) is the predecessor —
            load_program destroys it, so capture its uuid first       */
@@ -1950,7 +2046,8 @@ int main(int argc, char** argv) {
             return;
         }
         tplc::Package pk = std::move(pres.value);
-        tplc::Status sgst = pk.verifySignature(update_policy, trust_dir);
+        auto ua = update_auth_for(fd);
+        tplc::Status sgst = pk.verifySignature(ua.first, ua.second);
         if (!sgst.ok()) {
             ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
             return;
@@ -2208,7 +2305,8 @@ int main(int argc, char** argv) {
             return;
         }
         tplc::Package pk = std::move(pres.value);
-        tplc::Status sgst = pk.verifySignature(update_policy, trust_dir);
+        auto ua = update_auth_for(fd);
+        tplc::Status sgst = pk.verifySignature(ua.first, ua.second);
         if (!sgst.ok()) {
             ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
             return;
