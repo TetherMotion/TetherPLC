@@ -1,9 +1,11 @@
 /* tplc-ec-pump — EtherCAT master pump for the emulated Beckhoff fleet.
  *
- * Connects to beckhoff_slave_chain's UDP "virtual interface" as an
- * EtherCAT master (Tether examples/common FleetMaster bring-up), then
- * bridges the fleet's PDO entries to files so the tether-plc-bridge
- * simdir transport can carry them into the PLC process image:
+ * Connects to beckhoff_slave_chain over a virtual link as an
+ * EtherCAT master (Tether examples/common FleetMaster bring-up) — UDP
+ * by default, or raw L2 frames on a kernel interface via --iface —
+ * then bridges the fleet's PDO entries to files so the
+ * tether-plc-bridge simdir transport can carry them into the PLC
+ * process image:
  *
  *   <key>.tx   TxPDO image (slave inputs; pump writes, bridge reads)
  *   <key>.rx   RxPDO image (slave outputs; bridge writes, pump reads)
@@ -14,7 +16,8 @@
  *   signals master.<key>.do<g> / .ao<c>   (RxPDO, master -> slave)
  *   signals master.link / .cycles / .errors
  *
- * usage: tplc-ec-pump --peer HOST --port PORT --simdir DIR
+ * usage: tplc-ec-pump (--peer HOST --port PORT | --iface NAME)
+ *                    --simdir DIR
  *                    [--io-port N] [--io-bind ADDR] [--hz N] [--time S]
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
@@ -130,7 +133,7 @@ struct PendingSignal {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string peer = "127.0.0.1", simdir, ioBind = "127.0.0.1";
+    std::string peer = "127.0.0.1", simdir, ioBind = "127.0.0.1", iface;
     uint16_t port = 47820, ioPort = 0;
     uint32_t hz = 500;
     double runSecs = 0;
@@ -145,6 +148,7 @@ int main(int argc, char** argv) {
         };
         if      (a == "--peer")    peer    = need("--peer");
         else if (a == "--port")    port    = (uint16_t)std::stoul(need("--port"));
+        else if (a == "--iface")   iface   = need("--iface");
         else if (a == "--simdir")  simdir  = need("--simdir");
         else if (a == "--io-port") ioPort  = (uint16_t)std::stoul(need("--io-port"));
         else if (a == "--io-bind") ioBind  = need("--io-bind");
@@ -152,7 +156,8 @@ int main(int argc, char** argv) {
         else if (a == "--time")    runSecs = std::stod(need("--time"));
         else if (a == "--help" || a == "-h") {
             std::fprintf(stderr,
-                "usage: %s --peer HOST --port PORT --simdir DIR "
+                "usage: %s (--peer HOST --port PORT | --iface NAME) "
+                "--simdir DIR "
                 "[--io-port N] [--io-bind ADDR] [--hz N] [--time S]\n",
                 argv[0]);
             return 0;
@@ -172,7 +177,9 @@ int main(int argc, char** argv) {
     const auto infos = fleetInfos();
 
     FleetMaster fm;
-    if (!fm.open(peer, port)) {
+    const bool linkOk = iface.empty() ? fm.open(peer, port)
+                                      : fm.openIface(iface);
+    if (!linkOk) {
         std::fprintf(stderr, "tplc-ec-pump: link open failed\n");
         return 1;
     }

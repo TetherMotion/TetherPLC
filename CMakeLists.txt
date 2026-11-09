@@ -592,14 +592,23 @@ if(NOT CMAKE_CROSSCOMPILING)
     SKIP_RETURN_CODE 77 TIMEOUT 900)
 
   # EtherCAT fleet e2e: TetherPLC master + PLC against the emulated
-  # Beckhoff chain (sibling Tether beckhoff_slave_chain over UDP);
-  # Tether IO stimuli/observations on both endpoints
+  # Beckhoff chain (sibling Tether beckhoff_slave_chain over UDP or a
+  # veth pair); Tether IO stimuli/observations on both endpoints
   if(TARGET tplc-ec-pump AND TARGET tplc-io-cli)
     add_test(NAME ec_fleet_e2e
       COMMAND ${CMAKE_COMMAND} -E env
         "BUILD=$<TARGET_FILE_DIR:tether-plc>"
         bash ${CMAKE_SOURCE_DIR}/tests/ec/fleet_e2e.sh)
     set_tests_properties(ec_fleet_e2e PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 240 RESOURCE_LOCK plc_scan)
+    # Same scenario over raw L2 frames on a veth pair (EC_IFACE mode);
+    # skips when runec/ip or CAP_NET_ADMIN is unavailable
+    add_test(NAME ec_fleet_e2e_veth
+      COMMAND ${CMAKE_COMMAND} -E env
+        "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+        "EC_IFACE=veth-tplc-ec"
+        bash ${CMAKE_SOURCE_DIR}/tests/ec/fleet_e2e.sh)
+    set_tests_properties(ec_fleet_e2e_veth PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 240 RESOURCE_LOCK plc_scan)
   endif()
 

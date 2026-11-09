@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # EtherCAT fleet e2e: TetherPLC as EtherCAT master against the emulated
-# Beckhoff chain (Tether beckhoff_slave_chain over the UDP virtual
-# interface).  Validates stimuli on both Tether IO endpoints:
+# Beckhoff chain (Tether beckhoff_slave_chain over a virtual interface).
+# Validates stimuli on both Tether IO endpoints:
 #
 #   slave params (fleet.<key>.di/.ai) -> TxPDO -> master -> %I -> PLC
 #   -> %Q -> RxPDO -> slave signals (fleet.<key>.do/.ao)
@@ -9,6 +9,11 @@
 # Processes: beckhoff_slave_chain (Tether), tplc-ec-pump (master+pump
 # +IO), tether-plc-bridge + tether-plc (PLC).  Skips (77) when the
 # sibling Tether checkout/build, tplcc, or build tree is missing.
+#
+# Transport: UDP by default.  Set EC_IFACE=<base> (e.g. veth-tplc-ec)
+# to run the same scenario over raw L2 frames on a veth pair
+# (<base>0 = slave end, <base>1 = master end); requires runec (for
+# CAP_NET_ADMIN/CAP_NET_RAW) and ip(8), otherwise skips.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -20,7 +25,10 @@ SHM=/dev/shm$IMG
 WORK=$(mktemp -d)
 CTL=$WORK/ctl.sock
 SIM=$WORK/sim
+EC_IFACE=${EC_IFACE:-}
+VETH_SLAVE= VETH_MASTER=
 SLAVE_PID= PUMP_PID= BRIDGE_PID= PLC_PID=
+IPBIN=
 
 cleanup() {
     [ -n "$BRIDGE_PID" ] && kill "$BRIDGE_PID" 2>/dev/null
@@ -30,6 +38,8 @@ cleanup() {
     sleep 0.3
     pkill -f "tplc-ec-pump.*$SIM" 2>/dev/null
     pkill -f "beckhoff_slave_chain.*--port $UDP_PORT" 2>/dev/null
+    pkill -f "beckhoff_slave_chain.*--iface $VETH_SLAVE" 2>/dev/null
+    [ -n "$VETH_SLAVE" ] && runec "$IPBIN" link del "$VETH_SLAVE" 2>/dev/null
     "$BUILD"/tplc-image unlink "$IMG" 2>/dev/null
     rm -rf "$WORK"
 }
@@ -45,6 +55,23 @@ bad() { fail=$((fail+1)); echo "FAIL $1"; }
 [ -x "$BUILD/tplc-io-cli" ]   || { echo "SKIP: no tplc-io-cli"; exit 77; }
 [ -x "$BUILD/tether-plc-bridge" ] || { echo "SKIP: no build tree"; exit 77; }
 command -v python3 >/dev/null || { echo "SKIP: no python3"; exit 77; }
+
+# ---- raw-frame mode prerequisites -----------------------------------------
+if [ -n "$EC_IFACE" ]; then
+    command -v runec >/dev/null || { echo "SKIP: EC_IFACE set but no runec"; exit 77; }
+    IPBIN=$(command -v ip || true)
+    [ -n "$IPBIN" ] || { echo "SKIP: EC_IFACE set but no ip(8)"; exit 77; }
+    VETH_SLAVE="${EC_IFACE}0"; VETH_MASTER="${EC_IFACE}1"
+    [ ${#VETH_SLAVE} -le 15 ] || { echo "SKIP: iface name too long"; exit 77; }
+    runec "$IPBIN" link del "$VETH_SLAVE" 2>/dev/null
+    runec "$IPBIN" link del "$VETH_MASTER" 2>/dev/null
+    if ! runec "$IPBIN" link add "$VETH_SLAVE" type veth peer name "$VETH_MASTER" \
+         || ! runec "$IPBIN" link set "$VETH_SLAVE" up \
+         || ! runec "$IPBIN" link set "$VETH_MASTER" up; then
+        echo "SKIP: cannot create veth pair (need CAP_NET_ADMIN via runec)"
+        exit 77
+    fi
+fi
 
 # tplcc needs an LLVM-21 toolchain — locate one if not already on PATH
 if [ -z "${LLVM_SYS_211_PREFIX:-}" ]; then
@@ -145,14 +172,26 @@ wait_io() {
 }
 
 # ---- start the fleet -------------------------------------------------------
-"$TETHER_BIN" --port "$UDP_PORT" --io-port "$SLAVE_IO" --hz 1000 \
-    >$WORK/slave.log 2>&1 &
-SLAVE_PID=$!
+if [ -n "$EC_IFACE" ]; then
+    echo "transport: raw L2 frames on $VETH_SLAVE <-> $VETH_MASTER"
+    runec "$TETHER_BIN" --iface "$VETH_SLAVE" --io-port "$SLAVE_IO" \
+        --hz 1000 >$WORK/slave.log 2>&1 &
+    SLAVE_PID=$!
 
-"$BUILD/tplc-ec-pump" --peer 127.0.0.1 --port "$UDP_PORT" \
-    --simdir "$SIM" --io-port "$PUMP_IO" --hz 500 \
-    >$WORK/pump.log 2>&1 &
-PUMP_PID=$!
+    runec "$BUILD/tplc-ec-pump" --iface "$VETH_MASTER" \
+        --simdir "$SIM" --io-port "$PUMP_IO" --hz 500 \
+        >$WORK/pump.log 2>&1 &
+    PUMP_PID=$!
+else
+    "$TETHER_BIN" --port "$UDP_PORT" --io-port "$SLAVE_IO" --hz 1000 \
+        >$WORK/slave.log 2>&1 &
+    SLAVE_PID=$!
+
+    "$BUILD/tplc-ec-pump" --peer 127.0.0.1 --port "$UDP_PORT" \
+        --simdir "$SIM" --io-port "$PUMP_IO" --hz 500 \
+        >$WORK/pump.log 2>&1 &
+    PUMP_PID=$!
+fi
 
 # pump brings the bus up (discovery -> PREOP -> SAFEOP -> OP)
 if ! wait_io "$PUMP_IO" link 1 30; then

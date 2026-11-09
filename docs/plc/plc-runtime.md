@@ -145,9 +145,12 @@ simdir contract, proven against the emulated Beckhoff fleet in the
 sibling Tether checkout (`examples/beckhoff_slave_chain` +
 `examples/ethercat_fleet_probe` helpers):
 
-- Connects as EtherCAT master over `UdpEthercatLink` — UDP datagrams
-  carry whole Ethernet frames, so no CAP_NET_RAW/kernel interface is
-  needed. Runs `FleetMaster::bringUp` (discovery → mailbox → PREOP →
+- Connects as EtherCAT master over a virtual link — `UdpEthercatLink`
+  by default (UDP datagrams carry whole Ethernet frames, no
+  privileges needed) or `PacketEthercatLink --iface NAME` for raw L2
+  frames on a kernel interface such as a veth pair (needs CAP_NET_RAW;
+  `runec` suffices). Runs `FleetMaster::bringUp` (discovery → mailbox
+  → PREOP →
   SM/PDO → SAFEOP → OP) against `fleetInfos()` (2×EK1100 + EL1004/
   EL2004/EL3104/EL4104 per coupler), verifies SII identities, then
   pumps at `--hz`: `<key>.rx` file → RxPDO entry storage →
@@ -166,6 +169,9 @@ build) runs the whole chain: slave-chain + pump + bridge/PLC, then
 drives DI/AI stimuli through the slave's IO params and asserts DO/AO
 responses on the slave's IO signals — digital pass-through across
 couplers and analog arithmetic (%I→PLC→%Q) on both EK1100 segments.
+`ec_fleet_e2e_veth` runs the identical scenario over raw frames on an
+auto-created veth pair (`EC_IFACE` mode; skips when runec/ip or
+CAP_NET_ADMIN is unavailable).
 
 ## Simulation (doc 14)
 
