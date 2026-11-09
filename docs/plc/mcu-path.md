@@ -60,7 +60,11 @@ two module images into one host binary, resolves the ABI through a
 function table, and drives init/task/abort/blob-relocation/migrate.
 The gate asserts the binary imports no `dlopen`/`dlsym`/`mmap`/
 files/threads symbols — the standing proof that generated code and
-the ABI carry no Linux-only assumptions.
+the ABI carry no Linux-only assumptions. `tests/abi/mcu_shim_arm.sh`
+(ctest `mcu_shim_arm`) cross-compiles the same host and stub modules
+with `arm-none-eabi-gcc` and runs the full conformance sequence under
+`qemu-arm` — the ABI surface verified on a Cortex-M ISA, not just
+the host.
 
 ## What this proves
 
@@ -88,8 +92,9 @@ the ABI carry no Linux-only assumptions.
 - **On-target hardware**: qemu-arm user mode proves instruction
   execution, not silicon behavior (no MPU, no real SRAM layout, no
   flash retain). No board has been run.
-- **Cross-compiled shim**: `mcu_shim_host.c` is built for the host;
-  a Cortex-M build of the same conformance host is open.
+- **Cross-compiled shim**: done — `mcu_shim_arm` runs the same
+  conformance host on ARM under qemu-arm. What remains open is a
+  real board, not another emulator.
 - **MCU runtime crate** (`tplc-mcu`): scheduler, `ImageBackend`
   for SRAM/RPMsg transports, flash-backed retain — not started.
 
@@ -101,4 +106,5 @@ the ABI carry no Linux-only assumptions.
 | `mcu_link` | ARM object links bare-metal ELF32; six ABI exports resolve; only unwind stub needed |
 | `mcu_exec` | ARM module executes init/task/io under qemu-arm (skips without qemu-arm) |
 | `mcu_shim` | ABI has no Linux-only imports; static-link conformance on host |
+| `mcu_shim_arm` | same shim conformance cross-compiled for ARM, run under qemu-arm |
 | `abi_offsets` unit tests | generated struct offsets match `offsetof()` on LP64 and AAPCS32 |

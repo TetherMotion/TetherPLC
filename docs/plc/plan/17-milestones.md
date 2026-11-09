@@ -63,8 +63,8 @@ CiA-405 OD endpoint (landed as ctl `OD_*`; a CANopen wire
 binding remains); MCU loader path (`docs/plc/mcu-path.md` —
 `--target` emission, bare-metal link, qemu-arm execution, and the
 static-link ABI shim all landed as ctest `mcu_target`/`mcu_link`/
-`mcu_exec`/`mcu_shim`; a production mini-loader, PIC-blob variant,
-and on-target run remain open);
+`mcu_exec`/`mcu_shim`/`mcu_shim_arm`; a production mini-loader,
+PIC-blob variant, and on-target run remain open);
 WSTRING/LTIME/REF dialect extensions (WSTRING is a real UTF-16 type,
 LTIME rides the i64-ns Time representation, the standard function
 library landed, and `REFERENCE TO` is a blob offset that online change
