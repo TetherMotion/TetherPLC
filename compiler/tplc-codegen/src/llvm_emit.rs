@@ -2667,7 +2667,7 @@ pub fn emit_program<'ctx>(
 /* ------------------------------------------------------------------ */
 
 use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
 use inkwell::OptimizationLevel;
 use std::path::Path;
@@ -2675,10 +2675,20 @@ use std::path::Path;
 /// Create a TargetMachine for `triple` ("x86_64-unknown-linux-gnu",
 /// "aarch64-unknown-linux-gnu", "armv6-unknown-linux-gnueabihf").
 pub fn target_machine(triple: &str) -> Result<TargetMachine, String> {
-    let _ = triple;
-    Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
-    let triple_t = TargetMachine::get_default_triple();
+    if triple.is_empty() {
+        Target::initialize_native(&InitializationConfig::default())
+            .map_err(|e| e.to_string())?;
+    } else {
+        Target::initialize_all(&InitializationConfig::default());
+    }
+    let triple_t = if triple.is_empty() {
+        TargetMachine::get_default_triple()
+    } else {
+        TargetTriple::create(triple)
+    };
     let target = Target::from_triple(&triple_t).map_err(|e| e.to_string())?;
+    /* PIC for hosted triples; bare-metal targets reject PIC, so fall
+       back to static reloc + small code model (Cortex-M objects) */
     target
         .create_target_machine(
             &triple_t,
@@ -2688,12 +2698,44 @@ pub fn target_machine(triple: &str) -> Result<TargetMachine, String> {
             RelocMode::PIC,
             CodeModel::Default,
         )
-        .ok_or_else(|| "no target machine".to_string())
+        .or_else(|| {
+            target.create_target_machine(
+                &triple_t,
+                "generic",
+                "",
+                OptimizationLevel::Default,
+                RelocMode::Static,
+                CodeModel::Small,
+            )
+        })
+        .ok_or_else(|| format!("no target machine for {triple}"))
 }
 
-/// Emit an ELF object file for the native target.
-pub fn emit_object(module: &LlvmModule<'_>, path: &Path) -> Result<(), String> {
-    let tm = target_machine("")?;
+/// The host target triple ("" triple in target_machine means this).
+pub fn host_triple() -> String {
+    TargetMachine::get_default_triple()
+        .as_str()
+        .to_str()
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Stamp the module with a target triple + data layout so the backend
+/// emits for that target (the `tplcc --target` path).
+pub fn set_target(module: &LlvmModule<'_>, triple: &str) -> Result<(), String> {
+    let tm = target_machine(triple)?;
+    module.set_triple(&tm.get_triple());
+    module.set_data_layout(&tm.get_target_data().get_data_layout());
+    Ok(())
+}
+
+/// Emit an ELF object file for `triple` ("" = host).
+pub fn emit_object(
+    module: &LlvmModule<'_>,
+    path: &Path,
+    triple: &str,
+) -> Result<(), String> {
+    let tm = target_machine(triple)?;
     tm.write_to_file(module, FileType::Object, path)
         .map_err(|e| e.to_string())
 }

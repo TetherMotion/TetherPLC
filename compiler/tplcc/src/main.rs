@@ -13,7 +13,9 @@ use inkwell::context::Context;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use tplc_codegen::llvm_emit::{emit_bitcode, emit_object, emit_program};
+use tplc_codegen::llvm_emit::{
+    emit_bitcode, emit_object, emit_program, host_triple, set_target,
+};
 use tplc_mir::desc;
 use tplc_mir::ir::{AtRegion, IoBind, Pou, PouKind, Prov};
 use tplc_mir::layout::layout_program;
@@ -644,6 +646,7 @@ fn cmd_check(args: &[String]) -> ExitCode {
 fn cmd_build(args: &[String]) -> ExitCode {
     let mut out_path = PathBuf::from("out.tplc");
     let mut change_against: Option<PathBuf> = None;
+    let mut target: Option<String> = None;
     let mut allow_retain_loss = false;
     let mut json_mode = false;
     let mut task_period_ns: u64 = 10_000_000;
@@ -659,6 +662,10 @@ fn cmd_build(args: &[String]) -> ExitCode {
             }
             "--change-against" => {
                 change_against = Some(PathBuf::from(&args[i + 1]));
+                i += 1;
+            }
+            "--target" => {
+                target = Some(args[i + 1].clone());
                 i += 1;
             }
             "--allow-retain-loss" => allow_retain_loss = true,
@@ -982,15 +989,25 @@ fn cmd_build(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    /* --target selects the backend triple; the package's
+       target_obj is a monolithic object for non-host targets (the
+       .so link is native-only) */
+    let triple = target.unwrap_or_else(host_triple);
+    if let Err(e) = set_target(&llmod, &triple) {
+        eprintln!("tplcc: bad target triple {triple}: {e}");
+        return ExitCode::FAILURE;
+    }
     let tmp = std::env::temp_dir().join("tplcc_build");
     std::fs::create_dir_all(&tmp).unwrap();
     let bc = tmp.join("prog.bc");
     let obj = tmp.join("prog.o");
     emit_bitcode(&llmod, &bc).unwrap();
-    emit_object(&llmod, &obj).unwrap();
+    emit_object(&llmod, &obj, &triple).unwrap();
     let bc_bytes = std::fs::read(&bc).unwrap();
 
-    // link .o + tplc-rt → deployable .so (doc 01 §5: shared object).
+    /* link .o + tplc-rt → deployable .so (doc 01 §5: shared object) —
+       native triple only; a non-host target_obj is the raw object */
+    let obj_bytes = if triple == host_triple() {
     // The rt source is embedded; rustc produces a lean no_std
     // staticlib (~10KB .so, only `tplc_*` exports + abort).
     // TPLC_RT_LIB overrides for prebuilt archives.
@@ -1054,7 +1071,12 @@ fn cmd_build(args: &[String]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    let obj_bytes = std::fs::read(&so).unwrap();
+        std::fs::read(&so).unwrap()
+    } else {
+        /* bare-metal/foreign target: target_obj is the raw object,
+           not a linked .so — the MCU shim consumes it statically */
+        std::fs::read(&obj).unwrap()
+    };
 
     // retain hash → hex for manifest
     let lh_hex: String = layout_hash.iter().map(|b| format!("{b:02x}")).collect();
@@ -1084,7 +1106,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         .collect::<Vec<_>>()
         .join(",");
     let manifest = format!(
-        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\"}}"
+        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\",\"target_triple\":\"{triple}\"}}"
     );
     let src_bundle: String = srcs
         .iter()

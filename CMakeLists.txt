@@ -427,6 +427,12 @@ if(NOT CMAKE_CROSSCOMPILING)
 
   # flight recorder: an induced task fault freezes the ring and the
   # pre-fault channel scans survive for TRACE_READ (doc 12 §10.5)
+  # tplcc --target emits a monolithic object for a foreign triple
+  add_test(NAME mcu_target
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/abi/mcu_target.sh)
+  set_tests_properties(mcu_target PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

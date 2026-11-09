@@ -7,6 +7,9 @@
 > Status: partial — the container, LAYD and MIGD codecs are implemented
 > and conformance-tested on both implementations. SMAP/TCAT section
 > readers, signature, zstd compression, manifest schema validation, and
+> `target_obj` is a linked `.so` for the host triple; for a non-host
+> `--target` triple it is the raw relocatable ELF object and the
+> manifest carries `target_triple` (plan 18 §7.1).
 > NEEDED/hidden-state ELF checks remain future work.
 
 ## Implemented

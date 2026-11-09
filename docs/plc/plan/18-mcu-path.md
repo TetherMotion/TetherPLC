@@ -136,6 +136,13 @@ A no_std-ish embeddable runtime crate/C-lib implementing:
 
 1. `tplcc` emits a PIC-blob or monolithic-object `target_obj` for one
    Cortex-M target; package validates.
+   **Landed (monolithic object):** `tplcc build --target
+   armv7em-none-eabihf` stamps the LLVM module with the triple + data
+   layout, emits a relocatable ARM ELF as `target_obj` (no `.so` link
+   for non-host targets), and records `target_triple` in the manifest.
+   `tests/abi/mcu_target.sh` (ctest `mcu_target`) asserts the ELF class,
+   machine and relocatable type. The PIC-blob + fixup-table variant of
+   §2.1 remains open.
 2. A mini-loader on that target loads + runs the ABI conformance
    subset (init/cycle/migrate) in <N KB RAM.
 3. The MCU-shim conformance host (runtime-abi.md §11.7) stays green — ABI
