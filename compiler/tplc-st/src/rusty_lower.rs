@@ -570,6 +570,7 @@ pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
         pous: vec![],
         gvls: vec![],
         tasks: vec![],
+        checked_arith: false,
     };
     let mut io_bindings = Vec::new();
 

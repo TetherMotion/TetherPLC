@@ -534,3 +534,29 @@ acceptable because bare-metal ABIs in scope are LP64 and AAPCS32.
 Coverage: `abi_offsets_lp64`/`abi_offsets_aapcs32` unit tests pin the
 values against `offsetof()` output; `mcu_exec` exercises the AAPCS32
 path end to end.
+
+## D-IMPL-32: integer div/mod by zero, saturating default with checked mode opt-in
+
+**Decision:** `tplcc build --checked-arith` sets `Module::checked_arith`,
+which both backends honor. The MIR interpreter latches
+`TPLC_TASK_E_DIVZERO` (-19) on a zero divisor; LLVM emits a real
+branch to a `-19` return block in the POU function. Without the flag,
+integer `Div`/`Mod` keep the deterministic saturating-to-0 result.
+
+**Why:** IEC scan semantics want a faultable task for div-by-zero, but
+existing packages and the oracle corpus were built on saturating;
+a flag keeps both behaviors available per artifact instead of flipping
+the default. The manifest records `"checked_arith":true` as
+provenance; the mode is baked into bitcode and `.so`, not switched at
+load time.
+
+**Consequence:** saturating mode cannot use `select(dz, 0, sdiv)`:
+instcombine folds a branch-guarded div back into that shape, and x86
+`idiv` still traps on the zero arm. The emitted form clamps the
+divisor to a provably nonzero value (`select(dz, 1, r)`), divides,
+then selects 0, defined on every input, no trap possible. Checked
+mode keeps real control flow (the zero arm exits the function, so no
+merge exists for instcombine to fold). `INT_MIN / -1` overflow remains
+UB on the hardware path in both modes, matching prior behavior.
+Coverage: `saturating_arith_divmod_jit`, `checked_arith_divzero_jit`,
+and the `div.zero.sat`/`div.zero.checked` vectors through L1+L2.

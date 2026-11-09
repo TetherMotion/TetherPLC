@@ -105,6 +105,11 @@ Wire constants + error codes shared by both implementations:
   `PROG_PREPARE`, `PROG_SWAP`, `SHADOW_LOAD` — and fails with
   `REQUIRES_UNMET` (-214) before any module bytes are touched.
   `targets[]` triple selection remains unwired.
+- `tplcc --checked-arith` is recorded as `"checked_arith":true` in
+  the manifest (absent means the default saturating arithmetic).
+  The flag is baked into the generated code (bitcode and `.so`
+  both carry the guarded div/mod), so the manifest field is
+  provenance for tools, not a runtime switch.
 - Manifest is carried as opaque JSON bytes; schema validation is a
   P1-era concern (`tplcc` owns the producer side).
 

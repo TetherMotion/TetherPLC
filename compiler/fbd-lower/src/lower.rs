@@ -83,6 +83,7 @@ pub fn lower(project: &FbdProject) -> LowerOutput {
             pous: Vec::new(),
             gvls: Vec::new(),
             tasks: Vec::new(),
+            checked_arith: false,
         },
         io_bindings: Vec::new(),
         diags: Vec::new(),

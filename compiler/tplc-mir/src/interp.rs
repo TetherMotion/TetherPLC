@@ -424,13 +424,32 @@ impl<'a> Rt<'a> {
                     Sub => arith(l, r, |x, y| x.wrapping_sub(y), |x, y| x - y),
                     Mul => arith(l, r, |x, y| x.wrapping_mul(y), |x, y| x * y),
                     Div => {
-                        if r.as_i64() == 0 {
-                            Value::I(0) // div-zero fault model is P1; v0: saturate
+                        if r.as_i64() == 0 && !matches!(l, Value::F(_)) && !matches!(r, Value::F(_))
+                        {
+                            /* int div-by-zero: checked mode faults
+                            like the JIT (-19); otherwise saturate.
+                            Float operands keep IEEE semantics. */
+                            if self.module.checked_arith {
+                                self.fault = Some(TPLC_TASK_E_DIVZERO);
+                            }
+                            Value::I(0)
                         } else {
                             arith(l, r, |x, y| x / y, |x, y| x / y)
                         }
                     }
-                    Mod => arith(l, r, |x, y| x.wrapping_rem(y), |x, y| x % y),
+                    Mod => {
+                        if r.as_i64() == 0 && !matches!(l, Value::F(_)) && !matches!(r, Value::F(_))
+                        {
+                            /* wrapping_rem panics on a zero divisor:
+                            guard it here; checked mode faults (-19) */
+                            if self.module.checked_arith {
+                                self.fault = Some(TPLC_TASK_E_DIVZERO);
+                            }
+                            Value::I(0)
+                        } else {
+                            arith(l, r, |x, y| x.wrapping_rem(y), |x, y| x % y)
+                        }
+                    }
                     Eq => Value::Bool(cmp(&l, &r) == 0),
                     Ne => Value::Bool(cmp(&l, &r) != 0),
                     Lt => Value::Bool(cmp(&l, &r) < 0),

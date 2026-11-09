@@ -104,6 +104,7 @@ fn demo_module() -> mir::Module {
         pous: vec![fb, prog],
         gvls: vec![],
         tasks: vec![],
+        checked_arith: false,
     }
 }
 

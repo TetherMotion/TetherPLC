@@ -29,12 +29,13 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 66 emitted by runtime/tools | 74 test-hit (~99%)
+75 declared codes | 66 emitted by runtime/tools | 74 test-hit (98%)
 
 Every code with a real emit site is covered except race-only
-`IMG_EPOCH` and saturating `DIVZERO`; the only remaining
-emitted-but-uncovered code is `DIVZERO` itself (reserved for a
-checked-arithmetic mode — generated code saturates instead).
+`IMG_EPOCH`. `TPLC_TASK_E_DIVZERO` (-19) is emitted: `tplcc
+--checked-arith` switches integer div/mod by zero from the default
+saturating-to-0 to a task fault; the default mode stays
+bit-compatible with unflagged packages.
 
 ## Induced-error conformance test
 
@@ -56,6 +57,12 @@ or the wire reply:
 - image: `IMG_VERSION`, `IMG_TOO_SMALL` via crafted shm headers
 - reference faults: `TASK_E_PANIC` (-17) and `TASK_E_BOUNDS` (-18)
   via `reference_semantics_through_jit` (null / past-end deref)
+- arithmetic faults: `TASK_E_DIVZERO` (-19) via
+  `checked_arith_divzero_jit` / `saturating_arith_divmod_jit`
+  (LLVM JIT) and the `div.zero.sat` / `div.zero.checked` oracle
+  vectors, which `vector_run.py` replays through both the L1
+  interpreter and the L2 process sim (`program fault rc=-19` on
+  stderr, frozen `%Q` after the faulted scan)
 - package semantics: `PKG_ABI_MISMATCH` (-213) and `SYMMAP_RANGE`
   (-211) via `error_paths` payload mutations (manifest abi_version,
   out-of-blob symmap leaf); `validateForLoad` now also gates the
@@ -78,10 +85,16 @@ or the wire reply:
 
 **Declared but never emitted** (reserved — wire or prune):
 
-- `TPLC_TASK_E_DIVZERO` (-19) — generated code saturates division
-  instead of faulting; reserved for a checked-arithmetic mode.
-  (`TASK_E_PANIC`/`TASK_E_BOUNDS` are now emitted by `REFERENCE TO`
-  derefs — null and out-of-range — and covered by the JIT test.)
+- `TPLC_TASK_E_OVERFLOW` (-20) and `TPLC_TASK_E_RANGE` (-21):
+  reserved for checked-overflow / range-checked arithmetic modes;
+  no producer exists yet. (`TASK_E_DIVZERO` -19 left this list:
+  `--checked-arith` emits it. `TASK_E_PANIC`/`TASK_E_BOUNDS` are
+  emitted by `REFERENCE TO` derefs (null and out-of-range) and
+  covered by the JIT test.)
+- `TPLC_E_INIT_LAYOUT`/`INIT_INVALID`/`INIT_VALUE` (-1..-3): the
+  `tplc_init` contract codes; the host validates descriptors
+  itself (`HOST_*`) and generated init cannot fail today, so they
+  stay reserved for targets where init does validate.
 - (`SYMMAP_RANGE` -211, `PKG_ABI_MISMATCH` -213, `PKG_HIDDEN_STATE`
   -210, and `REQUIRES_UNMET` -214 are all emitted by
   `validateForLoad`/`checkRequires` and covered by `error_paths` —

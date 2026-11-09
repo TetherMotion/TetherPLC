@@ -611,7 +611,7 @@ fn main() {
     }
 
     // POUs
-    let mut module = mir::Module { pous: vec![], gvls: vec![], tasks: vec![] };
+    let mut module = mir::Module { pous: vec![], gvls: vec![], tasks: vec![], checked_arith: false };
     for pou in &unit.pous {
         let kind = match pou.kind {
             PouType::Program => mir::PouKind::Program,

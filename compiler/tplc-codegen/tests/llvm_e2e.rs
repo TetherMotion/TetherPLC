@@ -70,6 +70,7 @@ fn demo_module() -> Module {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -521,6 +522,7 @@ fn string_assign_and_compare_through_jit() {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -650,6 +652,7 @@ fn wide_string_is_utf16_through_jit() {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -774,6 +777,7 @@ fn string_builtins_through_jit() {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -991,6 +995,7 @@ fn scalar_builtins_through_jit() {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -1160,6 +1165,7 @@ fn string_functions_through_jit() {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -1360,6 +1366,7 @@ fn conversions_and_mux_through_jit() {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -1509,6 +1516,7 @@ fn reference_semantics_through_jit() {
         pous: Vec::new(),
         gvls: Vec::new(),
         tasks: Vec::new(),
+        checked_arith: false,
     };
     m.pous.push(Pou {
         kind: PouKind::Program,
@@ -1670,4 +1678,153 @@ fn reference_semantics_through_jit() {
         rp.write(u64::MAX);
         assert_eq!(run(&mut tctx), -17, "null deref → PANIC");
     }
+}
+
+/// Checked-arithmetic mode (`Module::checked_arith`, tplcc
+/// --checked-arith): integer div/mod by zero aborts the scan with
+/// TPLC_TASK_E_DIVZERO (-19): the faulting statement's store never
+/// lands, later statements don't run, and the next scan recovers.
+/// Saturating mode (default) keeps the select→0 guard.
+fn divmod_scenario(checked: bool) {
+    let dt = Type::Int {
+        signed: true,
+        bits: 32,
+    };
+    let mut m = Module {
+        pous: Vec::new(),
+        gvls: Vec::new(),
+        tasks: Vec::new(),
+        checked_arith: checked,
+    };
+    m.pous.push(Pou {
+        kind: PouKind::Program,
+        name: "D".into(),
+        iface: vec![
+            vd("d", dt.clone(), None),
+            vd("e", dt.clone(), None),
+            vd("q", dt.clone(), None),
+            vd("r", dt.clone(), None),
+        ],
+        body: Body::Stmts(vec![
+            assign(
+                Ref::Var("q".into()),
+                bin(BinOp::Div, int_e(100), int_v("d"), dt.clone()),
+            ),
+            assign(
+                Ref::Var("r".into()),
+                bin(BinOp::Mod, int_e(103), int_v("e"), dt.clone()),
+            ),
+        ]),
+        ret_ty: None,
+        prov: Prov::None,
+    });
+    let l = layout_program(&m, &m.pous[0]);
+    let m: &'static Module = Box::leak(Box::new(m));
+    let l: &'static _ = Box::leak(Box::new(l));
+    let program: &'static Pou = Box::leak(Box::new(m.pous[0].clone()));
+
+    let lctx = Context::create();
+    let module = emit_program(
+        &lctx,
+        m,
+        l,
+        program,
+        &[],
+        "dm",
+        [0x44; 16],
+        [0xDD; 32],
+        None,
+        10_000_000,
+    );
+    module
+        .verify()
+        .unwrap_or_else(|e| panic!("IR verify: {e}\n{}", module.print_to_string()));
+    Target::initialize_native(&InitializationConfig::default()).unwrap();
+    let ee = module.create_execution_engine().unwrap();
+
+    let scope = program_ctx(l);
+    let mut blob = vec![0u8; l.total_size as usize];
+    let mut img = vec![0u8; 64];
+    let mut ctx = FakeCtx {
+        ss: 0,
+        cf: 0,
+        blob: blob.as_mut_ptr(),
+        retain: std::ptr::null_mut(),
+        iin: img.as_mut_ptr(),
+        iout: unsafe { img.as_mut_ptr().add(32) },
+        mk: std::ptr::null_mut(),
+        now: 0,
+        cyc: 0,
+        ovr: 0,
+        svc: std::ptr::null(),
+        hp: std::ptr::null_mut(),
+        abort: 0,
+        pad: 0,
+        dl: 0,
+    };
+    let mut tctx = FakeTCtx {
+        prog: &mut ctx,
+        idx: 0,
+        fl: 0,
+        tl: std::ptr::null_mut(),
+        sn: 0,
+        dl: 0,
+        dt: 10_000_000,
+    };
+    unsafe {
+        let init: extern "C" fn(*mut FakeCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_init").unwrap());
+        let run: extern "C" fn(*mut FakeTCtx) -> i32 =
+            std::mem::transmute(ee.get_function_address("tplc_task_run").unwrap());
+        assert_eq!(init(&mut ctx), 0);
+        let bp = blob.as_mut_ptr();
+        let poke = |n: &str, v: i32| (bp.add(scope[n].0 as usize) as *mut i32).write(v);
+        let get = |n: &str| (bp.add(scope[n].0 as usize) as *const i32).read();
+
+        poke("d", 2);
+        poke("e", 3);
+        assert_eq!(run(&mut tctx), 0);
+        assert_eq!(get("q"), 50, "100/2");
+        assert_eq!(get("r"), 1, "103%3");
+
+        if checked {
+            /* d=0 → the Div faults before its store: q keeps the
+            previous value and the Mod statement never runs */
+            poke("d", 0);
+            assert_eq!(run(&mut tctx), -19, "div by zero → DIVZERO");
+            assert_eq!(get("q"), 50, "faulted store did not land");
+            assert_eq!(get("r"), 1, "later statement skipped");
+
+            /* e=0 with a healthy divisor → the Mod faults after q
+            was already updated this scan */
+            poke("d", 2);
+            poke("e", 0);
+            assert_eq!(run(&mut tctx), -19, "mod by zero → DIVZERO");
+            assert_eq!(get("q"), 50, "q updated before the fault");
+            assert_eq!(get("r"), 1, "mod store did not land");
+
+            /* the fault is per-scan, not sticky */
+            poke("d", 4);
+            poke("e", 5);
+            assert_eq!(run(&mut tctx), 0, "recovered");
+            assert_eq!(get("q"), 25, "100/4");
+            assert_eq!(get("r"), 3, "103%5");
+        } else {
+            poke("d", 0);
+            poke("e", 0);
+            assert_eq!(run(&mut tctx), 0, "saturating mode never faults");
+            assert_eq!(get("q"), 0, "div saturated to 0");
+            assert_eq!(get("r"), 0, "mod saturated to 0");
+        }
+    }
+}
+
+#[test]
+fn checked_arith_divzero_jit() {
+    divmod_scenario(true);
+}
+
+#[test]
+fn saturating_arith_divmod_jit() {
+    divmod_scenario(false);
 }

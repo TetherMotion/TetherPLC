@@ -407,6 +407,7 @@ fn compile_srcs(srcs: &[(String, String)]) -> tplc_st::FrontendOutput {
                     pous: vec![],
                     gvls: vec![],
                     tasks: vec![],
+                    checked_arith: false,
                 },
                 io_bindings: vec![],
                 diags: vec![tplc_mir::diag::Diag::error(
@@ -651,6 +652,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut json_mode = false;
     let mut task_period_ns: u64 = 10_000_000;
     let mut prog_version = String::from("0");
+    let mut checked_arith = false;
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
@@ -687,6 +689,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 }
                 i += 1;
             }
+            "--checked-arith" => checked_arith = true,
             f => files.push(f.into()),
         }
         i += 1;
@@ -714,6 +717,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
         }
         eprintln!("{errs} error(s)");
         return ExitCode::FAILURE;
+    }
+    if checked_arith {
+        out.module.checked_arith = true;
     }
 
     let program: Pou = out
@@ -1128,8 +1134,13 @@ fn cmd_build(args: &[String]) -> ExitCode {
             .max()
             .unwrap_or(0)
     };
+    let checked_json = if checked_arith {
+        ",\"checked_arith\":true"
+    } else {
+        ""
+    };
     let manifest = format!(
-        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\",\"target_triple\":\"{triple}\",\"requires\":{{\"image_in_bytes\":{},\"image_out_bytes\":{},\"marker_bytes\":{},\"retain_bytes\":{},\"state_blob_bytes\":{}}}}}",
+        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{prog_name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"layout_hash\":\"{lh_hex}\",\"target_triple\":\"{triple}\",\"requires\":{{\"image_in_bytes\":{},\"image_out_bytes\":{},\"marker_bytes\":{},\"retain_bytes\":{},\"state_blob_bytes\":{}}}{checked_json}}}",
         img_need(AtRegion::I),
         img_need(AtRegion::Q),
         img_need(AtRegion::M),
@@ -1221,7 +1232,7 @@ fn cmd_info(files: &[String]) -> ExitCode {
 /* expected traces as DATA (quarantined subprocess, never linked).      */
 /* ------------------------------------------------------------------ */
 
-use tplc_mir::interp::{program_ctx, Rt};
+use tplc_mir::interp::{program_ctx, Flow, Rt};
 
 fn parse_val(s: &str) -> tplc_mir::interp::Value {
     use tplc_mir::interp::Value;
@@ -1365,6 +1376,12 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
     for f in &files {
         runs.push(compile_run(f, src_dir, id)?);
     }
+    // "checked_arith": compile every leg (active + shadow) in
+    // checked-arithmetic mode: int div/mod by zero faults -19
+    let checked = v["checked_arith"].as_bool().unwrap_or(false);
+    for r in &mut runs {
+        r.0.module.checked_arith = checked;
+    }
     // shadow slot: loaded by a cycle's "shadow_load" — the candidate
     // sees identical %I, writes to a private image, and seeds its
     // state name-wise from the active blob at the load boundary.
@@ -1386,6 +1403,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                 .as_deref()
                 .ok_or(format!("{id} cycle {ci}: shadow_load w/o shadow"))?;
             let mut sh = compile_run(f, src_dir, id)?;
+            sh.0.module.checked_arith = checked;
             // seed: same-named fields carry the active blob's value —
             // the L1 model of the runtime's same-layout copy / MIGD
             {
@@ -1409,6 +1427,7 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
             runs[0] = sh;
         }
         let mut q_imgs: Vec<Vec<u8>> = Vec::new();
+        let mut aborts: Vec<Option<i32>> = Vec::new();
         for (pi, (out, program, layout, ctx, blob)) in runs.iter_mut().enumerate() {
             let tplc_mir::ir::Body::Stmts(stmts) = &program.body else {
                 return Err("program body not stmts".into());
@@ -1429,38 +1448,49 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
                     rt.write_field(short, &val);
                 }
             }
-            rt.exec_all(ctx, stmts);
+            let flow = rt.exec_all(ctx, stmts);
+            let aborted = matches!(flow, Flow::Abort(_));
+            aborts.push(match flow {
+                Flow::Abort(rc) => Some(rc),
+                _ => None,
+            });
             // check expect_fields (applied to every program — the corpus
-            // uses identical field names across language variants)
-            if let Some(ef) = c["expect_fields"].as_object() {
-                for (name, exp) in ef {
-                    let want = parse_val(exp.as_str().unwrap());
-                    let got = if name.contains('.') {
-                        let (inst, mem) = name.split_once('.').unwrap();
-                        rt.read_ref(
-                            ctx,
-                            &tplc_mir::ir::Ref::Field(
-                                Box::new(tplc_mir::ir::Ref::Var(inst.into())),
-                                mem.into(),
-                            ),
-                        )
-                    } else {
-                        rt.read_field(name)
-                    };
-                    let ok = match (&want, &got) {
-                        (tplc_mir::interp::Value::Bool(a), tplc_mir::interp::Value::Bool(b)) => {
-                            a == b
+            // uses identical field names across language variants);
+            // a faulted scan leaves mid-statement state; only
+            // expect_fault is meaningful there
+            if !aborted {
+                if let Some(ef) = c["expect_fields"].as_object() {
+                    for (name, exp) in ef {
+                        let want = parse_val(exp.as_str().unwrap());
+                        let got = if name.contains('.') {
+                            let (inst, mem) = name.split_once('.').unwrap();
+                            rt.read_ref(
+                                ctx,
+                                &tplc_mir::ir::Ref::Field(
+                                    Box::new(tplc_mir::ir::Ref::Var(inst.into())),
+                                    mem.into(),
+                                ),
+                            )
+                        } else {
+                            rt.read_field(name)
+                        };
+                        let ok = match (&want, &got) {
+                            (
+                                tplc_mir::interp::Value::Bool(a),
+                                tplc_mir::interp::Value::Bool(b),
+                            ) => a == b,
+                            (
+                                tplc_mir::interp::Value::Time(a),
+                                tplc_mir::interp::Value::Time(b),
+                            ) => a == b,
+                            _ => want.as_i64() == got.as_i64(),
+                        };
+                        if !ok {
+                            return Err(format!(
+                                "{id} cycle {ci} {}: {name} want {want:?} got {got:?}",
+                                files[pi]
+                            ));
                         }
-                        (tplc_mir::interp::Value::Time(a), tplc_mir::interp::Value::Time(b)) => {
-                            a == b
-                        }
-                        _ => want.as_i64() == got.as_i64(),
-                    };
-                    if !ok {
-                        return Err(format!(
-                            "{id} cycle {ci} {}: {name} want {want:?} got {got:?}",
-                            files[pi]
-                        ));
                     }
                 }
             }
@@ -1474,26 +1504,64 @@ fn run_vector(v: &serde_json::Value, src_dir: &std::path::Path) -> Result<(), St
             }
             q_imgs.push(img_out);
         }
-        // cross-program equivalence + optional expect_q
-        for (pi, o) in q_imgs.iter().enumerate().skip(1) {
-            if *o != q_imgs[0] {
-                return Err(format!(
-                    "{id} cycle {ci}: {} diverges from {}: {} vs {}",
-                    files[pi],
-                    files[0],
-                    hex_str(&o[..4]),
-                    hex_str(&q_imgs[0][..4])
-                ));
+        // cross-program equivalence + optional expect_q, skipped on
+        // a faulted scan (mid-statement state is not a trace)
+        let any_abort = aborts.iter().any(|a| a.is_some());
+        if !any_abort {
+            for (pi, o) in q_imgs.iter().enumerate().skip(1) {
+                if *o != q_imgs[0] {
+                    return Err(format!(
+                        "{id} cycle {ci}: {} diverges from {}: {} vs {}",
+                        files[pi],
+                        files[0],
+                        hex_str(&o[..4]),
+                        hex_str(&q_imgs[0][..4])
+                    ));
+                }
+            }
+            if let Some(qh) = c["expect_q"].as_str() {
+                let want = hex_bytes(qh);
+                if q_imgs[0][..want.len()] != want[..] {
+                    return Err(format!(
+                        "{id} cycle {ci}: %Q want {} got {}",
+                        qh,
+                        hex_str(&q_imgs[0][..want.len()])
+                    ));
+                }
             }
         }
-        if let Some(qh) = c["expect_q"].as_str() {
-            let want = hex_bytes(qh);
-            if q_imgs[0][..want.len()] != want[..] {
-                return Err(format!(
-                    "{id} cycle {ci}: %Q want {} got {}",
-                    qh,
-                    hex_str(&q_imgs[0][..want.len()])
-                ));
+        // task-fault expectation: "expect_fault": <rc> asserts every
+        // program leg aborted with that TPLC_TASK_E_* code; absent,
+        // any abort is an unexpected fault
+        match c["expect_fault"].as_i64() {
+            Some(code) => {
+                for (pi, a) in aborts.iter().enumerate() {
+                    match a {
+                        Some(rc) if *rc == code as i32 => {}
+                        Some(rc) => {
+                            return Err(format!(
+                                "{id} cycle {ci}: {} fault rc={rc} want {code}",
+                                files[pi]
+                            ))
+                        }
+                        None => {
+                            return Err(format!(
+                                "{id} cycle {ci}: {} completed, want fault {code}",
+                                files[pi]
+                            ))
+                        }
+                    }
+                }
+            }
+            None => {
+                for (pi, a) in aborts.iter().enumerate() {
+                    if let Some(rc) = a {
+                        return Err(format!(
+                            "{id} cycle {ci}: {} unexpected task fault rc={rc}",
+                            files[pi]
+                        ));
+                    }
+                }
             }
         }
         if c.get("expect_shadow_q").is_some() && shadow.is_none() {

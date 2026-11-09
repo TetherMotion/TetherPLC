@@ -235,6 +235,9 @@ pub struct Gen<'ctx> {
     /// null-reference deref → -17, out-of-range deref → -18
     panic_bb: Option<BasicBlock<'ctx>>,
     bounds_bb: Option<BasicBlock<'ctx>>,
+    /// checked-arith int div/mod by zero → -19 (saturating mode
+    /// never branches here)
+    divzero_bb: Option<BasicBlock<'ctx>>,
     loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>, // (cond, exit)
     ctx_ptr: PointerValue<'ctx>,
     this_ptr: PointerValue<'ctx>,
@@ -932,22 +935,45 @@ impl<'ctx> Gen<'ctx> {
             Sub => self.b.build_int_sub(l, r, "i").unwrap().into(),
             Mul => self.b.build_int_mul(l, r, "i").unwrap().into(),
             Div | Mod => {
-                // div-zero guard → 0 (deterministic fault model is P2)
+                /* sdiv/srem by zero is UB: a select guard cannot
+                protect the op, and neither can a branch→phi merge:
+                instcombine folds that back into `select(dz, 0,
+                sdiv)` which x86 lowers to an unconditional idiv
+                that still traps. Clamp the divisor to a provably
+                nonzero value, divide, then select 0 on dz. Checked
+                mode keeps real control flow to the -19 exit (no
+                merge, so nothing folds the div loose). */
                 let zero = r.get_type().const_zero();
                 let dz = self
                     .b
                     .build_int_compare(IntPredicate::EQ, r, zero, "dz")
                     .unwrap();
+                if self.mir.checked_arith {
+                    let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                    let ok_bb = self.ctx.append_basic_block(f, "div.ok");
+                    self.b
+                        .build_conditional_branch(dz, self.divzero_bb.unwrap(), ok_bb)
+                        .unwrap();
+                    self.b.position_at_end(ok_bb);
+                    return (if op == Div {
+                        self.b.build_int_signed_div(l, r, "d").unwrap()
+                    } else {
+                        self.b.build_int_signed_rem(l, r, "m").unwrap()
+                    })
+                    .into();
+                }
+                let one: BasicValueEnum = r.get_type().const_int(1, false).into();
+                let rv: BasicValueEnum = r.into();
+                let sr = self.b.build_select(dz, one, rv, "sd").unwrap();
+                let sr = sr.into_int_value();
                 let q = if op == Div {
-                    self.b.build_int_signed_div(l, r, "d").unwrap()
+                    self.b.build_int_signed_div(l, sr, "d").unwrap()
                 } else {
-                    self.b.build_int_signed_rem(l, r, "m").unwrap()
+                    self.b.build_int_signed_rem(l, sr, "m").unwrap()
                 };
-                self.b
-                    .build_select(dz, zero, q, "sel")
-                    .unwrap()
-                    .into_int_value()
-                    .into()
+                let z: BasicValueEnum = q.get_type().const_zero().into();
+                let qv: BasicValueEnum = q.into();
+                return self.b.build_select(dz, z, qv, "sel").unwrap();
             }
             Eq => self.icmp(IntPredicate::EQ, l, r),
             Ne => self.icmp(IntPredicate::NE, l, r),
@@ -2397,6 +2423,18 @@ impl<'ctx> Gen<'ctx> {
         self.b
             .build_return(Some(&self.ctx.i32_type().const_int((-18i64) as u64, true)))
             .unwrap();
+        /* checked-arith div/mod by zero (TPLC_TASK_E_DIVZERO) */
+        let db = self.ctx.append_basic_block(f, "div.zero");
+        self.divzero_bb = Some(db);
+        self.b.position_at_end(db);
+        self.b
+            .build_return(Some(
+                &self
+                    .ctx
+                    .i32_type()
+                    .const_int((TPLC_TASK_E_DIVZERO as i64) as u64, true),
+            ))
+            .unwrap();
         self.b.position_at_end(entry);
         self.abort_check();
         if let Body::Stmts(ss) = &pou.body {
@@ -2741,6 +2779,7 @@ pub fn emit_program_for_target<'ctx>(
         overrun_bb: None,
         panic_bb: None,
         bounds_bb: None,
+        divzero_bb: None,
         loop_stack: Vec::new(),
         ctx_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
         this_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),

@@ -183,8 +183,10 @@ def main():
         vid = v.get("id", "?")
         src = os.path.join(corpus, v["program"])
         pkg = os.path.join(work, vid.replace(".", "_") + ".tplc")
-        rc = subprocess.run([tplcc, "build", src, "-o", pkg],
-                            env=env, capture_output=True)
+        bargv = [tplcc, "build", src, "-o", pkg]
+        if v.get("checked_arith"):
+            bargv.append("--checked-arith")
+        rc = subprocess.run(bargv, env=env, capture_output=True)
         if rc.returncode != 0 or not os.path.isfile(pkg):
             print(f"FAIL {vid}: compile rc={rc.returncode} "
                   f"{rc.stderr.decode()[:200]}")
@@ -198,8 +200,10 @@ def main():
             ssrc = os.path.join(corpus, v["shadow"])
             shadow_pkg = os.path.join(
                 work, vid.replace(".", "_") + "_sh.tplc")
-            rc = subprocess.run([tplcc, "build", ssrc, "-o", shadow_pkg],
-                                env=env, capture_output=True)
+            sargv = [tplcc, "build", ssrc, "-o", shadow_pkg]
+            if v.get("checked_arith"):
+                sargv.append("--checked-arith")
+            rc = subprocess.run(sargv, env=env, capture_output=True)
             if rc.returncode != 0 or not os.path.isfile(shadow_pkg):
                 print(f"FAIL {vid}: shadow compile rc={rc.returncode} "
                       f"{rc.stderr.decode()[:200]}")
@@ -247,6 +251,7 @@ def main():
         steps = os.path.join(work, vid.replace(".", "_") + ".steps")
         open(steps, "w").write("\n".join(lines) + "\n")
         sigs = []
+        raws = []
         for rep in range(repeat):
             img = f"/tplc_vec_{os.getpid()}_{nfail + npass}_{rep}"
             ctl = f"/tmp/tplc_vec_{os.getpid()}_{npass + nfail}_{rep}.ctl"
@@ -276,8 +281,28 @@ def main():
             sig = "\n".join(re.sub(r"^audit \S+ \S+: ", "audit ", l)
                             for l in r.stderr.splitlines() if keep(l))
             sigs.append((r.returncode, sig))
+            raws.append(r.stderr)
         det = len(set(sigs)) == 1
-        if det and sigs[0][0] == 0:
+        # task-fault expectation: cycles may carry "expect_fault": rc;
+        # the runtime logs "program fault rc=<rc>" per faulting scan;
+        # checked on raw stderr: the filtered sig drops non-trace lines
+        # and the fault line count is scan-rate dependent
+        fault_bad = None
+        for cyc in v["cycles"]:
+            want = cyc.get("expect_fault")
+            if want is None:
+                continue
+            if not any(f"program fault rc={want}" in raw for raw in raws):
+                fault_bad = (want, raws[0] if raws else "")
+                break
+        if fault_bad is not None:
+            want, sig = fault_bad
+            tail = "\n     ".join(
+                [l for l in sig.splitlines() if l][-6:])
+            print(f"FAIL {vid}: expected fault rc={want}, "
+                  f"not observed:\n     {tail}")
+            nfail += 1
+        elif det and sigs[0][0] == 0:
             print(f"PASS {vid}")
             npass += 1
         elif not det:

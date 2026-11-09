@@ -348,4 +348,8 @@ pub struct Module {
     pub pous: Vec<Pou>,
     pub gvls: Vec<Gvl>,
     pub tasks: Vec<TaskDecl>,
+    /// checked-arithmetic mode (`tplcc build --checked-arith`):
+    /// integer div/mod by zero faults the scan with
+    /// TPLC_TASK_E_DIVZERO instead of saturating to 0.
+    pub checked_arith: bool,
 }

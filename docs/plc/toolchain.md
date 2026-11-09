@@ -21,7 +21,12 @@ One binary, five subcommands:
 `check` and `build` take `--json`: instead of the human renderer they
 emit one JSON line `{ok, errors, diags:[…]}` on stdout (build adds
 `"package"` on success). `build` also takes `--task-period-ns <ns>` to
-override the cyclic MAIN task period (default 10 ms). St spans carry
+override the cyclic MAIN task period (default 10 ms) and
+`--checked-arith` to make integer div/mod by zero a
+`TPLC_TASK_E_DIVZERO` (-19) task fault instead of the default
+saturating-to-0; the choice is baked into the generated code and
+recorded as `"checked_arith":true` in the package manifest.
+St spans carry
 `file/offset/len/line/col`;
 Fbd spans carry `sheet/node/pin`; non-frontend failures (LLVM verify,
 link, change-deny) are normalized into a uniform `TPLC_E_DRIVER` diag

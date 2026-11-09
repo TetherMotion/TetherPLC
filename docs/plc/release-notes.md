@@ -46,15 +46,15 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
 - **tether_io attach is loopback-only.** TCP has no transport
   authZ; the provider's own ctl role covers all its clients. No
   per-remote-user identity until a WS-side gateway exists.
-- **Debug plane gaps**: `DBG_STALE` (post-swap stale markers) is
-  declared but unemitted; flight-recorder induced-fault capture is
-  not asserted by tests; error-code coverage ~44% (see
-  error-code-coverage.md).
-- **Checked-arithmetic fault codes** (`DIVZERO`/`PANIC`/`BOUNDS`)
-  are ABI-reserved but unemitted — codegen saturates div-zero to 0.
-- **`MGMT_OP`/`MGMT_AUTHZ`/`MGMT_SCHEMA`** (-500/-502/-503) and
-  several `PKG_*` codes are declared but never emitted — dead
-  reservations to prune or wire.
+- **Debug plane gaps**: flight-recorder induced-fault capture is
+  not asserted by tests; error-code coverage is 74/75 test-hit
+  (see error-code-coverage.md).
+- **Arithmetic fault policy is opt-in**: `tplcc --checked-arith`
+  makes integer div/mod by zero a `TPLC_TASK_E_DIVZERO` (-19)
+  task fault; the default keeps saturating to 0. `TASK_E_OVERFLOW`
+  (-20) and `TASK_E_RANGE` (-21) remain declared-but-unemitted
+  reservations, as do the `tplc_init` contract codes
+  `INIT_LAYOUT`/`INIT_INVALID`/`INIT_VALUE` (-1..-3).
 - **`debug_stress` lateness flake**: under a 6-way ctl-flood on a
   loaded host, the 5 ms lateness bound occasionally trips at
   ~18 ms. Cadence holds; the bound assumes an unloaded host.
