@@ -289,7 +289,10 @@ pub enum Lit {
     /// wide string literal — encoded to UTF-16 code units at
     /// interp/codegen (never stored as narrow bytes)
     WStr(String),
-    EnumVal { ty: String, val: String },
+    EnumVal {
+        ty: String,
+        val: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

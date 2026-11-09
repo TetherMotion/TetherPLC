@@ -81,14 +81,38 @@ pub fn builtin_fn(name: &str) -> Option<BuiltinFn> {
 pub fn type_from_name(name: &str) -> Option<Type> {
     Some(match name.to_ascii_uppercase().as_str() {
         "BOOL" => Type::Bool,
-        "SINT" => Type::Int { signed: true, bits: 8 },
-        "INT" => Type::Int { signed: true, bits: 16 },
-        "DINT" => Type::Int { signed: true, bits: 32 },
-        "LINT" => Type::Int { signed: true, bits: 64 },
-        "USINT" | "BYTE" => Type::Int { signed: false, bits: 8 },
-        "UINT" | "WORD" => Type::Int { signed: false, bits: 16 },
-        "UDINT" | "DWORD" => Type::Int { signed: false, bits: 32 },
-        "ULINT" | "LWORD" => Type::Int { signed: false, bits: 64 },
+        "SINT" => Type::Int {
+            signed: true,
+            bits: 8,
+        },
+        "INT" => Type::Int {
+            signed: true,
+            bits: 16,
+        },
+        "DINT" => Type::Int {
+            signed: true,
+            bits: 32,
+        },
+        "LINT" => Type::Int {
+            signed: true,
+            bits: 64,
+        },
+        "USINT" | "BYTE" => Type::Int {
+            signed: false,
+            bits: 8,
+        },
+        "UINT" | "WORD" => Type::Int {
+            signed: false,
+            bits: 16,
+        },
+        "UDINT" | "DWORD" => Type::Int {
+            signed: false,
+            bits: 32,
+        },
+        "ULINT" | "LWORD" => Type::Int {
+            signed: false,
+            bits: 64,
+        },
         "REAL" => Type::Real { bits: 32 },
         "LREAL" => Type::Real { bits: 64 },
         "TIME" | "LTIME" => Type::Time,

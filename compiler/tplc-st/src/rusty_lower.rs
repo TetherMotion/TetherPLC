@@ -148,7 +148,9 @@ impl Ctx {
                 }
             }
             DataType::StringType { is_wide, size, .. } => {
-                let cap = size.as_ref().map(|s| lit_int(s) as u16)
+                let cap = size
+                    .as_ref()
+                    .map(|s| lit_int(s) as u16)
                     .unwrap_or(if *is_wide { 160 } else { 80 });
                 if *is_wide {
                     mir::Type::WStr { cap }
@@ -170,7 +172,7 @@ impl Ctx {
                 ..
             } => self.ty_of(referenced_type, at),
             /* REFERENCE TO T / REF_TO T: a blob-offset reference
-               (pointer-free by construction) */
+            (pointer-free by construction) */
             DataType::PointerType {
                 referenced_type,
                 auto_deref: Some(plc_ast::ast::AutoDerefType::Reference),

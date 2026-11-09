@@ -408,10 +408,7 @@ fn layout_stable(old: &Side, new: &Side) -> bool {
     for ol in &old.leaves {
         match new_by.get(ol.name.as_str()) {
             Some(nl) => {
-                if nl.abs_off != ol.abs_off
-                    || nl.size != ol.size
-                    || nl.sig != ol.sig
-                {
+                if nl.abs_off != ol.abs_off || nl.size != ol.size || nl.sig != ol.sig {
                     return false;
                 }
             }
@@ -485,14 +482,13 @@ pub fn diff(old: &Side, new: &Side, renames: &[(String, String)], allow_retain_l
                     });
                 }
                 /* a reference stores a blob offset: it survives when
-                   the referenced layout did not move (every surviving
-                   field keeps its offset and nothing was dropped), and
-                   must be nulled otherwise — a stale offset would point
-                   into the predecessor's layout */
+                the referenced layout did not move (every surviving
+                field keeps its offset and nothing was dropped), and
+                must be nulled otherwise — a stale offset would point
+                into the predecessor's layout */
                 if ol.tag == TAG_REF || nl.tag == TAG_REF {
                     if stable && ol.sig == nl.sig && ol.size == nl.size {
-                        plan.refs_preserved
-                            .push((nl.name.clone(), nl.field_idx));
+                        plan.refs_preserved.push((nl.name.clone(), nl.field_idx));
                         plan.rules.push(Rule::Copy {
                             old_off: ol.abs_off,
                             new_off: nl.abs_off,
@@ -502,8 +498,7 @@ pub fn diff(old: &Side, new: &Side, renames: &[(String, String)], allow_retain_l
                         });
                     } else {
                         plan.degraded = true;
-                        plan.refs_reset
-                            .push((nl.name.clone(), nl.field_idx));
+                        plan.refs_reset.push((nl.name.clone(), nl.field_idx));
                         plan.rules.push(Rule::Dropped {
                             name: nl.name.clone(),
                             retain: ol.retain,

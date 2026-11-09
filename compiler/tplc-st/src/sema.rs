@@ -10,8 +10,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use tplc_mir::ir::*;
 use tplc_mir::layout::builtin_fb_layout;
-use tplc_mir::ty::{builtin_fn, compatible, convertible, literal_fits, narrows,
-                   unify_num, BuiltinFn};
+use tplc_mir::ty::{
+    builtin_fn, compatible, convertible, literal_fits, narrows, unify_num, BuiltinFn,
+};
 
 use crate::diag::{codes, wcodes, Diag};
 
@@ -353,18 +354,14 @@ impl<'e> Checker<'e> {
                 let mut tb = self.expr(b);
                 /* a reference participates as its pointee */
                 if let Type::Ref { to } = ta.clone() {
-                    if compatible(&to, &tb)
-                        || (is_numeric(&to) && is_numeric(&tb))
-                    {
+                    if compatible(&to, &tb) || (is_numeric(&to) && is_numeric(&tb)) {
                         if let Some(t) = self.insert_deref(a) {
                             ta = t;
                         }
                     }
                 }
                 if let Type::Ref { to } = tb.clone() {
-                    if compatible(&to, &ta)
-                        || (is_numeric(&to) && is_numeric(&ta))
-                    {
+                    if compatible(&to, &ta) || (is_numeric(&to) && is_numeric(&ta)) {
                         if let Some(t) = self.insert_deref(b) {
                             tb = t;
                         }
@@ -387,14 +384,8 @@ impl<'e> Checker<'e> {
                         // STRING supports =/<> only (IEC 61131-3); an
                         // ordered compare or a mixed-type compare is a
                         // type error rather than a codegen surprise
-                        let str_l = matches!(
-                            ta,
-                            Type::Str { .. } | Type::WStr { .. }
-                        );
-                        let str_r = matches!(
-                            tb,
-                            Type::Str { .. } | Type::WStr { .. }
-                        );
+                        let str_l = matches!(ta, Type::Str { .. } | Type::WStr { .. });
+                        let str_r = matches!(tb, Type::Str { .. } | Type::WStr { .. });
                         if str_l || str_r {
                             if !(str_l && str_r) || !matches!(op, Eq | Ne) {
                                 self.err(
@@ -421,18 +412,18 @@ impl<'e> Checker<'e> {
             }
             ExprKind::Call { fun, args } => {
                 /* X_TO_Y conversion functions become a Conv node so
-                   both engines share one conversion path */
+                both engines share one conversion path */
                 if let Some((from, to)) = tplc_mir::ty::conversion_fn(fun) {
                     if args.len() != 1 {
-                        self.err(codes::TYPE,
-                                 format!("{fun} takes exactly one value"),
-                                 &e.prov);
+                        self.err(
+                            codes::TYPE,
+                            format!("{fun} takes exactly one value"),
+                            &e.prov,
+                        );
                         return to;
                     }
                     let t = self.expr(&mut args[0].1);
-                    if !compatible(&t, &from)
-                        && !literal_fits(&args[0].1, &from)
-                    {
+                    if !compatible(&t, &from) && !literal_fits(&args[0].1, &from) {
                         self.coerce(&mut args[0].1, &t, &from);
                     }
                     let inner = std::mem::replace(
@@ -457,54 +448,73 @@ impl<'e> Checker<'e> {
     }
 
     /// builtin function typing (LEN/CONCAT — IEC string functions)
-    fn builtin_ty(&mut self, b: BuiltinFn, args: &mut [(String, Expr)],
-                  prov: &Prov) -> Type {
+    fn builtin_ty(&mut self, b: BuiltinFn, args: &mut [(String, Expr)], prov: &Prov) -> Type {
         match b {
             BuiltinFn::Len => {
                 if args.len() != 1 {
                     self.err(codes::TYPE, "LEN takes exactly one string", prov);
-                    return Type::Int { signed: true, bits: 16 };
+                    return Type::Int {
+                        signed: true,
+                        bits: 16,
+                    };
                 }
                 let t = self.expr(&mut args[0].1);
                 match t {
-                    Type::Str { .. } | Type::WStr { .. } => {
-                        Type::Int { signed: true, bits: 16 }
-                    }
+                    Type::Str { .. } | Type::WStr { .. } => Type::Int {
+                        signed: true,
+                        bits: 16,
+                    },
                     _ => {
-                        self.err(codes::TYPE,
-                                 "LEN expects STRING or WSTRING", prov);
-                        Type::Int { signed: true, bits: 16 }
+                        self.err(codes::TYPE, "LEN expects STRING or WSTRING", prov);
+                        Type::Int {
+                            signed: true,
+                            bits: 16,
+                        }
                     }
                 }
             }
             BuiltinFn::Abs => {
                 if args.len() != 1 {
                     self.err(codes::TYPE, "ABS takes exactly one value", prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 let t = self.expr(&mut args[0].1);
                 match t {
                     Type::Int { .. } | Type::Real { .. } | Type::Time => t,
                     _ => {
                         self.err(codes::TYPE, "ABS expects a numeric value", prov);
-                        Type::Int { signed: true, bits: 32 }
+                        Type::Int {
+                            signed: true,
+                            bits: 32,
+                        }
                     }
                 }
             }
             BuiltinFn::Min | BuiltinFn::Max => {
                 let name = if b == BuiltinFn::Min { "MIN" } else { "MAX" };
                 if args.len() != 2 {
-                    self.err(codes::TYPE,
-                             format!("{name} takes exactly two values"), prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    self.err(
+                        codes::TYPE,
+                        format!("{name} takes exactly two values"),
+                        prov,
+                    );
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 let t1 = self.expr(&mut args[0].1);
                 let t2 = self.expr(&mut args[1].1);
                 let r = unify_num(&t1, &t2);
                 if !is_numeric(&r) {
-                    self.err(codes::TYPE,
-                             format!("{name} expects numeric values"), prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    self.err(codes::TYPE, format!("{name} expects numeric values"), prov);
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 self.coerce(&mut args[0].1, &t1, &r);
                 self.coerce(&mut args[1].1, &t2, &r);
@@ -512,8 +522,7 @@ impl<'e> Checker<'e> {
             }
             BuiltinFn::Sel => {
                 if args.len() != 3 {
-                    self.err(codes::TYPE,
-                             "SEL takes G, IN0, IN1", prov);
+                    self.err(codes::TYPE, "SEL takes G, IN0, IN1", prov);
                     return Type::Bool;
                 }
                 let tg = self.expr(&mut args[0].1);
@@ -522,8 +531,7 @@ impl<'e> Checker<'e> {
                 let t1 = self.expr(&mut args[2].1);
                 let r = unify_num(&t0, &t1);
                 if !is_numeric(&r) && !compatible(&t0, &t1) {
-                    self.err(codes::TYPE,
-                             "SEL branches must share a type", prov);
+                    self.err(codes::TYPE, "SEL branches must share a type", prov);
                     return t0;
                 }
                 let r = if is_numeric(&r) { r } else { t0.clone() };
@@ -533,18 +541,22 @@ impl<'e> Checker<'e> {
             }
             BuiltinFn::Limit => {
                 if args.len() != 3 {
-                    self.err(codes::TYPE,
-                             "LIMIT takes MN, IN, MX", prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    self.err(codes::TYPE, "LIMIT takes MN, IN, MX", prov);
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 let a = self.expr(&mut args[0].1);
                 let i = self.expr(&mut args[1].1);
                 let x = self.expr(&mut args[2].1);
                 let r = unify_num(&unify_num(&a, &i), &x);
                 if !is_numeric(&r) {
-                    self.err(codes::TYPE,
-                             "LIMIT expects numeric values", prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    self.err(codes::TYPE, "LIMIT expects numeric values", prov);
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 self.coerce(&mut args[0].1, &a, &r);
                 self.coerce(&mut args[1].1, &i, &r);
@@ -565,35 +577,54 @@ impl<'e> Checker<'e> {
             BuiltinFn::Trunc => {
                 if args.len() != 1 {
                     self.err(codes::TYPE, "TRUNC takes one value", prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 let t = self.expr(&mut args[0].1);
                 if !matches!(t, Type::Real { .. }) {
                     self.coerce(&mut args[0].1, &t, &Type::Real { bits: 64 });
                 }
-                Type::Int { signed: true, bits: 32 }
+                Type::Int {
+                    signed: true,
+                    bits: 32,
+                }
             }
             BuiltinFn::Round => {
                 if args.len() != 1 {
                     self.err(codes::TYPE, "ROUND takes one value", prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 let t = self.expr(&mut args[0].1);
                 if !matches!(t, Type::Real { .. }) {
                     self.coerce(&mut args[0].1, &t, &Type::Real { bits: 64 });
                 }
-                Type::Int { signed: true, bits: 32 }
+                Type::Int {
+                    signed: true,
+                    bits: 32,
+                }
             }
             BuiltinFn::Mux => {
                 if args.len() < 2 {
                     self.err(codes::TYPE, "MUX takes K and at least one input", prov);
-                    return Type::Int { signed: true, bits: 32 };
+                    return Type::Int {
+                        signed: true,
+                        bits: 32,
+                    };
                 }
                 let k = self.expr(&mut args[0].1);
-                self.coerce(&mut args[0].1, &k, &Type::Int {
-                    signed: true,
-                    bits: 32,
-                });
+                self.coerce(
+                    &mut args[0].1,
+                    &k,
+                    &Type::Int {
+                        signed: true,
+                        bits: 32,
+                    },
+                );
                 let mut r: Option<Type> = None;
                 for i in 1..args.len() {
                     let t = self.expr(&mut args[i].1);
@@ -601,7 +632,11 @@ impl<'e> Checker<'e> {
                         None => t,
                         Some(prev) => {
                             let u = unify_num(&prev, &t);
-                            if is_numeric(&u) { u } else { prev }
+                            if is_numeric(&u) {
+                                u
+                            } else {
+                                prev
+                            }
                         }
                     });
                 }
@@ -613,24 +648,30 @@ impl<'e> Checker<'e> {
                 r
             }
             BuiltinFn::Left | BuiltinFn::Right => {
-                let name = if b == BuiltinFn::Left { "LEFT" } else { "RIGHT" };
+                let name = if b == BuiltinFn::Left {
+                    "LEFT"
+                } else {
+                    "RIGHT"
+                };
                 if args.len() != 2 {
-                    self.err(codes::TYPE,
-                             format!("{name} takes IN, L"), prov);
+                    self.err(codes::TYPE, format!("{name} takes IN, L"), prov);
                     return Type::Str { cap: 0 };
                 }
                 let t = self.expr(&mut args[0].1);
                 let n = self.expr(&mut args[1].1);
-                self.coerce(&mut args[1].1, &n, &Type::Int {
-                    signed: true,
-                    bits: 32,
-                });
+                self.coerce(
+                    &mut args[1].1,
+                    &n,
+                    &Type::Int {
+                        signed: true,
+                        bits: 32,
+                    },
+                );
                 match t {
                     Type::Str { cap } => Type::Str { cap },
                     Type::WStr { cap } => Type::WStr { cap },
                     _ => {
-                        self.err(codes::TYPE,
-                                 format!("{name} expects a string"), prov);
+                        self.err(codes::TYPE, format!("{name} expects a string"), prov);
                         Type::Str { cap: 0 }
                     }
                 }
@@ -643,10 +684,14 @@ impl<'e> Checker<'e> {
                 let t = self.expr(&mut args[0].1);
                 for k in 1..3 {
                     let n = self.expr(&mut args[k].1);
-                    self.coerce(&mut args[k].1, &n, &Type::Int {
-                        signed: true,
-                        bits: 32,
-                    });
+                    self.coerce(
+                        &mut args[k].1,
+                        &n,
+                        &Type::Int {
+                            signed: true,
+                            bits: 32,
+                        },
+                    );
                 }
                 match t {
                     Type::Str { cap } => Type::Str { cap },
@@ -660,21 +705,28 @@ impl<'e> Checker<'e> {
             BuiltinFn::Find => {
                 if args.len() != 2 {
                     self.err(codes::TYPE, "FIND takes IN1, IN2", prov);
-                    return Type::Int { signed: true, bits: 16 };
+                    return Type::Int {
+                        signed: true,
+                        bits: 16,
+                    };
                 }
                 let t1 = self.expr(&mut args[0].1);
                 let t2 = self.expr(&mut args[1].1);
                 let ok = matches!(
                     (&t1, &t2),
-                    (Type::Str { .. }, Type::Str { .. })
-                        | (Type::WStr { .. }, Type::WStr { .. })
+                    (Type::Str { .. }, Type::Str { .. }) | (Type::WStr { .. }, Type::WStr { .. })
                 );
                 if !ok {
-                    self.err(codes::TYPE,
-                             "FIND expects two strings of the same kind",
-                             prov);
+                    self.err(
+                        codes::TYPE,
+                        "FIND expects two strings of the same kind",
+                        prov,
+                    );
                 }
-                Type::Int { signed: true, bits: 16 }
+                Type::Int {
+                    signed: true,
+                    bits: 16,
+                }
             }
             BuiltinFn::Insert | BuiltinFn::Delete | BuiltinFn::Replace => {
                 let (name, nargs) = match b {
@@ -683,8 +735,7 @@ impl<'e> Checker<'e> {
                     _ => ("REPLACE", 4),
                 };
                 if args.len() != nargs {
-                    self.err(codes::TYPE,
-                             format!("{name} takes {nargs} arguments"), prov);
+                    self.err(codes::TYPE, format!("{name} takes {nargs} arguments"), prov);
                     return Type::Str { cap: 0 };
                 }
                 let t1 = self.expr(&mut args[0].1);
@@ -697,27 +748,35 @@ impl<'e> Checker<'e> {
                 let start = if b == BuiltinFn::Delete { 1 } else { 2 };
                 for k in start..nargs {
                     let n = self.expr(&mut args[k].1);
-                    self.coerce(&mut args[k].1, &n, &Type::Int {
-                        signed: true,
-                        bits: 32,
-                    });
+                    self.coerce(
+                        &mut args[k].1,
+                        &n,
+                        &Type::Int {
+                            signed: true,
+                            bits: 32,
+                        },
+                    );
                 }
                 let (cap1, wide) = match &t1 {
                     Type::Str { cap } => (*cap, false),
                     Type::WStr { cap } => (*cap, true),
                     _ => {
-                        self.err(codes::TYPE,
-                                 format!("{name} expects a string"), prov);
+                        self.err(codes::TYPE, format!("{name} expects a string"), prov);
                         return Type::Str { cap: 0 };
                     }
                 };
                 let ins_cap = match &ins_ty {
                     Some(Type::Str { cap }) | Some(Type::WStr { cap })
-                        if wide == matches!(ins_ty, Some(Type::WStr { .. })) => *cap,
+                        if wide == matches!(ins_ty, Some(Type::WStr { .. })) =>
+                    {
+                        *cap
+                    }
                     Some(_) => {
-                        self.err(codes::TYPE,
-                                 format!("{name}: second argument must be the same string kind"),
-                                 prov);
+                        self.err(
+                            codes::TYPE,
+                            format!("{name}: second argument must be the same string kind"),
+                            prov,
+                        );
                         0
                     }
                     None => 0,
@@ -727,12 +786,15 @@ impl<'e> Checker<'e> {
                 } else {
                     cap1.saturating_add(ins_cap)
                 };
-                if wide { Type::WStr { cap } } else { Type::Str { cap } }
+                if wide {
+                    Type::WStr { cap }
+                } else {
+                    Type::Str { cap }
+                }
             }
             BuiltinFn::Concat => {
                 if args.len() != 2 {
-                    self.err(codes::TYPE,
-                             "CONCAT takes exactly two strings", prov);
+                    self.err(codes::TYPE, "CONCAT takes exactly two strings", prov);
                     return Type::Str { cap: 0 };
                 }
                 let t1 = self.expr(&mut args[0].1);
@@ -745,9 +807,11 @@ impl<'e> Checker<'e> {
                         cap: c1.saturating_add(c2),
                     },
                     _ => {
-                        self.err(codes::TYPE,
-                                 "CONCAT expects two strings of the same kind",
-                                 prov);
+                        self.err(
+                            codes::TYPE,
+                            "CONCAT expects two strings of the same kind",
+                            prov,
+                        );
                         Type::Str { cap: 0 }
                     }
                 }
@@ -842,7 +906,7 @@ impl<'e> Checker<'e> {
             return;
         }
         /* auto-deref (IEC REFERENCE TO): a reference used where its
-           pointee is expected reads through the reference */
+        pointee is expected reads through the reference */
         if let Type::Ref { to: pointee } = from {
             if **pointee == *to && self.insert_deref(e).is_some() {
                 return;

@@ -131,8 +131,7 @@ END_PROGRAM
     assert!(
         diags
             .iter()
-            .any(|d| d.code == tplc_st::codes::TYPE
-                && d.message.contains("STRING comparison")),
+            .any(|d| d.code == tplc_st::codes::TYPE && d.message.contains("STRING comparison")),
         "expected ordered-string diag, got {diags:?}"
     );
 
@@ -164,9 +163,7 @@ END_PROGRAM
     let mut module = out.module;
     let diags = tplc_st::sema::check(&mut module);
     assert!(
-        diags
-            .iter()
-            .any(|d| d.code == tplc_st::codes::TYPE),
+        diags.iter().any(|d| d.code == tplc_st::codes::TYPE),
         "expected wide→narrow mismatch, got {diags:?}"
     );
 
@@ -182,8 +179,7 @@ END_PROGRAM
     assert!(
         diags
             .iter()
-            .any(|d| d.code == tplc_st::codes::TYPE
-                && d.message.contains("STRING comparison")),
+            .any(|d| d.code == tplc_st::codes::TYPE && d.message.contains("STRING comparison")),
         "expected ordered-wide diag, got {diags:?}"
     );
 }
@@ -333,11 +329,13 @@ END_PROGRAM
     // the conversion is a Conv node, not a call: one conversion path
     let program = module.pous.iter().find(|p| p.name == "P").unwrap();
     let has_conv = match &program.body {
-        tplc_mir::Body::Stmts(ss) => ss.iter().any(|s| matches!(
-            &s.kind,
-            tplc_mir::StmtKind::Assign { rhs, .. }
-                if matches!(rhs.kind, tplc_mir::ExprKind::Conv { .. })
-        )),
+        tplc_mir::Body::Stmts(ss) => ss.iter().any(|s| {
+            matches!(
+                &s.kind,
+                tplc_mir::StmtKind::Assign { rhs, .. }
+                    if matches!(rhs.kind, tplc_mir::ExprKind::Conv { .. })
+            )
+        }),
         _ => false,
     };
     assert!(has_conv, "DINT_TO_REAL should lower to a Conv node");

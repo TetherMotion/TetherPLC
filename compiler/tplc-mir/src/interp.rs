@@ -156,12 +156,9 @@ impl<'a> Rt<'a> {
                 let len = (b[0] as usize).min(*cap as usize);
                 Value::Str(b[1..1 + len].to_vec())
             }
-            Type::Ref { .. } => {
-                Value::Ref(u64::from_le_bytes(b[..8].try_into().unwrap()))
-            }
+            Type::Ref { .. } => Value::Ref(u64::from_le_bytes(b[..8].try_into().unwrap())),
             Type::WStr { cap } => {
-                let len = (u16::from_le_bytes([b[0], b[1]]) as usize)
-                    .min(*cap as usize);
+                let len = (u16::from_le_bytes([b[0], b[1]]) as usize).min(*cap as usize);
                 let mut v = Vec::with_capacity(len);
                 for i in 0..len {
                     let o = 2 + i * 2;
@@ -313,9 +310,12 @@ impl<'a> Rt<'a> {
                     Type::Ref { to } => (**to).clone(),
                     _ => Type::Bool,
                 };
-                let off = match self.rd(slot, &Type::Ref {
-                    to: Box::new(to.clone()),
-                }) {
+                let off = match self.rd(
+                    slot,
+                    &Type::Ref {
+                        to: Box::new(to.clone()),
+                    },
+                ) {
                     Value::Ref(o) => o,
                     _ => u64::MAX,
                 };
@@ -470,8 +470,7 @@ impl<'a> Rt<'a> {
     /// LEFT/RIGHT/MID/INSERT/DELETE/REPLACE over narrow and wide
     /// strings. Positions are 1-based (IEC) and clamped; L<=0 yields
     /// the empty string, P past the end clamps to the end.
-    fn str_op(&mut self, caller: &Ctx, b: BuiltinFn,
-              args: &[(String, Expr)]) -> Value {
+    fn str_op(&mut self, caller: &Ctx, b: BuiltinFn, args: &[(String, Expr)]) -> Value {
         let ev = |rt: &mut Self, i: usize| -> Value {
             args.get(i)
                 .map(|(_, e)| rt.eval(caller, e))
@@ -537,11 +536,11 @@ impl<'a> Rt<'a> {
     }
 
     /// LEN/CONCAT over narrow and wide strings (IEC string functions)
-    fn builtin_call(&mut self, caller: &Ctx, b: BuiltinFn,
-                    args: &[(String, Expr)]) -> Value {
+    fn builtin_call(&mut self, caller: &Ctx, b: BuiltinFn, args: &[(String, Expr)]) -> Value {
         match b {
             BuiltinFn::Len => {
-                let v = args.first()
+                let v = args
+                    .first()
                     .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
                 let n = match v {
@@ -552,7 +551,9 @@ impl<'a> Rt<'a> {
                 Value::I(n as i64)
             }
             BuiltinFn::Abs => {
-                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                let v = args
+                    .first()
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
                 match v {
                     Value::F(x) => Value::F(x.abs()),
@@ -567,21 +568,39 @@ impl<'a> Rt<'a> {
                 }
             }
             BuiltinFn::Min | BuiltinFn::Max => {
-                let a = args.first().map(|(_, e)| self.eval(caller, e))
+                let a = args
+                    .first()
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
-                let b2 = args.get(1).map(|(_, e)| self.eval(caller, e))
+                let b2 = args
+                    .get(1)
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
                 let take_a = if matches!(a, Value::F(_)) || matches!(b2, Value::F(_)) {
                     let (x, y) = (a.as_f64(), b2.as_f64());
-                    if b == BuiltinFn::Min { x <= y } else { x >= y }
+                    if b == BuiltinFn::Min {
+                        x <= y
+                    } else {
+                        x >= y
+                    }
                 } else {
                     let (x, y) = (a.as_i64(), b2.as_i64());
-                    if b == BuiltinFn::Min { x <= y } else { x >= y }
+                    if b == BuiltinFn::Min {
+                        x <= y
+                    } else {
+                        x >= y
+                    }
                 };
-                if take_a { a } else { b2 }
+                if take_a {
+                    a
+                } else {
+                    b2
+                }
             }
             BuiltinFn::Sel => {
-                let g = args.first().map(|(_, e)| self.eval(caller, e))
+                let g = args
+                    .first()
+                    .map(|(_, e)| self.eval(caller, e))
                     .map(|v| v.truthy())
                     .unwrap_or(false);
                 let idx = if g { 2 } else { 1 };
@@ -590,41 +609,61 @@ impl<'a> Rt<'a> {
                     .unwrap_or(Value::I(0))
             }
             BuiltinFn::Limit => {
-                let mn = args.first().map(|(_, e)| self.eval(caller, e))
+                let mn = args
+                    .first()
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
-                let v = args.get(1).map(|(_, e)| self.eval(caller, e))
+                let v = args
+                    .get(1)
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
-                let mx = args.get(2).map(|(_, e)| self.eval(caller, e))
+                let mx = args
+                    .get(2)
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
-                if matches!(v, Value::F(_)) || matches!(mn, Value::F(_))
-                    || matches!(mx, Value::F(_)) {
+                if matches!(v, Value::F(_))
+                    || matches!(mn, Value::F(_))
+                    || matches!(mx, Value::F(_))
+                {
                     let (lo, x, hi) = (mn.as_f64(), v.as_f64(), mx.as_f64());
-                    Value::F(if x < lo { lo } else if x > hi { hi } else { x })
+                    Value::F(if x < lo {
+                        lo
+                    } else if x > hi {
+                        hi
+                    } else {
+                        x
+                    })
                 } else {
                     let (lo, x, hi) = (mn.as_i64(), v.as_i64(), mx.as_i64());
-                    Value::I(if x < lo { lo } else if x > hi { hi } else { x })
+                    Value::I(if x < lo {
+                        lo
+                    } else if x > hi {
+                        hi
+                    } else {
+                        x
+                    })
                 }
             }
-            BuiltinFn::Left | BuiltinFn::Right | BuiltinFn::Mid
-            | BuiltinFn::Insert | BuiltinFn::Delete | BuiltinFn::Replace => {
-                self.str_op(caller, b, args)
-            }
+            BuiltinFn::Left
+            | BuiltinFn::Right
+            | BuiltinFn::Mid
+            | BuiltinFn::Insert
+            | BuiltinFn::Delete
+            | BuiltinFn::Replace => self.str_op(caller, b, args),
             BuiltinFn::Find => {
                 let a = args.first().map(|(_, e)| self.eval(caller, e));
                 let b2 = args.get(1).map(|(_, e)| self.eval(caller, e));
                 let pos = match (a, b2) {
-                    (Some(Value::Str(x)), Some(Value::Str(y))) => {
-                        find_sub(&x, &y)
-                    }
-                    (Some(Value::WStr(x)), Some(Value::WStr(y))) => {
-                        find_sub(&x, &y)
-                    }
+                    (Some(Value::Str(x)), Some(Value::Str(y))) => find_sub(&x, &y),
+                    (Some(Value::WStr(x)), Some(Value::WStr(y))) => find_sub(&x, &y),
                     _ => 0,
                 };
                 Value::I(pos as i64)
             }
             BuiltinFn::IsValidRef => {
-                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                let v = args
+                    .first()
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::Ref(u64::MAX));
                 Value::Bool(match v {
                     Value::Ref(o) => o != u64::MAX,
@@ -632,17 +671,22 @@ impl<'a> Rt<'a> {
                 })
             }
             BuiltinFn::Trunc => {
-                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                let v = args
+                    .first()
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
                 Value::I(v.as_f64().trunc() as i64)
             }
             BuiltinFn::Round => {
-                let v = args.first().map(|(_, e)| self.eval(caller, e))
+                let v = args
+                    .first()
+                    .map(|(_, e)| self.eval(caller, e))
                     .unwrap_or(Value::I(0));
                 Value::I(v.as_f64().round() as i64)
             }
             BuiltinFn::Mux => {
-                let k = args.first()
+                let k = args
+                    .first()
                     .map(|(_, e)| self.eval(caller, e).as_i64())
                     .unwrap_or(0);
                 let idx = 1 + k as usize;
@@ -654,12 +698,8 @@ impl<'a> Rt<'a> {
                 let a = args.first().map(|(_, e)| self.eval(caller, e));
                 let b2 = args.get(1).map(|(_, e)| self.eval(caller, e));
                 match (a, b2) {
-                    (Some(Value::Str(x)), Some(Value::Str(y))) => {
-                        Value::Str([x, y].concat())
-                    }
-                    (Some(Value::WStr(x)), Some(Value::WStr(y))) => {
-                        Value::WStr([x, y].concat())
-                    }
+                    (Some(Value::Str(x)), Some(Value::Str(y))) => Value::Str([x, y].concat()),
+                    (Some(Value::WStr(x)), Some(Value::WStr(y))) => Value::WStr([x, y].concat()),
                     _ => Value::Str(Vec::new()),
                 }
             }
@@ -1086,7 +1126,11 @@ fn slice_lr<T: Copy>(s: &[T], l: i64, left: bool) -> Vec<T> {
         return Vec::new();
     }
     let n = (l as usize).min(s.len());
-    if left { s[..n].to_vec() } else { s[s.len() - n..].to_vec() }
+    if left {
+        s[..n].to_vec()
+    } else {
+        s[s.len() - n..].to_vec()
+    }
 }
 
 fn slice_mid<T: Copy>(s: &[T], l: i64, p: i64) -> Vec<T> {
