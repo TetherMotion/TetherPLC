@@ -63,10 +63,12 @@ CiA-405 OD endpoint (landed as ctl `OD_*`; a CANopen wire
 binding remains); MCU loader path (`18-mcu-path.md` — the
 static-link ABI shim criterion landed as ctest `mcu_shim`; a
 cross-compiled Cortex-M loader remains open);
-WSTRING/LTIME/REF dialect extensions (WSTRING is a real UTF-16 type
-and LTIME rides the i64-ns Time representation; the standard function library and `REFERENCE TO` landed
-(refs are blob offsets and are reset by online change)); collaborative editing; visual
-diff; OPC-UA adapter; safety FB subset (certification program).
+WSTRING/LTIME/REF dialect extensions (WSTRING is a real UTF-16 type,
+LTIME rides the i64-ns Time representation, the standard function
+library landed, and `REFERENCE TO` is a blob offset that online change
+preserves when the layout is unchanged and resets when it moved));
+collaborative editing; visual diff; OPC-UA adapter; safety FB subset
+(certification program).
 Shadow-run extension candidates (all currently non-goals):
 multiple simultaneous shadows, per-channel promote, shadow→image
 preview.

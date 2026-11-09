@@ -88,9 +88,12 @@ Wire constants + error codes shared by both implementations:
   chain provenance per doc 15 §6.
 - `zstd` (SECF_COMPRESSED) is declared but no compressor/decompressor
   is linked yet; readers reject nothing about it today.
-- `validate_for_load` is format-level only. Semantic load checks —
-  `requires` vs image size, `targets[]` triple match, ABI version —
-  belong to the host loader path (toolchain.md), not yet wired.
+- `validate_for_load` now also runs the package-byte semantic checks:
+  manifest `abi_version` must be 1 (`PKG_ABI_MISMATCH` -213) and every
+  blob-resident symmap leaf must lie inside the LAYD state blob
+  (`SYMMAP_RANGE` -211; `SK_IO_CHANNEL` entries are exempt — their
+  offsets address the process image). `requires` vs image size and
+  `targets[]` triple selection remain unwired.
 - Manifest is carried as opaque JSON bytes; schema validation is a
   P1-era concern (`tplcc` owns the producer side).
 

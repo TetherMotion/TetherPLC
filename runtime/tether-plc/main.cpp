@@ -1823,6 +1823,11 @@ int main(int argc, char** argv) {
                 ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
                 return;
             }
+            auto vst = pk.validateForLoad(false);
+            if (!vst.ok()) {
+                ctl.errorReply(fd, t, vst.code, vst.msg.c_str(), req);
+                return;
+            }
             tplc::PkgSection sec{};
             if (pk.section(TPLC_SEC_LAYOUT_DESC, sec))
                 layd_b.assign(sec.data, sec.data + sec.size);
@@ -1941,6 +1946,11 @@ int main(int argc, char** argv) {
         tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
         if (!sgst.ok()) {
             ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
+            return;
+        }
+        auto vst = pk.validateForLoad(false);
+        if (!vst.ok()) {
+            ctl.errorReply(fd, t, vst.code, vst.msg.c_str(), req);
             return;
         }
         tplc::PkgSection obj{}, migd{}, layd{}, smap{}, imap{};
@@ -2194,6 +2204,11 @@ int main(int argc, char** argv) {
         tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
         if (!sgst.ok()) {
             ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
+            return;
+        }
+        auto vst = pk.validateForLoad(false);
+        if (!vst.ok()) {
+            ctl.errorReply(fd, t, vst.code, vst.msg.c_str(), req);
             return;
         }
         tplc::PkgSection obj{}, migd{}, layd{}, smap{}, imap{};

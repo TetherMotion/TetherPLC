@@ -85,6 +85,31 @@ elif mode == 'retag':
             # -205 path); a retag meant to hide a section clears flags
             struct.pack_into('<I', d, o + 4, (fl | 1) if req else 0)
             break
+elif mode == 'abiver':
+    # manifest abi_version 1 -> 2 (same length, JSON stays valid)
+    for i in range(toc_n):
+        o, (t, fl, off, sz, sv, pd) = ent(i)
+        if t == 0x01:
+            p = bytes(d[off:off+sz]).find(b'"abi_version"')
+            if p >= 0:
+                q = off + p
+                q = d.find(b':', q) + 1
+                while d[q] in (32, 9): q += 1
+                d[q] = ord('2')
+            break
+elif mode == 'smaprange':
+    # first blob-resident symmap leaf gets an out-of-blob offset
+    for i in range(toc_n):
+        o, (t, fl, off, sz, sv, pd) = ent(i)
+        if t == 0x20:
+            count = struct.unpack_from('<I', d, off + 8)[0]
+            for j in range(count):
+                e = off + 32 + j * 64
+                if d[e + 4] == 10:      # io channel: image offset
+                    continue
+                struct.pack_into('<Q', d, e + 12, 0x00FFFFFFFFFFFFFF)
+                break
+            break
 elif mode == 'retaglast':
     o, (t, fl, off, sz, sv, pd) = ent(toc_n - 1)
     nt = t + 1
@@ -311,6 +336,19 @@ out=$(run_pkg "$WORK/noobj.tplc")
 echo "$out" | grep -q '(-212)' \
     && ok "TPLC_E_TARGET_MISMATCH on missing target_obj" \
     || bad "TARGET_MISMATCH: $out"
+
+# semantic validation: manifest abi_version and symmap leaf range
+python3 "$WORK/pkgmut.py" "$WORK/a.tplc" "$WORK/abiv.tplc" abiver
+out=$(run_pkg "$WORK/abiv.tplc")
+echo "$out" | grep -q '(-213)' \
+    && ok "TPLC_E_PKG_ABI_MISMATCH on manifest abi_version" \
+    || bad "PKG_ABI_MISMATCH: $out"
+
+python3 "$WORK/pkgmut.py" "$WORK/a.tplc" "$WORK/srange.tplc" smaprange
+out=$(run_pkg "$WORK/srange.tplc")
+echo "$out" | grep -q '(-211)' \
+    && ok "TPLC_E_SYMMAP_RANGE on out-of-blob leaf" \
+    || bad "SYMMAP_RANGE: $out"
 
 # signature tamper (sig section bytes; content_hash excludes it)
 "$TPLCC" sign keygen --dir "$WORK/trust" --name dev >/dev/null 2>&1

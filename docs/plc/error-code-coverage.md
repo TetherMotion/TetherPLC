@@ -29,7 +29,7 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 59 emitted by runtime/tools | 67 test-hit (~89%)
+75 declared codes | 61 emitted by runtime/tools | 69 test-hit (~92%)
 
 Every code that has a host/tool emit site is covered except
 `IMG_EPOCH`; the remainder are declared-but-unemitted reservations.
@@ -54,6 +54,10 @@ or the wire reply:
 - image: `IMG_VERSION`, `IMG_TOO_SMALL` via crafted shm headers
 - reference faults: `TASK_E_PANIC` (-17) and `TASK_E_BOUNDS` (-18)
   via `reference_semantics_through_jit` (null / past-end deref)
+- package semantics: `PKG_ABI_MISMATCH` (-213) and `SYMMAP_RANGE`
+  (-211) via `error_paths` payload mutations (manifest abi_version,
+  out-of-blob symmap leaf); `validateForLoad` now also gates the
+  swap/prepare/shadow-load ctl paths, not just boot
 - object dictionary: `MGMT_OP`/`MGMT_SCHEMA`/`MGMT_AUTHZ` via
   `tests/scan/od_surface.sh` (unknown index, read-only write, entry
   below the session role)
@@ -76,6 +80,9 @@ or the wire reply:
   instead of faulting; reserved for a checked-arithmetic mode.
   (`TASK_E_PANIC`/`TASK_E_BOUNDS` are now emitted by `REFERENCE TO`
   derefs — null and out-of-range — and covered by the JIT test.)
+- `TPLC_E_PKG_HIDDEN_STATE` (-210), `TPLC_E_REQUIRES_UNMET` (-214) —
+  ELF hidden-state and manifest `requires` checks are still
+  unimplemented (declared reservations).
 - (The former `-500` alias between `TPLC_E_MGMT_*` and
   `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
   MGMT codes are now emitted by the object dictionary, covered by

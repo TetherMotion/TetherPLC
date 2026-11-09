@@ -6,6 +6,7 @@
 #include <tplc/pkg/Sha256.hpp>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace tplc {
@@ -189,6 +190,16 @@ void Package::forEach(const std::function<void(const PkgSection&)>& fn) const {
                       data_ + e.offset, e.size});
 }
 
+namespace {
+uint32_t rd32(const uint8_t* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+uint64_t rd64(const uint8_t* p) {
+    return (uint64_t)rd32(p) | ((uint64_t)rd32(p + 4) << 32);
+}
+} /* namespace */
+
 Status Package::validateForLoad(bool irStripped) const {
     static const uint32_t req[] = {
         TPLC_SEC_MANIFEST, TPLC_SEC_SYMMAP, TPLC_SEC_TYPE_CATALOG,
@@ -202,6 +213,50 @@ Status Package::validateForLoad(bool irStripped) const {
         return perr(TPLC_E_PKG_TOC, "ir_bitcode missing (not stripped)");
     if (!section(TPLC_SEC_TARGET_OBJ, s))
         return perr(TPLC_E_TARGET_MISMATCH, "no target_obj");
+
+    /* semantic checks that need only package bytes:
+       - manifest abi_version must be the host's (1)
+       - every blob-resident symmap leaf must lie inside the
+         LAYD-declared state blob (image channels are exempt —
+         their offsets address the process image, not the blob)   */
+    PkgSection man{};
+    if (section(TPLC_SEC_MANIFEST, man) && man.data) {
+        std::string mj((const char*)man.data, (size_t)man.size);
+        size_t ap = mj.find("\"abi_version\"");
+        if (ap != std::string::npos) {
+            ap = mj.find(':', ap);
+            if (ap != std::string::npos) {
+                ap++;
+                while (ap < mj.size() &&
+                       (mj[ap] == ' ' || mj[ap] == '\t')) ap++;
+                long v = strtol(mj.c_str() + ap, nullptr, 10);
+                if (v != 1)
+                    return perr(TPLC_E_PKG_ABI_MISMATCH,
+                                "manifest abi_version != 1");
+            }
+        }
+    }
+    PkgSection layd{}, smap{};
+    if (section(TPLC_SEC_LAYOUT_DESC, layd) && layd.data &&
+        layd.size >= 24 && memcmp(layd.data, "LAYD", 4) == 0 &&
+        section(TPLC_SEC_SYMMAP, smap) && smap.data &&
+        smap.size >= 32 && memcmp(smap.data, "SMAP", 4) == 0) {
+        uint64_t blob_sz = rd64(layd.data + 12);
+        uint32_t count = rd32(smap.data + 8);
+        if ((uint64_t)32 + (uint64_t)count * 64 <= smap.size) {
+            for (uint32_t i = 0; i < count; i++) {
+                const uint8_t* e = smap.data + 32 + (size_t)i * 64;
+                /* kind 10 = io channel (image offset), others are
+                   blob offsets that must fit the state blob */
+                if (e[4] == 10) continue;
+                uint64_t off = rd64(e + 12);
+                uint64_t len = rd32(e + 20);
+                if (off > blob_sz || len > blob_sz - off)
+                    return perr(TPLC_E_SYMMAP_RANGE,
+                                "symmap leaf outside state blob");
+            }
+        }
+    }
     return Status::Ok();
 }
 
