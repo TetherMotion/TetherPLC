@@ -43,7 +43,7 @@ Still open (acceptance-matrix "Known acceptance gaps"):
 2. ~~Flight-recorder induced-fault trace~~ — closed: `flight_recorder`
    induces a hang→abort freeze and reads pre-fault samples.
 3. ~~Error-code coverage~~ — closed: `error_paths` induces every
-   reachable code; 69/75 test-hit, all emitted codes covered except
+   reachable code; 71/75 test-hit, all emitted codes covered except
    race-only `IMG_EPOCH`; reservations documented.
 4. Multi-tenant/cross-instance interference — not load-tested;
    marked v1 non-goal in the threat-model signoff.

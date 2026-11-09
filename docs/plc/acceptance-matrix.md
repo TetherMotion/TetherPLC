@@ -27,7 +27,7 @@ this matrix plus the as-built specs are the v1 acceptance surface.
 | all §4 suites in CI with green criteria | ctest registry (25 tests), `.github/workflows/ci.yml` | green |
 | kill -9 + hang + seq-odd fault injection | `fault_injection`, `watchdog_escalation` | green |
 | perf/jitter numbers vs DESIGN-GOALS §6 | `docs/plc/perf-evidence.md` + `tests/perf/evidence.sh` | green |
-| coverage gates + zero uncovered error codes | `error_paths` (induced codes), `docs/plc/error-code-coverage.md` (62/75 test-hit; every emitted code covered except race-only `IMG_EPOCH`) | green — emitted-code coverage complete; declared-not-emitted reservations documented |
+| coverage gates + zero uncovered error codes | `error_paths` (induced codes), `docs/plc/error-code-coverage.md` (71/75 test-hit; every emitted code covered except race-only `IMG_EPOCH`) | green — emitted-code coverage complete; declared-not-emitted reservations documented |
 
 ## Doc 15 — Safety & security
 
@@ -88,7 +88,7 @@ the no-`dlopen` target state and its open items.
    hangs a task past the abort watchdog, asserts the armed ring
    froze with pre-fault samples and the ctl plane stays live.
 3. ~~Error-code "zero gaps"~~ — `error_paths` induces every
-   reachable code; coverage report at 54/65 with all emitted codes
+   reachable code; coverage report at 71/75 with all emitted codes
    covered except race-only `IMG_EPOCH`; declared-not-emitted
    reservations documented in `error-code-coverage.md`.
 4. Multi-tenant/cross-instance interference not load-tested
