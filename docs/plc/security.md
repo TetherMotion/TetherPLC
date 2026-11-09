@@ -28,6 +28,12 @@ plane. Threat model and per-control test signoff:
   - `require`: must be signed, any key;
   - `require-trusted`: signed + signer key in `--trust-dir`
     (file-based store, `tplcc sign keygen/sign`).
+  - `--update-auth strict` upgrades every *update* op (prepare,
+    swap, shadow-load) to `require-trusted` regardless of
+    `--sig-policy` — the update-authorization control from plan 20.
+    The trust store supports rotation (multiple `<keyid>.pub` files;
+    any trusted key signs) and revocation (`<trust-dir>/revoked`
+    lists hex key-ids, checked before the store lookup).
 - Verification happens before `dlopen` (`sig_policy` test covers
   all three policies + tamper paths).
 - Post-link scanner (`ElfScan`): rejects `.so` payloads containing

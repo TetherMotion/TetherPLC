@@ -40,15 +40,17 @@ image from package (see §4.3).
 ## 3. Gaps to close
 
 1. **Policy strength on update paths.** `open` is the default and only
-   logs a warning. The plan: an update-authorization policy under
-   which update ops require `require-trusted` semantics regardless of
-   the CLI flag — e.g. a `--update-auth strict` mode or a config file
-   the ops cannot weaken. Decide whether `require` (signed, any key)
-   is acceptable for updates or whether trust is mandatory.
-2. **Key management.** Rotation (multiple trusted keys with an overlap
-   window), revocation (key-id denylist consulted before the trust
-   store), and possibly per-channel policy (safety-backed channels may
-   demand a different trust root than standard ones).
+   logs a warning. **Landed:** `--update-auth strict` upgrades every
+   update op (prepare, swap, shadow-load) to `require-trusted`
+   semantics regardless of `--sig-policy`; boot keeps its own policy.
+   Open question kept: whether `require` (signed, any key) should
+   ever be acceptable for updates, or trust is always mandatory.
+2. **Key management.** **Landed:** rotation works today (trust-dir
+   holds several `<keyid>.pub`; any trusted key signs) and revocation
+   is implemented — `<trust-dir>/revoked` lists hex key-ids, checked
+   before the store lookup so a revoked signer is rejected even while
+   its `.pub` remains. Still open: per-channel policy (safety-backed
+   channels may demand a different trust root).
 3. **Boot vs update.** State whether first-boot package load also
    requires trust, or whether trust is an update-time control only.
 4. **MCU path.** When `18-mcu-path` lands PIC blobs, the signature
@@ -73,9 +75,13 @@ image from package (see §4.3).
 
 1. With update-auth strict, every update op rejects unsigned or
    untrusted packages with `SIG_*` codes; no flag or config weakens it.
+   **Green:** `tests/scan/update_auth.sh` (ctest `update_auth`).
 2. Two trusted keys coexist during rotation; packages signed by
-   either are accepted.
+   either are accepted. **Green:** same test.
 3. A revoked key id is rejected even while its `.pub` is present.
+   **Green:** same test.
 4. `error_paths`-style coverage for policy × op combinations;
    `security.md` and `threat-model-signoff.md` updated; as-built doc
    `crypto-auth.md` written and this chapter deleted.
+   **Partial:** `security.md` updated; per-channel policy and the
+   as-built doc remain.

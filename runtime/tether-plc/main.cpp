@@ -401,6 +401,7 @@ int main(int argc, char** argv) {
     std::string image_path, module_path, package_path, ctl_path;
     std::string retain_dir, runbook_dir, instance_name, packages_dir;
     std::string sig_policy = "open";               /* doc 15 §4.1 */
+    std::string update_auth = "open";              /* plan 20: strict = updates need trusted sigs */
     std::string trust_dir  = "/etc/tether/trust";
     std::string authz_path, audit_path;            /* doc 15 §5   */
     uint64_t retain_flush_ms = 1000;
@@ -456,6 +457,7 @@ int main(int argc, char** argv) {
         else if (a == "--stopped") stopped_boot = true;
         else if (a == "--sig-policy") sig_policy = next();
         else if (a == "--trust-dir") trust_dir = next();
+        else if (a == "--update-auth") update_auth = next();
         else if (a == "--no-sandbox") no_sandbox = true;
         else if (a == "--authz") authz_path = next();
         else if (a == "--audit-log") audit_path = next();
@@ -1789,6 +1791,11 @@ int main(int argc, char** argv) {
     });
     /* prepare {u16 len + path} or {16B package_uuid in --packages}:
        load (or swap to) a module — lands STOPPED; start runs init */
+    /* plan 20: update ops authenticate against the update policy —
+       strict upgrades every update to require-trusted regardless of
+       the boot --sig-policy */
+    const std::string update_policy =
+        update_auth == "strict" ? "require-trusted" : sig_policy;
     ctl.on(TPLC_OP_PROG_PREPARE, [&](int fd, uint16_t t,
                                      const uint8_t* payload,
                                      uint32_t len, uint64_t req) {
@@ -1818,7 +1825,7 @@ int main(int argc, char** argv) {
                 return;
             }
             tplc::Package pk = std::move(pres.value);
-            tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
+            tplc::Status sgst = pk.verifySignature(update_policy, trust_dir);
             if (!sgst.ok()) {
                 ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
                 return;
@@ -1943,7 +1950,7 @@ int main(int argc, char** argv) {
             return;
         }
         tplc::Package pk = std::move(pres.value);
-        tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
+        tplc::Status sgst = pk.verifySignature(update_policy, trust_dir);
         if (!sgst.ok()) {
             ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
             return;
@@ -2201,7 +2208,7 @@ int main(int argc, char** argv) {
             return;
         }
         tplc::Package pk = std::move(pres.value);
-        tplc::Status sgst = pk.verifySignature(sig_policy, trust_dir);
+        tplc::Status sgst = pk.verifySignature(update_policy, trust_dir);
         if (!sgst.ok()) {
             ctl.errorReply(fd, t, sgst.code, sgst.msg.c_str(), req);
             return;

@@ -12,6 +12,7 @@
 #include <tplc/pkg/Package.hpp>
 #include <tplc/pkg/Sha256.hpp>
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -95,6 +96,33 @@ Status Package::verifySignature(const std::string& policy,
 
     /* trust-store gate */
     if (wantTrusted) {
+        /* revocation: <trustDir>/revoked lists hex key-ids (any
+           whitespace-separated run); a revoked signer is rejected
+           even while its .pub remains in the store */
+        std::string rf = trustDir + "/revoked";
+        if (FILE* rfp = std::fopen(rf.c_str(), "rb")) {
+            std::string want = hex64(kid, 32);
+            char buf[256];
+            bool revoked = false;
+            while (!revoked && std::fgets(buf, sizeof buf, rfp)) {
+                for (char* p = buf; *p && !revoked; p++) {
+                    if (!isxdigit((unsigned char)*p)) continue;
+                    char id[65];
+                    size_t n = 0;
+                    while (n < 64 && isxdigit((unsigned char)p[n])) {
+                        id[n] = p[n];
+                        n++;
+                    }
+                    id[n] = 0;
+                    p += n - 1;
+                    if (n == 64 && want == id) revoked = true;
+                }
+            }
+            std::fclose(rfp);
+            if (revoked)
+                return Status::Err(TPLC_E_SIG_UNTRUSTED,
+                                   "signer key revoked");
+        }
         std::string f = trustDir + "/" + hex64(kid, 32) + ".pub";
         FILE* fp = std::fopen(f.c_str(), "rb");
         if (!fp)

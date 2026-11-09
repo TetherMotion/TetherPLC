@@ -315,6 +315,12 @@ add_dependencies(module_scan scan_evil_syscall scan_evil_int80
 add_test(NAME sig_policy
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/scan/sig_policy.sh)
 set_tests_properties(sig_policy PROPERTIES SKIP_RETURN_CODE 77)
+
+# plan 20: update-auth strict + trust rotation/revocation
+add_test(NAME update_auth
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/scan/update_auth.sh)
+set_tests_properties(update_auth PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 90 RESOURCE_LOCK plc_scan)
 add_test(NAME module_scan COMMAND module_scan
   $<TARGET_FILE:scan_evil_syscall> reject
   $<TARGET_FILE:scan_evil_int80>   reject
