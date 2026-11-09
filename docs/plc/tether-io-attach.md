@@ -66,6 +66,9 @@ function parameters, returns, and signals carry `schema` +
 `schemaSlot` so V6 clients decode by slot.
 
 Value encoding follows the schema codec in both directions:
+`runtime/tplc-io/SchemaValueBridge.hpp` adapts native C++ values
+(`NativeValue`, `nv::*`, `encodeNative`, `asU64`/`asString`) onto
+Tether's committed `SchemaValue` encode/decode API.
 
 - returns are produced via `encodeNative` — a `present=false`
   function returns truly empty bytes (`okVoid`)

@@ -7,7 +7,7 @@
 #include <tether/io/TetherIOClient.hpp>
 #include <tether/io/TcpTransport.hpp>
 #include <tether/io/SlipTransport.hpp>
-#include <tether/io/SchemaValueBuilder.hpp>
+#include "SchemaValueBridge.hpp"
 #include <cstdio>
 #include <cstring>
 #include <string>

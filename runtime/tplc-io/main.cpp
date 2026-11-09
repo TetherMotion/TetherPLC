@@ -14,7 +14,7 @@
 #include <tether/io/Registry.hpp>
 #include <tether/io/SchemaCatalog.hpp>
 #include <tether/io/SchemaDigest.hpp>
-#include <tether/io/SchemaValueBuilder.hpp>
+#include "SchemaValueBridge.hpp"
 #include <tether/io/Server.hpp>
 #include <tether/io/TcpTransport.hpp>
 
@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -713,21 +714,29 @@ void assignSchema(FunctionParameter& p) {
     const SchemaNode* n = g_graph.find(keyFor(p.type));
     if (!n) return;
     p.schema = SchemaRef{n->key, computeSchemaDigest(*n)};
-    if (auto s = g_catalog.slotForKey(n->key)) p.schemaSlot = *s;
+    if (auto s = g_catalog.slotFor(p.schema)) p.schemaSlot = *s;
 }
 
 void assignSchema(FunctionReturn& r) {
     const SchemaNode* n = g_graph.find(keyFor(r.type));
     if (!n) return;
     r.schema = SchemaRef{n->key, computeSchemaDigest(*n)};
-    if (auto s = g_catalog.slotForKey(n->key)) r.schemaSlot = *s;
+    if (auto s = g_catalog.slotFor(r.schema)) r.schemaSlot = *s;
 }
 
 void assignSchema(SignalEntry& e) {
     const SchemaNode* n = g_graph.find(keyFor(e.valueType));
     if (!n) return;
     e.schema = SchemaRef{n->key, computeSchemaDigest(*n)};
-    if (auto s = g_catalog.slotForKey(n->key)) e.schemaSlot = *s;
+    if (auto s = g_catalog.slotFor(e.schema)) e.schemaSlot = *s;
+}
+
+std::vector<SchemaManifestEntry> plcManifest(const SchemaGraph& g) {
+    std::vector<SchemaManifestEntry> m;
+    m.reserve(g.nodes.size());
+    for (const auto& n : g.nodes)
+        m.push_back({SchemaRef{n.key, computeSchemaDigest(n)}, n.revision});
+    return m;
 }
 
 void buildSchema() {
@@ -748,7 +757,7 @@ void buildSchema() {
         g_graph.nodes.push_back(std::move(n));
     }
     resolveSchemaDigests(g_graph);
-    g_catalog.install(g_graph, buildSchemaManifest(g_graph));
+    g_catalog.install(g_graph, plcManifest(g_graph));
 }
 
 /* ---- function entry builders ------------------------------------- */
@@ -770,7 +779,7 @@ FunctionParameter Popt(const char* name, const char* desc, ValueType t,
 FunctionEntry fn(const char* name, const char* desc,
                  std::vector<FunctionParameter> params,
                  FunctionCallback cb,
-                 ValueType ret = ValueType::None) {
+                 std::optional<ValueType> ret = std::nullopt) {
     FunctionEntry e;
     e.id = g_fnId++;
     e.name = name;
@@ -779,10 +788,10 @@ FunctionEntry fn(const char* name, const char* desc,
     e.parameters = std::move(params);
     for (auto& p : e.parameters) assignSchema(p);
     e.callback = std::move(cb);
-    if (ret != ValueType::None) {
+    if (ret) {
         e.returnValue.present = true;
         e.returnValue.name = "result";
-        e.returnValue.type = ret;
+        e.returnValue.type = *ret;
         assignSchema(e.returnValue);
     }
     return e;
@@ -1513,8 +1522,7 @@ int main(int argc, char** argv) {
             std::vector<uint8_t> raw;
             if (progStatus(ps, raw) && ps.epoch != last_epoch) {
                 last_epoch = ps.epoch;
-                g_catalog.install(g_graph,
-                                  buildSchemaManifest(g_graph));
+                g_catalog.install(g_graph, plcManifest(g_graph));
                 SignalEntry m;
                 m.id = g_sigId++;
                 m.name = "epoch." + std::to_string(ps.epoch);
