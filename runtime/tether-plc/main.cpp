@@ -108,11 +108,15 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_RT_STATUS:      case TPLC_OP_PKG_LIST:
     case TPLC_OP_PKG_INFO:       case TPLC_OP_MAP_GET:
     case TPLC_OP_JOURNAL_TAIL:   case TPLC_OP_SHADOW_STATUS:
-    case TPLC_OP_SHADOW_COMPARE:
+    case TPLC_OP_SHADOW_COMPARE: case TPLC_OP_OD_READ:
+    case TPLC_OP_OD_LIST:
         return tplc::TPLC_ROLE_OBSERVER;
     case TPLC_OP_DBG_WATCH_ADD:
     case TPLC_OP_DBG_WATCH_STREAM:
     case TPLC_OP_DBG_WATCH_REMOVE:
+    /* OD_WRITE is a generic write channel: each object declares its
+       own floor, enforced in the handler (MGMT_AUTHZ)             */
+    case TPLC_OP_OD_WRITE:
         return tplc::TPLC_ROLE_ENGINEER;
     default:
         return tplc::TPLC_ROLE_COMMISSIONER;
@@ -2521,6 +2525,238 @@ int main(int argc, char** argv) {
         w.u64(att ? retain->losses() : 0);
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
+    /* ---------------- object dictionary (doc 16 §7) ----------------
+       CiA-405-style index/subindex view over the same state the
+       status ops expose; entry-level authz below the op gate.     */
+    enum : uint8_t { OD_T_U8 = 0, OD_T_U16, OD_T_U32, OD_T_U64,
+                     OD_T_I32, OD_T_STR, OD_T_BYTES };
+    enum : uint8_t { OD_RO = 0, OD_RW, OD_WO };
+
+    struct OdRow {
+        uint16_t index;
+        uint8_t  sub;
+        uint8_t  type;
+        uint8_t  access;
+        uint8_t  min_role;
+        const char* name;
+        std::vector<uint8_t> bytes;
+    };
+    auto od_put = [](std::vector<uint8_t>& v, const void* p, size_t n) {
+        const uint8_t* b = (const uint8_t*)p;
+        v.insert(v.end(), b, b + n);
+    };
+    /* enumerate the dictionary — `sub == 0xFF` means "any sub" */
+    auto od_rows = [&](uint16_t index, uint8_t sub) {
+        std::vector<OdRow> rows;
+        auto add = [&](uint16_t i, uint8_t sb, uint8_t ty, uint8_t acc,
+                       uint8_t role, const char* nm,
+                       std::vector<uint8_t> b) {
+            rows.push_back(OdRow{i, sb, ty, acc, role, nm, std::move(b)});
+        };
+        auto want = [&](uint16_t i, uint8_t sb) {
+            return (index == 0xFFFF || index == i) &&
+                   (sub == 0xFF || sub == sb);
+        };
+        if (want(0x2000, 0)) {
+            add(0x2000, 0, OD_T_U8, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "state", {(uint8_t)prog_state});
+        }
+        if (want(0x2001, 0)) {
+            std::vector<uint8_t> b(d.program_uuid,
+                                   d.program_uuid + 16);
+            add(0x2001, 0, OD_T_BYTES, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "program_uuid", std::move(b));
+        }
+        if (want(0x2002, 0)) {
+            uint64_t cyc = prog ? prog->ctx().cycle_no : 0;
+            std::vector<uint8_t> b(8);
+            memcpy(b.data(), &cyc, 8);
+            add(0x2002, 0, OD_T_U64, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "cycles", std::move(b));
+        }
+        if (want(0x2003, 0)) {
+            int32_t lf = last_fault;
+            std::vector<uint8_t> b(4);
+            memcpy(b.data(), &lf, 4);
+            add(0x2003, 0, OD_T_I32, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "last_fault", std::move(b));
+        }
+        if (want(0x2004, 0)) {
+            uint64_t e = mgmt_epoch;
+            std::vector<uint8_t> b(8);
+            memcpy(b.data(), &e, 8);
+            add(0x2004, 0, OD_T_U64, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "epoch", std::move(b));
+        }
+        if (want(0x2100, 0)) {
+            uint32_t n = d.task_count;
+            std::vector<uint8_t> b(4);
+            memcpy(b.data(), &n, 4);
+            add(0x2100, 0, OD_T_U32, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "task_count", std::move(b));
+        }
+        /* per-task stats rows: runs, late, faults, overruns, max_late,
+           exec_max, exec_avg (7 × u64) */
+        if (prog) {
+            for (uint32_t i = 0; i < d.task_count; i++) {
+                if (!want(0x2100, (uint8_t)(i + 1))) continue;
+                const tplc::Scheduler::TaskStats* st =
+                    sched.stats(*prog, i);
+                if (!st) continue;
+                uint64_t v[7] = { st->runs, st->late, st->faults,
+                                  st->overruns,
+                                  (uint64_t)st->max_late_ns,
+                                  st->exec_max_ns, st->execAvgNs() };
+                std::vector<uint8_t> b(sizeof v);
+                memcpy(b.data(), v, sizeof v);
+                add(0x2100, (uint8_t)(i + 1), OD_T_BYTES, OD_RO,
+                    tplc::TPLC_ROLE_OBSERVER, "task_stats", std::move(b));
+            }
+        }
+        if (want(0x2200, 0)) {
+            uint32_t n = tplc_image_in_size(&img);
+            std::vector<uint8_t> b(4);
+            memcpy(b.data(), &n, 4);
+            add(0x2200, 0, OD_T_U32, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "image_in_size", std::move(b));
+        }
+        if (want(0x2201, 0)) {
+            uint32_t n = tplc_image_out_size(&img);
+            std::vector<uint8_t> b(4);
+            memcpy(b.data(), &n, 4);
+            add(0x2201, 0, OD_T_U32, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "image_out_size", std::move(b));
+        }
+        if (want(0x2300, 0)) {
+            std::vector<uint8_t> b(pkg_version,
+                                   pkg_version + strlen(pkg_version));
+            add(0x2300, 0, OD_T_STR, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "version", std::move(b));
+        }
+        if (want(0x2301, 0)) {
+            std::vector<uint8_t> b(d.layout_hash, d.layout_hash + 32);
+            add(0x2301, 0, OD_T_BYTES, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "layout_hash", std::move(b));
+        }
+        if (want(0x2400, 0)) {
+            uint64_t n = (prog && retain && retain->attached() &&
+                          retain->dirty()) ? (uint64_t)prog->retainSize()
+                                           : 0;
+            std::vector<uint8_t> b(8);
+            memcpy(b.data(), &n, 8);
+            add(0x2400, 0, OD_T_U64, OD_RO, tplc::TPLC_ROLE_OBSERVER,
+                "retain_dirty_bytes", std::move(b));
+        }
+        if (want(0x2400, 1)) {
+            add(0x2400, 1, OD_T_U8, OD_WO,
+                tplc::TPLC_ROLE_COMMISSIONER, "retain_flush", {});
+        }
+        return rows;
+    };
+
+    ctl.on(TPLC_OP_OD_READ, [&](int fd, uint16_t t, const uint8_t* p,
+                                uint32_t n, uint64_t req) {
+        if (n < 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u16 index, u8 sub}", req);
+            return;
+        }
+        uint16_t idx; uint8_t sub;
+        memcpy(&idx, p, 2);
+        sub = p[2];
+        auto rows = od_rows(idx, sub);
+        if (rows.empty()) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_OP,
+                           "no such object", req);
+            return;
+        }
+        const OdRow& r = rows[0];
+        if (r.access == OD_WO) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_SCHEMA,
+                           "write-only object", req);
+            return;
+        }
+        tplc::CtlServer::W w;
+        w.u8(r.type);
+        w.u8(r.access);
+        w.u16((uint16_t)r.bytes.size());
+        w.bytes(r.bytes.data(), r.bytes.size());
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    ctl.on(TPLC_OP_OD_LIST, [&](int fd, uint16_t t, const uint8_t*,
+                                uint32_t, uint64_t req) {
+        auto rows = od_rows(0xFFFF, 0xFF);
+        tplc::CtlServer::W w;
+        w.u32((uint32_t)rows.size());
+        for (const auto& r : rows) {
+            w.u16(r.index);
+            w.u8(r.sub);
+            w.u8(r.access);
+            w.u16((uint16_t)r.bytes.size());
+            w.str(r.name, (uint32_t)strlen(r.name));
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    ctl.on(TPLC_OP_OD_WRITE, [&](int fd, uint16_t t, const uint8_t* p,
+                                 uint32_t n, uint64_t req) {
+        if (n < 8) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u16 index, u8 sub, u16 len, data}", req);
+            return;
+        }
+        uint16_t idx, dlen; uint8_t sub;
+        memcpy(&idx, p, 2);
+        sub = p[2];
+        memcpy(&dlen, p + 4, 2);
+        if (n < 8 + (uint32_t)dlen) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "payload shorter than len", req);
+            return;
+        }
+        auto rows = od_rows(idx, sub);
+        if (rows.empty()) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_OP,
+                           "no such object", req);
+            return;
+        }
+        const OdRow& r = rows[0];
+        if (r.access == OD_RO) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_SCHEMA,
+                           "read-only object", req);
+            return;
+        }
+        if (ctl.roleOf(fd) < r.min_role) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_AUTHZ,
+                           "object needs a higher role", req);
+            return;
+        }
+        if (idx == 0x2400 && sub == 1) {
+            if (dlen != 1) {
+                ctl.errorReply(fd, t, TPLC_E_MGMT_SCHEMA,
+                               "retain_flush takes u8", req);
+                return;
+            }
+            if (!retain || !retain->attached() || !prog) {
+                ctl.errorReply(fd, t, TPLC_E_CTL_STATE,
+                               "no retain store", req);
+                return;
+            }
+            retain->stage(prog->retainRegion());
+            tplc::Status fs = retain->flush();
+            if (!fs.ok()) {
+                ctl.errorReply(fd, t, fs.code, fs.msg.c_str(), req);
+                return;
+            }
+            audit(fd, "od.write", "0x2400/1 retain_flush");
+            uint8_t ok = 1;
+            ctl.reply(fd, t, &ok, 1, req);
+            return;
+        }
+        ctl.errorReply(fd, t, TPLC_E_MGMT_OP, "no writer", req);
+    });
+
     ctl.on(TPLC_OP_RETAIN_FLUSH, [&](int fd, uint16_t t,
                                      const uint8_t*, uint32_t,
                                      uint64_t req) {

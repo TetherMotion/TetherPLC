@@ -2,9 +2,10 @@
 
 > Status: implemented over the ctl.sock control channel, and exposed
 > to tether_io clients by the standalone `tplc-io` provider
-> (`docs/plc/tether-io-attach.md`). A CANopen object-dictionary
-> endpoint remains declared iteration-2 (doc 16 §7) — the state model
-> and op surface below are what those adapters must expose.
+> (`docs/plc/tether-io-attach.md`). The CiA-405-style object
+> dictionary is implemented over ctl (`OD_READ`/`OD_LIST`/
+> `OD_WRITE`, see "Object dictionary" below); a CANopen wire binding
+> remains a transport adapter over the same entries.
 >
 > `doc 16`/`doc 15` section references below are provenance to the
 > retired plan chapters; this document is authoritative (see
@@ -38,6 +39,7 @@ with `current=<n> requested=<op>` in the message — no silent no-ops.
 | debug | `DBG_RESOLVE/READ/WRITE/STATE`, `DBG_FORCE*`, `DBG_BREAK*`, `DBG_CAPTURE*`, `DBG_WATCH_*`, `DBG_STATE_DIFF`, `DBG_FIELDS`, `TRACE_*` |
 | retain | `RETAIN_STATUS/FLUSH/CLEAR/DUMP` |
 | map | `MAP_GET` (deploy-map section bytes, observer role) |
+| object dictionary | `OD_READ`, `OD_LIST`, `OD_WRITE` (index/subindex view, entry-level authz) |
 | runtime | `RT_STATUS`, `RT_SHUTDOWN` |
 | journal | `JOURNAL_TAIL` (durable audit tail), `SET_NOTIFY` + `TPLC_EV_*` (live feed) |
 
@@ -107,3 +109,33 @@ and event payloads already.
 populated, strict-transition `-501` errors with current+requested,
 transition events observable via subscription with epoch bumps,
 journal tail + map get. Role gating is covered by `authz_audit`.
+
+## Object dictionary (`OD_READ`/`OD_LIST`/`OD_WRITE`)
+
+A CiA-405-style index/subindex view of the same state the status ops
+expose, so a CANopen adapter is a transport binding rather than a
+second implementation.
+
+| index/sub | name | type | access | source |
+|---|---|---|---|---|
+| `0x2000/0` | state | u8 | ro | `prog_state` |
+| `0x2001/0` | program_uuid | bytes16 | ro | descriptor |
+| `0x2002/0` | cycles | u64 | ro | `TplcCtx.cycle_no` |
+| `0x2003/0` | last_fault | i32 | ro | fault latch |
+| `0x2004/0` | epoch | u64 | ro | `mgmt_epoch` |
+| `0x2100/0` | task_count | u32 | ro | descriptor |
+| `0x2100/1..n` | task_stats | 7 × u64 | ro | runs, late, faults, overruns, max_late_ns, exec_max_ns, exec_avg_ns |
+| `0x2200/0`, `0x2201/0` | image_in_size / image_out_size | u32 | ro | image header |
+| `0x2300/0` | version | string | ro | manifest version |
+| `0x2301/0` | layout_hash | bytes32 | ro | descriptor |
+| `0x2400/0` | retain_dirty_bytes | u64 | ro | retain store |
+| `0x2400/1` | retain_flush | u8 (wo) | wo | writing flushes the retain store |
+
+Access model: `OD_READ`/`OD_LIST` are observer ops; `OD_WRITE` is an
+engineer op and each object declares its own floor, so an engineer
+writing `0x2400/1` (commissioner) gets `TPLC_E_MGMT_AUTHZ` (-502).
+Unknown index/sub is `TPLC_E_MGMT_OP` (-500); a write to a read-only
+object, or a length/type mismatch, is `TPLC_E_MGMT_SCHEMA` (-503).
+Writes that act (the flush) land in the audit journal as `od.write`.
+
+Coverage: `tests/scan/od_surface.sh` (ctest `od_surface`).

@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
             "|trace-read [SEQ [N]]|trace-clear"
             "|watch OFF:LEN..|watch-get H|watch-stream H [HZ]"
             "|watch-rm [H|all]|watch-list|events [SEC]"
-            "|map-get|journal-tail [N]"
+            "|map-get|journal-tail [N]|od-read IDX [SUB]|od-list|od-write IDX SUB HEX"
             "|shadow-load X|shadow-status|shadow-compare [N]"
             "|shadow-promote|shadow-drop|shadow-reset\n", argv[0]);
         return 2;
@@ -571,6 +571,48 @@ int main(int argc, char** argv) {
         op = TPLC_OP_DBG_FIELDS;
         if (arg) { pre[0] = (uint8_t)strtoul(arg, NULL, 0);
                    pre_len = 1; }
+    }
+    else if (!strcmp(cmd, "od-read")) {
+        /* od-read INDEX [SUB]: object-dictionary read (doc 16 §7) */
+        op = TPLC_OP_OD_READ;
+        if (!arg) { fprintf(stderr, "od-read INDEX [SUB]\n"); return 2; }
+        uint16_t idx = (uint16_t)strtoul(arg, NULL, 0);
+        uint8_t sub = argc > 4 ? (uint8_t)strtoul(argv[4], NULL, 0) : 0;
+        memset(pre, 0, 4);
+        memcpy(pre, &idx, 2);
+        pre[2] = sub;
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "od-list")) op = TPLC_OP_OD_LIST;
+    else if (!strcmp(cmd, "od-write")) {
+        /* od-write INDEX SUB HEXBYTES */
+        op = TPLC_OP_OD_WRITE;
+        if (argc < 6) {
+            fprintf(stderr, "od-write INDEX SUB HEX\n");
+            return 2;
+        }
+        uint16_t idx = (uint16_t)strtoul(argv[3], NULL, 0);
+        uint8_t sub = (uint8_t)strtoul(argv[4], NULL, 0);
+        const char* hx = argv[5];
+        size_t hl = strlen(hx);
+        if (hl % 2 || hl / 2 > 1024) {
+            fprintf(stderr, "od-write: hex must be even length\n");
+            return 2;
+        }
+        uint16_t dlen = (uint16_t)(hl / 2);
+        memset(pre, 0, 8);
+        memcpy(pre, &idx, 2);
+        pre[2] = sub;
+        memcpy(pre + 4, &dlen, 2);
+        for (uint16_t i = 0; i < dlen; i++) {
+            unsigned v;
+            if (sscanf(hx + i * 2, "%2x", &v) != 1) {
+                fprintf(stderr, "od-write: bad hex\n");
+                return 2;
+            }
+            pre[8 + i] = (uint8_t)v;
+        }
+        pre_len = 8 + dlen;
     }
     else if (!strcmp(cmd, "retain-status")) op = TPLC_OP_RETAIN_STATUS;
     else if (!strcmp(cmd, "retain-flush"))  op = TPLC_OP_RETAIN_FLUSH;
@@ -1006,6 +1048,57 @@ int main(int argc, char** argv) {
                    (i % 32 == 30 || i + 2 >= len) ? '\n' : ' ');
         if (len % 2) printf("%02x\n", pl[len - 1]);
         else if (!len || len % 32) putchar('\n');
+    }
+    else if (op == TPLC_OP_OD_READ) {
+        static const char* tn[] = {"u8", "u16", "u32", "u64", "i32",
+                                   "string", "bytes"};
+        static const char* an[] = {"ro", "rw", "wo"};
+        if (len < 4) { puts("(short payload)"); }
+        else {
+            uint8_t ty = pl[0], acc = pl[1];
+            uint16_t l; memcpy(&l, pl + 2, 2);
+            printf("type %s  access %s  len %u\n",
+                   ty < 7 ? tn[ty] : "?", acc < 3 ? an[acc] : "?",
+                   l);
+            if ((size_t)l + 4 > len) l = (uint16_t)(len - 4);
+            if (ty == 5) {
+                printf("%.*s\n", (int)l, (const char*)(pl + 4));
+            } else if (ty == 6) {
+                for (uint16_t i = 0; i < l; i++)
+                    printf("%02x%s", pl[4 + i],
+                           (i + 1 == l) ? "\n" : " ");
+            } else {
+                unsigned long long v = 0;
+                memcpy(&v, pl + 4, l > 8 ? 8 : l);
+                printf("%llu (0x%llx)\n", v, v);
+            }
+        }
+    }
+    else if (op == TPLC_OP_OD_LIST) {
+        static const char* an[] = {"ro", "rw", "wo"};
+        if (len < 4) { puts("(short payload)"); }
+        else {
+            const uint8_t* q = pl;
+            uint32_t n; memcpy(&n, q, 4); q += 4;
+            printf("od %u entries\n", n);
+            for (uint32_t i = 0; i < n; i++) {
+                if ((size_t)(pl + len - q) < 8) break;
+                uint16_t idx, ol, nl;
+                uint8_t sub = q[2], acc = q[3];
+                memcpy(&idx, q, 2);
+                memcpy(&ol, q + 4, 2);
+                memcpy(&nl, q + 6, 2);
+                q += 8;
+                if ((size_t)(pl + len - q) < nl) break;
+                printf("  0x%04x/%u  %-2s  %5u B  %.*s\n", idx, sub,
+                       acc < 3 ? an[acc] : "?", ol, (int)nl,
+                       (const char*)q);
+                q += nl;
+            }
+        }
+    }
+    else if (op == TPLC_OP_OD_WRITE) {
+        printf("%s\n", (len >= 1 && pl[0]) ? "ok" : "rejected");
     }
     else if (op == TPLC_OP_DBG_FIELDS) {
         if (len < 4) { puts("(short payload)"); }

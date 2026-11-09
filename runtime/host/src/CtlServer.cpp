@@ -49,6 +49,12 @@ Status CtlServer::open(const std::string& path, mode_t mode) {
     return Status::Ok();
 }
 
+uint8_t CtlServer::roleOf(int fd) const {
+    for (const auto& c : clients_)
+        if (c.fd == fd) return c.role;
+    return TPLC_ROLE_NONE;
+}
+
 void CtlServer::close() {
     for (auto& c : clients_) ::close(c.fd);
     clients_.clear();

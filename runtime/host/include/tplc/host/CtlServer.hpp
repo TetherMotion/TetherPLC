@@ -68,6 +68,10 @@ public:
         deny_ = std::move(fn);
     }
 
+    /* role of a connected client (TPLC_ROLE_*); NONE when unknown.
+       Handlers use it for entry-level authz below the op gate. */
+    uint8_t roleOf(int fd) const;
+
     /* Service pending accepts + reads. timeout_ms bounds the poll. */
     int  poll(int timeout_ms);
     size_t clientCount() const { return clients_.size(); }

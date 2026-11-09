@@ -164,6 +164,21 @@ enum TplcCtlOp {
     /* runtime 0x0900 */
     TPLC_OP_RT_STATUS      = 0x0901,  /* P0 */
     TPLC_OP_RT_SHUTDOWN    = 0x0905,  /* P0 {u8 mode}                */
+    /* object dictionary 0x0A00 (doc 16 §7 iteration-2): a
+       CiA-405-style index/subindex view of the management state
+       model. READ {u16 index, u8 sub, u8 pad} →
+       {u8 type, u8 access, u16 len, u8 data[len]};
+       LIST ∅ → {u32 n, {u16 index, u8 sub, u8 access, u16 len,
+                        u8 nlen, char name[nlen]}*};
+       WRITE {u16 index, u8 sub, u8 pad, u16 len, u8 data[len]} →
+       {u8 ok}. type: 0 u8 1 u16 2 u32 3 u64 4 i32 5 string
+       6 bytes. access: 0 ro 1 rw 2 wo.
+       Errors: MGMT_OP (-500) unknown index/sub, MGMT_SCHEMA (-503)
+       type/length mismatch or write to a read-only entry,
+       MGMT_AUTHZ (-502) entry needs a higher role than the session. */
+    TPLC_OP_OD_READ        = 0x0A01,
+    TPLC_OP_OD_LIST        = 0x0A02,
+    TPLC_OP_OD_WRITE       = 0x0A03,
     /* map 0x0C00 */
     TPLC_OP_MAP_GET        = 0x0C01,  /* → deploy-map section bytes   */
     /* journal 0x0D00 */

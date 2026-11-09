@@ -443,6 +443,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(error_paths PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 60 RESOURCE_LOCK plc_scan)
 
+  # object dictionary (doc 16 §7): LIST/READ/WRITE + entry authz
+  add_test(NAME od_surface COMMAND bash
+    ${CMAKE_SOURCE_DIR}/tests/scan/od_surface.sh
+    $<TARGET_FILE:tether-plc> $<TARGET_FILE:tplc-image>
+    $<TARGET_FILE:tplc-ctl> $<TARGET_FILE:stub_v1>)
+  set_tests_properties(od_surface PROPERTIES
+    SKIP_RETURN_CODE 77 RESOURCE_LOCK plc_scan)
+
   # sim vectors (doc 14 §3.1): replay the oracle corpus through
   # tether-plc-sim incl. named field expectations via ctl DBG_READ
   add_test(NAME sim_vectors

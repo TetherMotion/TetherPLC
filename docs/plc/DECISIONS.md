@@ -416,3 +416,23 @@ inside an 8-byte slot). The sema rewrite also has to set the node's
 Coverage: `conv.functions` (L1 + sim parity),
 `conversions_and_mux_through_jit`, `conversions_round_and_mux_are_
 typed`.
+
+## D-IMPL-28 — CiA-405 object dictionary over ctl
+
+**Implemented:** `OD_READ`/`OD_LIST`/`OD_WRITE` (op range `0x0A00`)
+expose a 13+-entry index/subindex view of the management state model
+(`0x2000` program, `0x2100` tasks incl. per-task rows, `0x2200` image,
+`0x2300` lineage, `0x2400` retain). Read returns
+`{type, access, len, bytes}`; list returns every row with its name;
+write carries `{index, sub, len, data}`.
+
+**Authz shape:** the op floor for `OD_WRITE` is ENGINEER and each
+object declares its own minimum role, so an engineer writing the
+commissioner-level `0x2400/1` (retain flush) gets `MGMT_AUTHZ` — the
+three reserved `MGMT_*` codes (-500 unknown object, -502 object authz,
+-503 schema/read-only) are now real. `CtlServer::roleOf(fd)` was added
+so handlers can enforce entry-level floors below the op gate.
+
+**Deliberately not done:** the CANopen wire binding (SDO/PDO framing)
+— this is the dictionary the adapter binds to; entry values are
+computed per request, so nothing is cached.

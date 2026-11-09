@@ -59,7 +59,8 @@ DECISIONS.md updated for every deviation.
 ## 4. Iteration 2 (post-v1, recorded not scheduled)
 
 SFC language + editor; LD view/editor; multi-program IDE flows;
-CiA-405 OD endpoint; MCU loader path (`18-mcu-path.md` — the
+CiA-405 OD endpoint (landed as ctl `OD_*`; a CANopen wire
+binding remains); MCU loader path (`18-mcu-path.md` — the
 static-link ABI shim criterion landed as ctest `mcu_shim`; a
 cross-compiled Cortex-M loader remains open);
 WSTRING/LTIME/REF dialect extensions (WSTRING is a real UTF-16 type

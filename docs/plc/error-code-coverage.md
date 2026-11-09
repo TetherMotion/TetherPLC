@@ -29,7 +29,7 @@ runtime emits and which the tests exercise. Regenerate with
 
 ## Current numbers
 
-75 declared codes | 53 emitted by runtime/tools | 62 test-hit (~83%)
+75 declared codes | 56 emitted by runtime/tools | 65 test-hit (~86%)
 
 Every code that has a host/tool emit site is covered except
 `IMG_EPOCH`; the remainder are declared-but-unemitted reservations.
@@ -52,6 +52,9 @@ or the wire reply:
   `pkgmut.py` helper repatches `content_hash`/`header_hash` so
   surgical corruptions survive the integrity checks)
 - image: `IMG_VERSION`, `IMG_TOO_SMALL` via crafted shm headers
+- object dictionary: `MGMT_OP`/`MGMT_SCHEMA`/`MGMT_AUTHZ` via
+  `tests/scan/od_surface.sh` (unknown index, read-only write, entry
+  below the session role)
 - map validator: `MAP_RANGE`/`TYPE`/`SAFE`/`OWNER`/`SAFETY`/`AT`/`BIND`
   via a map file hitting every implemented violation rule
 
@@ -70,10 +73,10 @@ or the wire reply:
 - `TPLC_TASK_E_PANIC`, `TASK_E_BOUNDS`, `TASK_E_DIVZERO`
   (-17/-18/-19) — generated code saturates arithmetic and has no
   bounds-check aborts today; reserved for checked-code modes.
-- `TPLC_E_MGMT_OP`, `MGMT_AUTHZ`, `MGMT_SCHEMA` (-500/-502/-503) —
-  reserved for the CiA-405 management surface; ctl authz denials
-  use `CTL_AUTHZ` (-401) uniformly today. (The former `-500` alias
-  with `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`.)
+- (The former `-500` alias between `TPLC_E_MGMT_*` and
+  `TPLC_E_MAP_*` is resolved — MAP codes moved to `-600..`, and the
+  MGMT codes are now emitted by the object dictionary, covered by
+  `od_surface`.)
 - `TPLC_E_PKG_HIDDEN_STATE`, `SYMMAP_RANGE`, `PKG_ABI_MISMATCH`,
   `REQUIRES_UNMET` (-210/-211/-213/-214) — declared in
   `tplc-pkg`'s `PkgError` but no site returns them yet (manifest
