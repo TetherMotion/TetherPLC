@@ -16,7 +16,11 @@ static uint64_t mono_ns() {
 
 static HostServices* self(void* p) { return static_cast<HostServices*>(p); }
 
-HostServices::HostServices(uint32_t caps) {
+static uint64_t host_steady_ns(void* p) {
+    return self(p)->steadyNs();
+}
+
+HostServices::HostServices(uint32_t caps) : rtmon_(&host_steady_ns, this) {
     svc_.struct_size  = sizeof(TplcServices);
     svc_.caps         = caps | TPLC_EXT_MOVABLE_BETWEEN;
     svc_.host         = this;
@@ -76,6 +80,8 @@ void* HostServices::getService(const char* name, uint32_t len) {
         return const_cast<TplcSerialService*>(&serial_.table());
     if (len == 8 && memcmp(name, "tplc-ads", 8) == 0)
         return const_cast<TplcAdsService*>(&ads_.table());
+    if (len == 10 && memcmp(name, "tplc-rtmon", 10) == 0)
+        return const_cast<TplcRtmonService*>(&rtmon_.table());
     return nullptr;
 }
 

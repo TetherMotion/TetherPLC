@@ -38,6 +38,7 @@ add_library(tplc_host STATIC
   runtime/host/src/NetService.cpp
   runtime/host/src/SerialService.cpp
   runtime/host/src/AdsService.cpp
+  runtime/host/src/RtmonService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -551,6 +552,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc2_system_ads
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_system_ads.sh)
   set_tests_properties(tc2_system_ads PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc3_RealtimeMonitoring compat (plan 21 C3): tplc-rtmon mark ring
+  # e2e through the real runtime (timestamped marks, count, indexed
+  # reads, range error, clear)
+  add_test(NAME tc3_rtmon
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_rtmon.sh)
+  set_tests_properties(tc3_rtmon PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy

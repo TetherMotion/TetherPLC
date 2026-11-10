@@ -818,3 +818,39 @@ source NetID — real AMS routing needs a configured local NetID;
 Read-Write(0x09)/notification/broadcast commands, Write Control
 sends no extended control data. Indication FBs and ADSRDWRT are
 documented gaps.
+
+## D-IMPL-42 — tplc-rtmon service + FB_RtMon builtin (plan 21 C3)
+
+**Plan:** plan 21 §8 phase C3: first T1-services-II item,
+Tc3_RealtimeMonitoring; siblings Tc3_DynamicMemory (needs PVOID /
+REFERENCE TO PVOID) and Tc3_Module (TwinCAT COM object model) are
+blocked on missing language/runtime primitives.
+**Implemented:** `include/tplc/tplc_rtmon.h` defines the
+`TplcRtmonService` vtable (ABI v1) returned by
+`TplcServices.get_service("tplc-rtmon"): rtmon_mark, rtmon_count,
+rtmon_get, rtmon_clear`. Host side:
+`runtime/host/{include,src}/tplc/host/RtmonService.{hpp,cpp}` keeps a
+4096-entry ring of `TplcRtmonMark { ts_ns, context, group, event,
+markctrl }`, oldest overwritten when full; its clock is injected by
+`HostServices` as `steadyNs`, so `--sim` steps timestamp marks
+deterministically. PLC side: builtin `FB_RtMon`
+(`builtin_fb_layout` + `__tplc_rt_FB_RtMon`) is op-multiplexed
+(mark=1/count=2/get=3/clear=4); unlike the socket services the ops
+are synchronous O(1), so `DONE` sets on the EXEC edge scan with no
+poll state. `compat/tc3/tc3_rtmon.st` wraps it as
+`FB_RTMon_LogMarkBase`/`_LogMarkBaseEx` plus the eight
+`FB_RTMon_Log*` simple-mark FBs embedding the `TcMarkOption` masks;
+`tc3_rtmon` ctest replays a 10-state mark/count/get/clear sequence
+through tether-plc-sim (10 packed checks, `0x3ff`).
+**Decisions:** (a) synchronous ops — no deadline/poll fields in the
+layout; (b) `rtmon_count` returns the retained count so it equals
+the valid `rtmon_get` index domain (0 = oldest retained); (c) TwinCAT
+FB methods map to one `bExecute`-gated FB per method since the
+dialect has no METHOD; (d) `LogMarkEx` takes the `ST_RTMon_MarkDef`
+fields flattened because struct types are file-scoped and cannot
+cross `--lib`; (e) `RefToCaller`/`bLogCallingTask` records only the
+flag bit — no task references exist.
+**Consequence:** marks are in-process only; no realtime-monitor
+server, trace export, marker-group naming, or server-side recording
+trigger (`LogTrigger` stores a plain mark). `hrErrorCode` is 0 or a
+negative service code, not a COM HRESULT.

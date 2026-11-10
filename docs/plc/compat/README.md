@@ -7,9 +7,9 @@ for TwinCAT ST sources to compile and run unchanged where the
 underlying semantics allow.
 
 Per-library API references (parameters, descriptions, recursive
-catalog) live in `twincat/` — generated from
-`docs/plc/plan/21-twincat-libraries.md` by
-`tools/twincat-docs/split_plan.py`.
+catalog) for the libraries still awaiting implementation live in
+`twincat/` — generated from `docs/plc/plan/21-twincat-libraries.md`
+by `tools/twincat-docs/split_plan.py`.
 
 ## Layout
 
@@ -33,6 +33,11 @@ compat/tc2/           TwinCAT 2/3-era library sources
   tc2_system.st       Tc2_System ADS wrappers over the builtin
                       FB_Ads (tplc-ads service): FB_AdsConnect/
                       Read/Write/ReadState/WriteControl/Close
+compat/tc3/
+  tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
+                      builtin FB_RtMon (tplc-rtmon service):
+                      FB_RTMon_LogMarkBase/Ex + the eight
+                      FB_RTMon_Log* simple-mark FBs
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -54,6 +59,12 @@ tests/compat/
                       ADS/AMS-TCP peer (ads_test_server.py)
   ads_test_server.py  minimal Beckhoff-wire ADS responder used by
                       tc2_system_ads.sh
+  tc3_rtmon_case.st   autonomous mark sequence program (10 packed
+                      checks: 4 marks, count, 2 indexed reads,
+                      out-of-range, clear, recount)
+  tc3_rtmon.sh        ctest tc3_rtmon: library + consumer + 14-step
+                      sim replay expecting mask 0x3ff, in-process
+                      tplc-rtmon service (no external peer)
 ```
 
 ## Building and consuming
@@ -78,6 +89,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C0 | Library package format | done (`f912616`) |
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
+| C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml/Tc3_EventLogger pending |
 
 ### C1 coverage notes
 
@@ -203,6 +215,52 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     `ADSWriteControl` extended control-data path is not wired.
   - `nAdsError` surfaces the ADS result code but TwinCAT's full
     `ADS_ERROR` enumeration is not mapped.
+
+### C3 coverage notes (tplc-rtmon / Tc3_RealtimeMonitoring)
+
+- **Architecture**: builtin `FB_RtMon` (op-multiplexed,
+  `OP/CONTEXT/GROUP/EVENT/MARKCTRL/AUX/RESULT/ERRID/EXEC/BUSY/DONE`)
+  bridges to the host `tplc-rtmon` service. `OP` selects
+  mark(1)/count(2)/get(3)/clear(4). Unlike the socket services the
+  ops are synchronous O(1) ring operations, so `DONE` is set on the
+  same scan as the `EXEC` rising edge; there is no poll state.
+- **Service**: `RtmonService` keeps a 4096-entry ring of
+  `TplcRtmonMark { ts_ns, context, group, event, markctrl }`;
+  oldest record is overwritten when full. Timestamps come from the
+  injected clock, which is `HostServices::steadyNs`, so `--sim`
+  steps produce deterministic sim-time marks. `rtmon_count` returns
+  the retained count (the valid `rtmon_get` index domain);
+  `rtmon_get(0)` is the oldest retained record and fails with
+  `TPLC_RTMON_E_RANGE` past the end.
+- **Wrappers**: `compat/tc3/tc3_rtmon.st` exposes
+  `FB_RTMon_LogMarkBase` (explicit context + `nMarkCtrl`) and
+  `FB_RTMon_LogMarkBaseEx` (`LogMarkEx` with the `ST_RTMon_MarkDef`
+  fields flattened — struct types cannot cross the `--lib` boundary,
+  they are file-scoped), plus the eight simple-mark FBs
+  (`FB_RTMon_LogMark`, `_LogIntervalStart/Stop`,
+  `_LogSequenceStart/Stop`, `_LogStart`, `_LogStop`, `_LogTrigger`)
+  which embed the `TcMarkOption` mask for their method and OR in
+  `RefToCaller` (`16#08000000`) when `bLogCallingTask` is set.
+- **Verified**: `tc3_rtmon` ctest replays a 10-state sequence —
+  base/ex/simple marks, count=4, `get[0]`/`get[3]` field checks,
+  `get[4]` out-of-range (`ERRID=3`), clear, recount=0 — through
+  `tether-plc` + `tether-plc-sim`. 10 packed checks (`0x3ff`).
+- **Honest gaps**:
+  - TwinCAT FB methods (`fb.LogMark(...)`) are not expressible; each
+    method is a separate `bExecute`-gated FB (one rising edge = one
+    mark). `nContextId`'s `AdsPort` default and task references are
+    unavailable; `RefToCaller` only records the flag bit.
+  - `LogTrigger` stores a plain mark; server-side recording triggers
+    are not modeled. `hrErrorCode` carries 0 or a negative service
+    code, not a real COM HRESULT.
+  - Marks are consumed in-process only; there is no realtime-monitor
+    server, trace export, or marker-group naming.
+- **Blocked siblings**: `Tc3_DynamicMemory` needs `PVOID` /
+  `REFERENCE TO PVOID` (no pointer type in the language — same blocker
+  as the Tc2_Utilities heap/buffer FBs). `Tc3_Module` is the TwinCAT
+  COM-like object model (`ITcUnknown`, `Fw_ObjMgr_*`, interface
+  pointers) — not expressible without an object/interface runtime.
+  `Tc3_JsonXml` and `Tc3_EventLogger` are pending.
 
 ## Known limitations
 

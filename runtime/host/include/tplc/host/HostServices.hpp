@@ -8,6 +8,7 @@
 #include <tplc/tplc_abi.h>
 #include <tplc/host/AdsService.hpp>
 #include <tplc/host/NetService.hpp>
+#include <tplc/host/RtmonService.hpp>
 #include <tplc/host/SerialService.hpp>
 
 #include <cstdint>
@@ -64,6 +65,7 @@ private:
     NetService   net_;
     SerialService serial_;
     AdsService   ads_;
+    RtmonService rtmon_;
 };
 
 } /* namespace tplc */

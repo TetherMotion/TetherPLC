@@ -244,6 +244,34 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "__recvd", udint());
             push(&mut off, "__phase", dint());
         }
+        /* FB_RtMon — tplc-rtmon service bridge (Tc3_RealtimeMonitoring).
+        OP selects the op: 1=mark (append CONTEXT/GROUP/EVENT/MARKCTRL),
+        2=count (RESULT=retained marks), 3=get (AUX=index, fills
+        CONTEXT/GROUP/EVENT/MARKCTRL from the record), 4=clear.
+        Marks are synchronous O(1) ring appends, so no deadline/poll
+        state. */
+        "FB_RtMon" => {
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            push(&mut off, "OP", dint());
+            push(&mut off, "CONTEXT", udint());
+            push(&mut off, "GROUP", udint());
+            push(&mut off, "EVENT", udint());
+            push(&mut off, "MARKCTRL", udint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "RESULT", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;

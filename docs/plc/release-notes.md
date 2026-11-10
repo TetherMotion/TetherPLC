@@ -38,7 +38,13 @@ live attach over tether_io, and the safety/security envelope.
   ADS client on the host speaking the Beckhoff wire format, and a
   builtin `FB_Ads`; verified by a real ADS exchange (connect, read,
   write, read-state, write-control, close, refused-port error) against
-  a python ADS responder (ctest `tc2_system_ads`).
+  a python ADS responder (ctest `tc2_system_ads`). Fifth tranche adds
+  `compat/tc3/tc3_rtmon.st` (Tc3_RealtimeMonitoring mark FBs) over
+  the `tplc-rtmon` service — a `TplcRtmonService` vtable, a
+  4096-entry timestamped mark ring on the host clocked by
+  `HostServices::steadyNs` (deterministic under `--sim`), and a
+  builtin `FB_RtMon`; verified by an in-process mark/count/indexed-
+  read/clear sequence (ctest `tc3_rtmon`).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.
