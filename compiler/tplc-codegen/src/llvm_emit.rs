@@ -320,6 +320,27 @@ impl<'ctx> Gen<'ctx> {
         self.this_ptr
     }
 
+    /// array index expr → i64 offset arithmetic operand; the index
+    /// keeps its own width in MIR, so widen/truncate here honoring
+    /// signedness (unsigned indices zero-extend)
+    fn arr_idx(&mut self, ctx: &Ctx, idx: &Expr) -> IntValue<'ctx> {
+        let v = self.expr(ctx, idx).into_int_value();
+        let bits = v.get_type().get_bit_width();
+        let i64t = self.ctx.i64_type();
+        let signed = matches!(&idx.ty, Type::Int { signed: true, .. });
+        if bits < 64 {
+            if signed {
+                self.b.build_int_s_extend(v, i64t, "ix").unwrap()
+            } else {
+                self.b.build_int_z_extend(v, i64t, "ix").unwrap()
+            }
+        } else if bits > 64 {
+            self.b.build_int_truncate(v, i64t, "ix").unwrap()
+        } else {
+            v
+        }
+    }
+
     // ---- ref resolution → (ptr, Type) ----
     fn member_of(&self, fbname: &str) -> tplc_mir::layout::FbLayout {
         self.layout
@@ -416,14 +437,10 @@ impl<'ctx> Gen<'ctx> {
             Ref::Index(inner, idx) => {
                 let (p, ty) = self.resolve(ctx, inner);
                 if let Type::Array { elem, lo, .. } = ty {
-                    let iv = self.expr(ctx, idx);
+                    let iv = self.arr_idx(ctx, idx);
                     let iv = self
                         .b
-                        .build_int_sub(
-                            iv.into_int_value(),
-                            self.ctx.i64_type().const_int(lo as u64, true),
-                            "idx",
-                        )
+                        .build_int_sub(iv, self.ctx.i64_type().const_int(lo as u64, true), "idx")
                         .unwrap();
                     let esz = self.ctx.i64_type().const_int(elem.size(), false);
                     let bo = self.b.build_int_mul(iv, esz, "bo").unwrap();
@@ -578,7 +595,7 @@ impl<'ctx> Gen<'ctx> {
                     Type::Array { elem, lo, .. } => (*lo, (**elem).clone()),
                     _ => panic!("index on non-array"),
                 };
-                let iv = self.expr(ctx, idx).into_int_value();
+                let iv = self.arr_idx(ctx, idx);
                 let iv = self
                     .b
                     .build_int_sub(iv, i64t.const_int(lo as u64, true), "ri")
@@ -1326,6 +1343,9 @@ impl<'ctx> Gen<'ctx> {
         for (pname, pe) in args {
             if let Some((moff, mty)) = fbl.members.get(pname.as_str()).cloned() {
                 let v = self.expr(ctx, pe);
+                /* narrow/widen to the member width first — a literal
+                i32 into a u16/u8 member must not clobber neighbors */
+                let v = self.coerce(v, &pe.ty, &mty);
                 let p = self.off_ptr(instp, moff);
                 let v = if is_bool(&mty) {
                     self.b
