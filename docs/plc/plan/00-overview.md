@@ -16,6 +16,7 @@
 | chapter | scope | deletion condition |
 |---|---|---|
 | `17-milestones.md` | phased roadmap + P10 release sweep | v1 tag; remainder re-plans under iteration 2 |
+| `21-twincat-libraries.md` | complete TwinCAT PLC library catalog (9,947 APIs / 108 manuals) + per-library TetherPLC integration analysis | superseded when compat libraries land |
 
 Chapters 01–16 and 18–20 are retired; their as-built specs live in
 `docs/plc/` (see `architecture.md` §7 for the map, `mcu-path.md`
