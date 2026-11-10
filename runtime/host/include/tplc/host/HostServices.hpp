@@ -7,6 +7,7 @@
 
 #include <tplc/tplc_abi.h>
 #include <tplc/host/AdsService.hpp>
+#include <tplc/host/BacnetService.hpp>
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/NetService.hpp>
 #include <tplc/host/RtmonService.hpp>
@@ -70,6 +71,7 @@ private:
     RtmonService rtmon_;
     ModbusService modbus_;
     SacnService  sacn_;
+    BacnetService bacnet_;
 };
 
 } /* namespace tplc */
