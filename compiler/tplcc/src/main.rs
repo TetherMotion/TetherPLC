@@ -14,7 +14,8 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tplc_codegen::llvm_emit::{
-    emit_bitcode, emit_object, emit_program_for_target, host_triple, set_target,
+    emit_bitcode, emit_library_for_target, emit_object, emit_program_for_target, host_triple,
+    set_target,
 };
 use tplc_mir::desc;
 use tplc_mir::ir::{AtRegion, IoBind, Pou, PouKind, Prov};
@@ -654,6 +655,9 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut prog_version = String::from("0");
     let mut checked_arith = false;
     let mut pic_blob = false;
+    let mut library_mode = false;
+    let mut lib_name: Option<String> = None;
+    let mut lib_pkgs: Vec<String> = Vec::new();
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
@@ -692,15 +696,33 @@ fn cmd_build(args: &[String]) -> ExitCode {
             }
             "--checked-arith" => checked_arith = true,
             "--pic-blob" => pic_blob = true,
+            "--library" => library_mode = true,
+            "--name" => {
+                lib_name = Some(args[i + 1].clone());
+                i += 1;
+            }
+            "--lib" => {
+                lib_pkgs.push(args[i + 1].clone());
+                i += 1;
+            }
             f => files.push(f.into()),
         }
         i += 1;
     }
-    if files.is_empty() {
+    if files.is_empty() && lib_pkgs.is_empty() {
         eprintln!("tplcc build: no sources");
         return ExitCode::from(2);
     }
-    let srcs = read_srcs(&files);
+    let mut srcs = read_srcs(&files);
+    /* --lib <pkg.tplc>: pull the package's ST_SOURCES section into the
+    compilation — the source-inclusion path for library packages
+    (manifest kind "library"; program packages work too, their
+    PROGRAM would just join the module) */
+    for lp in &lib_pkgs {
+        let mut ls = lib_sources(lp);
+        ls.extend(srcs);
+        srcs = ls;
+    }
     let mut out = compile_srcs(&srcs);
     let mut diags = std::mem::take(&mut out.diags);
     if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
@@ -722,6 +744,22 @@ fn cmd_build(args: &[String]) -> ExitCode {
     }
     if checked_arith {
         out.module.checked_arith = true;
+    }
+
+    if library_mode {
+        return build_library_pkg(
+            &out_path,
+            &srcs,
+            &diags,
+            out.module,
+            out.io_bindings,
+            target,
+            pic_blob,
+            checked_arith,
+            lib_name,
+            &prog_version,
+            json_mode,
+        );
     }
 
     let program: Pou = out
@@ -1226,6 +1264,210 @@ fn cmd_build(args: &[String]) -> ExitCode {
         println!("{}", diag_report(&diags, &srcs, 0, Some(&out_path)));
     } else {
         println!("wrote {}", out_path.display());
+    }
+    ExitCode::SUCCESS
+}
+
+/// Extract `(name, text)` sources from a package's ST_SOURCES section.
+/// Wire format (emitted by `tplcc build`): repeated
+/// `==== <file>\n<content>` blocks.
+fn lib_sources(path: &str) -> Vec<(String, String)> {
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("tplcc: --lib {path}: {e}"));
+    let pkg = tplc_pkg::reader::Package::parse(&bytes)
+        .unwrap_or_else(|e| panic!("tplcc: --lib {path}: {e}"));
+    let sec = pkg
+        .section(SectionType::StSources)
+        .unwrap_or_else(|| panic!("tplcc: --lib {path}: no ST_SOURCES section"));
+    let text = String::from_utf8_lossy(&sec.data);
+    let mut out = Vec::new();
+    let mut name: Option<String> = None;
+    let mut cur = String::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("==== ") {
+            if let Some(n) = name.take() {
+                out.push((n, std::mem::take(&mut cur)));
+            }
+            name = Some(rest.trim().to_string());
+        } else {
+            cur.push_str(line);
+            cur.push('\n');
+        }
+    }
+    if let Some(n) = name {
+        out.push((n, cur));
+    }
+    if out.is_empty() {
+        panic!("tplcc: --lib {path}: empty ST_SOURCES section");
+    }
+    out
+}
+
+/// `tplcc build --library` — package a FUNCTION/FUNCTION_BLOCK
+/// collection with no PROGRAM, GVLs, or tasks. The result is a
+/// link-time artifact (`"kind":"library"` in the manifest), not a
+/// loadable program image: sections are Manifest, IrBitcode,
+/// TargetObj (the relocatable object, or TPLB with --pic-blob),
+/// StSources, Toolchain. Consumed today via `--lib` source inclusion;
+/// precompiled symbol linking is future work.
+#[allow(clippy::too_many_arguments)]
+fn build_library_pkg(
+    out_path: &PathBuf,
+    srcs: &[(String, String)],
+    diags: &[tplc_st::Diag],
+    module: tplc_mir::ir::Module,
+    io_bindings: Vec<IoBind>,
+    target: Option<String>,
+    pic_blob: bool,
+    checked_arith: bool,
+    lib_name: Option<String>,
+    prog_version: &str,
+    json_mode: bool,
+) -> ExitCode {
+    if module.pous.iter().any(|p| p.kind == PouKind::Program) {
+        eprintln!("tplcc build --library: PROGRAM found — libraries contain FUNCTION/FUNCTION_BLOCK POUs only");
+        return ExitCode::FAILURE;
+    }
+    if !module.gvls.is_empty() {
+        eprintln!(
+            "tplcc build --library: VAR_GLOBAL/VAR_EXTERNAL not supported in library packages — consume via --lib source inclusion instead"
+        );
+        return ExitCode::FAILURE;
+    }
+    if !module.tasks.is_empty() {
+        eprintln!("tplcc build --library: TASK declarations not supported in library packages");
+        return ExitCode::FAILURE;
+    }
+    if !io_bindings.is_empty() && !json_mode {
+        eprintln!(
+            "warning: --library: {} io binding(s) ignored (no program image)",
+            io_bindings.len()
+        );
+    }
+
+    let fb_types = tplc_mir::layout::library_fb_types(&module);
+    let layout: &'static tplc_mir::layout::Layout =
+        Box::leak(Box::new(tplc_mir::layout::Layout::library(fb_types)));
+    let module_ref: &'static tplc_mir::ir::Module = Box::leak(Box::new(module));
+
+    let triple = target.unwrap_or_else(host_triple);
+    if pic_blob && triple == host_triple() {
+        eprintln!(
+            "tplcc: --pic-blob requires a foreign --target (host builds emit the raw object)"
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let lctx = Context::create();
+    let llmod = match emit_library_for_target(&lctx, module_ref, layout, &triple) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("tplcc: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = llmod.verify() {
+        if json_mode {
+            println!("{}", stage_failure_json("verify", &e.to_string()));
+        }
+        eprintln!("tplcc: LLVM verify failed: {e}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = set_target(&llmod, &triple) {
+        eprintln!("tplcc: bad target triple {triple}: {e}");
+        return ExitCode::FAILURE;
+    }
+    let tmp = std::env::temp_dir().join("tplcc_build");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let bc = tmp.join("lib.bc");
+    let obj = tmp.join("lib.o");
+    emit_bitcode(&llmod, &bc).unwrap();
+    emit_object(&llmod, &obj, &triple).unwrap();
+    let bc_bytes = std::fs::read(&bc).unwrap();
+
+    /* library target_obj is always the relocatable object: POU symbols
+    stay linkable for a future precompiled-consumption path, and no
+    program entry points exist to justify a .so link */
+    let raw = std::fs::read(&obj).unwrap();
+    let obj_bytes = if pic_blob {
+        match tplc_codegen::elf_blob::build_blob(&raw) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("tplcc: --pic-blob failed: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        raw
+    };
+
+    let mut h = Sha256::new();
+    for (_, s) in srcs {
+        h.update(s.as_bytes());
+    }
+    let sh = h.finalize();
+    let mut uuid = [0u8; 16];
+    uuid.copy_from_slice(&sh[..16]);
+    let uuid_str = format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6],
+        uuid[7], uuid[8], uuid[9], uuid[10], uuid[11], uuid[12], uuid[13],
+        uuid[14], uuid[15]
+    );
+    let name = lib_name.unwrap_or_else(|| {
+        out_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "library".into())
+    });
+    let checked_json = if checked_arith {
+        ",\"checked_arith\":true"
+    } else {
+        ""
+    };
+    let objfmt_json = if pic_blob {
+        ",\"target_obj_format\":\"tplb\""
+    } else {
+        ""
+    };
+    let manifest = format!(
+        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"kind\":\"library\",\"target_triple\":\"{triple}\"{checked_json}{objfmt_json}}}"
+    );
+    let src_bundle: String = srcs
+        .iter()
+        .map(|(f, s)| format!("==== {f}\n{s}\n"))
+        .collect();
+
+    let mut w = PackageWriter::new();
+    w.uuid_str(&uuid_str).unwrap();
+    w.add_section(SectionType::Manifest, manifest.into_bytes(), false, 1, 0)
+        .unwrap();
+    w.add_section(SectionType::IrBitcode, bc_bytes, true, 1, 0)
+        .unwrap();
+    w.add_section(SectionType::TargetObj, obj_bytes, true, 1, 0)
+        .unwrap();
+    w.add_section(SectionType::StSources, src_bundle.into_bytes(), false, 1, 0)
+        .unwrap();
+    w.add_section(
+        SectionType::Toolchain,
+        format!(
+            "{{\"tplcc\":\"{}\",\"rustc\":\"{}\",\"llvm\":\"{}\",\"host\":\"{}\"}}",
+            env!("CARGO_PKG_VERSION"),
+            env!("TPLC_RUSTC"),
+            env!("TPLC_LLVM"),
+            env!("TPLC_HOST"),
+        )
+        .into_bytes(),
+        false,
+        1,
+        0,
+    )
+    .unwrap();
+    let pkg = w.build().unwrap();
+    std::fs::write(out_path, pkg).unwrap();
+    if json_mode {
+        println!("{}", diag_report(diags, srcs, 0, Some(out_path)));
+    } else {
+        println!("wrote {} (library)", out_path.display());
     }
     ExitCode::SUCCESS
 }

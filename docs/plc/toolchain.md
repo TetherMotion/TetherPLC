@@ -33,6 +33,16 @@ is baked into the generated code and recorded as
 `build` also takes `--target <triple>` for foreign-target objects
 and `--pic-blob` (foreign targets only) to store a TPLB loadable
 image instead of the raw ET_REL — see `mcu-path.md`.
+`build --library` packages a FUNCTION/FUNCTION_BLOCK collection
+with no PROGRAM, VAR_GLOBAL, or TASK declarations into a
+`"kind":"library"` package: manifest + bitcode + the relocatable
+object (POU `__tplc_pou_*` symbols stay linkable) + ST sources +
+toolchain, but no program-state sections. `build --lib <pkg.tplc>`
+(pull the package's ST_SOURCES section into the compilation, for
+consuming library packages) and `--name <n>` (library manifest
+name; default is the output file stem) round out the compat-library
+flow — see `plan/21-twincat-libraries.md` §8 C0 and
+`compat/twincat/INDEX.md` for the per-library catalog.
 St spans carry
 `file/offset/len/line/col`;
 Fbd spans carry `sheet/node/pin`; non-frontend failures (LLVM verify,

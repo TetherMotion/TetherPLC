@@ -132,6 +132,18 @@ Wire constants + error codes shared by both implementations:
   `mcu-path.md` and `tests/abi/tplb_load.h`.
 - Manifest is carried as opaque JSON bytes; schema validation is a
   P1-era concern (`tplcc` owns the producer side).
+- `tplcc build --library` emits a **library package**: manifest
+  `"kind":"library"` plus only Manifest, IrBitcode, TargetObj (the
+  relocatable object — `__tplc_pou_*` symbols stay linkable for a
+  future precompiled-consumption path; TPLB with `--pic-blob`),
+  StSources, and Toolchain sections. No LAYD/SMAP/TYPC/IO_MAP —
+  there is no program state to describe — so `validate_for_load`
+  rejects library packages by construction: they are link-time
+  artifacts, never deployed to `tether-plc`. Consumption today is
+  `tplcc build <app.st> --lib <lib.tplc>`, which extracts the
+  package's ST_SOURCES into the program's compilation unit (GVL
+  declarations merge into the consumer's module correctly). The
+  manifest `kind` field is absent on program packages.
 
 ## Verification
 

@@ -47,6 +47,40 @@ pub struct Layout {
     pub layd: Layd,
 }
 
+impl Layout {
+    /// Layout for a library package: only the FB type table; no
+    /// program fields, image regions, or retain area.
+    pub fn library(fb_types: BTreeMap<String, FbLayout>) -> Layout {
+        Layout {
+            total_size: 0,
+            fields: BTreeMap::new(),
+            fb_types,
+            retain_offset: 0,
+            retain_size: 0,
+            align: 1,
+            layd: Layd {
+                version: 1,
+                total_size: 0,
+                regions: vec![],
+                fields: vec![],
+            },
+        }
+    }
+}
+
+/// FB layouts for every FUNCTION_BLOCK in the module — the library
+/// counterpart of the pre-layout pass inside `layout_program`.
+pub fn library_fb_types(module: &Module) -> BTreeMap<String, FbLayout> {
+    let mut fb_types = BTreeMap::new();
+    for pou in &module.pous {
+        if pou.kind == PouKind::FunctionBlock {
+            let l = layout_fb(pou, &mut fb_types);
+            fb_types.insert(pou.name.clone(), l);
+        }
+    }
+    fb_types
+}
+
 /// Builtin FB bookkeeping layouts (doc 07 §3.2 rt fields). The names are
 /// reserved (`__` prefix) and live inside the instance sub-object.
 pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {

@@ -650,3 +650,28 @@ NOBITS sections are materialized as zero bytes in the blob for v1
 (simplicity over size). `mcu_blob.sh` proves the path end-to-end
 under qemu-arm when available; the host-side loader test validates
 fixup math on a real blob without executing ARM code.
+
+## D-IMPL-36 — library packages: kind=library manifest + --lib source inclusion
+
+**Plan:** plan 21 §8 phase C0 calls for `tplc` manifest support for
+library packages with ST-source and precompiled delivery, as the
+foundation for TwinCAT compatibility libraries.
+**Implemented:** `tplcc build --library` compiles a module with no
+PROGRAM, VAR_GLOBAL, or TASK into a `.tplc` whose manifest carries
+`"kind":"library"` and whose sections are Manifest, IrBitcode,
+TargetObj (always the relocatable object — `__tplc_pou_*` symbols
+stay linkable; TPLB still available via `--pic-blob`), StSources,
+Toolchain. No LAYD/SMAP/TYPC/IO_MAP: there is no program state, so
+`validate_for_load` rejects library packages by construction and
+they can never be deployed. Consumption is `tplcc build app.st
+--lib lib.tplc`, which extracts the ST_SOURCES section into the
+program's compilation unit — GVL declarations merge into the
+consumer's module correctly, which is also the documented escape
+hatch for libraries that need globals.
+**Consequence:** precompiled consumption is deliberately deferred:
+source inclusion gives sema full POU declarations today, while the
+relocatable object in TARGET_OBJ preserves the option of true
+symbol-level linking later (extern POU decls + link against the
+library .o). A discovered pre-existing bug — implicit `GLOBAL.x`
+access panics in codegen (`unresolved var GLOBAL`); VAR_EXTERNAL
+is the working form — is unrelated to this change and remains open.

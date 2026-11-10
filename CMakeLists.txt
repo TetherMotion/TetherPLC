@@ -515,6 +515,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(mcu_blob PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+  # library packages: tplcc build --library (kind=library manifest,
+  # POU object, ST sources) + --lib source-inclusion consumption
+  add_test(NAME library_pkg
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/pkg/library.sh)
+  set_tests_properties(library_pkg PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

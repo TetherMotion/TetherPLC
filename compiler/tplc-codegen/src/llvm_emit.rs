@@ -3278,6 +3278,71 @@ pub fn emit_program_for_target<'ctx>(
     Ok(g.module)
 }
 
+/// Emit a library module: `tplc_abi_version` plus one
+/// `__tplc_pou_<NAME>(ctx, this) -> i32` per FUNCTION/FUNCTION_BLOCK.
+/// No program entry points, init, task, descriptor, or migrate —
+/// library packages are link-time artifacts, not loadable images.
+pub fn emit_library_for_target<'ctx>(
+    lctx: &'ctx Context,
+    mir: &'static Module,
+    layout: &'static Layout,
+    triple: &str,
+) -> Result<LlvmModule<'ctx>, String> {
+    let abi = abi_offsets_for_triple(triple)?;
+    let module = lctx.create_module("tplc_library");
+    let mut g = Gen {
+        ctx: lctx,
+        module,
+        b: lctx.create_builder(),
+        layout,
+        mir,
+        abort_bb: None,
+        overrun_bb: None,
+        panic_bb: None,
+        bounds_bb: None,
+        divzero_bb: None,
+        overflow_bb: None,
+        range_bb: None,
+        loop_stack: Vec::new(),
+        ctx_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
+        this_ptr: lctx.ptr_type(inkwell::AddressSpace::default()).const_zero(),
+        abi,
+    };
+
+    let ft = lctx.i32_type().fn_type(&[], false);
+    let f = g
+        .module
+        .add_function("tplc_abi_version", ft, Some(Linkage::External));
+    let bb = lctx.append_basic_block(f, "e");
+    g.b.position_at_end(bb);
+    g.b.build_return(Some(&lctx.i32_type().const_int(1, false)))
+        .unwrap();
+
+    for pou in &mir.pous {
+        if pou.kind == PouKind::Program {
+            return Err(format!("library module contains PROGRAM {}", pou.name));
+        }
+        let sc: Ctx = match pou.kind {
+            PouKind::Program => unreachable!(),
+            PouKind::FunctionBlock => {
+                let fbl = layout
+                    .fb_types
+                    .get(&pou.name)
+                    .cloned()
+                    .or_else(|| builtin_fb_layout(&pou.name))
+                    .unwrap_or_else(|| panic!("no FB layout {}", pou.name));
+                fb_ctx(&fbl)
+            }
+            PouKind::Function => {
+                let fbl = tplc_mir::layout::layout_members(&pou.iface, BTreeMap::new());
+                fb_ctx(&fbl)
+            }
+        };
+        g.emit_pou(pou, &sc);
+    }
+    Ok(g.module)
+}
+
 /* ------------------------------------------------------------------ */
 /* Object / bitcode emission (P1-07)                                   */
 /* ------------------------------------------------------------------ */

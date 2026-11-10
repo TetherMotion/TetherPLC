@@ -12,7 +12,12 @@ live attach over tether_io, and the safety/security envelope.
 - **Compile**: `tplcc build prog.st -o prog.tplc` — ST and FBD lower
   into shared `tplc-mir`, LLVM emits host-arch `.so`; `.tplc`
   packages carry sectioned metadata (IO map, migrate descriptors,
-  symbols, toolchain provenance).
+  symbols, toolchain provenance). `tplcc build --library` packages
+  FUNCTION/FUNCTION_BLOCK collections as `"kind":"library"`
+  artifacts (linkable POU object + ST sources, no program state);
+  `--lib pkg.tplc` consumes them by source inclusion — the
+  foundation for TwinCAT compatibility libraries
+  (plan/21-twincat-libraries.md).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.
