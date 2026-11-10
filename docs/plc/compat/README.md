@@ -89,7 +89,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C0 | Library package format | done (`f912616`) |
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
-| C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml/Tc3_EventLogger pending |
+| C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 
 ### C1 coverage notes
 
@@ -260,7 +260,26 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   as the Tc2_Utilities heap/buffer FBs). `Tc3_Module` is the TwinCAT
   COM-like object model (`ITcUnknown`, `Fw_ObjMgr_*`, interface
   pointers) — not expressible without an object/interface runtime.
-  `Tc3_JsonXml` and `Tc3_EventLogger` are pending.
+- **Tc3_JsonXml blocked**: all 8 FBs are unusable in the current
+  dialect — `FB_JsonDomParser`/`FB_JsonDynDomParser` are ~150
+  `METHOD`s over opaque `SJsonValue` handles with `REFERENCE TO BOOL`
+  exec params; `FB_JsonSaxReader` needs the `ITcJsonSaxHandler`
+  interface; `FB_JsonSaxWriter`/`FB_JsonSaxPrettyWriter` take
+  `POINTER TO BYTE`; `FB_JsonReadWriteDataType` needs symbol-address
+  introspection; `FB_XmlDomParser` shares the DOM/method model;
+  `FB_JwtEncode` is an `ITcJsonSaxHandler` implementation. A faithful
+  port needs METHOD syntax, interface types, and pointers — a
+  JSON "subset" would be a new API, not TwinCAT compatibility.
+- **Tc3_EventLogger blocked**: the core is an object model —
+  `FB_TcEventBase`/`FB_TcEvent`/`FB_TcAlarm`/`FB_TcMessage` expose
+  `I_TcEventBase`/`I_TcArguments`/`I_TcMessage`/`I_TcSourceInfo`
+  interface properties and METHODs returning `HRESULT`; the remote
+  listener needs ADS device notifications (not implemented in
+  `tplc-ads`). The only plain functions, the four
+  `*TcEventEntry*`/`AdsErr` converters, lack documented mapping
+  semantics in the manual (which GUID/event-ID/severity each ADS
+  error produces is unspecified) and `TcEventEntry` needs a `GUID`
+  type the dialect does not have.
 
 ## Known limitations
 

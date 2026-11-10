@@ -176542,7 +176542,7 @@ Landed (detail pruned; git history retains it, as-built status lives in
 
 | Phase | Deliverable | Unblocks |
 |---|---|---|
-| **C3 — T1 services II** | DynamicMemory heap (blocked: PVOID), EventLogger parity, Module/config model (blocked: COM object model), JsonXml persistence, RealtimeMonitoring (done: `tplc-rtmon` + `FB_RtMon` + Tc3 wrappers, `tc3_rtmon` ctest) | Standard remainder |
+| **C3 — T1 services II** | done: RealtimeMonitoring (`tplc-rtmon` + `FB_RtMon` + Tc3 wrappers, `tc3_rtmon` ctest); blocked: DynamicMemory (PVOID), Module (COM object model), JsonXml (METHOD/interface/POINTER/REFERENCE/HRESULT), EventLogger (I_Tc* interfaces, HRESULT, GUID) | Standard remainder |
 | **C4 — Connectivity wave 1** | Tc2_TcpIp, sACN, BACnet, PJLink, Modbus TCP/RTU, S7, FTP, SMS/SMTP, IEC 60870 | Field protocols |
 | **C5 — Motion core** | `tplc-motion` axis backend + PLCopen MC2 subset (`MC_Power`…`MC_TorqueControl`) | All Motion libraries |
 | **C6 — Motion extended** | NC interpolation, camming, hydraulics, drives (CiA-402 via Tether DS402), MC3 | Motion remainder minus robotics |
