@@ -23,10 +23,18 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       WFIND WINSERT WLEFT WLEN WMID WREPLACE WRIGHT)
   tc2_standard_lt.st  Tc2_Standard L* timers: LTON LTOF LTP wrapping
                       the TON/TOF/TP builtins (LTIME == TIME repr)
+  tc2_tcpip.st        Tc2_TcpIp wrappers over the builtin FB_Socket
+                      (tplc-net service): FB_SocketConnect/Listen/
+                      Accept/Send/Receive/Close + UdpCreate/
+                      UdpSendTo/UdpReceiveFrom
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
                       6-step sim replay expecting masks 0x1FFFFF/0xFF
+  tc2_tcpip_case.st   autonomous loopback client/server program
+                      (7 packed checks)
+  tc2_tcpip.sh        ctest tc2_tcpip: library + consumer + 37-step
+                      sim replay expecting mask 0x7f
 ```
 
 ## Building and consuming
@@ -50,6 +58,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 |-------|-------|--------|
 | C0 | Library package format | done (`f912616`) |
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
+| C2 | T1 services I | `tplc-net` done: `FB_Socket` builtin + host POSIX socket service + Tc2_TcpIp wrappers, loopback e2e |
 
 ### C1 coverage notes
 
@@ -72,6 +81,34 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 - **Tc2_IoFunctions**: re-tiered T0 -> T3 in the plan — the catalog
   is dominated by EtherCAT device FBs (KL terminals, ASI, DPV1,
   IO-Link, SCIT, TcTouch, AX2000), not process-image helpers.
+
+### C2 coverage notes (tplc-net / Tc2_TcpIp)
+
+- **Architecture**: one builtin `FB_Socket` (op-multiplexed, members
+  `OP/HOST/PORT/TIMEOUT/DATA/DLEN/HANDLE/AUX/RESULT/ERRID/EXEC/BUSY/
+  DONE`) bridges to the host `tplc-net` service through
+  `TplcServices.get_service`. All service ops are nonblocking POSIX
+  sockets; long ops (connect/accept/send/recv) are polled per scan
+  until `DONE` or the `TIMEOUT` deadline. `ERRID` carries the
+  positive service code (1=param, 2=no service, 3=socket, 4=connect,
+  5=timeout, 6=closed, 7=again, 8=state).
+- **Wrappers**: `compat/tc2/tc2_tcpip.st` exposes the Beckhoff names
+  with their documented in/out roles. `sSrvNetId` is dropped (no AMS
+  routing yet); `POINTER TO BYTE` payloads are `STRING[256]`;
+  `hSocket`/`hListener` are `UDINT` service handles.
+- **Verified**: `tc2_tcpip` ctest runs a real loopback exchange —
+  listen, connect, accept, 4-byte send, receive, three closes —
+  through `tether-plc` + `tether-plc-sim`, 7 packed checks.
+- **Honest gaps**:
+  - IPv4 dotted-quad only; no DNS (a resolver would block the scan).
+  - UDP ops exist in the service and `FB_Socket` but only TCP is
+    exercised by the e2e; multicast add/drop is not implemented.
+  - `FB_SocketCloseAll` and the higher-level `FB_Client`/`FB_Server`/
+    `FB_Helper` connection wrappers are not provided.
+  - Socket handles do not survive program reload: the state blob is
+    rebuilt but host fds persist until process exit (documented
+    limitation, no handle re-validation yet).
+  - `tTimeout <= 0` means no deadline; Beckhoff requires a timeout.
 
 ## Known limitations
 

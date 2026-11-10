@@ -730,3 +730,32 @@ MID(s, i, 1) and never matched a digit; caught by the sim replay.
 **Blocked honestly:** FB_CalcHashValue/FB_MemBuffer*/RingBuffer
 need PVOID (no pointer type); FB_FormatString needs the T_Arg
 union — language gaps, not effort gaps.
+
+## D-IMPL-39 — tplc-net service + FB_Socket builtin (plan 21 C2)
+
+**Plan:** plan 21 §8 phase C2: first runtime service, unblocking
+Tc2_TcpIp and every TCP-dependent library (Modbus TCP, SMTP, ADS,
+OPC UA transport).
+**Implemented:** `include/tplc/tplc_net.h` defines the
+`TplcNetService` vtable (ABI v1) returned by
+`TplcServices.get_service("tplc-net")`: nonblocking POSIX TCP
+connect/listen/accept/send/recv/close plus UDP bind/sendto/
+recvfrom/close, all bounded for the scan path. Host side:
+`runtime/host/{include,src}/tplc/host/NetService.{hpp,cpp}` keeps a
+handle table over O_NONBLOCK fds; `HostServices::getService` is the
+single named-service lookup point. PLC side: one op-multiplexed
+builtin `FB_Socket` (`builtin_fb_layout` + `__tplc_rt_FB_Socket` in
+tplc-rt) resolves the service through `ctx->svc` each poll, arms on
+EXEC rising edge, polls until DONE or the TIMEOUT deadline; ERRID
+carries the positive service code. `compat/tc2/tc2_tcpip.st`
+wraps it in the Beckhoff FB names; `tc2_tcpip` ctest replays a
+real loopback exchange through tether-plc-sim.
+**Decisions:** (a) single generic FB instead of per-op builtins —
+the op enum mirrors `TPLC_SOCK_OP_*` and keeps the builtin count
+flat; (b) STRING[256] payload instead of POINTER TO BYTE (no
+pointer type); (c) IPv4 literals only — DNS would block the scan;
+(d) recv always reads the full DATA capacity so DLEN stays a pure
+output and cannot inherit a stale cap.
+**Consequence:** UDP ops and the vtable slots exist but only TCP is
+e2e-verified; multicast, sSrvNetId/AMS routing, FB_SocketCloseAll,
+and handle re-validation across program reload are documented gaps.

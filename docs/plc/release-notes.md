@@ -21,7 +21,13 @@ live attach over tether_io, and the safety/security envelope.
   `compat/tc2/`: Tc2_Math (all APIs), Tc2_Standard W* + L* wrappers
   (complete), Tc2_Utilities BCD FBs + FB_EnumStringNumbers;
   consumed and verified end-to-end by `tests/compat/tc2.sh`
-  (ctest `tc2_compat`).
+  (ctest `tc2_compat`). Second tranche adds `compat/tc2/tc2_tcpip.st`
+  (Tc2_TcpIp socket FBs) over the new `tplc-net` runtime service —
+  a `TplcNetService` vtable behind `TplcServices.get_service`,
+  nonblocking POSIX sockets on the host, and a builtin op-multiplexed
+  `FB_Socket` driving it; verified by a real loopback
+  listen/connect/accept/send/receive/close exchange
+  (ctest `tc2_tcpip`).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

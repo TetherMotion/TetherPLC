@@ -140,6 +140,39 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "R", Type::Bool);
             push(&mut off, "Q1", Type::Bool);
         }
+        /* FB_Socket — tplc-net service bridge (plan 21 C2). One
+        generic op-multiplexed FB; the compat layer's
+        FB_SocketConnect/Listen/Accept/Send/Receive/Close wrap
+        it with Beckhoff-shaped signatures. DATA is a STRING
+        (Beckhoff uses POINTER TO BYTE — no pointers in ST). */
+        "FB_Socket" => {
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            push(&mut off, "OP", dint());
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "DATA", Type::Str { cap: 256 });
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "RESULT", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__deadline", Type::Time);
+            push(&mut off, "__sent", udint());
+            push(&mut off, "__recvd", udint());
+            push(&mut off, "__phase", dint());
+        }
         _ => return None,
     }
     let align = 8u64;

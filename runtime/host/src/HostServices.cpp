@@ -3,6 +3,7 @@
 #include <tplc/host/HostServices.hpp>
 
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 
 namespace tplc {
@@ -68,8 +69,10 @@ int32_t HostServices::raiseEvent(uint32_t) {
     return -1;  /* EVENT tasks unimplemented in v1 */
 }
 
-void* HostServices::getService(const char*, uint32_t) {
-    return nullptr;  /* named services: none yet (trace.* later) */
+void* HostServices::getService(const char* name, uint32_t len) {
+    if (len == 8 && memcmp(name, "tplc-net", 8) == 0)
+        return const_cast<TplcNetService*>(&net_.table());
+    return nullptr;
 }
 
 } /* namespace tplc */

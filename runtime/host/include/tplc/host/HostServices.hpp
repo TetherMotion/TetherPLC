@@ -6,6 +6,7 @@
 #define TPLC_HOST_SERVICES_HPP
 
 #include <tplc/tplc_abi.h>
+#include <tplc/host/NetService.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -58,6 +59,7 @@ private:
     uint64_t     log_count_ = 0;
     uint64_t     sim_now_ = 0;
     bool         sim_on_ = false;
+    NetService   net_;
 };
 
 } /* namespace tplc */
