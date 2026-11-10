@@ -30,13 +30,20 @@ bad() { fail=$((fail+1)); echo "FAIL $1"; }
 "$TPLCC" build --library --name Tc2_Standard_Wide \
     compat/tc2/tc2_standard_wide.st -o "$WORK/tc2_wide.tplc" >/dev/null 2>&1 \
     && ok "Tc2_Standard_Wide library" || bad "Tc2_Standard_Wide library"
+"$TPLCC" build --library --name Tc2_Standard_LT \
+    compat/tc2/tc2_standard_lt.st -o "$WORK/tc2_lt.tplc" >/dev/null 2>&1 \
+    && ok "Tc2_Standard_LT library" || bad "Tc2_Standard_LT library"
+"$TPLCC" build --library --name Tc2_Utilities_Enum \
+    compat/tc2/tc2_util_enum.st -o "$WORK/tc2_enum.tplc" >/dev/null 2>&1 \
+    && ok "Tc2_Utilities_Enum library" || bad "Tc2_Utilities_Enum library"
 
 "$TPLCC" build tests/compat/tc2_case.st \
     --lib "$WORK/tc2_math.tplc" --lib "$WORK/tc2_bcd.tplc" \
-    --lib "$WORK/tc2_wide.tplc" \
+    --lib "$WORK/tc2_wide.tplc" --lib "$WORK/tc2_lt.tplc" \
+    --lib "$WORK/tc2_enum.tplc" \
     -o "$WORK/tc2_case.tplc" >/dev/null 2>&1 \
-    && ok "consumer build with --lib x3" \
-    || { bad "consumer build with --lib x3"; \
+    && ok "consumer build with --lib x5" \
+    || { bad "consumer build with --lib x5"; \
          echo "== $pass pass, $fail fail"; exit 1; }
 
 cat > "$WORK/tc2.steps" <<'EOF'
@@ -44,6 +51,8 @@ step 0 time=0        in 0=00
 step 1 time=10000000 in 0=01
 step 2 time=20000000 in 0=01 expect 0=ffff1f00
 step 3 time=30000000 in 0=01 expect 0=ffff1f00
+step 4 time=40000000 in 0=00
+step 5 time=50000000 in 0=00 expect 0=ffff1f00 expect 4=ff000000
 EOF
 
 IMG=/tplc_tc2_$$; CTL="$WORK/tc2.ctl"
@@ -52,7 +61,7 @@ IMG=/tplc_tc2_$$; CTL="$WORK/tc2.ctl"
     --ctl "$CTL" --scan --settle-ms 800 >"$WORK/sim.log" 2>&1
 rc=$?
 if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log"; then
-    ok "sim replay: 21 checks (math + W* + BCD)"
+    ok "sim replay: 28 checks (math + W* + BCD + L* + enum)"
 else
     bad "sim replay"
     tail -8 "$WORK/sim.log"

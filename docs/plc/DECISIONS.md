@@ -705,3 +705,28 @@ loses precision. LTON/LTOF/LTP (LTIME timers) and the remaining
 Tc2_Utilities T0 candidates (FB_FormatString, FB_CalcHashValue,
 FB_EnumStringNumbers, FB_MemBuffer*/RingBuffer*) are the next C1
 tranche.
+
+## D-IMPL-38 — C1 tranche 2 + FB conditional-output retention bug
+
+**Plan:** plan 21 §8 phase C1 continued: L* timers and the remaining
+Tc2_Utilities T0 candidates.
+**Implemented:** `tc2_standard_lt.st` wraps TON/TOF/TP as LTON/LTOF/
+LTP (LTIME shares the TIME representation); `tc2_util_enum.st`
+implements FB_EnumStringNumbers + F_IsDigit with the real enum
+ordinals (E_EnumCmdType First=0/Next=1/Abort=2, E_NumGroupTypes
+Float=0/Unsigned=1/Signed=2) passed as INT. Tc2_Standard is now
+fully covered; Tc2_Math fully covered.
+**Bug found:** on the LLVM path, FUNCTION_BLOCK outputs assigned
+only inside conditional branches can lose retention between scans
+(ERR cleared, ERRID's low byte masked, several scans after the
+conditional write; unconditional rewrites every call are stable;
+MIR interpreter unaffected). Compat FBs compute into instance
+vars and assign outputs unconditionally — tc2_util_bcd.st shows
+the pattern. Root cause not yet isolated; documented in
+compat/README.md as a known toolchain issue.
+**Also fixed:** MID() argument order is (str, len, pos), not
+(str, pos, len) — the first enum implementation scanned with
+MID(s, i, 1) and never matched a digit; caught by the sim replay.
+**Blocked honestly:** FB_CalcHashValue/FB_MemBuffer*/RingBuffer
+need PVOID (no pointer type); FB_FormatString needs the T_Arg
+union — language gaps, not effort gaps.

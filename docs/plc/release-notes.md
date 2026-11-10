@@ -17,10 +17,11 @@ live attach over tether_io, and the safety/security envelope.
   artifacts (linkable POU object + ST sources, no program state);
   `--lib pkg.tplc` consumes them by source inclusion — the
   foundation for TwinCAT compatibility libraries
-  (plan/21-twincat-libraries.md). First compat tranche under
-  `compat/tc2/`: Tc2_Math (all 7 math functions), Tc2_Standard W*
-  wide-string wrappers, Tc2_Utilities BCD FBs; consumed and verified
-  end-to-end by `tests/compat/tc2.sh` (ctest `tc2_compat`).
+  (plan/21-twincat-libraries.md). Compat tranche under
+  `compat/tc2/`: Tc2_Math (all APIs), Tc2_Standard W* + L* wrappers
+  (complete), Tc2_Utilities BCD FBs + FB_EnumStringNumbers;
+  consumed and verified end-to-end by `tests/compat/tc2.sh`
+  (ctest `tc2_compat`).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

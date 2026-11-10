@@ -2,14 +2,35 @@ PROGRAM Tc2Case
 VAR
     start_in AT %IX0.0 : BOOL;
     mask      AT %QD0   : DINT;
+    tmask     AT %QD4   : DINT;
     d2b       : DEC_TO_BCD;
     b2d       : BCD_TO_DEC;
     d2b_err   : DEC_TO_BCD;
+    lton1     : LTON;
+    ltof1     : LTOF;
+    ltp1      : LTP;
+    enm       : FB_EnumStringNumbers;
+    enm2      : FB_EnumStringNumbers;
+    enm3      : FB_EnumStringNumbers;
+    scan_n    : UDINT;
+    eCmd      : INT;
 END_VAR
 
 d2b(START := start_in, DIN := 42);
 b2d(START := start_in, BIN := 16#26);
 d2b_err(START := start_in, DIN := 200);
+lton1(IN := start_in, PT := T#15ms);
+ltof1(IN := start_in, PT := T#20ms);
+ltp1(IN := start_in, PT := T#25ms);
+IF scan_n = 0 THEN
+    eCmd := 0;
+ELSE
+    eCmd := 1;
+END_IF
+enm(sSearch := 'abc12.5xyz-7', eCmd := eCmd, eType := 0);
+enm2(sSearch := 'abc12.5xyz', eCmd := 0, eType := 0);
+enm3(sSearch := '-7x', eCmd := 0, eType := 2);
+scan_n := scan_n + 1;
 
 mask := 0;
 IF CEIL(2.3) = 3.0 THEN
@@ -74,5 +95,31 @@ IF d2b_err.ERR THEN
 END_IF
 IF d2b_err.ERRID <> 0 THEN
     mask := mask + 1048576;
+END_IF
+
+tmask := 0;
+IF lton1.Q = FALSE THEN
+    tmask := tmask + 1;
+END_IF
+IF ltof1.Q = TRUE THEN
+    tmask := tmask + 2;
+END_IF
+IF ltp1.Q = FALSE THEN
+    tmask := tmask + 4;
+END_IF
+IF enm2.sNumber = '12.5' THEN
+    tmask := tmask + 8;
+END_IF
+IF enm3.sNumber = '-7' THEN
+    tmask := tmask + 16;
+END_IF
+IF enm.bEOS = TRUE THEN
+    tmask := tmask + 32;
+END_IF
+IF enm.nPos = 13 THEN
+    tmask := tmask + 64;
+END_IF
+IF enm2.nPos = 8 THEN
+    tmask := tmask + 128;
 END_IF
 END_PROGRAM

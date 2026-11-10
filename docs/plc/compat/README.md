@@ -18,12 +18,15 @@ compat/tc2/           TwinCAT 2/3-era library sources
   tc2_math.st         Tc2_Math: CEIL FLOOR FRAC LTRUNC LMOD MODABS
                       MODTURNS F_GetVersionTcMath F_TruncL (helper)
   tc2_util_bcd.st     Tc2_Utilities subset: DEC_TO_BCD, BCD_TO_DEC
+  tc2_util_enum.st    Tc2_Utilities: FB_EnumStringNumbers + F_IsDigit
   tc2_standard_wide.st Tc2_Standard W* wrappers (WCONCAT WDELETE
                       WFIND WINSERT WLEFT WLEN WMID WREPLACE WRIGHT)
+  tc2_standard_lt.st  Tc2_Standard L* timers: LTON LTOF LTP wrapping
+                      the TON/TOF/TP builtins (LTIME == TIME repr)
 tests/compat/
-  tc2_case.st         consumer program (21 packed checks)
+  tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
-                      4-step sim replay expecting mask 0x001FFFFF
+                      6-step sim replay expecting masks 0x1FFFFF/0xFF
 ```
 
 ## Building and consuming
@@ -46,16 +49,13 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | C0 | Library package format | done (`f912616`) |
-| C1 | T0 core | first tranche done: Tc2_Math (8/8 APIs), Tc2_Standard W* (9/9), Tc2_Utilities BCD pair |
+| C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 
 ### C1 coverage notes
 
-- **Tc2_Standard**: the 16 IEC narrow-string functions and 9 timer/
-  counter FBs are already compiler builtins — no compat source
-  needed. The 9 `W*` wide-string functions are thin wrappers over
-  the same builtins (builtins accept `WSTRING` operands).
-  `LTON`/`LTOF`/`LTP` (LTIME timer variants) are not yet wrapped —
-  they need `LTIME`-typed TON instances.
+- **Tc2_Standard**: complete — the 16 IEC narrow-string functions,
+  9 timer/counter FBs, 9 `W*` wrappers, and 3 `L*` LTIME timers are
+  all covered (builtins + wrappers).
 - **Tc2_Math**: all 7 math functions implemented in pure ST.
   `TRUNC` narrows through `DINT`, so magnitudes `>= 2^31` lose
   precision (documented in the source header). `LMOD` uses
@@ -63,10 +63,12 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   the result is always in `[0, |m|)` — both flagged for verification
   against Beckhoff behaviour on edge cases.
 - **Tc2_Utilities**: 325 APIs, mostly T2 (file, registry, license,
-  AMS router, timezone, `NT_*`). Only the BCD pair is implemented —
-  it is a pure-IEC FB subset. `FB_FormatString`, `FB_CalcHashValue`,
-  `FB_EnumStringNumbers`, `FB_MemBuffer*`/`FB_MemRingBuffer*` are
-  T0 candidates for the next tranche.
+  AMS router, timezone, `NT_*`). Implemented: BCD pair,
+  `FB_EnumStringNumbers` (enum ordinals passed as INT; number-format
+  consume sets approximated per `E_NumGroupTypes`). Blocked by
+  missing language features, not effort: `FB_CalcHashValue` and
+  `FB_MemBuffer*`/`FB_MemRingBuffer*` need `PVOID`/pointers;
+  `FB_FormatString` needs the `T_Arg` union type.
 - **Tc2_IoFunctions**: re-tiered T0 -> T3 in the plan — the catalog
   is dominated by EtherCAT device FBs (KL terminals, ASI, DPV1,
   IO-Link, SCIT, TcTouch, AX2000), not process-image helpers.
@@ -82,3 +84,11 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   one scan after `START` and `ERR` latches until the next `START`,
   matching the documented handshake shape but not any asynchronous
   timing Beckhoff guarantees.
+- **Known toolchain issue**: on the LLVM path, FUNCTION_BLOCK
+  outputs written only inside conditional branches can lose
+  retention between scans (observed: `ERR`/`ERRID` partially
+  cleared several scans after a conditional write; the MIR
+  interpreter is unaffected). Compat FBs work around it by
+  computing into instance vars and assigning every output
+  unconditionally each call — see `tc2_util_bcd.st`. Root cause
+  not yet isolated; tracked as a compiler bug.
