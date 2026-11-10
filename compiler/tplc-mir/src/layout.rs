@@ -208,6 +208,42 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "__recvd", udint());
             push(&mut off, "__phase", dint());
         }
+        /* FB_Ads — tplc-ads service bridge (AMS/TCP ADS client).
+        Same op-multiplexed shape as FB_Socket/FB_Serial; STATE and
+        DEVSTATE carry the ADS/device states for read-state and
+        write-control, RESULT carries the ADS-layer error code. */
+        "FB_Ads" => {
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            push(&mut off, "OP", dint());
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "IDXGRP", udint());
+            push(&mut off, "IDXOFF", udint());
+            push(&mut off, "STATE", dint());
+            push(&mut off, "DEVSTATE", dint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "DATA", Type::Str { cap: 256 });
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "RESULT", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__deadline", Type::Time);
+            push(&mut off, "__sent", udint());
+            push(&mut off, "__recvd", udint());
+            push(&mut off, "__phase", dint());
+        }
         _ => return None,
     }
     let align = 8u64;

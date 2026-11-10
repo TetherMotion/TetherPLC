@@ -30,6 +30,15 @@
 //!                BUSY@381 u8, DONE@382 u8, __last_exec@383 u8,
 //!                __deadline@384 i64, __sent@392 u32,
 //!                __recvd@396 u32, __phase@400 i32   (size 408)
+//!   FB_Ads     : OP@0 i32, HOST@4(str), PORT@20 u32,
+//!                IDXGRP@24 u32, IDXOFF@28 u32, STATE@32 i32,
+//!                DEVSTATE@36 i32, AUX@40 u32,
+//!                TIMEOUT@48 i64, DATA@56(str), DLEN@316 u32,
+//!                HANDLE@320 u32, RESULT@324 i32, ERRID@328 u32,
+//!                EXEC@332 u8, BUSY@333 u8, DONE@334 u8,
+//!                __last_exec@335 u8, __deadline@336 i64,
+//!                __sent@344 u32, __recvd@348 u32,
+//!                __phase@352 i32   (size 360)
 
 #![cfg_attr(feature = "nostd", no_std)]
 
@@ -871,6 +880,254 @@ pub unsafe extern "C" fn __tplc_rt_FB_Serial(this: *mut u8, ctx: *mut u8) -> i32
             }
         }
         _ => ser_fail(this, SERERR_PARAM),
+    }
+    0
+}
+
+/* ---------------- FB_Ads (tplc-ads service bridge) ---------------- */
+
+// TplcAdsService fn ptrs start @16, eight bytes apart.
+const ADS_OPEN: usize = 16;
+const ADS_READ: usize = 24;
+const ADS_WRITE: usize = 32;
+const ADS_READ_STATE: usize = 40;
+const ADS_WRITE_CTRL: usize = 48;
+const ADS_CLOSE: usize = 56;
+
+// member offsets — keep in lockstep with builtin_fb_layout "FB_Ads"
+const AD_OP: usize = 0;
+const AD_HOST_LEN: usize = 4;
+const AD_HOST: usize = 5;
+const AD_PORT: usize = 20;
+const AD_IDXGRP: usize = 24;
+const AD_IDXOFF: usize = 28;
+const AD_STATE: usize = 32;
+const AD_DEVSTATE: usize = 36;
+const AD_TIMEOUT: usize = 48;
+const AD_DATA_LEN: usize = 56;
+const AD_DATA: usize = 57;
+const AD_DLEN: usize = 316;
+const AD_HANDLE: usize = 320;
+const AD_RESULT: usize = 324;
+const AD_ERRID: usize = 328;
+const AD_EXEC: usize = 332;
+const AD_BUSY: usize = 333;
+const AD_DONE: usize = 334;
+const AD_LAST_EXEC: usize = 335;
+const AD_DEADLINE: usize = 336;
+const AD_SENT: usize = 344;
+
+const ADS_OP_OPEN: i32 = 1;
+const ADS_OP_READ: i32 = 2;
+const ADS_OP_WRITE: i32 = 3;
+const ADS_OP_READ_STATE: i32 = 4;
+const ADS_OP_WRITE_CTRL: i32 = 5;
+const ADS_OP_CLOSE: i32 = 6;
+
+// mirrored TplcAdsService result codes (positive form for ERRID)
+const ADSERR_PARAM: u32 = 1;
+const ADSERR_NOSERVICE: u32 = 2;
+const ADSERR_TIMEOUT: u32 = 5;
+
+type FAdsOpen = unsafe extern "C" fn(*const u8, *const u8, u16, *mut u32) -> i32;
+type FAdsRead =
+    unsafe extern "C" fn(*const u8, u32, u32, u32, u32, *mut u8, u32, *mut u32, *mut u32) -> i32;
+type FAdsWrite = unsafe extern "C" fn(*const u8, u32, u32, u32, *const u8, u32, *mut u32) -> i32;
+type FAdsReadState = unsafe extern "C" fn(*const u8, u32, *mut u32, *mut u32, *mut u32) -> i32;
+type FAdsWriteCtrl = unsafe extern "C" fn(*const u8, u32, u32, u32, *mut u32) -> i32;
+type FAdsClose = unsafe extern "C" fn(*const u8, u32) -> i32;
+
+unsafe fn ads_fail(this: *mut u8, errid: u32) {
+    wb(this.add(AD_BUSY), false);
+    wb(this.add(AD_DONE), true);
+    wu32(this.add(AD_ERRID), errid);
+    wi32(this.add(AD_RESULT), 0);
+}
+
+unsafe fn ads_done(this: *mut u8, result: i32) {
+    wb(this.add(AD_BUSY), false);
+    wb(this.add(AD_DONE), true);
+    wu32(this.add(AD_ERRID), 0);
+    wi32(this.add(AD_RESULT), result);
+}
+
+/// copy the len-prefixed HOST member into a NUL-terminated buffer
+unsafe fn ad_host_cstr(this: *const u8, out: *mut u8) {
+    let n = (*this.add(AD_HOST_LEN) as usize).min(15);
+    core::ptr::copy_nonoverlapping(this.add(AD_HOST), out, n);
+    *out.add(n) = 0;
+}
+
+/// resolve the tplc-ads service table through ctx->svc->get_service
+unsafe fn ads_service(ctx: *const u8) -> *const u8 {
+    let svcs = (ctx.add(CTX_SVC) as *const *const u8).read();
+    if svcs.is_null() {
+        return core::ptr::null();
+    }
+    let host = (svcs.add(SVC_HOST) as *const *mut u8).read();
+    let gs = core::mem::transmute::<usize, unsafe extern "C" fn(*mut u8, *const u8, u32) -> *mut u8>(
+        (svcs.add(SVC_GET_SERVICE) as *const usize).read(),
+    );
+    gs(host, c"tplc-ads".as_ptr() as *const u8, 8) as *const u8
+}
+
+/// load a TplcAdsService slot as a raw pointer-sized value
+#[inline]
+unsafe fn adsfn(ads: *const u8, off: usize) -> usize {
+    (ads.add(off) as *const usize).read()
+}
+
+/// `__tplc_rt_FB_Ads` — EXEC rising edge arms an op; while BUSY the
+/// op is polled each scan until DONE or the TIMEOUT deadline. RESULT
+/// carries the ADS-layer error code; ERRID carries service errors.
+/// # Safety
+/// `this` must point at a valid instance block of the documented
+/// layout; `ctx` at a live `TplcCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn __tplc_rt_FB_Ads(this: *mut u8, ctx: *mut u8) -> i32 {
+    let exec = rb(this.add(AD_EXEC));
+    let last = rb(this.add(AD_LAST_EXEC));
+    let now = now_ns(ctx);
+
+    if !rb(this.add(AD_BUSY)) {
+        if !(exec && !last) {
+            wb(this.add(AD_LAST_EXEC), exec);
+            return 0;
+        }
+        // rising edge: arm the op
+        wb(this.add(AD_DONE), false);
+        wu32(this.add(AD_ERRID), 0);
+        wi32(this.add(AD_RESULT), 0);
+        wu32(this.add(AD_SENT), 0);
+        wb(this.add(AD_BUSY), true);
+        let to = ri(this.add(AD_TIMEOUT));
+        wi(
+            this.add(AD_DEADLINE),
+            if to > 0 {
+                now.saturating_add(to)
+            } else {
+                i64::MAX
+            },
+        );
+    }
+    wb(this.add(AD_LAST_EXEC), exec);
+
+    let ads = ads_service(ctx);
+    if ads.is_null() {
+        ads_fail(this, ADSERR_NOSERVICE);
+        return 0;
+    }
+    if now > ri(this.add(AD_DEADLINE)) {
+        ads_fail(this, ADSERR_TIMEOUT);
+        return 0;
+    }
+
+    let op = ri32(this.add(AD_OP));
+    let mut hbuf = [0u8; 16];
+    match op {
+        ADS_OP_OPEN => {
+            ad_host_cstr(this, hbuf.as_mut_ptr());
+            let mut out: u32 = 0;
+            let f: FAdsOpen = core::mem::transmute(adsfn(ads, ADS_OPEN));
+            let rc = f(ads, hbuf.as_ptr(), ru32(this.add(AD_PORT)) as u16, &mut out);
+            if rc < 0 {
+                ads_fail(this, (-rc) as u32);
+            } else {
+                wu32(this.add(AD_HANDLE), out);
+                ads_done(this, 0);
+            }
+        }
+        ADS_OP_READ => {
+            let req_len = ru32(this.add(AD_DLEN)).min(256);
+            let mut rlen: u32 = 0;
+            let mut adserr: u32 = 0;
+            let f: FAdsRead = core::mem::transmute(adsfn(ads, ADS_READ));
+            let rc = f(
+                ads,
+                ru32(this.add(AD_HANDLE)),
+                ru32(this.add(AD_IDXGRP)),
+                ru32(this.add(AD_IDXOFF)),
+                req_len,
+                this.add(AD_DATA),
+                256,
+                &mut rlen,
+                &mut adserr,
+            );
+            match rc {
+                0 => {
+                    *this.add(AD_DATA_LEN) = rlen.min(256) as u8;
+                    wu32(this.add(AD_DLEN), rlen);
+                    ads_done(this, adserr as i32);
+                }
+                -6 => {}
+                e => ads_fail(this, (-e) as u32),
+            }
+        }
+        ADS_OP_WRITE => {
+            let dlen = ru32(this.add(AD_DLEN)) as usize;
+            let slen = (*this.add(AD_DATA_LEN) as usize).min(256);
+            let total = if dlen > 0 { dlen.min(256) } else { slen };
+            let mut adserr: u32 = 0;
+            let f: FAdsWrite = core::mem::transmute(adsfn(ads, ADS_WRITE));
+            let rc = f(
+                ads,
+                ru32(this.add(AD_HANDLE)),
+                ru32(this.add(AD_IDXGRP)),
+                ru32(this.add(AD_IDXOFF)),
+                this.add(AD_DATA),
+                total as u32,
+                &mut adserr,
+            );
+            match rc {
+                0 => ads_done(this, adserr as i32),
+                -6 => {}
+                e => ads_fail(this, (-e) as u32),
+            }
+        }
+        ADS_OP_READ_STATE => {
+            let mut ads_state: u32 = 0;
+            let mut dev_state: u32 = 0;
+            let mut adserr: u32 = 0;
+            let f: FAdsReadState = core::mem::transmute(adsfn(ads, ADS_READ_STATE));
+            let rc = f(
+                ads,
+                ru32(this.add(AD_HANDLE)),
+                &mut ads_state,
+                &mut dev_state,
+                &mut adserr,
+            );
+            match rc {
+                0 => {
+                    wi32(this.add(AD_STATE), ads_state as i32);
+                    wi32(this.add(AD_DEVSTATE), dev_state as i32);
+                    ads_done(this, adserr as i32);
+                }
+                -6 => {}
+                e => ads_fail(this, (-e) as u32),
+            }
+        }
+        ADS_OP_WRITE_CTRL => {
+            let mut adserr: u32 = 0;
+            let f: FAdsWriteCtrl = core::mem::transmute(adsfn(ads, ADS_WRITE_CTRL));
+            let rc = f(
+                ads,
+                ru32(this.add(AD_HANDLE)),
+                ru32(this.add(AD_STATE)),
+                ru32(this.add(AD_DEVSTATE)),
+                &mut adserr,
+            );
+            match rc {
+                0 => ads_done(this, adserr as i32),
+                -6 => {}
+                e => ads_fail(this, (-e) as u32),
+            }
+        }
+        ADS_OP_CLOSE => {
+            let f: FAdsClose = core::mem::transmute(adsfn(ads, ADS_CLOSE));
+            f(ads, ru32(this.add(AD_HANDLE)));
+            ads_done(this, 0);
+        }
+        _ => ads_fail(this, ADSERR_PARAM),
     }
     0
 }

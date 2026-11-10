@@ -6,6 +6,7 @@
 #define TPLC_HOST_SERVICES_HPP
 
 #include <tplc/tplc_abi.h>
+#include <tplc/host/AdsService.hpp>
 #include <tplc/host/NetService.hpp>
 #include <tplc/host/SerialService.hpp>
 
@@ -62,6 +63,7 @@ private:
     bool         sim_on_ = false;
     NetService   net_;
     SerialService serial_;
+    AdsService   ads_;
 };
 
 } /* namespace tplc */

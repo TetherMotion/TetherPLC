@@ -30,6 +30,9 @@ compat/tc2/           TwinCAT 2/3-era library sources
   tc2_serialcom.st    Tc2_SerialCom wrappers over the builtin
                       FB_Serial (tplc-serial service): FB_SerialOpen/
                       Send/Receive/Close/Flush/Rs485
+  tc2_system.st       Tc2_System ADS wrappers over the builtin
+                      FB_Ads (tplc-ads service): FB_AdsConnect/
+                      Read/Write/ReadState/WriteControl/Close
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -43,6 +46,14 @@ tests/compat/
   tc2_serial.sh       ctest tc2_serial: library + consumer + 37-step
                       sim replay expecting mask 0xff, python pty
                       echo peer
+  tc2_system_ads_case.st  autonomous ADS exchange program (8 packed
+                      checks: connect/read/write/read-state/
+                      write-control/close + refused-port error leg)
+  tc2_system_ads.sh   ctest tc2_system_ads: library + consumer +
+                      37-step sim replay expecting mask 0xff, python
+                      ADS/AMS-TCP peer (ads_test_server.py)
+  ads_test_server.py  minimal Beckhoff-wire ADS responder used by
+                      tc2_system_ads.sh
 ```
 
 ## Building and consuming
@@ -66,7 +77,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 |-------|-------|--------|
 | C0 | Library package format | done (`f912616`) |
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
-| C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e) |
+| C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 
 ### C1 coverage notes
 
@@ -148,6 +159,50 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     FBs and the 3964R/RK512 protocol FBs are not implemented.
   - Baud rates limited to the termios `speed_t` set; exotic rates
     (e.g. 230400+ on some drivers) may be rejected with `ERRID=1`.
+
+### C2 coverage notes (tplc-ads / Tc2_System)
+
+- **Architecture**: same shape as `tplc-net`/`tplc-serial` — builtin
+  `FB_Ads` (op-multiplexed, `OP/HOST/PORT/IDXGRP/IDXOFF/STATE/DEVSTATE/
+  AUX/TIMEOUT/DATA/DLEN/HANDLE/RESULT/ERRID/EXEC/BUSY/DONE`) bridges to
+  the host `tplc-ads` service through `TplcServices.get_service`.
+  `OP` selects open(1)/read(2)/write(3)/read-state(4)/write-control(5)/
+  close(6). The service speaks the Beckhoff AMS/TCP wire format
+  (6-byte TCP header, 32-byte AMS header, ADS payload) over a
+  nonblocking socket; connect completes lazily inside the first
+  request, and each request/response exchange is polled per scan
+  until `DONE` or the `TIMEOUT` deadline. One outstanding request per
+  connection; polling the same op continues, a different op gets
+  `ERRID=7` (state). `RESULT` carries the ADS-layer error code,
+  `ERRID` the transport/service code.
+- **Wrappers**: `compat/tc2/tc2_system.st` exposes
+  `FB_AdsConnect/Read/Write/ReadState/WriteControl/Close`. TwinCAT
+  connects implicitly per (NETID, PORT); this port needs the explicit
+  connect FB because the transport is TCP. `sNetId` maps to `sHost`
+  (IPv4 literal only — the first four NetID octets become the host
+  address and `.1.1` the target AMS port suffix). `POINTER TO BYTE`
+  payloads are `STRING[256]`; indication FBs (`ADSREADIND`,
+  `ADSWRITEIND`, `...RES`) and combined `ADSRDWRT` are not provided.
+- **Verified**: `tc2_system_ads` ctest runs a real AMS/TCP exchange —
+  connect, read (`'ABCDEFGH'`), write, read-state (RUN), write-control,
+  close, plus a refused-port connect+read asserting `ERRID=3` —
+  through `tether-plc` + `tether-plc-sim` against
+  `tests/compat/ads_test_server.py`, a python ADS responder speaking
+  the Beckhoff wire format. 8 packed checks.
+- **Honest gaps**:
+  - Client side only; no AMS router, no ADS server, no routing
+    between NetIDs. The source AMS NetID/port are fixed placeholders
+    (`127.0.0.1.1.1`/0); a real deployment needs a configured local
+    NetID.
+  - Target NetID is derived as `host + ".1.1"` (the common Beckhoff
+    device convention); arbitrary target NetIDs are not selectable.
+  - Commands implemented: Read, Write, Read State, Write Control.
+    Read-Write (0x09), Add/Delete Device Notification, and the
+    broadcast/system commands are not implemented.
+  - Write Control sends additional-data length 0; the
+    `ADSWriteControl` extended control-data path is not wired.
+  - `nAdsError` surfaces the ADS result code but TwinCAT's full
+    `ADS_ERROR` enumeration is not mapped.
 
 ## Known limitations
 

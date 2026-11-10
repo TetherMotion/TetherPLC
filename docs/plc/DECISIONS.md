@@ -786,3 +786,35 @@ in ST; (c) STRING[256] payload instead of POINTER TO BYTE;
 **Consequence:** POSIX termios only; MCU UART backend, hardware
 ComReset, 3964R/RK512 protocol FBs, and KL6xxx terminal FBs are
 documented gaps.
+
+## D-IMPL-41 — tplc-ads service + FB_Ads builtin (plan 21 C2)
+
+**Plan:** plan 21 §8 phase C2 continued: third runtime service, the
+ADS/AMS client, unblocking Tc2_System ADS FBs and remote `sSrvNetId`.
+**Implemented:** `include/tplc/tplc_ads.h` defines the
+`TplcAdsService` vtable (ABI v1) returned by
+`TplcServices.get_service("tplc-ads"): open, read, write, read-state,
+write-control, close — all nonblocking, one outstanding request per
+connection. Host side:
+`runtime/host/{include,src}/tplc/host/AdsService.{hpp,cpp}` speaks the
+Beckhoff AMS/TCP wire format (6-byte TCP header, 32-byte AMS header,
+ADS payload) over nonblocking sockets; connect completes lazily
+inside the first request, each exchange is polled per scan. PLC
+side: builtin `FB_Ads` (`builtin_fb_layout` + `__tplc_rt_FB_Ads`)
+mirrors the FB_Socket/FB_Serial state machine; `RESULT` carries the
+ADS-layer error, `ERRID` the transport code. `compat/tc2/
+tc2_system.st` wraps it as `FB_AdsConnect/Read/Write/ReadState/
+WriteControl/Close`; `tc2_system_ads` ctest replays a real AMS/TCP
+exchange against `tests/compat/ads_test_server.py` (python ADS
+responder) through tether-plc-sim.
+**Decisions:** (a) explicit connect FB — TwinCAT connects implicitly
+per (NETID, PORT) but the transport is TCP so a handle is needed;
+(b) lazy connect inside the first request keeps `ads_open`
+single-scan like the other services; (c) target NetID derived as
+`host + ".1.1"` (Beckhoff device convention) with a placeholder
+source NetID — real AMS routing needs a configured local NetID;
+(d) STRING[256] payload instead of POINTER TO BYTE.
+**Consequence:** client only; no AMS router/server, no
+Read-Write(0x09)/notification/broadcast commands, Write Control
+sends no extended control data. Indication FBs and ADSRDWRT are
+documented gaps.

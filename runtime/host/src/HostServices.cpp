@@ -74,6 +74,8 @@ void* HostServices::getService(const char* name, uint32_t len) {
         return const_cast<TplcNetService*>(&net_.table());
     if (len == 11 && memcmp(name, "tplc-serial", 11) == 0)
         return const_cast<TplcSerialService*>(&serial_.table());
+    if (len == 8 && memcmp(name, "tplc-ads", 8) == 0)
+        return const_cast<TplcAdsService*>(&ads_.table());
     return nullptr;
 }
 

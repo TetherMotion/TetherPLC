@@ -32,7 +32,13 @@ live attach over tether_io, and the safety/security envelope.
   `tplc-serial` service — a `TplcSerialService` vtable, nonblocking
   POSIX termios on the host, and a builtin `FB_Serial`; verified by
   a real pty-pair echo exchange plus bad-path error check
-  (ctest `tc2_serial`).
+  (ctest `tc2_serial`). Fourth tranche adds
+  `compat/tc2/tc2_system.st` (Tc2_System ADS function blocks) over
+  the `tplc-ads` service — a `TplcAdsService` vtable, an AMS/TCP
+  ADS client on the host speaking the Beckhoff wire format, and a
+  builtin `FB_Ads`; verified by a real ADS exchange (connect, read,
+  write, read-state, write-control, close, refused-port error) against
+  a python ADS responder (ctest `tc2_system_ads`).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.
