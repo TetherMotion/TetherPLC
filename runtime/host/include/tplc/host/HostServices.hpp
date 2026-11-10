@@ -7,6 +7,7 @@
 
 #include <tplc/tplc_abi.h>
 #include <tplc/host/NetService.hpp>
+#include <tplc/host/SerialService.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -60,6 +61,7 @@ private:
     uint64_t     sim_now_ = 0;
     bool         sim_on_ = false;
     NetService   net_;
+    SerialService serial_;
 };
 
 } /* namespace tplc */

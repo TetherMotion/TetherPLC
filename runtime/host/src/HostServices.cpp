@@ -72,6 +72,8 @@ int32_t HostServices::raiseEvent(uint32_t) {
 void* HostServices::getService(const char* name, uint32_t len) {
     if (len == 8 && memcmp(name, "tplc-net", 8) == 0)
         return const_cast<TplcNetService*>(&net_.table());
+    if (len == 11 && memcmp(name, "tplc-serial", 11) == 0)
+        return const_cast<TplcSerialService*>(&serial_.table());
     return nullptr;
 }
 

@@ -38,9 +38,11 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
   - `HostServices` — the `TplcServices` table: bounded log sink, diag
     counters, `steady_ns`, retain-dirty range tracking, unimplemented
     `raise_event`; `get_service` resolves named services — `tplc-net`
-    (see `include/tplc/tplc_net.h`, host impl `NetService`) is the
-    first, backed by nonblocking POSIX sockets and driven scan-side
-    by the builtin `FB_Socket`.
+    (see `include/tplc/tplc_net.h`, host impl `NetService`) and
+    `tplc-serial` (`include/tplc/tplc_serial.h`, host impl
+    `SerialService`) are live, backed by nonblocking POSIX sockets
+    and termios respectively, and driven scan-side by the builtins
+    `FB_Socket`/`FB_Serial`.
   - `Scheduler` — single-thread CYCLIC/FREEWHEELING dispatch, priority
     order within a tick, phase-stable `next_due` accumulation, per-task
     runs/late/faults stats.

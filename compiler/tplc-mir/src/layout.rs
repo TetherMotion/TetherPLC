@@ -173,6 +173,41 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "__recvd", udint());
             push(&mut off, "__phase", dint());
         }
+        /* FB_Serial — tplc-serial service bridge. Same op-multiplexed
+        shape as FB_Socket; DEV is the device path (STRING, no
+        pointers in ST), DATA the bounded payload. */
+        "FB_Serial" => {
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            push(&mut off, "OP", dint());
+            push(&mut off, "DEV", Type::Str { cap: 63 });
+            push(&mut off, "BAUD", udint());
+            push(&mut off, "PARITY", udint());
+            push(&mut off, "DBITS", udint());
+            push(&mut off, "SBITS", udint());
+            push(&mut off, "FLAGS", udint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "DATA", Type::Str { cap: 256 });
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "RESULT", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__deadline", Type::Time);
+            push(&mut off, "__sent", udint());
+            push(&mut off, "__recvd", udint());
+            push(&mut off, "__phase", dint());
+        }
         _ => return None,
     }
     let align = 8u64;

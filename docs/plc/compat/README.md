@@ -27,6 +27,9 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       (tplc-net service): FB_SocketConnect/Listen/
                       Accept/Send/Receive/Close + UdpCreate/
                       UdpSendTo/UdpReceiveFrom
+  tc2_serialcom.st    Tc2_SerialCom wrappers over the builtin
+                      FB_Serial (tplc-serial service): FB_SerialOpen/
+                      Send/Receive/Close/Flush/Rs485
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -35,6 +38,11 @@ tests/compat/
                       (7 packed checks)
   tc2_tcpip.sh        ctest tc2_tcpip: library + consumer + 37-step
                       sim replay expecting mask 0x7f
+  tc2_serial_case.st  pty loopback program (8 packed checks, device
+                      path substituted by the script)
+  tc2_serial.sh       ctest tc2_serial: library + consumer + 37-step
+                      sim replay expecting mask 0xff, python pty
+                      echo peer
 ```
 
 ## Building and consuming
@@ -58,7 +66,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 |-------|-------|--------|
 | C0 | Library package format | done (`f912616`) |
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
-| C2 | T1 services I | `tplc-net` done: `FB_Socket` builtin + host POSIX socket service + Tc2_TcpIp wrappers, loopback e2e |
+| C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e) |
 
 ### C1 coverage notes
 
@@ -109,6 +117,37 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     rebuilt but host fds persist until process exit (documented
     limitation, no handle re-validation yet).
   - `tTimeout <= 0` means no deadline; Beckhoff requires a timeout.
+
+### C2 coverage notes (tplc-serial / Tc2_SerialCom)
+
+- **Architecture**: same shape as `tplc-net` — builtin `FB_Serial`
+  (op-multiplexed, `OP/DEV/BAUD/PARITY/DBITS/SBITS/FLAGS/AUX/TIMEOUT/
+  DATA/DLEN/HANDLE/RESULT/ERRID/EXEC/BUSY/DONE`) bridges to the host
+  `tplc-serial` service through `TplcServices.get_service`. Service
+  ops are single nonblocking termios reads/writes; `serial_open`
+  configures the port once (baud, databits, parity, stopbits, raw
+  mode, optional RS485 flag) before returning.
+- **Wrappers**: `compat/tc2/tc2_serialcom.st` exposes
+  `FB_SerialOpen/Send/Receive/Close/Flush/Rs485`. TwinCAT's
+  `ComBuffer`/`SerialLineControl` model keeps per-port state in a
+  runtime-owned buffer object; this port uses explicit `UDINT`
+  handles returned by `FB_SerialOpen`. `POINTER TO BYTE` payloads
+  are `STRING[256]`; protocol FBs (3964R, RK512, KL6xxx) are not
+  provided.
+- **Verified**: `tc2_serial` ctest runs a real pty-pair loopback —
+  open, 4-byte send, receive (python echo peer), flush, rs485 flag,
+  close, plus a bad-path open asserting `ERRID=3` — through
+  `tether-plc` + `tether-plc-sim`, 8 packed checks.
+- **Honest gaps**:
+  - POSIX termios devices only (`/dev/ttyS*`, `/dev/ttyUSB*`,
+    `/dev/pts/*`); no microcontroller UART backend yet.
+  - RS485 is a best-effort `TIOCSRS485` ioctl at open plus a runtime
+    direction stub; board-specific DE GPIO is not wired.
+  - `ComReset` maps to `FB_SerialFlush` (tcflush), not a hardware
+    reset; `SerialLineControl`/`SerialLineControlADS` background
+    FBs and the 3964R/RK512 protocol FBs are not implemented.
+  - Baud rates limited to the termios `speed_t` set; exotic rates
+    (e.g. 230400+ on some drivers) may be rejected with `ERRID=1`.
 
 ## Known limitations
 

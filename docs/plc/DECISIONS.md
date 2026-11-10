@@ -759,3 +759,30 @@ output and cannot inherit a stale cap.
 **Consequence:** UDP ops and the vtable slots exist but only TCP is
 e2e-verified; multicast, sSrvNetId/AMS routing, FB_SocketCloseAll,
 and handle re-validation across program reload are documented gaps.
+
+## D-IMPL-40 — tplc-serial service + FB_Serial builtin (plan 21 C2)
+
+**Plan:** plan 21 §8 phase C2 continued: second runtime service,
+unblocking Tc2_SerialCom.
+**Implemented:** `include/tplc/tplc_serial.h` defines the
+`TplcSerialService` vtable (ABI v1) returned by
+`TplcServices.get_service("tplc-serial")`: open (termios configure:
+baud/databits/parity/stopbits/raw/RS485 flag), single nonblocking
+write/read, flush, RS485 direction stub, close — all bounded for
+the scan path. Host side: `runtime/host/{include,src}/
+tplc/host/SerialService.{hpp,cpp}` keeps a handle table over
+O_NONBLOCK termios fds. PLC side: builtin `FB_Serial`
+(`builtin_fb_layout` + `__tplc_rt_FB_Serial`) mirrors the
+FB_Socket state machine. `compat/tc2/tc2_serialcom.st` wraps it as
+`FB_SerialOpen/Send/Receive/Close/Flush/Rs485`; `tc2_serial` ctest
+replays a real pty-pair loopback (python echo peer) through
+tether-plc-sim.
+**Decisions:** (a) same op-multiplexed builtin shape as FB_Socket —
+consistency over per-op builtins; (b) explicit UDINT port handles
+instead of TwinCAT's ComBuffer/SerialLineControl runtime objects —
+the ComBuffer model is runtime-internal and cannot be replicated
+in ST; (c) STRING[256] payload instead of POINTER TO BYTE;
+(d) AUX carries op arguments (flush purge mask, rs485 enable).
+**Consequence:** POSIX termios only; MCU UART backend, hardware
+ComReset, 3964R/RK512 protocol FBs, and KL6xxx terminal FBs are
+documented gaps.
