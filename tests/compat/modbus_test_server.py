@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""modbus_test_server.py — minimal Modbus TCP server for the
-tc2_modbussrv e2e. Accepts one transaction at a time (the client
-connects per transaction), answers functions 1/3/5/6/8/15/16/23 with
-deterministic data, and returns exception 2 for reads at addr >= 99.
+"""modbus_test_server.py — minimal Modbus TCP/UDP server for the
+tc2_modbussrv e2e. Accepts one TCP transaction at a time (the
+client connects per transaction), answers functions
+1/2/3/4/5/6/8/15/16/23 with deterministic data, and returns
+exception 2 for reads at addr >= 99. UDP mode serves the same ADU
+per datagram on TCP_PORT+1.
 Usage: modbus_test_server.py PORT"""
 import socket
 import struct
@@ -33,6 +35,9 @@ def handle_pdu(pdu):
         if func in (3, 4):
             data = reg_pattern(addr, qty)
             return bytes([func, len(data)]) + data
+        if func == 2:
+            nbytes = (qty + 7) // 8
+            return bytes([func, nbytes]) + bytes([0x5A] * nbytes)
         nbytes = (qty + 7) // 8
         return bytes([func, nbytes]) + bytes([0xA5] * nbytes)
     if func in (5, 6):
@@ -79,8 +84,27 @@ def serve(conn):
         conn.close()
 
 
+def serve_udp(port):
+    us = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    us.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    us.bind(("127.0.0.1", port))
+    while True:
+        adu, peer = us.recvfrom(2048)
+        if len(adu) < 8:
+            continue
+        mlen = be16(adu, 4)
+        body = adu[7:6 + mlen]
+        tid, proto, unit = adu[:2], adu[2:4], adu[6]
+        resp_pdu = handle_pdu(body)
+        rsp = tid + proto + struct.pack(">H", len(resp_pdu) + 1) \
+            + bytes([unit]) + resp_pdu
+        us.sendto(rsp, peer)
+
+
 def main():
     port = int(sys.argv[1])
+    threading.Thread(target=serve_udp, args=(port + 1,),
+                     daemon=True).start()
     ls = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     ls.bind(("127.0.0.1", port))

@@ -317,6 +317,9 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "BUSY", Type::Bool);
             push(&mut off, "DONE", Type::Bool);
             push(&mut off, "__last_exec", Type::Bool);
+            /* UDP selects the datagram transport (mb_begin_udp);
+            appended last so earlier member offsets stay fixed */
+            push(&mut off, "UDP", Type::Bool);
         }
         _ => return None,
     }

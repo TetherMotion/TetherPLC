@@ -14,7 +14,7 @@
 extern "C" {
 #endif
 
-#define TPLC_MODBUS_ABI_VERSION 1u
+#define TPLC_MODBUS_ABI_VERSION 2u
 #define TPLC_MODBUS_SVC_NAME "tplc-modbus"
 #define TPLC_MODBUS_HANDLE_INVALID 0u
 #define TPLC_MODBUS_MAX_PDU 253u /* max PDU bytes after the func code */
@@ -70,6 +70,12 @@ typedef struct TplcModbusService {
                        TplcModbusResp* resp);
     /* cancel a pending transaction and free the handle. */
     int32_t (*mb_abort)(void* svc, TplcModbusHandle h);
+    /* ABI v2: same request/response contract over UDP — the full
+       ADU goes in one datagram, the response is one datagram from
+       the request's peer. Handles share the mb_poll/mb_abort
+       namespace with TCP transactions. */
+    int32_t (*mb_begin_udp)(void* svc, const TplcModbusReq* req,
+                            TplcModbusHandle* out);
 } TplcModbusService;
 
 #ifdef __cplusplus

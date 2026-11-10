@@ -43,7 +43,8 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     `SerialService`), `tplc-ads` (`include/tplc/tplc_ads.h`, host
     impl `AdsService`), `tplc-rtmon` (`include/tplc/tplc_rtmon.h`,
     host impl `RtmonService`), and `tplc-modbus`
-    (`include/tplc/tplc_modbus.h`, host impl `ModbusService`) are
+    (`include/tplc/tplc_modbus.h`, host impl `ModbusService`, ABI
+    v2 adds `mb_begin_udp`) are
     live, backed by nonblocking POSIX sockets, termios, an AMS/TCP
     ADS client, a timestamped mark ring, and a Modbus TCP client
     respectively, and driven scan-side by the builtins

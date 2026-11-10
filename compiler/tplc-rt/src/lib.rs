@@ -48,7 +48,7 @@
 //!                RLEN@292 u32, DLEN@296 u32, HANDLE@300 u32,
 //!                RESULT@304 i32, EXC@308 u32, ERRID@312 u32,
 //!                EXEC@316 u8, BUSY@317 u8, DONE@318 u8,
-//!                __last_exec@319 u8                  (size 320)
+//!                __last_exec@319 u8, UDP@320 u8    (size 328)
 
 #![cfg_attr(feature = "nostd", no_std)]
 
@@ -1302,6 +1302,7 @@ pub unsafe extern "C" fn __tplc_rt_FB_RtMon(this: *mut u8, ctx: *mut u8) -> i32 
 // TplcModbusService fn ptrs start @16, eight bytes apart.
 const MB_SVC_BEGIN: usize = 16;
 const MB_SVC_POLL: usize = 24;
+const MB_SVC_BEGIN_UDP: usize = 40;
 
 // member offsets — keep in lockstep with builtin_fb_layout "FB_Modbus"
 const MB_HOST_LEN: usize = 0;
@@ -1321,6 +1322,7 @@ const MB_EXEC: usize = 316;
 const MB_BUSY: usize = 317;
 const MB_DONE: usize = 318;
 const MB_LAST_EXEC: usize = 319;
+const MB_UDP: usize = 320;
 
 // mirrored TplcModbusService result codes, shifted so ERRID 2 stays
 // "no service" like the other service bridges
@@ -1431,7 +1433,14 @@ pub unsafe extern "C" fn __tplc_rt_FB_Modbus(this: *mut u8, ctx: *mut u8) -> i32
         let datap = this.add(MB_DATA) as usize as u64;
         req[24..32].copy_from_slice(&datap.to_le_bytes());
         let mut h: u32 = 0;
-        let f: FMbBegin = core::mem::transmute(mbfn(svc, MB_SVC_BEGIN));
+        /* UDP flag selects mb_begin_udp (vtable slot 40); both share
+        mb_poll/mb_abort and the handle namespace */
+        let foff = if rb(this.add(MB_UDP)) {
+            MB_SVC_BEGIN_UDP
+        } else {
+            MB_SVC_BEGIN
+        };
+        let f: FMbBegin = core::mem::transmute(mbfn(svc, foff));
         let rc = f(svc, req.as_ptr(), &mut h);
         if rc != 0 {
             mb_fail(this, mb_errid(rc));

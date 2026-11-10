@@ -50,9 +50,12 @@ live attach over tether_io, and the safety/security envelope.
   nonblocking Modbus TCP client on the host (MBAP/PDU, big-endian
   wire fields, connect-per-transaction, exception responses), and a
   builtin `FB_Modbus` with a 256-byte `DATA` array; verified by a
-  real six-transaction exchange (read/write regs and coils,
-  exception response, read/write) against a python Modbus TCP peer
-  (ctest `tc2_modbussrv`). The tranche also fixed two latent bugs:
+  real six-transaction TCP exchange plus a five-transaction UDP
+  datagram exchange (read/write regs and coils, exception
+  response, read/write) against a python Modbus TCP/UDP peer
+  (ctest `tc2_modbussrv`). Service ABI v2 adds `mb_begin_udp`;
+  `FB_Modbus.UDP` selects the transport. The tranche also fixed
+  two latent bugs:
   FB-call argument binding stored literal-width values into
   narrower members (clobbering adjacent inputs), and the ELF
   sandbox x86 length decoder desynced on `0F 8x` jumps and

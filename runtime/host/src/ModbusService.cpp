@@ -43,6 +43,10 @@ ModbusService::ModbusService(ClockFn clock, void* clock_ctx)
     svc_.mb_abort     = [](void* s, TplcModbusHandle h) {
         return self(s)->mbAbort(s, h);
     };
+    svc_.mb_begin_udp = [](void* s, const TplcModbusReq* r,
+                           TplcModbusHandle* o) {
+        return self(s)->mbBeginUdp(s, r, o);
+    };
 }
 
 void ModbusService::put16be(std::vector<uint8_t>& v, uint16_t x) {
@@ -93,16 +97,41 @@ void ModbusService::drop(TplcModbusHandle h) {
     }
 }
 
-int32_t ModbusService::mbBegin(void* s, const TplcModbusReq* req,
-                               TplcModbusHandle* out) {
-    (void)s;
-    if (!req || !out || !req->host[0] || req->port == 0 ||
-        req->func == 0 || req->func > 0x7f ||
-        req->req_len > TPLC_MODBUS_MAX_PDU ||
+int32_t ModbusService::checkReq(const TplcModbusReq* req) {
+    if (!req || !req->host[0] || req->port == 0 || req->func == 0 ||
+        req->func > 0x7f || req->req_len > TPLC_MODBUS_MAX_PDU ||
         (req->req_len && !req->req))
         return TPLC_MB_E_PARAM;
     struct in_addr a4{};
     if (inet_pton(AF_INET, req->host, &a4) != 1) return TPLC_MB_E_PARAM;
+    return TPLC_MB_OK;
+}
+
+/* MBAP + func + request data; tid/proto/unit/func/len filled here */
+void ModbusService::buildAdu(Txn& t, const TplcModbusReq* req) {
+    t.unit = req->unit_id;
+    t.func = req->func;
+    t.tx.reserve(MBAP_LEN + 1 + req->req_len);
+    uint16_t tid = next_tid_++;
+    if (tid == 0) tid = next_tid_++;
+    t.tid = tid;
+    put16be(t.tx, tid);
+    put16be(t.tx, MB_PROTO);
+    put16be(t.tx, (uint16_t)(1 + req->req_len + 1)); /* unit+pdu len */
+    t.tx.push_back(req->unit_id);
+    t.tx.push_back(req->func);
+    if (req->req_len)
+        t.tx.insert(t.tx.end(), req->req, req->req + req->req_len);
+}
+
+int32_t ModbusService::mbBegin(void* s, const TplcModbusReq* req,
+                               TplcModbusHandle* out) {
+    (void)s;
+    if (!out) return TPLC_MB_E_PARAM;
+    int32_t v = checkReq(req);
+    if (v != TPLC_MB_OK) return v;
+    struct in_addr a4{};
+    inet_pton(AF_INET, req->host, &a4);
 
     int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (fd < 0) return TPLC_MB_E_IO;
@@ -121,24 +150,42 @@ int32_t ModbusService::mbBegin(void* s, const TplcModbusReq* req,
 
     Txn t;
     t.fd = fd;
-    t.unit = req->unit_id;
-    t.func = req->func;
     if (req->timeout_ms) {
         t.has_deadline = true;
         t.deadline = nowNs() + (uint64_t)req->timeout_ms * 1000000ull;
     }
-    /* MBAP + func + request data */
-    t.tx.reserve(MBAP_LEN + 1 + req->req_len);
-    uint16_t tid = next_tid_++;
-    if (tid == 0) tid = next_tid_++;
-    t.tid = tid;
-    put16be(t.tx, tid);
-    put16be(t.tx, MB_PROTO);
-    put16be(t.tx, (uint16_t)(1 + req->req_len + 1)); /* unit+pdu len */
-    t.tx.push_back(req->unit_id);
-    t.tx.push_back(req->func);
-    if (req->req_len)
-        t.tx.insert(t.tx.end(), req->req, req->req + req->req_len);
+    buildAdu(t, req);
+
+    TplcModbusHandle h = next_handle_++;
+    if (h == TPLC_MODBUS_HANDLE_INVALID) h = next_handle_++;
+    txns_[h] = std::move(t);
+    *out = h;
+    return TPLC_MB_OK;
+}
+
+int32_t ModbusService::mbBeginUdp(void* s, const TplcModbusReq* req,
+                                  TplcModbusHandle* out) {
+    (void)s;
+    if (!out) return TPLC_MB_E_PARAM;
+    int32_t v = checkReq(req);
+    if (v != TPLC_MB_OK) return v;
+    struct in_addr a4{};
+    inet_pton(AF_INET, req->host, &a4);
+
+    int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    if (fd < 0) return TPLC_MB_E_IO;
+
+    Txn t;
+    t.fd = fd;
+    t.udp = true;
+    t.peer.sin_family = AF_INET;
+    t.peer.sin_port = htons(req->port);
+    t.peer.sin_addr = a4;
+    if (req->timeout_ms) {
+        t.has_deadline = true;
+        t.deadline = nowNs() + (uint64_t)req->timeout_ms * 1000000ull;
+    }
+    buildAdu(t, req);
 
     TplcModbusHandle h = next_handle_++;
     if (h == TPLC_MODBUS_HANDLE_INVALID) h = next_handle_++;
@@ -228,6 +275,44 @@ int32_t ModbusService::finish(Txn& t, TplcModbusResp* resp) {
     return TPLC_MB_OK;
 }
 
+/* UDP transaction: one request datagram, then response datagrams
+   until one arrives from the request peer. The whole datagram is
+   the ADU; finish() validates MBAP/PDU fields as for TCP. */
+int32_t ModbusService::udpDrive(Txn& t) {
+    if (!t.sent) {
+        ssize_t n = ::sendto(t.fd, t.tx.data(), t.tx.size(), MSG_NOSIGNAL,
+                             (struct sockaddr*)&t.peer, sizeof(t.peer));
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return TPLC_MB_BUSY;
+            return mapErr(errno);
+        }
+        t.sent = 1;
+    }
+    for (;;) {
+        uint8_t buf[512];
+        struct sockaddr_in from{};
+        socklen_t fl = sizeof(from);
+        ssize_t n = ::recvfrom(t.fd, buf, sizeof(buf), MSG_DONTWAIT,
+                               (struct sockaddr*)&from, &fl);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return TPLC_MB_BUSY;
+            return mapErr(errno);
+        }
+        if (from.sin_addr.s_addr != t.peer.sin_addr.s_addr ||
+            from.sin_port != t.peer.sin_port)
+            continue;                       /* stray datagram */
+        t.rx.assign(buf, buf + n);
+        if (t.rx.size() < MBAP_LEN) return TPLC_MB_E_PROTO;
+        /* the datagram must cover the MBAP-declared ADU length;
+           trailing bytes beyond it are ignored */
+        uint16_t mlen = get16be(t.rx.data() + 4);
+        size_t need = MBAP_LEN + (size_t)mlen - 1;
+        if (mlen < 2 || t.rx.size() < need) return TPLC_MB_E_PROTO;
+        t.rx.resize(need);
+        return TPLC_MB_OK;
+    }
+}
+
 int32_t ModbusService::mbPoll(void* s, TplcModbusHandle h,
                               TplcModbusResp* resp) {
     (void)s;
@@ -241,7 +326,7 @@ int32_t ModbusService::mbPoll(void* s, TplcModbusHandle h,
     /* drive() returns BUSY on EAGAIN at any stage, OK only once the
        full response ADU is buffered, negative on transport/proto
        errors. */
-    int32_t rc = drive(*t);
+    int32_t rc = t->udp ? udpDrive(*t) : drive(*t);
     if (rc == TPLC_MB_BUSY) return TPLC_MB_BUSY;
     int32_t frc = TPLC_MB_E_PROTO;
     if (rc == TPLC_MB_OK) frc = finish(*t, resp);

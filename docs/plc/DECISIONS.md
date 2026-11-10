@@ -886,12 +886,21 @@ carry lengths explicitly; (b) the service copies the request at
 `exc`=code), not transport errors — wrappers surface them as
 `nErrId = 16#8000 + exc`; (d) connect-per-transaction matches the
 TwinCAT FB model and keeps handles stateless across scans.
-**Consequence:** IPv4 literals only (no DNS/IPv6); `FB_MBUdp*`
-variants and `Tc2_ModbusRTU` remain; no slave/listen mode.
-Two latent compiler/runtime bugs were fixed on the way: the
+**Consequence:** IPv4 literals only (no DNS/IPv6); no slave/listen
+mode. Two latent compiler/runtime bugs were fixed on the way: the
 `fb_call` arg binder stored literal-width values into narrower
 FB members (clobbering adjacent inputs such as `bExecute`), now
 coerced to the member type; the ELF sandbox x86 length decoder
 desynced on `0F 8x` jcc-rel32 and on `0x66`-prefixed imm32
 instructions, fixed so generated code stops false-positiving as
 kernel-gate opcodes.
+
+**UDP follow-up (same change set):** service ABI bumped to v2 with
+`mb_begin_udp` appended to the vtable; `FB_Modbus.UDP` (appended
+last in the layout so earlier offsets stay fixed) selects the
+transport per transaction. UDP carries the same MBAP+PDU ADU in
+one datagram; the response is the first datagram from the request
+peer covering the MBAP-declared length. All ten `FB_MBUdp*`
+wrappers share the TCP wrapper bodies plus `mb.UDP := TRUE`,
+completing Tc2_ModbusSrv at 20/20 catalog entries; `tc2_modbussrv`
+ctest covers both transports (TCP `0x3f`, UDP `0x1f`).

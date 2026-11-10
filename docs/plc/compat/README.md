@@ -38,7 +38,8 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       TCP client FBs FB_MBReadCoils/ReadInputs/
                       ReadRegs/ReadInputRegs/WriteSingleCoil/
                       WriteSingleReg/WriteCoils/WriteRegs/
-                      ReadWriteRegs + FB_MBDiagnose
+                      ReadWriteRegs + FB_MBDiagnose, plus the ten
+                      FB_MBUdp* UDP variants
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -75,10 +76,14 @@ tests/compat/
                       (6 packed checks: read regs, write single
                       reg, write regs, read coils, exception read,
                       read/write regs)
-  tc2_modbussrv.sh    ctest tc2_modbussrv: library + consumer +
-                      38-step sim replay expecting mask 0x3f,
-                      python Modbus TCP peer (modbus_test_server.py)
-  modbus_test_server.py  minimal Modbus TCP responder used by
+  tc2_modbussrv_udp_case.st  autonomous Modbus UDP sequence
+                      program (5 packed checks on the datagram
+                      transport)
+  tc2_modbussrv.sh    ctest tc2_modbussrv: library + both consumers
+                      + TCP (mask 0x3f) and UDP (mask 0x1f) sim
+                      replays, python Modbus TCP/UDP peer
+                      (modbus_test_server.py)
+  modbus_test_server.py  minimal Modbus TCP/UDP responder used by
                       tc2_modbussrv.sh
 ```
 
@@ -105,7 +110,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done for TCP (FB_Modbus + Tc2_ModbusSrv TCP FBs, wire-protocol e2e); `FB_MBUdp*` UDP variants and Tc2_ModbusRTU remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done — Tc2_ModbusSrv complete (20/20: TCP + UDP FBs, wire-protocol e2e); Tc2_ModbusRTU and sACN/BACnet/PJLink/S7/FTP/SMS/IEC 60870 remain |
 
 ### C1 coverage notes
 
@@ -318,32 +323,39 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   unit id, and function code are validated; exception responses
   (func|0x80) surface via `status`/`exc`. Its clock is injected by
   `HostServices` as `steadyNs`.
-- **Wrappers**: `compat/tc2/tc2_modbussrv.st` exposes the ten TCP
-  client FBs (`FB_MBReadCoils` func 1, `FB_MBReadInputs` 2,
-  `FB_MBReadRegs` 3, `FB_MBReadInputRegs` 4, `FB_MBWriteSingleCoil` 5,
-  `FB_MBWriteSingleReg` 6, `FB_MBWriteCoils` 15, `FB_MBWriteRegs` 16,
-  `FB_MBReadWriteRegs` 23, `FB_MBDiagnose` 8) with the documented
+- **Wrappers**: `compat/tc2/tc2_modbussrv.st` exposes all twenty
+  catalog FBs — the ten TCP client FBs (`FB_MBReadCoils` func 1,
+  `FB_MBReadInputs` 2, `FB_MBReadRegs` 3, `FB_MBReadInputRegs` 4,
+  `FB_MBWriteSingleCoil` 5, `FB_MBWriteSingleReg` 6,
+  `FB_MBWriteCoils` 15, `FB_MBWriteRegs` 16, `FB_MBReadWriteRegs`
+  23, `FB_MBDiagnose` 8) and the ten `FB_MBUdp*` UDP variants with
+  identical signatures — with the documented
   `bExecute`/`bBusy`/`bDone`/`bError`/`nErrId` outputs. Modbus
   exception responses map to `nErrId = 16#8000 + exception code`.
   Coil/register payloads are raw big-endian bytes; bit packing for
   coil arrays stays the caller's job, as in TwinCAT.
+- **UDP transport**: service ABI v2 appends `mb_begin_udp`; the
+  request ADU goes in one datagram, the response is the first
+  datagram from the request peer whose MBAP length is covered.
+  `FB_Modbus.UDP` selects the transport per transaction; handles
+  share the `mb_poll`/`mb_abort` namespace.
 - **Verified**: `tc2_modbussrv` ctest replays a six-transaction
-  sequence (read regs, write single reg, write regs, read coils,
-  exception read at addr>=99, read/write regs) through
-  `tether-plc` + `tether-plc-sim` against
-  `tests/compat/modbus_test_server.py`, a python Modbus TCP
-  responder. 6 packed checks (`0x3f`).
+  TCP sequence (read regs, write single reg, write regs, read
+  coils, exception read at addr>=99, read/write regs) plus a
+  five-transaction UDP sequence through `tether-plc` +
+  `tether-plc-sim` against `tests/compat/modbus_test_server.py`,
+  a python Modbus TCP/UDP responder. 6 + 5 packed checks
+  (`0x3f` / `0x1f`).
 - **Honest gaps**:
-  - `FB_MBUdp*` UDP variants (10 more catalog entries) are not
-    implemented; Modbus UDP uses a different MBAP encapsulation and
-    would need a UDP transport path in the service.
   - IPv4 dotted-quad only; no DNS, no IPv6.
   - `Tc2_ModbusRTU` (serial RTU framing, CRC16, T3.5 gap timing) is
     not implemented; `tplc-serial` provides the byte transport but
     the RTU codec does not exist yet.
   - `POINTER TO BYTE` payloads are bounded `ARRAY[0..255] OF BYTE`
     buffers; `cbLength`-style capacity args are advisory.
-  - Slave/server mode (listening Modbus TCP) is not provided.
+  - Slave/server mode (listening Modbus TCP/UDP) is not provided.
+  - UDP encapsulation assumes the same MBAP+PDU ADU per datagram;
+    the TwinCAT manual does not specify a different framing.
 
 ## Known limitations
 

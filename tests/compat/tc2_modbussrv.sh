@@ -15,7 +15,7 @@ cd "$(dirname "$0")/../.."
 TPLCC=${TPLCC:-./compiler/target/debug/tplcc}
 BUILD=${BUILD:-./build}
 WORK=$(mktemp -d)
-trap 'kill $SRV_PID 2>/dev/null; rm -rf "$WORK"; "'$BUILD'"/tplc-image unlink /tplc_tc2mb_$$ 2>/dev/null' EXIT
+trap 'kill $SRV_PID 2>/dev/null; rm -rf "$WORK"; "'$BUILD'"/tplc-image unlink /tplc_tc2mb_$$ 2>/dev/null; "'$BUILD'"/tplc-image unlink /tplc_tc2mbudp_$$ 2>/dev/null' EXIT
 
 [ -x "$TPLCC" ] || { echo "SKIP: no tplcc"; exit 77; }
 [ -x "$BUILD/tether-plc" ] && [ -x "$BUILD/tether-plc-sim" ] \
@@ -41,6 +41,13 @@ kill -0 $SRV_PID 2>/dev/null || { bad "modbus test server"; \
     -o "$WORK/tc2_modbussrv_case.tplc" >/dev/null 2>&1 \
     && ok "consumer build with --lib" \
     || { bad "consumer build with --lib"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+
+"$TPLCC" build tests/compat/tc2_modbussrv_udp_case.st \
+    --lib "$WORK/tc2_modbussrv.tplc" \
+    -o "$WORK/tc2_modbussrv_udp_case.tplc" >/dev/null 2>&1 \
+    && ok "UDP consumer build with --lib" \
+    || { bad "UDP consumer build with --lib"; \
          echo "== $pass pass, $fail fail"; exit 1; }
 
 cat > "$WORK/mb.steps" <<'EOF'
@@ -94,6 +101,22 @@ if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log"; then
 else
     bad "sim replay"
     tail -8 "$WORK/sim.log"
+fi
+
+# UDP replay: same step cadence, 5 datagram transactions on port
+# 15089, expecting mask 0x1f
+sed 's/expect 0=3f000000/expect 0=1f000000/' "$WORK/mb.steps" \
+    > "$WORK/mb_udp.steps"
+IMG=/tplc_tc2mbudp_$$; CTL="$WORK/mbu.ctl"
+"$BUILD/tether-plc-sim" --image "$IMG" --package "$WORK/tc2_modbussrv_udp_case.tplc" \
+    --steps "$WORK/mb_udp.steps" --plc "$BUILD/tether-plc" \
+    --ctl "$CTL" --scan --settle-ms 800 >"$WORK/simu.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/simu.log"; then
+    ok "sim replay: modbus UDP read/write/exception/read-write"
+else
+    bad "sim replay UDP"
+    tail -8 "$WORK/simu.log"
 fi
 
 echo "== $pass pass, $fail fail"

@@ -224,44 +224,43 @@ tracked as-built in `docs/plc/compat/README.md`.
 | 70 | Connectivity | `Tc2_FTP+Tc3_FTP` | `TF6300_TC3_FTP_Client_EN` | 41 | T2 |
 | 71 | Connectivity | `Tc2_IEC60870_5_10x` | `TF6500_TC3_IEC60870-5-10x_EN` | 93 | T2 |
 | 72 | Connectivity | `Tc2_ModbusRTU` | `TF6255_TC3_Modbus_RTU_EN` | 11 | T2 |
-| 73 | Connectivity | `Tc2_ModbusSrv` | `TF6250_TC3_Modbus_TCP_EN` | 20 | T2 |
-| 74 | Connectivity | `Tc2_OpcUa+Tc3_PLCopen_OpcUa` | `TF6100_TC3_OPC_UA_Server_EN` | 8 | T2 |
-| 75 | Connectivity | `Tc2_RFID` | `TF6600_TC3_RFID_Reader_Communication_EN` | 1 | T2 |
-| 76 | Connectivity | `Tc2_S5S7Com` | `TF6610_TC3_S5S7_Communication_EN` | 5 | T2 |
-| 77 | Connectivity | `Tc2_SMS+Tc2_SMTP` | `TF6350_TC3_SMS_SMTP_EN` | 7 | T2 |
-| 78 | Connectivity | `Tc2_SerialCom` | `TF6340_TC3_Serial_Communication_EN` | 20 | T2 |
-| 79 | Connectivity | `Tc2_TcpIp` | `TF6310_TC3_TCP_IP_EN` | 34 | T2 |
-| 80 | Connectivity | `Tc2_XmlDataSrv` | `TF6421_TC3_XML_Server_EN` | 8 | T2 |
-| 81 | Connectivity | `Tc3_Acsi+iec61850 family` | `TF6510_TC3_IEC61850_EN` | 485 | T2 |
-| 82 | Connectivity | `Tc3_EtherCATExtSync` | `TF6225_TC3_EtherCAT_External_Sync_EN` | 2 | T2 |
-| 83 | Connectivity | `Tc3_IotBase` | `TF6701_TC3_IoT_Communication_MQTT_EN` | 372 | T2 |
-| 84 | Connectivity | `Tc3_OCPP` | `TF6771_TC3_IoT_OCPP_EN` | 175 | T2 |
-| 85 | Connectivity | `Tc3_PLCopen_OpcUa-client` | `TF6100_TC3_OPC_UA_Client_EN` | 18 | T2 |
-| 86 | Connectivity | `Tc3_S7Comm` | `TF6620_TC3_S7_Communication_EN` | 24 | T2 |
-| 87 | Connectivity | `Tc3_iotFunctions` | `TF6710_TC3_IoT_Functions_EN` | 11 | T2 |
-| 88 | Vision | `Tc3_vision` | `TF7000-TF7810_TC3_Vision_EN` | 2501 | T4 |
-| 89 | Building | `Tc2_BABasic` | `TF8010_TC3_BABasic_EN` | 35 | T2 |
-| 90 | Building | `Tc2_DALI` | `TwinCAT_3_PLC_Lib_Tc2_DALI_EN` | 290 | T2 |
-| 91 | Building | `Tc2_DMX` | `TwinCAT_3_PLC_Lib_Tc2_DMX_EN` | 33 | T2 |
-| 92 | Building | `Tc2_EIB` | `TwinCAT_3_PLC_Lib_Tc2_EIB_EN` | 48 | T2 |
-| 93 | Building | `Tc2_EnOcean` | `TwinCAT_3_PLC_Lib_Tc2_EnOcean_EN` | 17 | T2 |
-| 94 | Building | `Tc2_GENIbus` | `TwinCAT_3_PLC_Lib_Tc2_GENIbus_EN` | 6 | T2 |
-| 95 | Building | `Tc2_HVAC` | `TF8000_TC3_HVAC_EN` | 120 | T0 |
-| 96 | Building | `Tc2_LON` | `TwinCAT_3_PLC_Lib_Tc2_LON_EN` | 371 | T2 |
-| 97 | Building | `Tc2_MBus` | `TwinCAT_3_PLC_Lib_Tc2_MBus_EN` | 65 | T2 |
-| 98 | Building | `Tc2_MPBus` | `TwinCAT_3_PLC_Lib_Tc2_MPBus_EN` | 44 | T2 |
-| 99 | Building | `Tc2_SMI` | `TwinCAT_3_PLC_Lib_Tc2_SMI_EN` | 25 | T2 |
-| 100 | Building | `Tc3_BA2_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA2_Common_EN` | 66 | T0 |
-| 101 | Building | `Tc3_BACnetRev14` | `TF8020_TC3_BACnet_EN` | 3 | T2 |
-| 102 | Building | `Tc3_BA_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA_Common_EN` | 21 | T0 |
-| 103 | Building | `Tc3_DALI` | `TwinCAT_3_PLC_Lib_Tc3_DALI_EN` | 405 | T2 |
-| 104 | Building | `Tc3_LS` | `TF8050_LS_EN` | 1 | T2 |
-| 105 | Building | `Tc3_XBA+BA2+BA+BA2_Common` | `TF8040_TC3_Building_Automation_EN` | 407 | T0 |
+| 73 | Connectivity | `Tc2_OpcUa+Tc3_PLCopen_OpcUa` | `TF6100_TC3_OPC_UA_Server_EN` | 8 | T2 |
+| 74 | Connectivity | `Tc2_RFID` | `TF6600_TC3_RFID_Reader_Communication_EN` | 1 | T2 |
+| 75 | Connectivity | `Tc2_S5S7Com` | `TF6610_TC3_S5S7_Communication_EN` | 5 | T2 |
+| 76 | Connectivity | `Tc2_SMS+Tc2_SMTP` | `TF6350_TC3_SMS_SMTP_EN` | 7 | T2 |
+| 77 | Connectivity | `Tc2_SerialCom` | `TF6340_TC3_Serial_Communication_EN` | 20 | T2 |
+| 78 | Connectivity | `Tc2_TcpIp` | `TF6310_TC3_TCP_IP_EN` | 34 | T2 |
+| 79 | Connectivity | `Tc2_XmlDataSrv` | `TF6421_TC3_XML_Server_EN` | 8 | T2 |
+| 80 | Connectivity | `Tc3_Acsi+iec61850 family` | `TF6510_TC3_IEC61850_EN` | 485 | T2 |
+| 81 | Connectivity | `Tc3_EtherCATExtSync` | `TF6225_TC3_EtherCAT_External_Sync_EN` | 2 | T2 |
+| 82 | Connectivity | `Tc3_IotBase` | `TF6701_TC3_IoT_Communication_MQTT_EN` | 372 | T2 |
+| 83 | Connectivity | `Tc3_OCPP` | `TF6771_TC3_IoT_OCPP_EN` | 175 | T2 |
+| 84 | Connectivity | `Tc3_PLCopen_OpcUa-client` | `TF6100_TC3_OPC_UA_Client_EN` | 18 | T2 |
+| 85 | Connectivity | `Tc3_S7Comm` | `TF6620_TC3_S7_Communication_EN` | 24 | T2 |
+| 86 | Connectivity | `Tc3_iotFunctions` | `TF6710_TC3_IoT_Functions_EN` | 11 | T2 |
+| 87 | Vision | `Tc3_vision` | `TF7000-TF7810_TC3_Vision_EN` | 2501 | T4 |
+| 88 | Building | `Tc2_BABasic` | `TF8010_TC3_BABasic_EN` | 35 | T2 |
+| 89 | Building | `Tc2_DALI` | `TwinCAT_3_PLC_Lib_Tc2_DALI_EN` | 290 | T2 |
+| 90 | Building | `Tc2_DMX` | `TwinCAT_3_PLC_Lib_Tc2_DMX_EN` | 33 | T2 |
+| 91 | Building | `Tc2_EIB` | `TwinCAT_3_PLC_Lib_Tc2_EIB_EN` | 48 | T2 |
+| 92 | Building | `Tc2_EnOcean` | `TwinCAT_3_PLC_Lib_Tc2_EnOcean_EN` | 17 | T2 |
+| 93 | Building | `Tc2_GENIbus` | `TwinCAT_3_PLC_Lib_Tc2_GENIbus_EN` | 6 | T2 |
+| 94 | Building | `Tc2_HVAC` | `TF8000_TC3_HVAC_EN` | 120 | T0 |
+| 95 | Building | `Tc2_LON` | `TwinCAT_3_PLC_Lib_Tc2_LON_EN` | 371 | T2 |
+| 96 | Building | `Tc2_MBus` | `TwinCAT_3_PLC_Lib_Tc2_MBus_EN` | 65 | T2 |
+| 97 | Building | `Tc2_MPBus` | `TwinCAT_3_PLC_Lib_Tc2_MPBus_EN` | 44 | T2 |
+| 98 | Building | `Tc2_SMI` | `TwinCAT_3_PLC_Lib_Tc2_SMI_EN` | 25 | T2 |
+| 99 | Building | `Tc3_BA2_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA2_Common_EN` | 66 | T0 |
+| 100 | Building | `Tc3_BACnetRev14` | `TF8020_TC3_BACnet_EN` | 3 | T2 |
+| 101 | Building | `Tc3_BA_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA_Common_EN` | 21 | T0 |
+| 102 | Building | `Tc3_DALI` | `TwinCAT_3_PLC_Lib_Tc3_DALI_EN` | 405 | T2 |
+| 103 | Building | `Tc3_LS` | `TF8050_LS_EN` | 1 | T2 |
+| 104 | Building | `Tc3_XBA+BA2+BA+BA2_Common` | `TF8040_TC3_Building_Automation_EN` | 407 | T0 |
 
-Total: 9896 API entries in 105 manuals remaining.
+Total: 9876 API entries in 104 manuals remaining.
 
 Landed libraries pruned so far: `Tc2_Math` (8/8), `Tc2_Standard`
-(31/31), `Tc3_RealtimeMonitoring` (12/12) — see
+(31/31), `Tc3_RealtimeMonitoring` (12/12), `Tc2_ModbusSrv` (20/20) — see
 `docs/plc/compat/README.md` for as-built coverage and the remaining
 per-library gaps.
 
@@ -72912,366 +72911,6 @@ per-parameter prose.
 | `ErrorId` | `MODBUS_ERRORS` | Indicates an error number [} 41] in the event of disturbed |
 
 **Description:** The function block ModbusRtuSlave_Generic implements a Modbus slave that communicates via various serial interfaces (COM port, virtual COM port, EtherCAT Terminals, ...).
-
-### Tc2_ModbusSrv — `TF6250_TC3_Modbus_TCP_EN`
-
-- **Category:** Connectivity · **Tier:** T2
-- **Manual:** `TF6250_TC3_Modbus_TCP_EN.pdf` · **API entries:** 20
-- **Integration:** Modbus TCP server: socket service + holding/register image mapping.
-
-#### PLC API › Tc2_ModbusSrv library › Function blocks
-
-##### `FB_MBReadCoils (Modbus function 1)` — §6.1.2.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING(15)` | — |
-| `nTCPPort` | `UINT:= MODBUS_TCP_PORT` | — |
-| `nUnitID` | `BYTE:=16#FF` | — |
-| `nQuantity` | `WORD` | — |
-| `nMBAddr` | `WORD` | — |
-| `cbLength` | `UDINT` | — |
-| `pDestAddr` | `POINTER TO BYTE` | — |
-| `bExecute` | `BOOL` | — |
-| `tTimeout` | `TIME` | — |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBReadInputs (Modbus function 2)` — §6.1.2.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING(15)` | — |
-| `nTCPPort` | `UINT:= MODBUS_TCP_PORT` | — |
-| `nUnitID` | `BYTE:=16#FF` | — |
-| `nQuantity` | `WORD` | — |
-| `nMBAddr` | `WORD` | — |
-| `cbLength` | `UDINT` | — |
-| `pDestAddr` | `POINTER TO BYTE` | — |
-| `bExecute` | `BOOL` | — |
-| `tTimeout` | `TIME` | — |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBReadRegs (Modbus function 3)` — §6.1.2.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING(15)` | — |
-| `nTCPPort` | `UINT:= MODBUS_TCP_PORT` | — |
-| `nUnitID` | `BYTE:=16#FF` | — |
-| `nQuantity` | `WORD` | — |
-| `nMBAddr` | `WORD` | — |
-| `cbLength` | `UDINT` | — |
-| `pDestAddr` | `POINTER TO BYTE` | — |
-| `bExecute` | `BOOL` | — |
-| `tTimeout` | `TIME` | — |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBReadInputRegs (Modbus function 4)` — §6.1.2.4
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING(15)` | — |
-| `nTCPPort` | `UINT:= MODBUS_TCP_PORT` | — |
-| `nUnitID` | `BYTE:=16#FF` | — |
-| `nQuantity` | `WORD` | — |
-| `nMBAddr` | `WORD` | — |
-| `cbLength` | `UDINT` | — |
-| `pDestAddr` | `POINTER TO BYTE` | — |
-| `bExecute` | `BOOL` | — |
-| `tTimeout` | `TIME` | — |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBWriteSingleCoil (Modbus function 5)` — §6.1.2.5
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING(15)` | — |
-| `nTCPPort` | `UINT:= MODBUS_TCP_PORT` | — |
-| `nUnitID` | `BYTE:=16#FF` | — |
-| `nMBAddr` | `WORD` | — |
-| `nValue` | `WORD` | — |
-| `bExecute` | `BOOL` | — |
-| `tTimeout` | `TIME` | — |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD nValue WORD bExecute BOOL tTimeout TIME
-
-##### `FB_MBWriteSingleReg (Modbus function 6)` — §6.1.2.6
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD nValue WORD bExecute BOOL tTimeout TIME
-
-##### `FB_MBWriteCoils (Modbus function 15)` — §6.1.2.7
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nQuantity WORD nMBAddr WORD cbLength UDINT pSrcAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBWriteRegs (Modbus function 16)` — §6.1.2.8
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nQuantity WORD nMBAddr WORD cbLength UDINT pSrcAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBReadWriteRegs (Modbus-Funktion 23)` — §6.1.2.9
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBReadAddr WORD nWriteQuantity WORD nMBWriteAddr WORD cbDestLength UDINT pDestAddr Pointer To BYTE cbSrcLength UDINT pSrcAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBDiagnose (Modbus function 8)` — §6.1.2.10
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nWriteData WORD bExecute BOOL tTimeout TIME
-
-#### PLC API › Tc2_ModbusSrv library › Function blocks › UDP
-
-##### `FB_MBUdpReadCoils (Modbus function 1)` — §6.1.2.11.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpReadInputs (Modbus function 2)` — §6.1.2.11.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING(15)` | — |
-| `nTCPPort` | `UINT:= MODBUS_TCP_PORT` | — |
-| `nUnitID` | `BYTE:=16#FF` | — |
-| `nQuantity` | `WORD` | — |
-| `nMBAddr` | `WORD` | — |
-| `cbLength` | `UDINT` | — |
-| `pDestAddr` | `POINTER TO BYTE` | — |
-| `bExecute` | `BOOL` | — |
-| `tTimeout` | `TIME` | — |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpReadRegs (Modbus function 3)` — §6.1.2.11.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpReadInputRegs (Modbus function 4)` — §6.1.2.11.4
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**Description:** nMBAddr WORD cbLength UDINT pDestAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpWriteSingleCoil (Modbus function 5)` — §6.1.2.11.5
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBUSY` | `BOOL` | — |
-| `bError` | `BOOL` | — |
-| `nErrId` | `UDINT` | — |
-
-**Description:** nMBAddr WORD nValue WORD bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpWriteSingleReg (Modbus function 6)` — §6.1.2.11.6
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**Description:** nMBAddr WORD nValue WORD bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpWriteCoils (Modbus function 15)` — §6.1.2.11.7
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING(15)` | — |
-| `nTCPPort` | `UINT:= MODBUS_TCP_PORT` | — |
-| `nUnitID` | `BYTE:=16#FF` | — |
-| `nQuantity` | `WORD` | — |
-| `nMBAddr` | `WORD` | — |
-| `cbLength` | `UDINT` | — |
-| `pSrcAddr` | `POINTER TO BYTE` | — |
-| `bExecute` | `BOOL` | — |
-| `tTimeout` | `TIME` | — |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nQuantity WORD nMBAddr WORD cbLength UDINT pSrcAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpWriteRegs (Modbus function 16)` — §6.1.2.11.8
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nQuantity WORD nMBAddr WORD cbLength UDINT pSrcAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpReadWriteRegs (Modbus function 23)` — §6.1.2.11.9
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nMBReadAddr WORD nWriteQuantity WORD nMBWriteAddr WORD cbDestLength UDINT pDestAddr Pointer To BYTE cbSrcLength UDINT pSrcAddr Pointer To BYTE bExecute BOOL tTimeout TIME
-
-##### `FB_MBUdpDiagnose (Modbus function 8)` — §6.1.2.11.10
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `sIPAddr` | `STRING (15)` | Is a string containing the IP address of the target device. |
-| `nTCPPort` | `UINT` | Port number of the target device. |
-| `nUnitID` | `BYTE` | Identification number of a serial sub-network device. If a |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bBusy` | `BOOL` | When the function block is enabled, this output is set and |
-
-**Description:** nWriteData WORD bExecute BOOL tTimeout TIME
 
 ### Tc2_OpcUa+Tc3_PLCopen_OpcUa — `TF6100_TC3_OPC_UA_Server_EN`
 
@@ -176543,7 +176182,7 @@ Landed (detail pruned; git history retains it, as-built status lives in
 | Phase | Deliverable | Unblocks |
 |---|---|---|
 | **C3 — T1 services II** | done: RealtimeMonitoring (`tplc-rtmon` + `FB_RtMon` + Tc3 wrappers, `tc3_rtmon` ctest); blocked: DynamicMemory (PVOID), Module (COM object model), JsonXml (METHOD/interface/POINTER/REFERENCE/HRESULT), EventLogger (I_Tc* interfaces, HRESULT, GUID) | Standard remainder |
-| **C4 — Connectivity wave 1** | in progress: Modbus TCP done (`tplc-modbus` + `FB_Modbus` + Tc2_ModbusSrv TCP FBs, `tc2_modbussrv` ctest; `FB_MBUdp*` variants + Tc2_ModbusRTU remain); sACN, BACnet, PJLink, S7, FTP, SMS/SMTP, IEC 60870 | Field protocols |
+| **C4 — Connectivity wave 1** | in progress: Tc2_ModbusSrv done 20/20 (`tplc-modbus` TCP+UDP + `FB_Modbus` + all TCP/UDP wrappers, `tc2_modbussrv` ctest); Tc2_ModbusRTU, sACN, BACnet, PJLink, S7, FTP, SMS/SMTP, IEC 60870 remain | Field protocols |
 | **C5 — Motion core** | `tplc-motion` axis backend + PLCopen MC2 subset (`MC_Power`…`MC_TorqueControl`) | All Motion libraries |
 | **C6 — Motion extended** | NC interpolation, camming, hydraulics, drives (CiA-402 via Tether DS402), MC3 | Motion remainder minus robotics |
 | **C7 — T2 wave 2** | OPC UA, EtherNet/IP, IEC 61850, IoT/MQTT, OCPP, AES70, Building buses (DALI/DMX/EIB/LON/MBus/EnOcean) | Long-tail protocols |
