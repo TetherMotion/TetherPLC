@@ -41,13 +41,16 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     (see `include/tplc/tplc_net.h`, host impl `NetService`),
     `tplc-serial` (`include/tplc/tplc_serial.h`, host impl
     `SerialService`), `tplc-ads` (`include/tplc/tplc_ads.h`, host
-    impl `AdsService`), and `tplc-rtmon` (`include/tplc/tplc_rtmon.h`,
-    host impl `RtmonService`) are live, backed by nonblocking POSIX
-    sockets, termios, an AMS/TCP ADS client, and a timestamped mark
-    ring respectively, and driven scan-side by the builtins
-    `FB_Socket`/`FB_Serial`/`FB_Ads`/`FB_RtMon`. `RtmonService` takes
-    its clock from `HostServices::steadyNs`, so `--sim` steps produce
-    deterministic sim-time mark timestamps.
+    impl `AdsService`), `tplc-rtmon` (`include/tplc/tplc_rtmon.h`,
+    host impl `RtmonService`), and `tplc-modbus`
+    (`include/tplc/tplc_modbus.h`, host impl `ModbusService`) are
+    live, backed by nonblocking POSIX sockets, termios, an AMS/TCP
+    ADS client, a timestamped mark ring, and a Modbus TCP client
+    respectively, and driven scan-side by the builtins
+    `FB_Socket`/`FB_Serial`/`FB_Ads`/`FB_RtMon`/`FB_Modbus`.
+    `RtmonService` and `ModbusService` take their clocks from
+    `HostServices::steadyNs`, so `--sim` steps produce deterministic
+    sim-time timestamps and timeouts.
   - `Scheduler` — single-thread CYCLIC/FREEWHEELING dispatch, priority
     order within a tick, phase-stable `next_due` accumulation, per-task
     runs/late/faults stats.

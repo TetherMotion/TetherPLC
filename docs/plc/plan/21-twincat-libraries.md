@@ -176543,7 +176543,7 @@ Landed (detail pruned; git history retains it, as-built status lives in
 | Phase | Deliverable | Unblocks |
 |---|---|---|
 | **C3 — T1 services II** | done: RealtimeMonitoring (`tplc-rtmon` + `FB_RtMon` + Tc3 wrappers, `tc3_rtmon` ctest); blocked: DynamicMemory (PVOID), Module (COM object model), JsonXml (METHOD/interface/POINTER/REFERENCE/HRESULT), EventLogger (I_Tc* interfaces, HRESULT, GUID) | Standard remainder |
-| **C4 — Connectivity wave 1** | Tc2_TcpIp, sACN, BACnet, PJLink, Modbus TCP/RTU, S7, FTP, SMS/SMTP, IEC 60870 | Field protocols |
+| **C4 — Connectivity wave 1** | in progress: Modbus TCP done (`tplc-modbus` + `FB_Modbus` + Tc2_ModbusSrv TCP FBs, `tc2_modbussrv` ctest; `FB_MBUdp*` variants + Tc2_ModbusRTU remain); sACN, BACnet, PJLink, S7, FTP, SMS/SMTP, IEC 60870 | Field protocols |
 | **C5 — Motion core** | `tplc-motion` axis backend + PLCopen MC2 subset (`MC_Power`…`MC_TorqueControl`) | All Motion libraries |
 | **C6 — Motion extended** | NC interpolation, camming, hydraulics, drives (CiA-402 via Tether DS402), MC3 | Motion remainder minus robotics |
 | **C7 — T2 wave 2** | OPC UA, EtherNet/IP, IEC 61850, IoT/MQTT, OCPP, AES70, Building buses (DALI/DMX/EIB/LON/MBus/EnOcean) | Long-tail protocols |

@@ -854,3 +854,44 @@ flag bit — no task references exist.
 server, trace export, marker-group naming, or server-side recording
 trigger (`LogTrigger` stores a plain mark). `hrErrorCode` is 0 or a
 negative service code, not a COM HRESULT.
+
+## D-IMPL-43 — tplc-modbus service + FB_Modbus builtin (plan 21 C4)
+
+**Plan:** plan 21 §8 phase C4: first connectivity item, Modbus;
+TCP via `tplc-modbus`, RTU later on `tplc-serial`, UDP variants of
+Tc2_ModbusSrv deferred.
+**Implemented:** `include/tplc/tplc_modbus.h` defines the
+`TplcModbusService` vtable (ABI v1) returned by
+`TplcServices.get_service("tplc-modbus"): mb_begin, mb_poll,
+mb_abort`. Host side:
+`runtime/host/{include,src}/tplc/host/ModbusService.{hpp,cpp}`
+implements Modbus TCP — MBAP + PDU with big-endian wire fields,
+connect-per-transaction over nonblocking sockets, partial
+send/receive driven per poll, MBAP-length bounded receive,
+tid/proto/unit/func validation, exception responses via
+`status`/`exc`; its clock is injected as `HostServices::steadyNs`.
+PLC side: builtin `FB_Modbus` (`builtin_fb_layout` +
+`__tplc_rt_FB_Modbus`) carries `FUNC` + a 256-byte `DATA` array
+(request bytes in via `RLEN`, response out via `DLEN`), `RESULT`
+0=ok/1=exception (`EXC`), `ERRID` transport codes. `compat/tc2/
+tc2_modbussrv.st` wraps it as the ten documented TCP client FBs
+(funcs 1/2/3/4/5/6/15/16/23/8); `tc2_modbussrv` ctest replays a
+six-transaction sequence against a python Modbus TCP peer (6
+packed checks, `0x3f`).
+**Decisions:** (a) `DATA` is `ARRAY[0..255] OF BYTE`, not a string —
+PDU payloads are binary and need indexed access; `RLEN`/`DLEN`
+carry lengths explicitly; (b) the service copies the request at
+`mb_begin`, so caller buffers need only live for that call;
+(c) exception responses are normal completions (`status=1`,
+`exc`=code), not transport errors — wrappers surface them as
+`nErrId = 16#8000 + exc`; (d) connect-per-transaction matches the
+TwinCAT FB model and keeps handles stateless across scans.
+**Consequence:** IPv4 literals only (no DNS/IPv6); `FB_MBUdp*`
+variants and `Tc2_ModbusRTU` remain; no slave/listen mode.
+Two latent compiler/runtime bugs were fixed on the way: the
+`fb_call` arg binder stored literal-width values into narrower
+FB members (clobbering adjacent inputs such as `bExecute`), now
+coerced to the member type; the ELF sandbox x86 length decoder
+desynced on `0F 8x` jcc-rel32 and on `0x66`-prefixed imm32
+instructions, fixed so generated code stops false-positiving as
+kernel-gate opcodes.

@@ -7,6 +7,7 @@
 
 #include <tplc/tplc_abi.h>
 #include <tplc/host/AdsService.hpp>
+#include <tplc/host/ModbusService.hpp>
 #include <tplc/host/NetService.hpp>
 #include <tplc/host/RtmonService.hpp>
 #include <tplc/host/SerialService.hpp>
@@ -66,6 +67,7 @@ private:
     SerialService serial_;
     AdsService   ads_;
     RtmonService rtmon_;
+    ModbusService modbus_;
 };
 
 } /* namespace tplc */

@@ -44,7 +44,20 @@ live attach over tether_io, and the safety/security envelope.
   4096-entry timestamped mark ring on the host clocked by
   `HostServices::steadyNs` (deterministic under `--sim`), and a
   builtin `FB_RtMon`; verified by an in-process mark/count/indexed-
-  read/clear sequence (ctest `tc3_rtmon`).
+  read/clear sequence (ctest `tc3_rtmon`). Sixth tranche adds
+  `compat/tc2/tc2_modbussrv.st` (Tc2_ModbusSrv TCP client FBs) over
+  the `tplc-modbus` service — a `TplcModbusService` vtable, a
+  nonblocking Modbus TCP client on the host (MBAP/PDU, big-endian
+  wire fields, connect-per-transaction, exception responses), and a
+  builtin `FB_Modbus` with a 256-byte `DATA` array; verified by a
+  real six-transaction exchange (read/write regs and coils,
+  exception response, read/write) against a python Modbus TCP peer
+  (ctest `tc2_modbussrv`). The tranche also fixed two latent bugs:
+  FB-call argument binding stored literal-width values into
+  narrower members (clobbering adjacent inputs), and the ELF
+  sandbox x86 length decoder desynced on `0F 8x` jumps and
+  `0x66`-prefixed immediates, rejecting valid modules as
+  kernel-gate violations.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

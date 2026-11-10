@@ -272,6 +272,52 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "DONE", Type::Bool);
             push(&mut off, "__last_exec", Type::Bool);
         }
+        /* FB_Modbus — tplc-modbus service bridge (Modbus TCP client).
+        One transaction per EXEC edge: FUNC is the Modbus function
+        code, DATA is a 256-byte array carrying the request PDU data
+        in (RLEN bytes) and the response PDU data out (the service
+        copies the request at begin, so the buffer can be reused),
+        DLEN the response length, RESULT 0=ok /1=exception (EXC =
+        exception code), ERRID transport errors. The service enforces
+        TIMEOUT itself, so no deadline fields. */
+        "FB_Modbus" => {
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "UNIT", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "FUNC", udint());
+            push(
+                &mut off,
+                "DATA",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 255,
+                },
+            );
+            push(&mut off, "RLEN", udint());
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "RESULT", dint());
+            push(&mut off, "EXC", udint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;
