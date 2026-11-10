@@ -943,3 +943,60 @@ variants need EtherCAT terminal integration.
 (pty-verified); no RS-485 direction control beyond what the
 adapter/driver provides, no broadcast unit id 0 handling beyond
 normal framing, no slave mode.
+
+## D-IMPL-45 — tplc-sacn service + FB_SacnSource/FB_SacnReceiver builtins (plan 21 C4)
+
+`include/tplc/tplc_sacn.h` defines `TplcSacnService` (ABI v1):
+`src_begin`/`src_poll`/`src_abort` for the ENABLE-lifecycle sender
+and `rcv_poll`/`rcv_reset` for the receiver. The host impl
+`SacnService` (`runtime/host/src/SacnService.cpp`) owns two
+nonblocking UDP sockets: a sender bound to port 5568 that
+multicasts per-universe E1.31-2018 data packets
+(`239.255.x.y`, universe-derived group) and a receiver joined to
+the same group with `SO_REUSEADDR` so source and receiver can
+coexist on one host. The codec was verified byte-identical
+against two independent Python reference implementations
+(sacn-py and the sacn crate): root/framing/DMP vectors, the
+`ASC-E1.17` preamble, sender CID, priority/sequence/universe
+fields, the static DMP field descriptor `A1 00 00 00 01`, the
+property count including the start-code byte, and flags+length
+patching.
+
+sACN priority is inverted (lower value wins). `rcv_poll`
+replaces the held DMX buffer only on equal-or-better priority;
+worse-priority datagrams increment `nDroppedPackets` and are
+discarded. The receiver strips the start-code byte before
+exposing `nDmxLength`/`DmxData`. Sequence-number tracking is
+exposed via `nSequence` for gap detection at the PLC level.
+
+PLC side: builtin `FB_SacnSource` (universe, priority, source
+name, sequence, `DmxData[512]`/`nDmxLength`/`nErrId`/`EXEC`/
+`BUSY`/`DONE`) and `FB_SacnReceiver` (universe filter,
+`bHaveData`/`HAVE_DATA` latch, `sSourceName`, `nPriority`,
+`nSequence`, `nDataPackets`, `nDroppedPackets`,
+`DmxData[512]`/`nDmxLength`/`nErrId`). `compat/tc3/tc3_sacn.st`
+wraps them as `FB_sACN_Source`/`FB_sACN_Receiver` (TwinCAT's
+`I_sAcn*` callback model adapted to poll) plus the three
+pure-IEC helpers `F_HighLowArr_TO_UINT`,
+`F_UNIVERSE_TO_MulticastAdr` (returns the E1.31 multicast
+address as packed UDINT), and `FB_UINT_TO_HighLowArr`.
+`tc3_sacn` ctest replays a 600-step free-running sim against
+`sacn_test_peer.py` — four packed checks (`0x0f`): own-source
+receive, priority-10 preemption, priority-200 drop accounting,
+helper conversions.
+
+**Decisions:** (a) service-level multicast sockets rather than
+per-universe socket pools — one sender/receiver pair covers
+the universe the FBs are configured for, matching how the
+twinCAT FBs bind one universe per instance; (b) receiver
+accepts any source name on the configured universe (no
+`F_SACN_DISCOVERY` personality filtering yet); (c) the peer
+synchronizes on the DUT's own SRC1 stream before injecting
+foreign packets, keeping the priority test deterministic
+without wall-clock-dependent phase windows; (d) TwinCAT's
+`I_sAcn*` COM-style interfaces stay unimplemented — same
+blocker class as Tc3_EventLogger.
+**Consequence:** E1.31 data path works end-to-end over real
+multicast; discovery/sync packets are codec-complete but not
+PLC-exposed; callback-driven TwinCAT sACN code needs porting
+to the poll model.

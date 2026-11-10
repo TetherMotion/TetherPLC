@@ -368,6 +368,144 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "DONE", Type::Bool);
             push(&mut off, "__last_exec", Type::Bool);
         }
+        /* FB_SacnSource — tplc-sacn source role (ANSI E1.31
+        streaming ACN). ENABLE rising edge opens the source (config
+        fields are latched at begin), falling edge closes it; while
+        enabled the service transmits the DMX frame every INTERVAL
+        ms. START_CODE is the DMX start code byte, DMX the slot
+        data, DLEN its byte count (<=512). SENT/AUX count data and
+        sync+discovery packets, SEQ the last data-packet sequence,
+        LAST_ERR the last socket errno. */
+        "FB_SacnSource" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let ulint = || Type::Int {
+                signed: false,
+                bits: 64,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "ENABLE", Type::Bool);
+            push(&mut off, "UNIVERSE", udint());
+            push(&mut off, "PRIORITY", udint());
+            push(&mut off, "SYNC_ADDR", udint());
+            push(&mut off, "INTERVAL", udint());
+            push(&mut off, "TTL", udint());
+            push(&mut off, "OPTIONS", byte());
+            push(&mut off, "FLAGS", byte());
+            push(&mut off, "START_CODE", byte());
+            push(&mut off, "NAME", Type::Str { cap: 63 });
+            push(
+                &mut off,
+                "CID",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 15,
+                },
+            );
+            push(&mut off, "DLEN", udint());
+            push(
+                &mut off,
+                "DMX",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 511,
+                },
+            );
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "SEQ", udint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "LAST_ERR", dint());
+            push(&mut off, "SENT", ulint());
+            push(&mut off, "AUX", ulint());
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "__err_latch", Type::Bool);
+        }
+        /* FB_SacnReceiver — tplc-sacn receiver role. ENABLE rising
+        edge binds the sACN port and joins the universe multicast
+        group(s), falling edge closes. While enabled each scan drains
+        pending datagrams; the outputs mirror the latest accepted
+        data/sync/discovery packet. DMX holds the latest payload
+        (DLEN bytes), SRC_NAME the sender name, UNIS the first 64
+        universes of the last discovery list (UNI_COUNT the full
+        count). Counters are u64. */
+        "FB_SacnReceiver" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let ulint = || Type::Int {
+                signed: false,
+                bits: 64,
+            };
+            let u16t = || Type::Int {
+                signed: false,
+                bits: 16,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "ENABLE", Type::Bool);
+            push(&mut off, "RCV_UNIVERSE", udint());
+            push(&mut off, "SYNC_UNIVERSE", udint());
+            push(&mut off, "PORT", udint());
+            push(&mut off, "DATA_RX", ulint());
+            push(&mut off, "DATA_DROP", ulint());
+            push(&mut off, "SYNC_RX", ulint());
+            push(&mut off, "DISC_RX", ulint());
+            push(&mut off, "REMOTE_IP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "SYNC_ADDR", u16t());
+            push(&mut off, "UNIVERSE", u16t());
+            push(&mut off, "SYNC_ADDR_SEEN", u16t());
+            push(&mut off, "UNI_COUNT", u16t());
+            push(&mut off, "START_CODE", byte());
+            push(&mut off, "SEQ", byte());
+            push(&mut off, "PRIORITY", byte());
+            push(&mut off, "SYNC_SEQ", byte());
+            push(&mut off, "UNI_PAGE", byte());
+            push(&mut off, "UNI_LAST", byte());
+            push(&mut off, "HAVE_DATA", Type::Bool);
+            push(&mut off, "PREVIEW", Type::Bool);
+            push(&mut off, "STREAM_TERM", Type::Bool);
+            push(&mut off, "FORCE_SYNC", Type::Bool);
+            push(&mut off, "HAVE_SYNC", Type::Bool);
+            push(&mut off, "HAVE_DISC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "SRC_NAME", Type::Str { cap: 63 });
+            push(
+                &mut off,
+                "DMX",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 511,
+                },
+            );
+            push(
+                &mut off,
+                "UNIS",
+                Type::Array {
+                    elem: Box::new(u16t()),
+                    lo: 0,
+                    hi: 63,
+                },
+            );
+            push(&mut off, "__err_latch", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;

@@ -10,6 +10,7 @@
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/NetService.hpp>
 #include <tplc/host/RtmonService.hpp>
+#include <tplc/host/SacnService.hpp>
 #include <tplc/host/SerialService.hpp>
 
 #include <cstdint>
@@ -68,6 +69,7 @@ private:
     AdsService   ads_;
     RtmonService rtmon_;
     ModbusService modbus_;
+    SacnService  sacn_;
 };
 
 } /* namespace tplc */

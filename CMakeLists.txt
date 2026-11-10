@@ -40,6 +40,7 @@ add_library(tplc_host STATIC
   runtime/host/src/AdsService.cpp
   runtime/host/src/RtmonService.cpp
   runtime/host/src/ModbusService.cpp
+  runtime/host/src/SacnService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -575,6 +576,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc2_modbusrtu
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_modbusrtu.sh)
   set_tests_properties(tc2_modbusrtu PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc3_sACN compat (plan 21 C4): tplc-sacn E1.31 multicast source +
+  # receiver e2e against a python sACN peer (priority preemption and
+  # drop accounting)
+  add_test(NAME tc3_sacn
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_sacn.sh)
+  set_tests_properties(tc3_sacn PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy

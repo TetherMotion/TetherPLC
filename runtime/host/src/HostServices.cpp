@@ -21,7 +21,8 @@ static uint64_t host_steady_ns(void* p) {
 }
 
 HostServices::HostServices(uint32_t caps)
-    : rtmon_(&host_steady_ns, this), modbus_(&host_steady_ns, this) {
+    : rtmon_(&host_steady_ns, this), modbus_(&host_steady_ns, this),
+      sacn_(&host_steady_ns, this) {
     svc_.struct_size  = sizeof(TplcServices);
     svc_.caps         = caps | TPLC_EXT_MOVABLE_BETWEEN;
     svc_.host         = this;
@@ -85,6 +86,8 @@ void* HostServices::getService(const char* name, uint32_t len) {
         return const_cast<TplcRtmonService*>(&rtmon_.table());
     if (len == 11 && memcmp(name, "tplc-modbus", 11) == 0)
         return const_cast<TplcModbusService*>(&modbus_.table());
+    if (len == 9 && memcmp(name, "tplc-sacn", 9) == 0)
+        return const_cast<TplcSacnService*>(&sacn_.table());
     return nullptr;
 }
 

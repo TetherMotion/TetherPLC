@@ -51,6 +51,13 @@ compat/tc3/
                       builtin FB_RtMon (tplc-rtmon service):
                       FB_RTMon_LogMarkBase/Ex + the eight
                       FB_RTMon_Log* simple-mark FBs
+  tc3_sacn.st         Tc3_sACN over the builtin FB_SacnSource +
+                      FB_SacnReceiver (tplc-sacn service): E1.31
+                      data/discovery/sync codec, multicast TX/RX,
+                      priority filtering; plus the three pure-IEC
+                      helpers F_HighLowArr_TO_UINT,
+                      F_UNIVERSE_TO_MulticastAdr,
+                      FB_UINT_TO_HighLowArr
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -101,6 +108,16 @@ tests/compat/
                       (modbus_rtu_test_server.py)
   modbus_rtu_test_server.py  minimal Modbus RTU slave used by
                       tc2_modbusrtu.sh
+  tc3_sacn_case.st    autonomous sACN program (4 packed checks:
+                      own-source receive, HIPRI preemption, drop
+                      accounting, helper conversions)
+  tc3_sacn.sh         ctest tc3_sacn: library + consumer + 600-step
+                      sim replay expecting mask 0x0f, python sACN
+                      peer (sacn_test_peer.py)
+  sacn_test_peer.py   E1.31 data-packet peer used by tc3_sacn.sh:
+                      waits for the DUT's own SRC1 stream, then
+                      injects priority-10 HIPRI and priority-200
+                      LOWPR packets on a wall-clock schedule
 ```
 
 ## Building and consuming
@@ -126,7 +143,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done — Tc2_ModbusSrv complete (20/20: TCP + UDP FBs, wire-protocol e2e) + Tc2_ModbusRTU V2-master subset (all ten master actions as standalone FBs over the RTU transport, pty e2e); ModbusRtuSlave_*, ComBuffer Generic variants, KL6x* bus-terminal variants, and the obsolete non-V2 masters remain; sACN/BACnet/PJLink/S7/FTP/SMS/IEC 60870 remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); BACnet/PJLink/S7/FTP/SMS/IEC 60870 remain |
 
 ### C1 coverage notes
 
@@ -408,6 +425,61 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     provided.
   - UDP encapsulation assumes the same MBAP+PDU ADU per datagram;
     the TwinCAT manual does not specify a different framing.
+
+### C4 coverage notes (tplc-sacn / Tc3_sACN)
+
+- **Architecture**: builtin `FB_SacnSource` /
+  `FB_SacnReceiver` bridge to the host `tplc-sacn` service
+  (`include/tplc/tplc_sacn.h`) through `TplcServices.get_service`.
+  The service owns two nonblocking UDP sockets: a sender bound to
+  port 5568 and a receiver joined to the per-universe multicast
+  group `239.255.x.y` (universe-derived, not configurable — the
+  E1.31 group allocation is fixed). The source is ENABLE-edge
+  lifecycle like `FB_Modbus`; the receiver is always-on once
+  enabled.
+- **Protocol**: E1.31-2018 wire codec verified byte-identical
+  against two independent reference implementations — root layer
+  (preamble `ASC-E1.17`, flags+length, vector 0x0004 data / 0x0001
+  discovery under the extended framing vector 0x0002, sender CID),
+  framing layer (vector 0x0002, source name, priority, sequence,
+  universe, DMP vector), and DMP layer (static field descriptor
+  `A1 00 00 00 01`, property count including the start-code byte,
+  start code, DMX payload). Sync (vector 0x0001) and discovery
+  (vector 0x0001 under root vector 0x0001) packets are built by the
+  service but not yet exposed to PLC inputs.
+- **Priority semantics**: sACN priority is inverted relative to
+  intuition — lower value wins. The receiver replaces its DMX
+  buffer only when an incoming packet's priority is equal or
+  better than the held frame; worse-priority packets are counted
+  in `nDroppedPackets` and their payload is discarded.
+- **Wrappers**: `compat/tc3/tc3_sacn.st` adapts TwinCAT's
+  callback-driven `I_sAcn*` surface into poll-driven FBs
+  (`FB_sACN_Source`/`FB_sACN_Receiver`) plus the three pure-IEC
+  catalog helpers (`F_HighLowArr_TO_UINT`,
+  `F_UNIVERSE_TO_MulticastAdr`, `FB_UINT_TO_HighLowArr`). The
+  `I_sAcnCommunicator`/`I_sAcnSource`/`I_sAcnReceiver` interface
+  methods and the five interface-callback FBs remain unimplemented
+  (same blocker class as Tc3_EventLogger).
+- **Verified**: `tc3_sacn` ctest builds the library and a
+  consumer program, then replays 600 free-running sim steps
+  against `tests/compat/sacn_test_peer.py` — a python E1.31 peer
+  that joins the group, waits for the DUT's own `SRC1` stream,
+  then injects priority-10 `HIPRI` and priority-200 `LOWPR`
+  packets. Four packed checks (`0x0f`): own-source receive,
+  HIPRI preemption, LOWPR drop accounting, helper conversions.
+- **Honest gaps**:
+  - Universe range 1..63999 maps to multicast groups per E1.31;
+    universes > 63999 are rejected.
+  - `nDmxLength` excludes the sACN start-code byte (service strips
+    it); the wire always carries `start code + payload`.
+  - Discovery/sync transmission is service-internal; no PLC-level
+    inputs expose `F_SYNC`/`F_DISCOVERY` addresses or the
+    `sACN_E131_*` personality fields.
+  - The `I_sAcn*` COM-style interface model is not implemented;
+    TwinCAT code written against `I_sAcnCommunicator` callbacks
+    needs porting to the poll model.
+  - IPv4 multicast only; no IPv6, no unicast sACN (E1.31 is
+    multicast-only for data).
 
 ## Known limitations
 

@@ -73,7 +73,30 @@ live attach over tether_io, and the safety/security envelope.
   python RTU slave on a pty pair (ctest `tc2_modbusrtu`, mask
   `0x3f`). One transport bug was caught by the e2e: a 0-byte
   `read()` under `VMIN=0`/`VTIME=0` means "no data this scan", not
-  EOF — treating it as hangup desynced every transaction.
+  EOF — treating it as hangup desynced every transaction. Eighth
+  tranche adds `compat/tc3/tc3_sacn.st` (Tc3_sACN) over the new
+  `tplc-sacn` service — a `TplcSacnService` vtable, an E1.31-2018
+  codec (root/framing/DMP layers verified byte-identical against
+  two independent reference implementations), nonblocking UDP
+  multicast sockets for source TX and receiver RX on the
+  universe-derived `239.255.x.y` group, sACN priority filtering
+  (lower value wins; worse-priority packets counted and dropped),
+  and builtins `FB_SacnSource`/`FB_SacnReceiver`; the library also
+  provides the three pure-IEC helpers `F_HighLowArr_TO_UINT`,
+  `F_UNIVERSE_TO_MulticastAdr`, `FB_UINT_TO_HighLowArr`. Verified
+  by a real multicast exchange: a python sACN peer waits for the
+  DUT's own SRC1 stream, then injects priority-10 HIPRI (accepted,
+  preempts) and priority-200 LOWPR (dropped) packets — four packed
+  checks (`0x0f`, ctest `tc3_sacn`). The tranche fixed three
+  latent codegen bugs the e2e exposed: narrow-typed `:=` literals
+  stored at literal width (a `BYTE`/`WORD` store clobbered up to
+  three neighboring state bytes — now coerced to the destination
+  type in `write`, `lit_store`, FOR-init, and call-arg binding);
+  aggregate array actuals bound through `read()` copied only
+  element 0 (now `llvm.memcpy` of the bounded aggregate size in
+  FB/FUNCTION arg binding and whole-array assignment); and the
+  receiver's priority comparison was inverted (it rejected
+  better-priority packets and accepted worse ones).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.
