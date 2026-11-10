@@ -64,12 +64,13 @@ const uint8_t* rd(const uint8_t* base, size_t size,
  * `forbidden` is set when the decoded opcode is a gate to the kernel. */
 int x86Len(const uint8_t* p, size_t n, bool& forbidden) {
     size_t i = 0;
-    bool addr = false, rexW = false;
+    bool rexW = false, op16 = false;
     for (;;) {
         if (i >= n) return -1;
         uint8_t b = p[i];
-        if (b == 0x67) { addr = true; i++; continue; }
-        if (b == 0x66 || b == 0xF0 || b == 0xF2 || b == 0xF3 ||
+        if (b == 0x67) { i++; continue; }
+        if (b == 0x66) { op16 = true; i++; continue; }
+        if (b == 0xF0 || b == 0xF2 || b == 0xF3 ||
             b == 0x2E || b == 0x36 || b == 0x3E || b == 0x26 ||
             b == 0x64 || b == 0x65) { i++; continue; }
         if (b >= 0x40 && b <= 0x4F) { rexW = (b & 8) != 0; i++; continue; }
@@ -78,6 +79,9 @@ int x86Len(const uint8_t* p, size_t n, bool& forbidden) {
     uint8_t op = p[i++];
     bool modrm = true;
     int imm = 0, disp = 0;
+    /* op16 (0x66 prefix) shrinks imm32→imm16 unless REX.W keeps the
+       operand at 64 bits */
+    const int imm32 = (op16 && !rexW) ? 2 : 4;
 
     if (op == 0x0F) {
         if (i >= n) return -1;
@@ -86,7 +90,10 @@ int x86Len(const uint8_t* p, size_t n, bool& forbidden) {
             forbidden = true;           /* syscall/sysret/sysenter/sysexit */
             return (int)i;
         }
-        if (o2 == 0x38 || o2 == 0x3A) {
+        if (o2 >= 0x80 && o2 <= 0x8F) {              /* jcc rel32: no modrm */
+            modrm = false;
+            imm = 4;
+        } else if (o2 == 0x38 || o2 == 0x3A) {
             if (i >= n) return -1;
             i++;                        /* map-3 opcode byte */
             imm = (o2 == 0x3A) ? 1 : 0;
@@ -134,18 +141,21 @@ int x86Len(const uint8_t* p, size_t n, bool& forbidden) {
             imm = 1;
         else if (op == 0xC2 || op == 0xCA) imm = 2;  /* ret/retf imm16 */
         else if (op == 0xC8) imm = 3;                /* enter */
-        else if (op == 0x68 || op == 0xA9 || op == 0xE8 || op == 0xE9)
-            imm = 4;
-        else if (in(op, 0xB8, 0xBF)) imm = rexW ? 8 : 4;   /* mov r,imm */
-        else if (in(op, 0xA0, 0xA3)) imm = addr ? 4 : 8;   /* mov moffs */
+        else if (op == 0xE8 || op == 0xE9) imm = 4;   /* call/jmp rel32 */
+        else if (op == 0x68) imm = op16 ? 2 : 4;     /* push imm */
+        else if (op == 0xA9) imm = imm32;            /* test eAX,imm */
+        else if (in(op, 0xB8, 0xBF))
+            imm = rexW ? 8 : (op16 ? 2 : 4);         /* mov r,imm */
+        else if (in(op, 0xA0, 0xA3))
+            imm = (op16 && !rexW) ? 4 : 8;           /* mov moffs */
         else if (op == 0x9A || op == 0xEA) imm = 6;        /* far call/jmp */
         else if (op <= 0x3F && (op & 7) == 4) imm = 1;     /* ALU imm8 */
-        else if (op <= 0x3F && (op & 7) == 5) imm = 4;     /* ALU eAX,imm */
+        else if (op <= 0x3F && (op & 7) == 5) imm = imm32; /* ALU eAX,imm */
         /* modrm ops with immediates */
-        else if (op == 0x69) imm = 4;
+        else if (op == 0x69) imm = imm32;            /* imul imm */
         else if (op == 0x6B || op == 0x80 || op == 0x82 || op == 0x83 ||
                  op == 0xC0 || op == 0xC1 || op == 0xC6) imm = 1;
-        else if (op == 0x81 || op == 0xC7) imm = 4;
+        else if (op == 0x81 || op == 0xC7) imm = imm32;
         /* 0xF6/0xF7 group-3 imm depends on modrm.reg: handled below */
     }
 
@@ -163,7 +173,7 @@ int x86Len(const uint8_t* p, size_t n, bool& forbidden) {
         else if (mod == 2) disp = 4;
         int reg = (m >> 3) & 7;
         if (op == 0xF6 && reg <= 1) imm = 1;
-        if (op == 0xF7 && reg <= 1) imm = 4;
+        if (op == 0xF7 && reg <= 1) imm = imm32;
     }
     i += (size_t)disp + (size_t)imm;
     if (i > n) return -1;
