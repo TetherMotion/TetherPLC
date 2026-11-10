@@ -142,7 +142,13 @@ Key design rules:
   MCU peripherals); the MCU path gets stubs that fault cleanly
   with a documented error code.
 
-## 5. Coverage report — all 108 manuals
+## 5. Coverage report — remaining manuals
+
+This table lists the manuals still awaiting implementation. The
+original corpus covered 108 manuals / 9,947 API entries; libraries
+whose API surface is fully implemented are pruned from this table
+and from the §7 catalog below (git history retains them) and are
+tracked as-built in `docs/plc/compat/README.md`.
 
 | # | Category | Product | Manual | APIs | Tier |
 |---|---|---|---|---|---|
@@ -151,111 +157,113 @@ Key design rules:
 | 3 | Standard | `Tc2_EtherCAT` | `TwinCAT_3_PLC_Lib_Tc2_EtherCAT_EN` | 97 | T2 |
 | 4 | Standard | `Tc2_IoFunctions` | `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN` | 81 | T3 |
 | 5 | Standard | `Tc2_MDP` | `TwinCAT_3_PLC_Lib_Tc2_MDP_EN` | 17 | T1 |
-| 6 | Standard | `Tc2_Math` | `TwinCAT_3_PLC_Lib_Tc2_Math_EN` | 8 | T0 |
-| 7 | Standard | `Tc2_ProfinetDiag` | `TwinCAT_3_PLC_Lib_Tc2_ProfinetDiag_EN` | 24 | T2 |
-| 8 | Standard | `Tc2_SUPS` | `TwinCAT_3_PLC_Lib_Tc2_SUPS_EN` | 4 | T2 |
-| 9 | Standard | `Tc2_Standard` | `TwinCAT_3_PLC_Lib_Tc2_Standard_EN` | 31 | T0 |
-| 10 | Standard | `Tc2_System` | `TwinCAT_3_PLC_Lib_Tc2_System_EN` | 81 | T1 |
-| 11 | Standard | `Tc2_SystemC69xx` | `TwinCAT_3_PLC_Lib_Tc2_SystemC69xx_EN` | 3 | T1 |
-| 12 | Standard | `Tc2_SystemCX` | `TwinCAT_3_PLC_Lib_Tc2_SystemCX_EN` | 32 | T1 |
-| 13 | Standard | `Tc2_Utilities` | `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN` | 325 | T2 |
-| 14 | Standard | `Tc3_DynamicMemory` | `TwinCAT_3_PLC_Lib_Tc3_DynamicMemory_EN` | 2 | T1 |
-| 15 | Standard | `Tc3_EtherCATDiag` | `TwinCAT_3_PLC_Lib_Tc3_EtherCATDiag_EN` | 2 | T2 |
-| 16 | Standard | `Tc3_EventLogger` | `TwinCAT_3_PLC_Lib_Tc3_EventLogger_EN` | 146 | T1 |
-| 17 | Standard | `Tc3_IPCDiag` | `TcPlcLib_Tc3_IPCDiag_EN` | 7 | T2 |
-| 18 | Standard | `Tc3_IoLink` | `TwinCAT_3_PLC_Lib_Tc3_IOLink_EN` | 55 | T2 |
-| 19 | Standard | `Tc3_JsonXml` | `TwinCAT_3_PLC_Lib_Tc3_JsonXml_EN` | 322 | T1 |
-| 20 | Standard | `Tc3_Module` | `TwinCAT_3_PLC_Lib_Tc3_Module_EN` | 33 | T1 |
-| 21 | Engineering | `Tc3_RealtimeMonitoring` | `TE1010_TC3_Realtime_Monitor_EN` | 12 | T1 |
-| 22 | System | `Tc3_PlcTestFramework+Utilities` | `TF1140_Test_Framework_EN` | 28 | T1 |
-| 23 | Measurement | `Tc2_SPA` | `TF3900_TC3_Solar_Position_Algorithm_EN` | 1 | T0 |
-| 24 | Measurement | `Tc3_Analytics` | `TF3510_TC3_Analytics_Library_EN` | 672 | T4 |
-| 25 | Measurement | `Tc3_AnalyticsCommunication` | `TF3500_TC3_Analytics_Logger_EN` | 20 | T4 |
-| 26 | Measurement | `Tc3_AnalyticsStorageProvider` | `TF3520_TC3_Analytics_Storage_Provider_EN` | 50 | T4 |
-| 27 | Measurement | `Tc3_CM+CM_Base+MultiArray` | `TF3600_TC3_ConditionMonitoring_EN` | 53 | T0 |
-| 28 | Measurement | `Tc3_Filter` | `TF3680_TC3_FILTER_EN` | 61 | T0 |
-| 29 | Measurement | `Tc3_MLL` | `TF38x0_TC3_ML_NN_Inference_Engine_EN` | 15 | T4 |
-| 30 | Measurement | `Tc3_MlServer` | `TF3820_TC3_Machine_Learning_Server_EN` | 1 | T4 |
-| 31 | Measurement | `Tc3_MlServer-alt` | `tf3820_tc3_machine_learning_server_EN` | 1 | T4 |
-| 32 | Measurement | `Tc3_PowerMonitoring` | `TF3650_TC3_Power_Monitoring_EN` | 133 | T1 |
-| 33 | Measurement | `Tc3_Weighing` | `TF3685_TC3_Weighing_Library_EN` | 19 | T0 |
-| 34 | Control | `Tc2_ControllerToolbox` | `TF4100_TC3_Controller_Toolbox_EN` | 55 | T0 |
-| 35 | Control | `Tc2_TempController` | `TF4110_TC3_Temperature_Controller_EN` | 3 | T0 |
-| 36 | Control | `Tc3_Speech` | `TF4500_TC3_Speech_EN` | 8 | T4 |
-| 37 | Motion/Drive | `Tc2_Drive` | `TwinCAT_3_PLC_Lib_Tc2_Drive_EN` | 26 | T3 |
-| 38 | Motion/Drive | `Tc3_DriveMotionControl` | `TwinCAT_3_PLC_Lib_Tc3_DriveMotionControl_EN` | 14 | T3 |
-| 39 | Motion/NC2 | `Tc2_MC2` | `TwinCAT_3_PLC_Lib_Tc2_MC2_EN` | 61 | T3 |
-| 40 | Motion/NC2 | `Tc2_MC2_Camming` | `TF5050_TC3_NC_Camming_EN` | 18 | T3 |
-| 41 | Motion/NC2 | `Tc2_MC2_Drive` | `TwinCAT_3_PLC_Lib_Tc2_MC2_Drive_EN` | 41 | T3 |
-| 42 | Motion/NC2 | `Tc2_MC2_FlyingSaw` | `TF5055_TC3_NC_Flying_Saw_EN` | 3 | T3 |
-| 43 | Motion/NC2 | `Tc2_MC2_XFC+Tc2_NciXFC+AdvancedHoming_XFC` | `TF5065_TC3_Motion_Control_XFC_XFC_NCI_EN` | 30 | T3 |
-| 44 | Motion/NC2 | `Tc2_NCI+Tc2_PlcInterpolation+Tc2_NC` | `TF5100_TC3_NC_I_EN` | 103 | T3 |
-| 45 | Motion/NC2 | `Tc2_NcDrive` | `TwinCAT_3_PLC_Lib_Tc2_NcDrive_EN` | 21 | T3 |
-| 46 | Motion/NC2 | `Tc2_NcFifoAxes` | `TF5060_TCNC_FIFOAXES_EN` | 8 | T3 |
-| 47 | Motion/NC2 | `Tc2_NcKinematicTransformation` | `TF5110-TF5113_TC3_Kinematic_Transformation_EN` | 12 | T3 |
-| 48 | Motion/NC2 | `Tc3_MC2_AdvancedHoming` | `TwinCAT_3_PLC_Lib_Tc3_MC2_AdvancedHoming_EN` | 16 | T3 |
-| 49 | Motion/NC2 | `Tc3_Mc3Definitions` | `TF5400_TC3_Advanced_Motion_Pack_EN` | 0 | T3 |
-| 50 | Motion/NC2 | `Tc3_McCollisionAvoidance+Tc3_McCompensations+Tc3_Mc3Definitions` | `TF5410_TC3_Motion_Collision_Avoidance_EN` | 36 | T3 |
-| 51 | Motion/MC3 | `Tc3_Mc3Base+Mc3Ptp+Mc3Camming+Mc3FluidPower` | `TF55xx_TC3_MC3_EN` | 89 | T3 |
-| 52 | Motion/MC3 | `Tc3_Mc3PlanarMotion` | `tf5430_tc3_planar_motion_EN` | 87 | T3 |
-| 53 | Motion/MC3 | `Tc3_Physics` | `TwinCAT_3_PLC_Lib_Tc3_Physics_EN` | 38 | T0 |
-| 54 | Motion/Robot | `Tc3_mxAutomation` | `TF5120_TC3_Robotics_mxAutomation_EN` | 95 | T4 |
-| 55 | Motion/Robot | `Tc3_uniValPlc` | `TF5130_TC3_Robotics_uniVAL_PLC_EN` | 49 | T4 |
-| 56 | Motion/CNC | `Tc2_CncHli` | `TF5200_HLI_INTERFACE_EN` | 9 | T3 |
-| 57 | Motion/CNC | `Tc2_CncPlcopenP4` | `TF5200_JOBMANAGER_EN` | 1 | T4 |
-| 58 | Motion | `Tc2_Hydraulics` | `TF5810_TC3_Hydraulic_Positioning_EN` | 118 | T3 |
-| 59 | Industry | `PfwLib_Processing` | `TF8540_Plastic_Processing_Framework_EN` | 26 | T0 |
-| 60 | Industry | `Tc3_AES70` | `TF8810_TC3_AES70_Communication_EN` | 39 | T2 |
-| 61 | Industry | `Tc3_PJLink` | `PLC_Lib_PJLink_EN` | 2 | T2 |
-| 62 | Industry | `Tc3_PackML` | `TwinCAT_3_PLC_Lib_Tc3_PackML_EN` | 5 | T0 |
-| 63 | Industry | `Tc3_PackML_V2` | `TwinCAT_3_PLC_Lib_Tc3_PackML_V2_EN` | 21 | T0 |
-| 64 | Industry | `Tc3_PackML_V3` | `TwinCAT_3_PLC_Lib_Tc3_PackML_V3_EN` | 29 | T0 |
-| 65 | Industry | `Tc3_PlasticBaseApplication` | `TF85xx_TC3_Plastic_Application_EN` | 255 | T0 |
-| 66 | Industry | `Tc3_PlasticFunctions` | `TF8560_Plastic_Technology_Functions_EN` | 218 | T0 |
-| 67 | Industry | `Tc3_QRC` | `QRC_EN` | 60 | T0 |
-| 68 | Industry | `Tc3_RRCS` | `Riedel_Communications_RRCS_EN` | 5 | T2 |
-| 69 | Industry | `Tc3_sACN` | `TF6310_SACN_EN` | 28 | T2 |
-| 70 | Connectivity | `TC3_IotCommunicator` | `TF6730_TC3_IoT_Communicator_EN` | 13 | T2 |
-| 71 | Connectivity | `Tc2_Database+Tc3_Database` | `TF6420_TC3_Database_Server_EN` | 153 | T2 |
-| 72 | Connectivity | `Tc2_EthernetIP` | `TF6281_TC3_EthernetIP_Scanner_EN` | 7 | T2 |
-| 73 | Connectivity | `Tc2_FTP+Tc3_FTP` | `TF6300_TC3_FTP_Client_EN` | 41 | T2 |
-| 74 | Connectivity | `Tc2_IEC60870_5_10x` | `TF6500_TC3_IEC60870-5-10x_EN` | 93 | T2 |
-| 75 | Connectivity | `Tc2_ModbusRTU` | `TF6255_TC3_Modbus_RTU_EN` | 11 | T2 |
-| 76 | Connectivity | `Tc2_ModbusSrv` | `TF6250_TC3_Modbus_TCP_EN` | 20 | T2 |
-| 77 | Connectivity | `Tc2_OpcUa+Tc3_PLCopen_OpcUa` | `TF6100_TC3_OPC_UA_Server_EN` | 8 | T2 |
-| 78 | Connectivity | `Tc2_RFID` | `TF6600_TC3_RFID_Reader_Communication_EN` | 1 | T2 |
-| 79 | Connectivity | `Tc2_S5S7Com` | `TF6610_TC3_S5S7_Communication_EN` | 5 | T2 |
-| 80 | Connectivity | `Tc2_SMS+Tc2_SMTP` | `TF6350_TC3_SMS_SMTP_EN` | 7 | T2 |
-| 81 | Connectivity | `Tc2_SerialCom` | `TF6340_TC3_Serial_Communication_EN` | 20 | T2 |
-| 82 | Connectivity | `Tc2_TcpIp` | `TF6310_TC3_TCP_IP_EN` | 34 | T2 |
-| 83 | Connectivity | `Tc2_XmlDataSrv` | `TF6421_TC3_XML_Server_EN` | 8 | T2 |
-| 84 | Connectivity | `Tc3_Acsi+iec61850 family` | `TF6510_TC3_IEC61850_EN` | 485 | T2 |
-| 85 | Connectivity | `Tc3_EtherCATExtSync` | `TF6225_TC3_EtherCAT_External_Sync_EN` | 2 | T2 |
-| 86 | Connectivity | `Tc3_IotBase` | `TF6701_TC3_IoT_Communication_MQTT_EN` | 372 | T2 |
-| 87 | Connectivity | `Tc3_OCPP` | `TF6771_TC3_IoT_OCPP_EN` | 175 | T2 |
-| 88 | Connectivity | `Tc3_PLCopen_OpcUa-client` | `TF6100_TC3_OPC_UA_Client_EN` | 18 | T2 |
-| 89 | Connectivity | `Tc3_S7Comm` | `TF6620_TC3_S7_Communication_EN` | 24 | T2 |
-| 90 | Connectivity | `Tc3_iotFunctions` | `TF6710_TC3_IoT_Functions_EN` | 11 | T2 |
-| 91 | Vision | `Tc3_vision` | `TF7000-TF7810_TC3_Vision_EN` | 2501 | T4 |
-| 92 | Building | `Tc2_BABasic` | `TF8010_TC3_BABasic_EN` | 35 | T2 |
-| 93 | Building | `Tc2_DALI` | `TwinCAT_3_PLC_Lib_Tc2_DALI_EN` | 290 | T2 |
-| 94 | Building | `Tc2_DMX` | `TwinCAT_3_PLC_Lib_Tc2_DMX_EN` | 33 | T2 |
-| 95 | Building | `Tc2_EIB` | `TwinCAT_3_PLC_Lib_Tc2_EIB_EN` | 48 | T2 |
-| 96 | Building | `Tc2_EnOcean` | `TwinCAT_3_PLC_Lib_Tc2_EnOcean_EN` | 17 | T2 |
-| 97 | Building | `Tc2_GENIbus` | `TwinCAT_3_PLC_Lib_Tc2_GENIbus_EN` | 6 | T2 |
-| 98 | Building | `Tc2_HVAC` | `TF8000_TC3_HVAC_EN` | 120 | T0 |
-| 99 | Building | `Tc2_LON` | `TwinCAT_3_PLC_Lib_Tc2_LON_EN` | 371 | T2 |
-| 100 | Building | `Tc2_MBus` | `TwinCAT_3_PLC_Lib_Tc2_MBus_EN` | 65 | T2 |
-| 101 | Building | `Tc2_MPBus` | `TwinCAT_3_PLC_Lib_Tc2_MPBus_EN` | 44 | T2 |
-| 102 | Building | `Tc2_SMI` | `TwinCAT_3_PLC_Lib_Tc2_SMI_EN` | 25 | T2 |
-| 103 | Building | `Tc3_BA2_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA2_Common_EN` | 66 | T0 |
-| 104 | Building | `Tc3_BACnetRev14` | `TF8020_TC3_BACnet_EN` | 3 | T2 |
-| 105 | Building | `Tc3_BA_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA_Common_EN` | 21 | T0 |
-| 106 | Building | `Tc3_DALI` | `TwinCAT_3_PLC_Lib_Tc3_DALI_EN` | 405 | T2 |
-| 107 | Building | `Tc3_LS` | `TF8050_LS_EN` | 1 | T2 |
-| 108 | Building | `Tc3_XBA+BA2+BA+BA2_Common` | `TF8040_TC3_Building_Automation_EN` | 407 | T0 |
+| 6 | Standard | `Tc2_ProfinetDiag` | `TwinCAT_3_PLC_Lib_Tc2_ProfinetDiag_EN` | 24 | T2 |
+| 7 | Standard | `Tc2_SUPS` | `TwinCAT_3_PLC_Lib_Tc2_SUPS_EN` | 4 | T2 |
+| 8 | Standard | `Tc2_System` | `TwinCAT_3_PLC_Lib_Tc2_System_EN` | 81 | T1 |
+| 9 | Standard | `Tc2_SystemC69xx` | `TwinCAT_3_PLC_Lib_Tc2_SystemC69xx_EN` | 3 | T1 |
+| 10 | Standard | `Tc2_SystemCX` | `TwinCAT_3_PLC_Lib_Tc2_SystemCX_EN` | 32 | T1 |
+| 11 | Standard | `Tc2_Utilities` | `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN` | 325 | T2 |
+| 12 | Standard | `Tc3_DynamicMemory` | `TwinCAT_3_PLC_Lib_Tc3_DynamicMemory_EN` | 2 | T1 |
+| 13 | Standard | `Tc3_EtherCATDiag` | `TwinCAT_3_PLC_Lib_Tc3_EtherCATDiag_EN` | 2 | T2 |
+| 14 | Standard | `Tc3_EventLogger` | `TwinCAT_3_PLC_Lib_Tc3_EventLogger_EN` | 146 | T1 |
+| 15 | Standard | `Tc3_IPCDiag` | `TcPlcLib_Tc3_IPCDiag_EN` | 7 | T2 |
+| 16 | Standard | `Tc3_IoLink` | `TwinCAT_3_PLC_Lib_Tc3_IOLink_EN` | 55 | T2 |
+| 17 | Standard | `Tc3_JsonXml` | `TwinCAT_3_PLC_Lib_Tc3_JsonXml_EN` | 322 | T1 |
+| 18 | Standard | `Tc3_Module` | `TwinCAT_3_PLC_Lib_Tc3_Module_EN` | 33 | T1 |
+| 19 | System | `Tc3_PlcTestFramework+Utilities` | `TF1140_Test_Framework_EN` | 28 | T1 |
+| 20 | Measurement | `Tc2_SPA` | `TF3900_TC3_Solar_Position_Algorithm_EN` | 1 | T0 |
+| 21 | Measurement | `Tc3_Analytics` | `TF3510_TC3_Analytics_Library_EN` | 672 | T4 |
+| 22 | Measurement | `Tc3_AnalyticsCommunication` | `TF3500_TC3_Analytics_Logger_EN` | 20 | T4 |
+| 23 | Measurement | `Tc3_AnalyticsStorageProvider` | `TF3520_TC3_Analytics_Storage_Provider_EN` | 50 | T4 |
+| 24 | Measurement | `Tc3_CM+CM_Base+MultiArray` | `TF3600_TC3_ConditionMonitoring_EN` | 53 | T0 |
+| 25 | Measurement | `Tc3_Filter` | `TF3680_TC3_FILTER_EN` | 61 | T0 |
+| 26 | Measurement | `Tc3_MLL` | `TF38x0_TC3_ML_NN_Inference_Engine_EN` | 15 | T4 |
+| 27 | Measurement | `Tc3_MlServer` | `TF3820_TC3_Machine_Learning_Server_EN` | 1 | T4 |
+| 28 | Measurement | `Tc3_MlServer-alt` | `tf3820_tc3_machine_learning_server_EN` | 1 | T4 |
+| 29 | Measurement | `Tc3_PowerMonitoring` | `TF3650_TC3_Power_Monitoring_EN` | 133 | T1 |
+| 30 | Measurement | `Tc3_Weighing` | `TF3685_TC3_Weighing_Library_EN` | 19 | T0 |
+| 31 | Control | `Tc2_ControllerToolbox` | `TF4100_TC3_Controller_Toolbox_EN` | 55 | T0 |
+| 32 | Control | `Tc2_TempController` | `TF4110_TC3_Temperature_Controller_EN` | 3 | T0 |
+| 33 | Control | `Tc3_Speech` | `TF4500_TC3_Speech_EN` | 8 | T4 |
+| 34 | Motion/Drive | `Tc2_Drive` | `TwinCAT_3_PLC_Lib_Tc2_Drive_EN` | 26 | T3 |
+| 35 | Motion/Drive | `Tc3_DriveMotionControl` | `TwinCAT_3_PLC_Lib_Tc3_DriveMotionControl_EN` | 14 | T3 |
+| 36 | Motion/NC2 | `Tc2_MC2` | `TwinCAT_3_PLC_Lib_Tc2_MC2_EN` | 61 | T3 |
+| 37 | Motion/NC2 | `Tc2_MC2_Camming` | `TF5050_TC3_NC_Camming_EN` | 18 | T3 |
+| 38 | Motion/NC2 | `Tc2_MC2_Drive` | `TwinCAT_3_PLC_Lib_Tc2_MC2_Drive_EN` | 41 | T3 |
+| 39 | Motion/NC2 | `Tc2_MC2_FlyingSaw` | `TF5055_TC3_NC_Flying_Saw_EN` | 3 | T3 |
+| 40 | Motion/NC2 | `Tc2_MC2_XFC+Tc2_NciXFC+AdvancedHoming_XFC` | `TF5065_TC3_Motion_Control_XFC_XFC_NCI_EN` | 30 | T3 |
+| 41 | Motion/NC2 | `Tc2_NCI+Tc2_PlcInterpolation+Tc2_NC` | `TF5100_TC3_NC_I_EN` | 103 | T3 |
+| 42 | Motion/NC2 | `Tc2_NcDrive` | `TwinCAT_3_PLC_Lib_Tc2_NcDrive_EN` | 21 | T3 |
+| 43 | Motion/NC2 | `Tc2_NcFifoAxes` | `TF5060_TCNC_FIFOAXES_EN` | 8 | T3 |
+| 44 | Motion/NC2 | `Tc2_NcKinematicTransformation` | `TF5110-TF5113_TC3_Kinematic_Transformation_EN` | 12 | T3 |
+| 45 | Motion/NC2 | `Tc3_MC2_AdvancedHoming` | `TwinCAT_3_PLC_Lib_Tc3_MC2_AdvancedHoming_EN` | 16 | T3 |
+| 46 | Motion/NC2 | `Tc3_Mc3Definitions` | `TF5400_TC3_Advanced_Motion_Pack_EN` | 0 | T3 |
+| 47 | Motion/NC2 | `Tc3_McCollisionAvoidance+Tc3_McCompensations+Tc3_Mc3Definitions` | `TF5410_TC3_Motion_Collision_Avoidance_EN` | 36 | T3 |
+| 48 | Motion/MC3 | `Tc3_Mc3Base+Mc3Ptp+Mc3Camming+Mc3FluidPower` | `TF55xx_TC3_MC3_EN` | 89 | T3 |
+| 49 | Motion/MC3 | `Tc3_Mc3PlanarMotion` | `tf5430_tc3_planar_motion_EN` | 87 | T3 |
+| 50 | Motion/MC3 | `Tc3_Physics` | `TwinCAT_3_PLC_Lib_Tc3_Physics_EN` | 38 | T0 |
+| 51 | Motion/Robot | `Tc3_mxAutomation` | `TF5120_TC3_Robotics_mxAutomation_EN` | 95 | T4 |
+| 52 | Motion/Robot | `Tc3_uniValPlc` | `TF5130_TC3_Robotics_uniVAL_PLC_EN` | 49 | T4 |
+| 53 | Motion/CNC | `Tc2_CncHli` | `TF5200_HLI_INTERFACE_EN` | 9 | T3 |
+| 54 | Motion/CNC | `Tc2_CncPlcopenP4` | `TF5200_JOBMANAGER_EN` | 1 | T4 |
+| 55 | Motion | `Tc2_Hydraulics` | `TF5810_TC3_Hydraulic_Positioning_EN` | 118 | T3 |
+| 56 | Industry | `PfwLib_Processing` | `TF8540_Plastic_Processing_Framework_EN` | 26 | T0 |
+| 57 | Industry | `Tc3_AES70` | `TF8810_TC3_AES70_Communication_EN` | 39 | T2 |
+| 58 | Industry | `Tc3_PJLink` | `PLC_Lib_PJLink_EN` | 2 | T2 |
+| 59 | Industry | `Tc3_PackML` | `TwinCAT_3_PLC_Lib_Tc3_PackML_EN` | 5 | T0 |
+| 60 | Industry | `Tc3_PackML_V2` | `TwinCAT_3_PLC_Lib_Tc3_PackML_V2_EN` | 21 | T0 |
+| 61 | Industry | `Tc3_PackML_V3` | `TwinCAT_3_PLC_Lib_Tc3_PackML_V3_EN` | 29 | T0 |
+| 62 | Industry | `Tc3_PlasticBaseApplication` | `TF85xx_TC3_Plastic_Application_EN` | 255 | T0 |
+| 63 | Industry | `Tc3_PlasticFunctions` | `TF8560_Plastic_Technology_Functions_EN` | 218 | T0 |
+| 64 | Industry | `Tc3_QRC` | `QRC_EN` | 60 | T0 |
+| 65 | Industry | `Tc3_RRCS` | `Riedel_Communications_RRCS_EN` | 5 | T2 |
+| 66 | Industry | `Tc3_sACN` | `TF6310_SACN_EN` | 28 | T2 |
+| 67 | Connectivity | `TC3_IotCommunicator` | `TF6730_TC3_IoT_Communicator_EN` | 13 | T2 |
+| 68 | Connectivity | `Tc2_Database+Tc3_Database` | `TF6420_TC3_Database_Server_EN` | 153 | T2 |
+| 69 | Connectivity | `Tc2_EthernetIP` | `TF6281_TC3_EthernetIP_Scanner_EN` | 7 | T2 |
+| 70 | Connectivity | `Tc2_FTP+Tc3_FTP` | `TF6300_TC3_FTP_Client_EN` | 41 | T2 |
+| 71 | Connectivity | `Tc2_IEC60870_5_10x` | `TF6500_TC3_IEC60870-5-10x_EN` | 93 | T2 |
+| 72 | Connectivity | `Tc2_ModbusRTU` | `TF6255_TC3_Modbus_RTU_EN` | 11 | T2 |
+| 73 | Connectivity | `Tc2_ModbusSrv` | `TF6250_TC3_Modbus_TCP_EN` | 20 | T2 |
+| 74 | Connectivity | `Tc2_OpcUa+Tc3_PLCopen_OpcUa` | `TF6100_TC3_OPC_UA_Server_EN` | 8 | T2 |
+| 75 | Connectivity | `Tc2_RFID` | `TF6600_TC3_RFID_Reader_Communication_EN` | 1 | T2 |
+| 76 | Connectivity | `Tc2_S5S7Com` | `TF6610_TC3_S5S7_Communication_EN` | 5 | T2 |
+| 77 | Connectivity | `Tc2_SMS+Tc2_SMTP` | `TF6350_TC3_SMS_SMTP_EN` | 7 | T2 |
+| 78 | Connectivity | `Tc2_SerialCom` | `TF6340_TC3_Serial_Communication_EN` | 20 | T2 |
+| 79 | Connectivity | `Tc2_TcpIp` | `TF6310_TC3_TCP_IP_EN` | 34 | T2 |
+| 80 | Connectivity | `Tc2_XmlDataSrv` | `TF6421_TC3_XML_Server_EN` | 8 | T2 |
+| 81 | Connectivity | `Tc3_Acsi+iec61850 family` | `TF6510_TC3_IEC61850_EN` | 485 | T2 |
+| 82 | Connectivity | `Tc3_EtherCATExtSync` | `TF6225_TC3_EtherCAT_External_Sync_EN` | 2 | T2 |
+| 83 | Connectivity | `Tc3_IotBase` | `TF6701_TC3_IoT_Communication_MQTT_EN` | 372 | T2 |
+| 84 | Connectivity | `Tc3_OCPP` | `TF6771_TC3_IoT_OCPP_EN` | 175 | T2 |
+| 85 | Connectivity | `Tc3_PLCopen_OpcUa-client` | `TF6100_TC3_OPC_UA_Client_EN` | 18 | T2 |
+| 86 | Connectivity | `Tc3_S7Comm` | `TF6620_TC3_S7_Communication_EN` | 24 | T2 |
+| 87 | Connectivity | `Tc3_iotFunctions` | `TF6710_TC3_IoT_Functions_EN` | 11 | T2 |
+| 88 | Vision | `Tc3_vision` | `TF7000-TF7810_TC3_Vision_EN` | 2501 | T4 |
+| 89 | Building | `Tc2_BABasic` | `TF8010_TC3_BABasic_EN` | 35 | T2 |
+| 90 | Building | `Tc2_DALI` | `TwinCAT_3_PLC_Lib_Tc2_DALI_EN` | 290 | T2 |
+| 91 | Building | `Tc2_DMX` | `TwinCAT_3_PLC_Lib_Tc2_DMX_EN` | 33 | T2 |
+| 92 | Building | `Tc2_EIB` | `TwinCAT_3_PLC_Lib_Tc2_EIB_EN` | 48 | T2 |
+| 93 | Building | `Tc2_EnOcean` | `TwinCAT_3_PLC_Lib_Tc2_EnOcean_EN` | 17 | T2 |
+| 94 | Building | `Tc2_GENIbus` | `TwinCAT_3_PLC_Lib_Tc2_GENIbus_EN` | 6 | T2 |
+| 95 | Building | `Tc2_HVAC` | `TF8000_TC3_HVAC_EN` | 120 | T0 |
+| 96 | Building | `Tc2_LON` | `TwinCAT_3_PLC_Lib_Tc2_LON_EN` | 371 | T2 |
+| 97 | Building | `Tc2_MBus` | `TwinCAT_3_PLC_Lib_Tc2_MBus_EN` | 65 | T2 |
+| 98 | Building | `Tc2_MPBus` | `TwinCAT_3_PLC_Lib_Tc2_MPBus_EN` | 44 | T2 |
+| 99 | Building | `Tc2_SMI` | `TwinCAT_3_PLC_Lib_Tc2_SMI_EN` | 25 | T2 |
+| 100 | Building | `Tc3_BA2_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA2_Common_EN` | 66 | T0 |
+| 101 | Building | `Tc3_BACnetRev14` | `TF8020_TC3_BACnet_EN` | 3 | T2 |
+| 102 | Building | `Tc3_BA_Common` | `TwinCAT_3_PLC_Lib_Tc3_BA_Common_EN` | 21 | T0 |
+| 103 | Building | `Tc3_DALI` | `TwinCAT_3_PLC_Lib_Tc3_DALI_EN` | 405 | T2 |
+| 104 | Building | `Tc3_LS` | `TF8050_LS_EN` | 1 | T2 |
+| 105 | Building | `Tc3_XBA+BA2+BA+BA2_Common` | `TF8040_TC3_Building_Automation_EN` | 407 | T0 |
 
-Total: 9947 API entries in 108 manuals.
+Total: 9896 API entries in 105 manuals remaining.
+
+Landed libraries pruned so far: `Tc2_Math` (8/8), `Tc2_Standard`
+(31/31), `Tc3_RealtimeMonitoring` (12/12) — see
+`docs/plc/compat/README.md` for as-built coverage and the remaining
+per-library gaps.
 
 ## 6. Per-category integration analysis
 
@@ -269,7 +277,6 @@ the recursive category ancestry. Entries are grouped by manual
 in overview order. Parameter tables preserve the manual's own
 descriptions; "—" means the manual gave a name/type but no
 per-parameter prose.
-
 
 ### Tc2_Coupler — `TwinCAT_3_PLC_Lib_Tc2_Coupler_EN`
 
@@ -387,7 +394,6 @@ per-parameter prose.
 | `nVersionElement` | `INT` | — |
 
 **Description:** This function is obsolete and should not be used any longer. Use the global constant stLibVersion_Tc2_Coupler [} 20] to read version information from the plc library.
-
 
 ### Tc2_DataExchange — `TwinCAT_3_PLC_Lib_Tc2_DataExchange_EN`
 
@@ -601,7 +607,6 @@ per-parameter prose.
 | `nErrorId` | `UDINT` | ADS error number if an error has occurred. |
 
 **Description:** Writing of a watchdog signal to another ADS device (TwinCAT PLC, Bus Terminal Controller, ...).
-
 
 ### Tc2_EtherCAT — `TwinCAT_3_PLC_Lib_Tc2_EtherCAT_EN`
 
@@ -2155,7 +2160,6 @@ per-parameter prose.
 
 **Description:** This function can be used to read PLC library version information.
 
-
 ### Tc2_IoFunctions — `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN`
 
 - **Category:** Standard · **Tier:** T3
@@ -3564,7 +3568,6 @@ per-parameter prose.
 
 **Description:** This function is obsolete and should not be used. Please use the global constant: stLibVersion_Tc2_IoFunctions [} 150] to read version information from the PLC library.
 
-
 ### Tc2_MDP — `TwinCAT_3_PLC_Lib_Tc2_MDP_EN`
 
 - **Category:** Standard · **Tier:** T1
@@ -3984,101 +3987,6 @@ per-parameter prose.
 | `stMDP_ModuleContent` | `ST_MDP_TwinCAT` | — |
 
 **Description:** The function block enables querying of the IPC diagnostics module TwinCAT.
-
-
-### Tc2_Math — `TwinCAT_3_PLC_Lib_Tc2_Math_EN`
-
-- **Category:** Standard · **Tier:** T0
-- **Manual:** `TwinCAT_3_PLC_Lib_Tc2_Math_EN.pdf` · **API entries:** 8
-- **Integration:** Mathematical functions: pure-ST compatibility library.
-
-#### Functions
-
-##### `CEIL` (FUNCTION) → `LREAL` — §3.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lr_in` | `LREAL` | Function parameters of type LREAL Comparison with other rounding functions |
-
-**Description:** The CEIL function determines an integer value from a floating point number that is lower than or equal to that number. It is always rounded up to the larger number.
-
-##### `FLOOR` (FUNCTION) → `LREAL` — §3.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lr_in` | `LREAL 10` | Function parameters of type LREAL Functions Comparison with other rounding functions |
-
-**Description:** The FLOOR function determines an integer value from a floating point number that is lower than or equal to that number. It is always rounded down to the lower number.
-
-##### `FRAC` (FUNCTION) → `LREAL` — §3.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lr_in` | `LREAL` | Function parameters of type LREAL |
-
-**Description:** The FRAC function determines the decimal component of a floating point number.
-
-##### `LMOD` (FUNCTION) → `LREAL` — §3.4
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lr_Value` | `LREAL` | Input value |
-| `lr_Arg` | `LREAL` | Modulo range |
-
-**Description:** 12
-
-##### `LTRUNC` (FUNCTION) → `LREAL` — §3.5
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lr_in` | `LREAL` | Function parameters of type LREAL Comparison with other rounding functions |
-
-**Description:** The LTRUNC function determines the integer part of a floating point number.
-
-##### `MODABS` (FUNCTION) → `LREAL` — §3.6
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lr_val` | `LREAL` | Input value |
-| `lr_mod` | `LREAL` | Modulo range Functions |
-
-**Description:** The MODABS function performs a modulo division and determines the unsigned modulo value within the modulo range.
-
-##### `MODTURNS` (FUNCTION) → `DINT` — §3.7
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `lr_Value` | `LREAL` | Input value |
-| `lr_Arg` | `LREAL 16` | Modulo range Functions |
-
-**Description:** The MODTURNS function carries out a modulo division and determines the signed integer component (modulo periods, modulo rotations).
-
-#### [obsolete functions]
-
-##### `F_GetVersionTcMath` (FUNCTION) → `UINT` — §4.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nVersionElement` | `INT` | Version element to be read. Possible parameters: |
-
-**Description:** This function can be used to read PLC library version information.
-
 
 ### Tc2_ProfinetDiag — `TwinCAT_3_PLC_Lib_Tc2_ProfinetDiag_EN`
 
@@ -4509,7 +4417,6 @@ per-parameter prose.
 
 **Description:** The function block FB_PN_READ_PORT_DIAG retrieves the diagnosis information of the ports of a PROFINET device.
 
-
 ### Tc2_SUPS — `TwinCAT_3_PLC_Lib_Tc2_SUPS_EN`
 
 - **Category:** Standard · **Tier:** T2
@@ -4593,462 +4500,6 @@ per-parameter prose.
 | `ERRID` | `UDINT` | Supplies the error number when the ERR output is set. |
 
 **Description:** Loss of data The function block FB_NT_QuickShutdown is used internally by the various FB_S_UPS blocks. It must not be used independently, because this could result in data loss!
-
-
-### Tc2_Standard — `TwinCAT_3_PLC_Lib_Tc2_Standard_EN`
-
-- **Category:** Standard · **Tier:** T0
-- **Manual:** `TwinCAT_3_PLC_Lib_Tc2_Standard_EN.pdf` · **API entries:** 31
-- **Integration:** IEC standard functions (string, time, math, memory): pure-ST compatibility library, no runtime services.
-
-#### Function blocks › Bistable
-
-##### `RS` — §3.1.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `SET` | `BOOL` | Set input - Q1 is set to TRUE on a rising edge. |
-| `RESET1` | `BOOL` | Reset input (dominant) - Q1 is set to FALSE on rising edge |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q1` | `BOOL` | Output |
-
-**Description:** The RS function block is bistable and RESET is dominant.
-
-##### `SR` — §3.1.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `SET1` | `BOOL` | Set input (dominant) - Q1 is set to TRUE on a rising edge |
-| `RESET` | `BOOL` | Reset input - Q1 is set to FALSE on a rising edge |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q1` | `BOOL` | Output |
-
-**Description:** The SR function block is bistable and SET is dominant.
-
-#### Function blocks › Counter
-
-##### `CTD` — §3.2.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `CD` | `BOOL` | On a rising edge: count down by one |
-| `LOAD` | `BOOL` | TRUE: Set counter variable CV to the start value PV |
-| `PV` | `Word` | Start value |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `10 Function blocks` | `` | — |
-| `Q` | `BOOL` | TRUE if the counter value CV is 0. |
-| `CV` | `WORD` | Counter variable (current counter value) |
-
-**Description:** The CTD function block is a down counter.
-
-##### `CTU` — §3.2.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `CU` | `BOOL` | On a rising edge: count up by one |
-| `RESET` | `BOOL` | TRUE: Reset counter variable CV to the value 0 |
-| `PV` | `WORD` | Counter limit |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | TRUE if the counter value CV is greater than or equal to |
-
-**Description:** The CTU function block is an up counter.
-
-##### `CTUD` — §3.2.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `CU` | `BOOL` | On a rising edge: count up by one |
-| `CD` | `BOOL` | On a rising edge: count down by one |
-| `RESET` | `BOOL` | TRUE: Reset counter variable CV to the value 0 |
-| `LOAD` | `BOOL` | TRUE: Set counter variable CV to the start value PV |
-| `PV` | `WORD` | Start value/counter limit |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `QU` | `BOOL` | TRUE if the counter value CV is greater than or equal to |
-
-**Description:** Function blocks
-
-#### Function blocks › Timer
-
-##### `TOF` — §3.3.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `IN` | `BOOL` | Falling edge: Start timer Rising edge: Reset timer |
-| `PT` | `TIME` | Delay time (time that elapses before Q is reset) |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | TRUE if the IN input is TRUE. |
-
-**Description:** The TOF function block implements a timer with a switch-off delay.
-
-##### `TON` — §3.3.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `IN` | `BOOL` | Rising edge: Start timer Falling edge: Reset timer |
-| `PT` | `TIME` | Delay time (time elapsed before Q is set) |
-| `PT` | `TIME` | Delay time (time elapsed before Q is set) |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | FALSE if the IN input is FALSE. |
-
-**Description:** The TON function block implements a timer with a switch-on delay.
-
-##### `TP` — §3.3.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `IN` | `BOOL` | Rising edge: Start pulse timer and set Q to TRUE |
-| `PT` | `TIME` | Pulse duration (length of the high signal) |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | TRUE after a rising edge at the IN input for the pulse |
-
-**Description:** The TP function block, a pulse generator, can be used to generate pulses with a defined pulse duration.
-
-#### Function blocks › Timer (LTIME)
-
-##### `LTOF` — §3.4.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `IN` | `BOOL` | Falling edge: Start timer Rising edge: Reset timer |
-| `PT` | `TIME` | Delay time (time that elapses before Q is reset) |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | TRUE if the IN input is TRUE. |
-
-**Description:** The LTOF function block implements a timer with switch-off delay with 64-bit time data type (LTIME).
-
-##### `LTON` — §3.4.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `IN` | `BOOL` | Rising edge: Start timer Falling edge: Reset timer |
-| `PT` | `TIME` | Delay time (time elapsed before Q is set) |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | FALSE if the IN input is FALSE. |
-
-**Description:** The LTON function block implements a timer with a switch-on delay with a 64-bit time data type (LTIME).
-
-##### `LTP` — §3.4.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `IN` | `BOOL` | Rising edge: Start pulse timer and set Q to TRUE |
-| `PT` | `TIME` | Pulse duration (length of the high signal) |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | TRUE after a rising edge at the IN input for the pulse |
-
-**Description:** The LTP function block is a pulse generator with 64-bit time data type (LTIME). This function block can be used to generate pulses with a defined pulse duration.
-
-#### Function blocks › Trigger
-
-##### `F_TRIG` — §3.5.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `CLK` | `BOOL` | Boolean signal to be checked |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | TRUE for a falling edge at the CLK input (for one cycle) |
-
-**Description:** The F_TRIG function block is a detector for a falling edge.
-
-##### `R_TRIG` — §3.5.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `CLK` | `BOOL` | Boolean signal to be checked |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `Q` | `BOOL` | TRUE for a rising edge at the CLK input (for one cycle) |
-
-**Description:** The R_TRIG function block is a rising edge detector.
-
-#### String functions
-
-##### `CONCAT` (FUNCTION) → `STRING` — §4.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `STRING(255)` | — |
-| `STR2` | `STRING(255)` | — |
-
-**Description:** Concatenation (combination) of two strings.
-
-##### `DELETE` (FUNCTION) → `STRING` — §4.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `STRING(255)` | — |
-| `LEN` | `INT` | — |
-| `POS` | `INT` | — |
-
-**Description:** The function DELETE removes a partial string from a larger string at a defined position. The input variable STR is type STRING, LEN and POS are type INT, the return value of the function is type STRING. DELETE (STR, LEN, POS) means: Delete LEN characters from STR beginning with the character in the POS.
-
-##### `FIND` (FUNCTION) → `INT` — §4.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `STRING(255)` | — |
-| `STR2` | `STRING(255)` | — |
-
-**Description:** The function FIND searches for a partial string within a string. FIND (STR1, STR2) means: Find the position of the first character where STR2 appears in STR1 for the first time. If STR2 is not found in STR1, then OUT:=0.
-
-##### `INSERT` (FUNCTION) → `STRING` — §4.4
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `STRING(255)` | — |
-| `STR2` | `STRING(255)` | — |
-| `POS` | `INT` | — |
-
-**Description:** The function INSERT inserts a string into another string at a defined point. INSERT (STR1, STR2, POS) means: Insert STR2 into STR1 after position POS.
-
-##### `LEFT` (FUNCTION) → `STRING` — §4.5
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `STRING(255)` | — |
-| `SIZE` | `INT` | — |
-
-**Description:** The function LEFT returns the left, initial string for a given string. LEFT (STR, SIZE) means: Take the first SIZE character from the left in the string STR.
-
-##### `LEN` (FUNCTION) → `INT` — §4.6
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `STRING(255)` | — |
-| `Var1` | `= LEN ('SUSI')` | — |
-
-**Description:** The function LEN returns the length of a string.
-
-##### `MID` (FUNCTION) → `STRING` — §4.7
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `STRING(255)` | — |
-| `LEN` | `INT` | — |
-| `POS` | `INT` | — |
-
-**Description:** The function MID returns a partial string from within a string. MID (STR, LEN, POS) means: Retrieve LEN characters from the STR string beginning with the character at position POS.
-
-##### `REPLACE` (FUNCTION) → `STRING` — §4.8
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `STRING(255)` | — |
-| `STR2` | `STRING(255)` | — |
-| `L` | `INT` | — |
-| `P` | `INT` | — |
-
-**Description:** The function REPLACE replaces a partial string from a larger string with a third string. REPLACE (STR1, STR2, L, P) means: Replace L characters from STR1 with STR2 beginning with the character in the P position.
-
-##### `RIGHT` (FUNCTION) → `STRING` — §4.9
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `STRING(255)` | — |
-| `SIZE` | `INT` | — |
-
-**Description:** The RIGHT function returns a right-hand start string of a string. RIGHT (STR, SIZE) means: take the first SIZE characters from the right in the STR string.
-
-#### String functions (WSTRING)
-
-##### `WCONCAT` (FUNCTION) → `WSTRING` — §5.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `WSTRING(255); (*Head part of the concatenated result*)` | — |
-| `STR2` | `WSTRING(255); (*Tail part of the concatenated result*)` | — |
-
-**Description:** Concatenation (combination) of two WSTRINGs.
-
-##### `WDELETE` (FUNCTION) → `WSTRING` — §5.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `WSTRING(255)` | — |
-| `LEN` | `INT` | — |
-| `POS` | `INT` | — |
-
-**Description:** The function WDELETE deletes part of a WSTRING from a certain point. The input STR is of type WSTRING. LEN and POS are of type INT. The return value of the function is of type WSTRING. WDELETE (STR, LEN, POS) means: Delete LEN characters from STR beginning with the POSth character.
-
-##### `WFIND` (FUNCTION) → `INT` — §5.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `WSTRING(255)` | — |
-| `STR2` | `WSTRING(255)` | — |
-
-**Description:** The function WFIND searches for a part in WSTRING. WFIND (STR1, STR2) means: Find the position of the first character of first occurrence of STR2 in STR1. If STR2 does not occur in STR1, then OUT := 0 applies.
-
-##### `WINSERT` (FUNCTION) → `WSTRING` — §5.4
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `WSTRING(255)` | — |
-| `STR2` | `WSTRING(255)` | — |
-| `POS` | `INT` | — |
-
-**Description:** The function WINSERT adds a WString in another WString from a particular location. WINSERT (STR1, STR2, POS) means: Add STR2 in STR1 after the POSth position.
-
-##### `WLEFT` (FUNCTION) → `WSTRING` — §5.5
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `WSTRING(255)` | — |
-| `SIZE` | `INT` | — |
-
-**Description:** The function WLEFT supplies a left-hand start string for a WSTRING. WLEFT (STR, SIZE) means: Take the first SIZE characters from the left in WString STR.
-
-##### `WLEN` (FUNCTION) → `INT` — §5.6
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `WSTRING(255)` | — |
-
-**Description:** The function WLEN outputs the length of a WSTRING.
-
-##### `WMID` (FUNCTION) → `WSTRING` — §5.7
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `WSTRING(255)` | — |
-| `LEN` | `INT` | — |
-| `POS` | `INT` | — |
-
-**Description:** String functions (WSTRING)
-
-##### `WREPLACE` (FUNCTION) → `WSTRING` — §5.8
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR1` | `WSTRING(255)` | — |
-| `STR2` | `WSTRING(255)` | — |
-| `L` | `INT` | — |
-| `P` | `INT` | — |
-
-**Description:** The function WREPLACE replaces a substring of a WSTRING with another WSTRING. WREPLACE (STR1, STR2, L, P) means: Replace L characters from STR1 with STR2 beginning with the Pth character.
-
-##### `WRIGHT` (FUNCTION) → `WSTRING` — §5.9
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `STR` | `WSTRING(255)` | — |
-| `SIZE` | `INT` | — |
-
-**Description:** 28
-
 
 ### Tc2_System — `TwinCAT_3_PLC_Lib_Tc2_System_EN`
 
@@ -6319,7 +5770,6 @@ per-parameter prose.
 
 **Description:** The use of the PLC function blocks for data access from the Tc2_system library is introduced in this example. A new function block, FB_FileCopy, is implemented with the aid of the existing function blocks. Using the FB_FileCopy function block, binary files can be copied in the local TwinCAT system or between a local and a remote TwinCAT system.
 
-
 ### Tc2_SystemC69xx — `TwinCAT_3_PLC_Lib_Tc2_SystemC69xx_EN`
 
 - **Category:** Standard · **Tier:** T1
@@ -6374,7 +5824,6 @@ per-parameter prose.
 | `nVersionElement INT` | `Version element to be read. Possible parameters:` | — |
 
 **Description:** This function can be used to read PLC library version information.
-
 
 ### Tc2_SystemCX — `TwinCAT_3_PLC_Lib_Tc2_SystemCX_EN`
 
@@ -6942,7 +6391,6 @@ per-parameter prose.
 | `F_CX8190 INT` | `-1: flash code not implemented; 0: OK _LED_ERR` | — |
 
 **Description:** Since the CX8190 supports various protocols, the two LEDs WD and ERR on the CX8190 are not used by the firmware. This allows users to create their own diagnosis messages. The LEDs can be used to indicate, for example, whether the CX8190 has received an IP address from the DHCP server or whether devices are exchanging data.
-
 
 ### Tc2_Utilities — `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN`
 
@@ -12499,7 +11947,6 @@ per-parameter prose.
 
 **Description:** The complete sources can be found here: https://infosys.beckhoff.com/content/1033/TcPlcLib_Tc2_Utilities/ Resources/803399691.zip
 
-
 ### Tc3_DynamicMemory — `TwinCAT_3_PLC_Lib_Tc3_DynamicMemory_EN`
 
 - **Category:** Standard · **Tier:** T1
@@ -12537,7 +11984,6 @@ per-parameter prose.
 | `p` | `REFERENCE TO PVOID; // the given pointer is reset to zero after deletion` | — |
 
 **Description:** This function block provides the possibility to dynamically allocate memory and to release it again. Integrated counters indicate the memory consumption and thus enable an overview of the already allocated memory.
-
 
 ### Tc3_EtherCATDiag — `TwinCAT_3_PLC_Lib_Tc3_EtherCATDiag_EN`
 
@@ -12594,7 +12040,6 @@ per-parameter prose.
 | `bBusy` | `BOOL` | Simple busy signal, indicates that the function block is |
 
 **Description:** The function block FB_ReadCoEDiagHistory_Axis is a variation of the function block FB_ReadCoEDiagHistory [} 9], which can be assigned an AXIS_REF structure instead of an address. Only messages that belong either to the device or to the specific axis are output (e.g. for an AX8206 dual-axis module).
-
 
 ### Tc3_EventLogger — `TwinCAT_3_PLC_Lib_Tc3_EventLogger_EN`
 
@@ -14743,7 +14188,6 @@ per-parameter prose.
 
 **Description:** This method compares an instance with source information with another instance.
 
-
 ### Tc3_IPCDiag — `TcPlcLib_Tc3_IPCDiag_EN`
 
 - **Category:** Standard · **Tier:** T2
@@ -14960,7 +14404,6 @@ per-parameter prose.
 | `fbRegister` | `FB_IPCDiag_Register` | — |
 
 **Description:** The MDP (Modular Device Profile) information model lists all parameters with the help of areas, modules and tables. As the generic access to each parameter, an addressing is defined whose main component is the MDP index (2 bytes).
-
 
 ### Tc3_IoLink — `TwinCAT_3_PLC_Lib_Tc3_IOLink_EN`
 
@@ -15946,7 +15389,6 @@ per-parameter prose.
 | `sErrorTxt` | `STRING(255) := ''` | — |
 
 **Description:** In this sample, the ApplicationSpecificTag is written using the WriteApplicationspecificTag methods and then read and checked using the ReadApplicationSpecificTag method.
-
 
 ### Tc3_JsonXml — `TwinCAT_3_PLC_Lib_Tc3_JsonXml_EN`
 
@@ -21565,7 +21007,6 @@ per-parameter prose.
 
 **Description:** This callback method is triggered if a value of the data type ULINT was found at the position of the SAX reader. The input parameter value contains the value found. The SAX parsing procedure is aborted by setting the return value HRESULT to S_FALSE.
 
-
 ### Tc3_Module — `TwinCAT_3_PLC_Lib_Tc3_Module_EN`
 
 - **Category:** Standard · **Tier:** T1
@@ -22070,211 +21511,6 @@ per-parameter prose.
 
 **Description:** The function GuidsEqual checks two GUID objects for their equality to one another.
 
-
-### Tc3_RealtimeMonitoring — `TE1010_TC3_Realtime_Monitor_EN`
-
-- **Category:** Engineering · **Tier:** T1
-- **Manual:** `TE1010_TC3_Realtime_Monitor_EN.pdf` · **API entries:** 12
-- **Integration:** Runtime introspection (cycle times, task stats) extends the existing debug plane.
-
-#### Function blocks
-
-##### `FB_RTMon_LogMark` — §12.1.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `set with each mark` | `` | — |
-| `nContextId` | `UINT` | Context ID for which this marker is to be set. The initial |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bError` | `BOOL` | Boolean value that indicates whether the function block is |
-
-**Description:** The FB_RTMon_LogMark is an extended function block that enables the setting of "simple" (time) markers.
-
-#### Function blocks › FB_RTMon_LogMark
-
-##### `LogIntervalStart` — §12.1.1.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogIntervalStart` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker with an interval start for the transferred Marker ID.
-
-##### `LogIntervalStop` — §12.1.1.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogIntervalStop` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker with an interval stop for the transferred Marker ID.
-
-##### `LogMark` — §12.1.1.3
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogMark` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker for the marker ID that was transferred. Optionally, the event ID can be used to distinguish between different user events or to display additional data (formatted as UINT) in the TwinCAT 3 Realtime Monitor display.
-
-##### `LogSequenceStart` — §12.1.1.4
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogSequenceSta HRESULT` | `Returns the error code in the event of an error. rt` | — |
-
-**Description:** The method creates a marker with a sequence start for the marker ID that was transferred.
-
-##### `LogSequenceStop` — §12.1.1.5
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogSequenceSto HRESULT` | `Returns the error code in the event of an error. p` | — |
-
-**Description:** The method creates a marker with a sequence stop for the marker ID that was transferred.
-
-##### `LogStart` — §12.1.1.6
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogStart` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker with a sequence and interval start for the transferred marker ID. Thus, this marker represents the time of a process at which it is immediately active / started.
-
-##### `LogStop` — §12.1.1.7
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogStop` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker with a sequence and interval stop for the passed marker ID. Thus, this marker represents the point in time of a process at which it is terminated directly.
-
-##### `LogTrigger` — §12.1.1.8
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `nGroupId` | `UINT` | Marker ID (marker group) for which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogTrigger` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker with a trigger for the transferred marker ID. The real-time monitor server can be configured to start recording based on this trigger.
-
-#### Function blocks
-
-##### `FB_RTMon_LogMarkBase` — §12.1.2
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `bError` | `BOOL` | TRUE if an error has occurred. |
-| `hrErrorCode` | `HRESULT` | Outputs the error code that has occurred. |
-
-**Description:** The FB_RTMon_LogMarkBase is a generic function block that enables the setting of (time) marks.
-
-#### Function blocks › FB_RTMon_LogMarkBase
-
-##### `LogMark` — §12.1.2.1
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `60 PLC API` | `` | — |
-| `nContextId` | `UINT` | Defines the context ID under which the marker is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogMark` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker for the transferred marker group ID. The marker type is transferred using the parameter nMarkCtrl (see TcMarkOption [} 62]).
-
-##### `LogMarkEx` — §12.1.2.2
-
-**VAR_INPUT / Inputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `stMark` | `ST_RTMon_MarkDef [} 61]` | Transfer parameter for a defined marker that is to be |
-
-**VAR_OUTPUT / Outputs**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `LogMarkEx` | `HRESULT` | Returns the error code in the event of an error. |
-
-**Description:** The method creates a marker. The marker is defined using the data type ST_RTMon_MarkDef [} 61]. The marker type is transferred using the parameter nMarkCtrl (see TcMarkOption [} 62]).
-
-
 ### Tc3_PlcTestFramework+Utilities — `TF1140_Test_Framework_EN`
 
 - **Category:** System · **Tier:** T1
@@ -22565,7 +21801,6 @@ per-parameter prose.
 
 **Description:** The method SucceededPreparation is called to confirm that test case preparation has been successfully completed. The preparation steps are executed until either an Assert method detects that a preparation step has failed, the configured timeout stops the test case preparation process, or a call to SucceededPreparation confirms that the test case preparation has completed error-free and the test case can now be executed.
 
-
 ### Tc2_SPA — `TF3900_TC3_Solar_Position_Algorithm_EN`
 
 - **Category:** Measurement · **Tier:** T0
@@ -22589,7 +21824,6 @@ per-parameter prose.
 | `fZenith` | `LREAL` | The zenith angle of the sun is defined as the angle |
 
 **Description:** At the input all available values for the location definition and type of calculation are specified.
-
 
 ### Tc3_Analytics — `TF3510_TC3_Analytics_Library_EN`
 
@@ -32855,7 +32089,6 @@ per-parameter prose.
 
 **Description:** Function to convert an input of type ST_ALY_Timespan [} 434] to a raw timespan.
 
-
 ### Tc3_AnalyticsCommunication — `TF3500_TC3_Analytics_Logger_EN`
 
 - **Category:** Measurement · **Tier:** T4
@@ -33313,7 +32546,6 @@ per-parameter prose.
 | `nMaxNumElements UDINT` | `Maximum number of saved symbols influenced by` | — |
 
 **Description:** Syntax
-
 
 ### Tc3_AnalyticsStorageProvider — `TF3520_TC3_Analytics_Storage_Provider_EN`
 
@@ -34102,7 +33334,6 @@ per-parameter prose.
 | `StopMonitoring` | `BOOL` | Is TRUE when completed. |
 
 **Description:** Syntax
-
 
 ### Tc3_CM+CM_Base+MultiArray — `TF3600_TC3_ConditionMonitoring_EN`
 
@@ -36084,7 +35315,6 @@ per-parameter prose.
 
 **Description:** This sample implements an event based frequency analysis. The generated signal consists of a noisy sine signal with a frequency of 200 Hz and pure noise, which alternate every two seconds. Buffering of the signal begins when a rising edge is detected in the (generated) input signal. The collected data are then relayed via FB_CMA_Source [} 255] to the function block FB_CMA_MagnitudeSpectrum [} 168].
 
-
 ### Tc3_Filter — `TF3680_TC3_FILTER_EN`
 
 - **Category:** Measurement · **Tier:** T0
@@ -37154,7 +36384,6 @@ per-parameter prose.
 
 **Description:** This sample shows how the individual filter function blocks of the PLC library Tc3_Filter are declared and called.
 
-
 ### Tc3_MLL — `TF38x0_TC3_ML_NN_Inference_Engine_EN`
 
 - **Category:** Measurement · **Tier:** T4
@@ -37428,7 +36657,6 @@ per-parameter prose.
 
 **Description:** Syntax
 
-
 ### Tc3_MlServer — `TF3820_TC3_Machine_Learning_Server_EN`
 
 - **Category:** Measurement · **Tier:** T4
@@ -37454,7 +36682,6 @@ per-parameter prose.
 
 **Description:** FB_MlSvrPrediction is a TcMlServer client that provides asynchronous and optionally hardware- accelerated AI model inference for the PLC.
 
-
 ### Tc3_MlServer-alt — `tf3820_tc3_machine_learning_server_EN`
 
 - **Category:** Measurement · **Tier:** T4
@@ -37479,7 +36706,6 @@ per-parameter prose.
 | `bError` | `BOOL` | TRUE if the currently pending asynchronous request to the |
 
 **Description:** FB_MlSvrPrediction is a TcMlServer client that provides asynchronous and optionally hardware- accelerated AI model inference for the PLC.
-
 
 ### Tc3_PowerMonitoring — `TF3650_TC3_Power_Monitoring_EN`
 
@@ -39564,7 +38790,6 @@ per-parameter prose.
 
 **Description:** The method is called in order to reconfigure the function block during the runtime.
 
-
 ### Tc3_Weighing — `TF3685_TC3_Weighing_Library_EN`
 
 - **Category:** Measurement · **Tier:** T0
@@ -39894,7 +39119,6 @@ per-parameter prose.
 | `AutoTare` | `BOOL` | TRUE if the method call was executed successfully. |
 
 **Description:** The method can be used at runtime to automatically tare a FB_WG_Scaling [} 24] instance.
-
 
 ### Tc2_ControllerToolbox — `TF4100_TC3_Controller_Toolbox_EN`
 
@@ -41496,7 +40720,6 @@ per-parameter prose.
 
 **Description:** The function block provides a signal generator offering triangular, sine and sawtooth signal forms.
 
-
 ### Tc2_TempController — `TF4110_TC3_Temperature_Controller_EN`
 
 - **Category:** Control · **Tier:** T0
@@ -41647,7 +40870,6 @@ per-parameter prose.
 | `eErrorId` | `E_CTRL_ErrorCodes` | — |
 
 **Description:** This temperature controller function block adds disturbance compensation to the FB_CTRL_TempController function blocks. The structure is described here.
-
 
 ### Tc3_Speech — `TF4500_TC3_Speech_EN`
 
@@ -41824,7 +41046,6 @@ per-parameter prose.
 | `HRESULT Samples` | `` | — |
 
 **Description:** Method to be called once to specifiy the AmsNetId of destination TcSpeech service.
-
 
 ### Tc2_Drive — `TwinCAT_3_PLC_Lib_Tc2_Drive_EN`
 
@@ -42280,7 +41501,6 @@ per-parameter prose.
 
 **Description:** fDeceleration2 LREAL bNegativeDirection BOOL stOptions ST_DriveMoveVelocityOptions
 
-
 ### Tc3_DriveMotionControl — `TwinCAT_3_PLC_Lib_Tc3_DriveMotionControl_EN`
 
 - **Category:** Motion/Drive · **Tier:** T3
@@ -42636,7 +41856,6 @@ per-parameter prose.
 | `Status` | `ST_AxisStatus` | — |
 
 **Description:** The AXIS_REF data type contains axis information. AXIS_REF is an interface between the PLC and the DRIVE. It is added to MC function blocks as axis reference. TYPE AXIS_REF :
-
 
 ### Tc2_MC2 — `TwinCAT_3_PLC_Lib_Tc2_MC2_EN`
 
@@ -44098,7 +43317,6 @@ per-parameter prose.
 
 **Description:** The AXIS_REF data type contains axis information. AXIS_REF is an interface between the PLC and the NC. It is added to MC function blocks as axis reference. TYPE AXIS_REF :
 
-
 ### Tc2_MC2_Camming — `TF5050_TC3_NC_Camming_EN`
 
 - **Category:** Motion/NC2 · **Tier:** T3
@@ -44563,7 +43781,6 @@ per-parameter prose.
 | `Done` | `BOOL` | Becomes TRUE, if the coupling was successful and the |
 
 **Description:** The function block MC_ReadCamTableMasterPosition can be used to calculate the master position for a given slave position. While the slave position for a given master position must be unique, the inverse is not true. In order to limit the number of master output options for the function block, for a given master position (MasterStartPosition) the smaller (MasterLow) and larger master position (MasterHigh) for the slave value is output.
-
 
 ### Tc2_MC2_Drive — `TwinCAT_3_PLC_Lib_Tc2_MC2_Drive_EN`
 
@@ -45500,7 +44717,6 @@ per-parameter prose.
 
 **Description:** With the function block FB_CoEEL72xxDeletePositionOffset, a position offset can be deleted from the memory of the EL72xx.
 
-
 ### Tc2_MC2_FlyingSaw — `TF5055_TC3_NC_Flying_Saw_EN`
 
 - **Category:** Motion/NC2 · **Tier:** T3
@@ -45577,7 +44793,6 @@ per-parameter prose.
 | `Done` | `BOOL` | Is set to TRUE when the data set has been successfully |
 
 **Description:** The function block MC_ReadFlyingSawCharacteristics allows the characteristic values for the synchronization phase of the Universal Flying Saw to be read.
-
 
 ### Tc2_MC2_XFC+Tc2_NciXFC+AdvancedHoming_XFC — `TF5065_TC3_Motion_Control_XFC_XFC_NCI_EN`
 
@@ -46299,7 +45514,6 @@ per-parameter prose.
 | `Done` | `BOOL` | Becomes TRUE if the command was completed |
 
 **Description:** This function block performs the search for a zero pulse of an encoder.
-
 
 ### Tc2_NCI+Tc2_PlcInterpolation+Tc2_NC — `TF5100_TC3_NC_I_EN`
 
@@ -48313,7 +47527,6 @@ per-parameter prose.
 
 **Description:** The function block FB_NciFeedTable transfers a given table to the NC kernel. If the override is set and the approvals are enabled, execution is started immediately. bFeedingDone becomes TRUE when the transfer is complete. This signal can be used for overwriting the table with NciFeedTablePreparation [} 314]. In NciFeedTablePreparation the table first has to be reset.
 
-
 ### Tc2_NcDrive — `TwinCAT_3_PLC_Lib_Tc2_NcDrive_EN`
 
 - **Category:** Motion/NC2 · **Tier:** T3
@@ -48806,7 +48019,6 @@ per-parameter prose.
 
 **Description:** This function can be used to read PLC library version information.
 
-
 ### Tc2_NcFifoAxes — `TF5060_TCNC_FIFOAXES_EN`
 
 - **Category:** Motion/NC2 · **Tier:** T3
@@ -48958,7 +48170,6 @@ per-parameter prose.
 | `bBusy` | `BOOL` | Becomes TRUE with a rising edge at bExecute, and remains TRUE until the block has executed the |
 
 **Description:** tTimeout TIME
-
 
 ### Tc2_NcKinematicTransformation — `TF5110-TF5113_TC3_Kinematic_Transformation_EN`
 
@@ -49205,7 +48416,6 @@ per-parameter prose.
 | `eKinStatus` | `E_KINSTATUS` | Returns the status of the kinematic channel. See |
 
 **Description:** The function block FB_KinCheckActualStatus returns the status of the kinematic channel.
-
 
 ### Tc3_MC2_AdvancedHoming — `TwinCAT_3_PLC_Lib_Tc3_MC2_AdvancedHoming_EN`
 
@@ -49587,13 +48797,11 @@ per-parameter prose.
 
 **Description:** This function block performs the search for a zero pulse of an encoder.
 
-
 ### Tc3_Mc3Definitions — `TF5400_TC3_Advanced_Motion_Pack_EN`
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5400_TC3_Advanced_Motion_Pack_EN.pdf` · **API entries:** 0
 - **Integration:** MC3 shared definitions/types: axis-backend type layer.
-
 
 ### Tc3_McCollisionAvoidance+Tc3_McCompensations+Tc3_Mc3Definitions — `TF5410_TC3_Motion_Collision_Avoidance_EN`
 
@@ -50420,7 +49628,6 @@ per-parameter prose.
 | `T` | `end of the defined buffer will be reached. Sample` | — |
 
 **Description:** Avoidance
-
 
 ### Tc3_Mc3Base+Mc3Ptp+Mc3Camming+Mc3FluidPower — `TF55xx_TC3_MC3_EN`
 
@@ -52146,7 +51353,6 @@ per-parameter prose.
 
 **Description:** This function block characterizes the valve characteristic curve of the axis through a series of velocity measurements. For each measurement the function block generates an output value for the drive based on the
 
-
 ### Tc3_Mc3PlanarMotion — `tf5430_tc3_planar_motion_EN`
 
 - **Category:** Motion/MC3 · **Tier:** T3
@@ -53274,7 +52480,6 @@ per-parameter prose.
 
 **Description:** Returns the oid of the track at the specified index [1, ..., size] in the trail. Zero is returned on error.
 
-
 ### Tc3_Physics — `TwinCAT_3_PLC_Lib_Tc3_Physics_EN`
 
 - **Category:** Motion/MC3 · **Tier:** T0
@@ -53708,7 +52913,6 @@ per-parameter prose.
 | `positionXY` | `PositionXY` | — |
 
 **Description:** Place a PositionXY into the coordinate system referenced by this position.
-
 
 ### Tc3_mxAutomation — `TF5120_TC3_Robotics_mxAutomation_EN`
 
@@ -55963,7 +55167,6 @@ per-parameter prose.
 
 **Description:** Messages | Errors in the function block
 
-
 ### Tc3_uniValPlc — `TF5130_TC3_Robotics_uniVAL_PLC_EN`
 
 - **Category:** Motion/Robot · **Tier:** T4
@@ -57410,7 +56613,6 @@ per-parameter prose.
 
 **Description:** The function VAL_EnableManualMove : BOOL enables movement of the robot when manual mode is selected. It provides the hold-to-run function described hereafter:
 
-
 ### Tc2_CncHli — `TF5200_HLI_INTERFACE_EN`
 
 - **Category:** Motion/CNC · **Tier:** T3
@@ -57550,7 +56752,6 @@ per-parameter prose.
 |---|---|---|
 | `dummy` | `BOOL := FALSE; (* not_used *)` | — |
 
-
 ### Tc2_CncPlcopenP4 — `TF5200_JOBMANAGER_EN`
 
 - **Category:** Motion/CNC · **Tier:** T4
@@ -57568,7 +56769,6 @@ per-parameter prose.
 | `JobState` | `MCV_JOB_STATE                    Job information` | — |
 
 **Description:** The function block is used to evaluate the end or abort operations of jobs commanded by an MC_MovePath [} 27] . The instance of the MC_MovePath [} 27] whose job acknowledgements are evaluated is identified via the “Fb” input.
-
 
 ### Tc2_Hydraulics — `TF5810_TC3_Hydraulic_Positioning_EN`
 
@@ -60484,7 +59684,6 @@ per-parameter prose.
 
 **Description:** The function block is used to reference an incremental position measuring system. The function block outputs the position of the reference pulse to the outside via RecordedPosition. No position is set.
 
-
 ### PfwLib_Processing — `TF8540_Plastic_Processing_Framework_EN`
 
 - **Category:** Industry · **Tier:** T0
@@ -61022,7 +60221,6 @@ per-parameter prose.
 
 **Description:** This function block determines the Windows system time and returns it to the application.
 
-
 ### Tc3_AES70 — `TF8810_TC3_AES70_Communication_EN`
 
 - **Category:** Industry · **Tier:** T2
@@ -61476,7 +60674,6 @@ per-parameter prose.
 
 **Description:** RntfReading
 
-
 ### Tc3_PJLink — `PLC_Lib_PJLink_EN`
 
 - **Category:** Industry · **Tier:** T2
@@ -61554,7 +60751,6 @@ per-parameter prose.
 | `bExecute` | `BOOL` | — |
 
 **Description:** Power
-
 
 ### Tc3_PackML — `TwinCAT_3_PLC_Lib_Tc3_PackML_EN`
 
@@ -61719,7 +60915,6 @@ per-parameter prose.
 | `Error` | `BOOL` | Signals an error in the function block, e.g. "Mode change |
 
 **Description:** Packaging machines have different unit modes and not only the "automatic" mode. Each unit mode is defined by its own state model. A "Mode Manager" must be defined for transitions between the modes. The "Mode Manager" determines how and in which state a machine can change unit modes; i.e. built-in barriers prevent the machine from changing to unsuitable states.
-
 
 ### Tc3_PackML_V2 — `TwinCAT_3_PLC_Lib_Tc3_PackML_V2_EN`
 
@@ -62058,7 +61253,6 @@ per-parameter prose.
 | `eMode` | `DINT` | The Unit Mode for which the name is to be determined |
 
 **Description:** This function returns the name of a Unit Mode as a string.
-
 
 ### Tc3_PackML_V3 — `TwinCAT_3_PLC_Lib_Tc3_PackML_V3_EN`
 
@@ -62434,7 +61628,6 @@ per-parameter prose.
 | `bDone` | `BOOL` | Becomes TRUE as soon as the mode change has been |
 
 **Description:** Machines have other system modes apart from “Production”. Each unit mode is defined by its own state model. A "Mode Manager" must be defined for transitions between the modes. The “Mode Manager” decides how and in which state a machine can change unit modes; i.e. built-in barriers prevent the machine from changing to unsuitable states. These barriers are predefined for the base modes “Production”, “Maintenance” and “Manual”, as the illustration below shows. This can be individually specified for other modes defined via the FB_PMLUnitModeConfig [} 38] function block.
-
 
 ### Tc3_PlasticBaseApplication — `TF85xx_TC3_Plastic_Application_EN`
 
@@ -64345,7 +63538,6 @@ per-parameter prose.
 ##### `FB_CamCfgHmi` (FUNCTION_BLOCK) — §9.1.18
 
 **Description:** Alternative: FB_CamsHmi [} 281] (consisting of FB_CamSwitchHmi [} 283])
-
 
 ### Tc3_PlasticFunctions — `TF8560_Plastic_Technology_Functions_EN`
 
@@ -66941,7 +66133,6 @@ per-parameter prose.
 
 **Description:** Alternative: Limiting [} 145]
 
-
 ### Tc3_QRC — `QRC_EN`
 
 - **Category:** Industry · **Tier:** T0
@@ -67621,7 +66812,6 @@ per-parameter prose.
 
 **Description:** This method enables to extract control properties from a QRC response frame.
 
-
 ### Tc3_RRCS — `Riedel_Communications_RRCS_EN`
 
 - **Category:** Industry · **Tier:** T2
@@ -67710,7 +66900,6 @@ per-parameter prose.
 | `AR_OUTPUT` | `` | — |
 
 **Description:** This function block offers the option of changing the state of a 'Logic Source'. This is done using the unique ObjectID.
-
 
 ### Tc3_sACN — `TF6310_SACN_EN`
 
@@ -68048,7 +67237,6 @@ per-parameter prose.
 
 **Description:** This function automatically calculates the sACN multicast IPv4 address associated with a specific universe number according to the ANSI E1.31 standard. The address is generated using the pattern **239.255.H.L**, where H and L correspond to the high and low bytes of the universe ID respectively.
 
-
 ### TC3_IotCommunicator — `TF6730_TC3_IoT_Communicator_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -68260,7 +67448,6 @@ per-parameter prose.
 | `Remove` | `BOOL` | This value is set to TRUE if the method is called successfully. |
 
 **Description:** This method is called to remove the currently available command from the memory.
-
 
 ### Tc2_Database+Tc3_Database — `TF6420_TC3_Database_Server_EN`
 
@@ -71127,7 +70314,6 @@ per-parameter prose.
 
 **Description:** This scenario example illustrates how the TwinCAT Database Server handles XML files with any structure. The production recipe for building the product is read from an XML file. The corresponding test parameters are read from a different file. In addition, the test results are written into an existing XML file.
 
-
 ### Tc2_EthernetIP — `TF6281_TC3_EthernetIP_Scanner_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -71265,7 +70451,6 @@ per-parameter prose.
 | `nErrorId` | `UDINT` | — |
 
 **Description:** This function returns a descriptive text based on an error number.
-
 
 ### Tc2_FTP+Tc3_FTP — `TF6300_TC3_FTP_Client_EN`
 
@@ -71950,7 +71135,6 @@ per-parameter prose.
 | `bBusy` | `BOOL` | The command is in the process of being transmitted by ADS. No new command |
 
 **Description:** The current state of the FTP client can be queried with the function block FB_GetStateTcFTPClient.
-
 
 ### Tc2_IEC60870_5_10x — `TF6500_TC3_IEC60870-5-10x_EN`
 
@@ -73542,7 +72726,6 @@ per-parameter prose.
 
 **Description:** C_1
 
-
 ### Tc2_ModbusRTU — `TF6255_TC3_Modbus_RTU_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -73729,7 +72912,6 @@ per-parameter prose.
 | `ErrorId` | `MODBUS_ERRORS` | Indicates an error number [} 41] in the event of disturbed |
 
 **Description:** The function block ModbusRtuSlave_Generic implements a Modbus slave that communicates via various serial interfaces (COM port, virtual COM port, EtherCAT Terminals, ...).
-
 
 ### Tc2_ModbusSrv — `TF6250_TC3_Modbus_TCP_EN`
 
@@ -74091,7 +73273,6 @@ per-parameter prose.
 
 **Description:** nWriteData WORD bExecute BOOL tTimeout TIME
 
-
 ### Tc2_OpcUa+Tc3_PLCopen_OpcUa — `TF6100_TC3_OPC_UA_Server_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -74242,7 +73423,6 @@ per-parameter prose.
 
 **Description:** The TwinCAT OPC UA Server currently sets the ServiceLevel statically to the value 255. This function block enables the ServiceLevel to be set via an ADS interface in the server. A distinction is made between use with and without a watchdog.
 
-
 ### Tc2_RFID — `TF6600_TC3_RFID_Reader_Communication_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -74273,7 +73453,6 @@ per-parameter prose.
 | `bBusy` | `BOOL` | If the command call is valid, the bBusy output goes to TRUE for |
 
 **Description:** The TwinCAT RFID library only consists of one function block.
-
 
 ### Tc2_S5S7Com — `TF6610_TC3_S5S7_Communication_EN`
 
@@ -74413,7 +73592,6 @@ per-parameter prose.
 | `nVersionElement` | `INT` | — |
 
 **Description:** This function can be used to read PLC library version information.
-
 
 ### Tc2_SMS+Tc2_SMTP — `TF6350_TC3_SMS_SMTP_EN`
 
@@ -74567,7 +73745,6 @@ per-parameter prose.
 | `bGet` | `BOOL` | This parameter has no significance for the function |
 
 **Description:** This function can be used to read the version information of the PLC library.
-
 
 ### Tc2_SerialCom — `TF6340_TC3_Serial_Communication_EN`
 
@@ -74963,7 +74140,6 @@ per-parameter prose.
 | `SerialLineControlAD BOOL` | `If the conversion is successful, the function returns TRUE. SErr_TO_TcEventE ntry` | — |
 
 **Description:** The SerialLineControlADSErr_TO_TcEventEntry function converts errors that can occur in the SerialLineControlADS [} 52] function block to an event definition.
-
 
 ### Tc2_TcpIp — `TF6310_TC3_TCP_IP_EN`
 
@@ -75601,7 +74777,6 @@ per-parameter prose.
 
 **Description:** The required functionality was encapsulated in the function block FB_PeerToPeer. Each of the communication partners uses an instance of the FB_PeerToPeer function block. The block is activated through a rising edge at the bEnable input. A new UDP socket is opened, and data exchange commences. The socket address is specified via the variables sLocalHost and nLocalPort. A falling edge stops the data exchange and closes the socket. The data to be sent are transferred to the block through a reference (VAR_IN_OUT) via the variable sendFifo. The data received are stored in the variable receiveFifo.
 
-
 ### Tc2_XmlDataSrv — `TF6421_TC3_XML_Server_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -75739,7 +74914,6 @@ per-parameter prose.
 | `bBusy` | `BOOL` | This output is set when the function block is activated and |
 
 **Description:** The FB_XmlSrvObfuscationExport function block decrypts an obfuscated XML file and stores it unencrypted on the hard disk.
-
 
 ### Tc3_Acsi+iec61850 family — `TF6510_TC3_IEC61850_EN`
 
@@ -81453,7 +80627,6 @@ per-parameter prose.
 
 **Description:** This sample shows how a plain text password can be activated and configured to authenticate the connection in a TwinCAT IEC 61850 client or server application. This sample also shows how the server application can control the authentication process itself at runtime. This means that the application can accept or reject the connection depending on the password received. This sample also shows how the services and parameters supported by the IEC 61850 server are enabled and configured in the TwinCAT client and server application. The sample also shows how the server can control the negotiation of the supported services and parameters itself at runtime. The TwinCAT IEC 61850 server application can, for example, reject the services and/or parameters proposed by the client depending on the password received and thus restrict access to these services or parameters for certain connections or users. If you are using an older version of the TwinCAT IEC 61850 Telecontrol Configurator, the functionalities presented in this sample may not yet be supported. To be able to compile and test this sample without errors, you need a newer version of the TF6510 IEC 61850 Telecontrol.
 
-
 ### Tc3_EtherCATExtSync — `TF6225_TC3_EtherCAT_External_Sync_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -81493,7 +80666,6 @@ per-parameter prose.
 | `bSynchronized` | `BOOL` | TRUE if the difference between the internal and external time |
 
 **Description:** This function block FB_EcExtSyncIsSynchronized checks whether the internal and external clocks are synchronized (bSynchronized). For this purpose, the system checks whether the difference between the clocks over 10 cycles is within the specified synchronization window nSyncWindow. In the event of invalid data (bNotConnected = TRUE), the synchronization is reported as failed.
-
 
 ### Tc3_IotBase — `TF6701_TC3_IoT_Communication_MQTT_EN`
 
@@ -87942,7 +87114,6 @@ per-parameter prose.
 
 **Description:** Sample for MQTTv5 communication via a message queue
 
-
 ### Tc3_OCPP — `TF6771_TC3_IoT_OCPP_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -90716,7 +89887,6 @@ per-parameter prose.
 
 **Description:** This method is an alternative way of receiving and responding to a Get Configuration Request from the corresponding OCPP server in the OCPP client. In contrast to the RecvGetConfiguration [} 34] method at FB_OCPP1_Client [} 21], the response is sent automatically to the OCPP server. Depending on the request, it contains all or specifically requested Configuration Keys.
 
-
 ### Tc3_PLCopen_OpcUa-client — `TF6100_TC3_OPC_UA_Client_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -91079,7 +90249,6 @@ per-parameter prose.
 | `Busy` | `BOOL` | TRUE until the function block has executed a command, at the most for the |
 
 **Description:** This function block writes values to a given node and connection handle.
-
 
 ### Tc3_S7Comm — `TF6620_TC3_S7_Communication_EN`
 
@@ -91550,7 +90719,6 @@ per-parameter prose.
 
 **Description:** Removes a variable from a write request. The variable is specified via its address in the TwinCAT PLC. No write request may be pending at the time that the method is executed, i.e. the output bBusy of the function block must be FALSE.
 
-
 ### Tc3_iotFunctions — `TF6710_TC3_IoT_Functions_EN`
 
 - **Category:** Connectivity · **Tier:** T2
@@ -91749,7 +90917,6 @@ per-parameter prose.
 | `Execute` | `BOOL` | Indicates whether the call was successful. |
 
 **Description:** Syntax
-
 
 ### Tc3_vision — `TF7000-TF7810_TC3_Vision_EN`
 
@@ -131770,7 +130937,6 @@ per-parameter prose.
 
 **Description:** This sample explains what needs to be observed when writing your own functions for Vision applications. It essentially concerns: • The handling of the HRESULT [} 144] • The handling of Interface pointers [} 140] and References
 
-
 ### Tc2_BABasic — `TF8010_TC3_BABasic_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -133423,7 +132589,6 @@ per-parameter prose.
 | `bxxxxxx` | `Boolean statement indicating whether today is the respective holiday.` | — |
 
 **Description:** US federal holidays for the current year are calculated based on the date entered. A boolean output indicates whether the entered date matches one of the calculated holidays. To ensure international readability the function block was translated into English. The parameters have the following meaning:
-
 
 ### Tc2_DALI — `TwinCAT_3_PLC_Lib_Tc2_DALI_EN`
 
@@ -139992,7 +139157,6 @@ per-parameter prose.
 
 **Description:** The function block FB_KL6811Config is used to configure the KL6811. The configuration is executed when the PLC program starts, or it can be triggered by a positive edge at the input bConfigurate. The parameters are stored in the respective registers of the KL6811 in a fail-safe manner. In addition, some general information, such as the firmware version, is read from the KL6811.
 
-
 ### Tc2_DMX — `TwinCAT_3_PLC_Lib_Tc2_DMX_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -140786,7 +139950,6 @@ per-parameter prose.
 
 **Description:** This function block sets the DMX512 start address. This lies within the range from 1 – 512. Each sub-device and the root device occupy different DMX512 start addresses.
 
-
 ### Tc2_EIB — `TwinCAT_3_PLC_Lib_Tc2_EIB_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -141575,7 +140738,6 @@ per-parameter prose.
 
 **Description:** Conversion of a 3-stage group address to a 2-stage group address.
 
-
 ### Tc2_EnOcean — `TwinCAT_3_PLC_Lib_Tc2_EnOcean_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -141899,7 +141061,6 @@ per-parameter prose.
 
 **Description:** This function converts a raw byte value to a Boolean array in the form of a data structure (see STREnOceanTurnSwitch [} 45]).
 
-
 ### Tc2_GENIbus — `TwinCAT_3_PLC_Lib_Tc2_GENIbus_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -142055,7 +141216,6 @@ per-parameter prose.
 | `bBusy` | `BOOL` | Starting with the edge at bStart, this output remains TRUE |
 
 **Description:** This function block represents a universal application for a Grundfos Magna pump. The fundamental operating modes can be set and important parameters read out.
-
 
 ### Tc2_HVAC — `TF8000_TC3_HVAC_EN`
 
@@ -148582,7 +147742,6 @@ per-parameter prose.
 | `iPrecision` | `Precision. The value determines the number of digits after the decimal point. The range of` | — |
 
 **Description:** The function F_RoundLREAL_EX rounds the input variable lrIN of the data type LREAL to the number of decimal places specified by iPrecision. This function can also be used for REAL data types. An instance of the function LTRUNC from the library TcMath.lib is used internally in the function.
-
 
 ### Tc2_LON — `TwinCAT_3_PLC_Lib_Tc2_LON_EN`
 
@@ -157247,7 +156406,6 @@ per-parameter prose.
 
 **Description:** This function block sends the following LON output variable (nvo):
 
-
 ### Tc2_MBus — `TwinCAT_3_PLC_Lib_Tc2_MBus_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -158816,7 +157974,6 @@ per-parameter prose.
 
 **Description:** The function block FB_MBUS_ZRM_zelsiusZR is used to read heat meters from Zenner.
 
-
 ### Tc2_MPBus — `TwinCAT_3_PLC_Lib_Tc2_MPBus_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -159624,7 +158781,6 @@ per-parameter prose.
 
 **Description:** This function calculates a temperature from the value of a PT1000 resistor.
 
-
 ### Tc2_SMI — `TwinCAT_3_PLC_Lib_Tc2_SMI_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -160214,7 +159370,6 @@ per-parameter prose.
 | `bBusy` | `BOOL` | This output is set as soon as the function block processes |
 
 **Description:** The function block FB_SMIParValueReadDWord reads a DWord parameter (4 bytes) stored on the motor side. The meaning of the individual parameters is manufacturer-specific.
-
 
 ### Tc3_BA2_Common — `TwinCAT_3_PLC_Lib_Tc3_BA2_Common_EN`
 
@@ -161083,7 +160238,6 @@ per-parameter prose.
 
 **Description:** Programming
 
-
 ### Tc3_BACnetRev14 — `TF8020_TC3_BACnet_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -161123,7 +160277,6 @@ per-parameter prose.
 ##### `Receiving alarms and events from other devices` (FUNCTION_BLOCK) — §9.9
 
 **Description:** This example shows the use of an Eventlog object as a receiver for alarms and events of an external BACnet device. The Eventlog object of the alarm receiver is entered in the notification class of the alarm transmitter. The assignment is made via the process identifier.
-
 
 ### Tc3_BA_Common — `TwinCAT_3_PLC_Lib_Tc3_BA_Common_EN`
 
@@ -161754,7 +160907,6 @@ per-parameter prose.
 | `Qf` | `Result of the last comparison (TRUE as soon as the monitored value changes from TRUE to FALSE).` | — |
 
 **Description:** Function block for the detection of a rising or falling edge on a Boolean variable. The use of the separate function blocks R_TRIG and F_TRIG can be avoided with the block.
-
 
 ### Tc3_DALI — `TwinCAT_3_PLC_Lib_Tc3_DALI_EN`
 
@@ -168470,7 +167622,6 @@ per-parameter prose.
 
 **Description:** The function block represents a DALI control gear on a virtual DALI line.
 
-
 ### Tc3_LS — `TF8050_LS_EN`
 
 - **Category:** Building · **Tier:** T2
@@ -168495,7 +167646,6 @@ per-parameter prose.
 | `bSwitch_Reset_Trig` | `: BOOL;` | — |
 | `bEnable_WritePersistent` | `BOOL` | Allows cyclic persistent writing to the controller. |
 | `tWritePersistent` | `TIME` | Cyclic persistent saving of the configured data. The input |
-
 
 ### Tc3_XBA+BA2+BA+BA2_Common — `TF8040_TC3_Building_Automation_EN`
 
@@ -177367,7 +176517,6 @@ per-parameter prose.
 
 **Description:** Calculates a color between two colors to a corresponding value.
 
-
 ---
 
 ## 8. Implementation roadmap
@@ -177375,12 +176524,25 @@ per-parameter prose.
 Phases are ordered by dependency, not by category size. Each phase ends
 with the affected libraries compiling and passing simulator vectors.
 
+Landed (detail pruned; git history retains it, as-built status lives in
+`docs/plc/compat/README.md`):
+
+- **C0 — Compat package format**: `tplcc build --library` +
+  `--lib` source inclusion + per-library docs under
+  `docs/plc/compat/twincat/`.
+- **C1 — T0 core**: Tc2_Math (8/8) and Tc2_Standard (31/31) complete;
+  Tc2_Utilities BCD pair + `FB_EnumStringNumbers`. Remainder of
+  Tc2_Utilities needs `PVOID`/union types — blocked on language
+  features, not effort.
+- **C2 — T1 services I**: `tplc-net`/`tplc-serial`/`tplc-ads`
+  services + `FB_Socket`/`FB_Serial`/`FB_Ads` + Tc2 wrappers, all
+  with real end-to-end tests. Leftovers: DNS resolution and
+  multicast in `tplc-net`; full AMS router/server and configurable
+  local NetID in `tplc-ads`.
+
 | Phase | Deliverable | Unblocks |
 |---|---|---|
-| **C0 — Compat package format** | `tplc` manifest support for library packages; ST-source and precompiled delivery; per-library docs generation from this catalog | Everything |
-| **C1 — T0 core** | Tc2_Standard, Tc2_Math, Tc2_Utilities, Tc2_IoFunctions + shared IEC types | First TwinCAT ST code compiles unmodified |
-| **C2 — T1 services I** | `tplc-net` sockets (TCP/UDP/multicast/DNS), `tplc-serial`, ADS router service | Connectivity wave 1 |
-| **C3 — T1 services II** | DynamicMemory heap, EventLogger parity, Module/config model, JsonXml persistence, RealtimeMonitoring | Standard remainder |
+| **C3 — T1 services II** | DynamicMemory heap (blocked: PVOID), EventLogger parity, Module/config model (blocked: COM object model), JsonXml persistence, RealtimeMonitoring (done: `tplc-rtmon` + `FB_RtMon` + Tc3 wrappers, `tc3_rtmon` ctest) | Standard remainder |
 | **C4 — Connectivity wave 1** | Tc2_TcpIp, sACN, BACnet, PJLink, Modbus TCP/RTU, S7, FTP, SMS/SMTP, IEC 60870 | Field protocols |
 | **C5 — Motion core** | `tplc-motion` axis backend + PLCopen MC2 subset (`MC_Power`…`MC_TorqueControl`) | All Motion libraries |
 | **C6 — Motion extended** | NC interpolation, camming, hydraulics, drives (CiA-402 via Tether DS402), MC3 | Motion remainder minus robotics |

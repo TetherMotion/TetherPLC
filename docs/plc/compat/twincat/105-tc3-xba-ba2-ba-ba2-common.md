@@ -8874,5 +8874,4 @@
 
 **Description:** Calculates a color between two colors to a corresponding value.
 
-
 ---
