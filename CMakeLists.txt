@@ -522,6 +522,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(library_pkg PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+  # TwinCAT T0 compat libraries (plan 21 C1): compat/tc2/*.st as
+  # --library packages consumed via --lib, replayed on the real runtime
+  add_test(NAME tc2_compat
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2.sh)
+  set_tests_properties(tc2_compat PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

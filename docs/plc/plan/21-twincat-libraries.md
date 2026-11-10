@@ -149,7 +149,7 @@ Key design rules:
 | 1 | Standard | `Tc2_Coupler` | `TwinCAT_3_PLC_Lib_Tc2_Coupler_EN` | 6 | T2 |
 | 2 | Standard | `Tc2_DataExchange` | `TwinCAT_3_PLC_Lib_Tc2_DataExchange_EN` | 10 | T2 |
 | 3 | Standard | `Tc2_EtherCAT` | `TwinCAT_3_PLC_Lib_Tc2_EtherCAT_EN` | 97 | T2 |
-| 4 | Standard | `Tc2_IoFunctions` | `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN` | 81 | T0 |
+| 4 | Standard | `Tc2_IoFunctions` | `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN` | 81 | T3 |
 | 5 | Standard | `Tc2_MDP` | `TwinCAT_3_PLC_Lib_Tc2_MDP_EN` | 17 | T1 |
 | 6 | Standard | `Tc2_Math` | `TwinCAT_3_PLC_Lib_Tc2_Math_EN` | 8 | T0 |
 | 7 | Standard | `Tc2_ProfinetDiag` | `TwinCAT_3_PLC_Lib_Tc2_ProfinetDiag_EN` | 24 | T2 |
@@ -158,7 +158,7 @@ Key design rules:
 | 10 | Standard | `Tc2_System` | `TwinCAT_3_PLC_Lib_Tc2_System_EN` | 81 | T1 |
 | 11 | Standard | `Tc2_SystemC69xx` | `TwinCAT_3_PLC_Lib_Tc2_SystemC69xx_EN` | 3 | T1 |
 | 12 | Standard | `Tc2_SystemCX` | `TwinCAT_3_PLC_Lib_Tc2_SystemCX_EN` | 32 | T1 |
-| 13 | Standard | `Tc2_Utilities` | `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN` | 325 | T0 |
+| 13 | Standard | `Tc2_Utilities` | `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN` | 325 | T2 |
 | 14 | Standard | `Tc3_DynamicMemory` | `TwinCAT_3_PLC_Lib_Tc3_DynamicMemory_EN` | 2 | T1 |
 | 15 | Standard | `Tc3_EtherCATDiag` | `TwinCAT_3_PLC_Lib_Tc3_EtherCATDiag_EN` | 2 | T2 |
 | 16 | Standard | `Tc3_EventLogger` | `TwinCAT_3_PLC_Lib_Tc3_EventLogger_EN` | 146 | T1 |
@@ -2158,9 +2158,9 @@ per-parameter prose.
 
 ### Tc2_IoFunctions — `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN`
 
-- **Category:** Standard · **Tier:** T0
+- **Category:** Standard · **Tier:** T3
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN.pdf` · **API entries:** 81
-- **Integration:** I/O helper functions over the process image: maps to %I/%Q/%M addressing.
+- **Integration:** EtherCAT device libraries (KL terminals, ASI, DPV1, IO-Link, SCIT, TcTouch, AX2000): need EtherCAT master integration and device profiles; only small helper FBs are T0.
 
 #### Function blocks › General IO FBs
 
@@ -6946,9 +6946,9 @@ per-parameter prose.
 
 ### Tc2_Utilities — `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN`
 
-- **Category:** Standard · **Tier:** T0
+- **Category:** Standard · **Tier:** T2
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN.pdf` · **API entries:** 325
-- **Integration:** Utility functions; file/time helpers degrade to T1 where they touch the OS.
+- **Integration:** Mixed: BCD/hash/format/memory-buffer/enum helpers are pure IEC (T0 subset); file, registry, license, AMS router, timezone and NT_* entries need host OS services (T2).
 
 #### Function blocks › [obsolete]
 

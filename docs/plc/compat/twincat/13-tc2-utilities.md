@@ -2,11 +2,11 @@
 
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_Utilities_EN` (Beckhoff TwinCAT 3 PLC library
   documentation; copyright Beckhoff Automation)
-- **Category:** Standard · **Tier:** T0 · **API entries:** 325
+- **Category:** Standard · **Tier:** T2 · **API entries:** 325
 - **Catalog source:** `docs/plc/plan/21-twincat-libraries.md`
   §7 (complete recursive catalog)
 
-**Integration:** Utility functions; file/time helpers degrade to T1 where they touch the OS.
+**Integration:** Mixed: BCD/hash/format/memory-buffer/enum helpers are pure IEC (T0 subset); file, registry, license, AMS router, timezone and NT_* entries need host OS services (T2).
 
 ---
 

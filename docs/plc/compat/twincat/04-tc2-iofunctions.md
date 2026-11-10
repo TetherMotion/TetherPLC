@@ -2,11 +2,11 @@
 
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN` (Beckhoff TwinCAT 3 PLC library
   documentation; copyright Beckhoff Automation)
-- **Category:** Standard · **Tier:** T0 · **API entries:** 81
+- **Category:** Standard · **Tier:** T3 · **API entries:** 81
 - **Catalog source:** `docs/plc/plan/21-twincat-libraries.md`
   §7 (complete recursive catalog)
 
-**Integration:** I/O helper functions over the process image: maps to %I/%Q/%M addressing.
+**Integration:** EtherCAT device libraries (KL terminals, ASI, DPV1, IO-Link, SCIT, TcTouch, AX2000): need EtherCAT master integration and device profiles; only small helper FBs are T0.
 
 ---
 

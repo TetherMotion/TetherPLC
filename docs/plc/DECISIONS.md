@@ -675,3 +675,33 @@ symbol-level linking later (extern POU decls + link against the
 library .o). A discovered pre-existing bug — implicit `GLOBAL.x`
 access panics in codegen (`unresolved var GLOBAL`); VAR_EXTERNAL
 is the working form — is unrelated to this change and remains open.
+
+## D-IMPL-37 — C1 first tranche: compat/tc2 pure-IEC libraries
+
+**Plan:** plan 21 §8 phase C1 (T0 core): Tc2_Standard, Tc2_Math,
+Tc2_Utilities, Tc2_IoFunctions as compatibility libraries.
+**Implemented:** `compat/tc2/` holds three library sources built
+with `tplcc build --library` and consumed via `--lib`:
+`tc2_math.st` (CEIL/FLOOR/FRAC/LTRUNC/LMOD/MODABS/MODTURNS/
+F_GetVersionTcMath, all LREAL math in pure ST),
+`tc2_util_bcd.st` (DEC_TO_BCD/BCD_TO_DEC FBs with the documented
+START/BUSY/ERR handshake, single-scan), and
+`tc2_standard_wide.st` (the 9 W* functions as wrappers over the
+narrow-string builtins, which already accept WSTRING operands).
+Tc2_Standard's narrow functions and timer/counter FBs needed no
+source — they are compiler builtins. `tests/compat/tc2.sh`
+(ctest `tc2_compat`) packs 21 pass/fail checks into %QD0 and
+replays a 4-step tape on the real runtime expecting 0x001FFFFF.
+**Tier corrections:** catalog review showed Tc2_IoFunctions is
+dominated by EtherCAT device FBs (KL/ASI/DPV1/IO-Link/SCIT/
+TcTouch) — re-tiered T0->T3; Tc2_Utilities is mostly host-OS
+services — re-tiered T0->T2 with a documented T0 subset (BCD,
+hash, format, memory buffers). Plan and per-library docs
+regenerated.
+**Consequence:** LMOD uses truncation (fmod-style) semantics and
+MODABS floor-modulo into [0,|m|); both flagged for Beckhoff
+edge-case verification. TRUNC narrows through DINT so |x| >= 2^31
+loses precision. LTON/LTOF/LTP (LTIME timers) and the remaining
+Tc2_Utilities T0 candidates (FB_FormatString, FB_CalcHashValue,
+FB_EnumStringNumbers, FB_MemBuffer*/RingBuffer*) are the next C1
+tranche.

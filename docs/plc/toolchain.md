@@ -42,7 +42,8 @@ toolchain, but no program-state sections. `build --lib <pkg.tplc>`
 consuming library packages) and `--name <n>` (library manifest
 name; default is the output file stem) round out the compat-library
 flow — see `plan/21-twincat-libraries.md` §8 C0 and
-`compat/twincat/INDEX.md` for the per-library catalog.
+`compat/README.md` for the compat layer status;
+`compat/twincat/INDEX.md` indexes the per-library catalog.
 St spans carry
 `file/offset/len/line/col`;
 Fbd spans carry `sheet/node/pin`; non-frontend failures (LLVM verify,
