@@ -1,8 +1,11 @@
-/* tplc_modbus.h — TplcModbusService: nonblocking Modbus TCP client.
+/* tplc_modbus.h — TplcModbusService: nonblocking Modbus client.
  * One transaction per begin/poll cycle; the service owns the socket
- * and protocol state, the caller owns the payload buffers.
- * Wire format: MBAP header (tid u16be, proto u16be=0, length u16be,
- * unit u8) + PDU (func u8 + data), all multi-byte fields big-endian.
+ * or serial port and protocol state, the caller owns the payload
+ * buffers.
+ * TCP/UDP wire format: MBAP header (tid u16be, proto u16be=0,
+ * length u16be, unit u8) + PDU (func u8 + data), all multi-byte
+ * fields big-endian. RTU wire format: unit u8 + PDU + CRC16
+ * (little-endian), no MBAP header.
  * Service ABI structs use native layout (little-endian hosts).
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 #ifndef TPLC_MODBUS_H
@@ -14,7 +17,7 @@
 extern "C" {
 #endif
 
-#define TPLC_MODBUS_ABI_VERSION 2u
+#define TPLC_MODBUS_ABI_VERSION 3u
 #define TPLC_MODBUS_SVC_NAME "tplc-modbus"
 #define TPLC_MODBUS_HANDLE_INVALID 0u
 #define TPLC_MODBUS_MAX_PDU 253u /* max PDU bytes after the func code */
@@ -55,6 +58,25 @@ typedef struct TplcModbusResp {
 
 typedef uint32_t TplcModbusHandle;
 
+/* RTU request descriptor (ABI v3); req bytes are copied at
+   mb_begin_rtu, so the caller buffer only needs to stay valid for
+   that call. dev is a NUL-terminated serial path ("/dev/ttyS0",
+   pty slave, ...). parity/databits/stopbits use the tplc-serial
+   numeric codes: parity 0 none / 1 even / 2 odd, databits 5..8,
+   stopbits 1 or 2. */
+typedef struct TplcModbusRtuReq {
+    char     dev[64];        /* serial device path               */
+    uint32_t baud;           /* bit/s                            */
+    uint32_t timeout_ms;     /* 0 = no deadline                  */
+    uint8_t  unit_id;        /* Modbus station address           */
+    uint8_t  func;           /* Modbus function code             */
+    uint8_t  parity;         /* 0 none, 1 even, 2 odd            */
+    uint8_t  databits;       /* 5..8                             */
+    uint8_t  stopbits;       /* 1 or 2                           */
+    uint16_t req_len;        /* PDU data bytes after func, <=253 */
+    const uint8_t* req;      /* request PDU data (may be NULL)   */
+} TplcModbusRtuReq;
+
 typedef struct TplcModbusService {
     uint32_t struct_size;
     uint32_t abi_version;
@@ -75,6 +97,13 @@ typedef struct TplcModbusService {
        the request's peer. Handles share the mb_poll/mb_abort
        namespace with TCP transactions. */
     int32_t (*mb_begin_udp)(void* svc, const TplcModbusReq* req,
+                            TplcModbusHandle* out);
+    /* ABI v3: same request/response contract over RTU — the serial
+       device is opened per transaction, the frame is
+       unit|func|data|crc16, and the response is validated by CRC,
+       unit id, and function code. Handles share the
+       mb_poll/mb_abort namespace with TCP/UDP transactions. */
+    int32_t (*mb_begin_rtu)(void* svc, const TplcModbusRtuReq* req,
                             TplcModbusHandle* out);
 } TplcModbusService;
 

@@ -570,6 +570,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_modbussrv PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_ModbusRTU compat (plan 21 C4): tplc-modbus RTU transport e2e
+  # through the real runtime against a pty Modbus RTU slave peer
+  add_test(NAME tc2_modbusrtu
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_modbusrtu.sh)
+  set_tests_properties(tc2_modbusrtu PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

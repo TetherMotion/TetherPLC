@@ -49,6 +49,13 @@
 //!                RESULT@304 i32, EXC@308 u32, ERRID@312 u32,
 //!                EXEC@316 u8, BUSY@317 u8, DONE@318 u8,
 //!                __last_exec@319 u8, UDP@320 u8    (size 328)
+//!   FB_ModbusRtu: DEV@0(str64), BAUD@64 u32, PARITY@68 u32,
+//!                DBITS@72 u32, SBITS@76 u32, UNIT@80 u32,
+//!                TIMEOUT@88 i64, FUNC@96 u32, DATA@100 (256B array),
+//!                RLEN@356 u32, DLEN@360 u32, HANDLE@364 u32,
+//!                RESULT@368 i32, EXC@372 u32, ERRID@376 u32,
+//!                EXEC@380 u8, BUSY@381 u8, DONE@382 u8,
+//!                __last_exec@383 u8            (size 384)
 
 #![cfg_attr(feature = "nostd", no_std)]
 
@@ -1477,6 +1484,137 @@ pub unsafe extern "C" fn __tplc_rt_FB_Modbus(this: *mut u8, ctx: *mut u8) -> i32
             wu32(this.add(MB_HANDLE), 0);
         }
         e => mb_fail(this, mb_errid(e)),
+    }
+    0
+}
+
+/* ---------------- FB_ModbusRtu (tplc-modbus RTU bridge) ---------------- */
+
+// member offsets — keep in lockstep with builtin_fb_layout
+// "FB_ModbusRtu"
+const MRT_DEV_LEN: usize = 0;
+const MRT_DEV: usize = 1;
+const MRT_BAUD: usize = 64;
+const MRT_PARITY: usize = 68;
+const MRT_DBITS: usize = 72;
+const MRT_SBITS: usize = 76;
+const MRT_UNIT: usize = 80;
+const MRT_TIMEOUT: usize = 88;
+const MRT_FUNC: usize = 96;
+const MRT_DATA: usize = 100;
+const MRT_RLEN: usize = 356;
+const MRT_DLEN: usize = 360;
+const MRT_HANDLE: usize = 364;
+const MRT_RESULT: usize = 368;
+const MRT_EXC: usize = 372;
+const MRT_ERRID: usize = 376;
+const MRT_EXEC: usize = 380;
+const MRT_BUSY: usize = 381;
+const MRT_DONE: usize = 382;
+const MRT_LAST_EXEC: usize = 383;
+
+const MB_SVC_BEGIN_RTU: usize = 48;
+
+unsafe fn mrt_fail(this: *mut u8, errid: u32) {
+    wb(this.add(MRT_BUSY), false);
+    wb(this.add(MRT_DONE), true);
+    wu32(this.add(MRT_ERRID), errid);
+    wi32(this.add(MRT_RESULT), 0);
+    wu32(this.add(MRT_HANDLE), 0);
+}
+
+/// `__tplc_rt_FB_ModbusRtu` — EXEC rising edge begins one Modbus RTU
+/// transaction over the serial device in DEV (BAUD/PARITY/DBITS/
+/// SBITS termios settings, UNIT station address); while BUSY the
+/// transaction is polled each scan until DONE or the service-side
+/// TIMEOUT. Same RESULT/EXC/ERRID contract as FB_Modbus.
+/// # Safety
+/// `this` must point at a valid instance block of the documented
+/// layout; `ctx` at a live `TplcCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn __tplc_rt_FB_ModbusRtu(this: *mut u8, ctx: *mut u8) -> i32 {
+    let exec = rb(this.add(MRT_EXEC));
+    let last = rb(this.add(MRT_LAST_EXEC));
+    wb(this.add(MRT_LAST_EXEC), exec);
+
+    if !rb(this.add(MRT_BUSY)) {
+        if !(exec && !last) {
+            return 0;
+        }
+        wb(this.add(MRT_DONE), false);
+        wu32(this.add(MRT_ERRID), 0);
+        wi32(this.add(MRT_RESULT), 0);
+        wu32(this.add(MRT_EXC), 0);
+        wu32(this.add(MRT_DLEN), 0);
+        wb(this.add(MRT_BUSY), true);
+
+        let svc = modbus_service(ctx);
+        if svc.is_null() {
+            mrt_fail(this, MBERR_NOSERVICE);
+            return 0;
+        }
+        /* TplcModbusRtuReq (88 bytes): dev[64] @0 NUL-term,
+        baud u32le @64, timeout_ms u32le @68, unit u8 @72,
+        func u8 @73, parity u8 @74, databits u8 @75, stopbits u8 @76,
+        req_len u16le @78, req ptr u64le @80 */
+        let mut req = [0u8; 88];
+        let dn = (*this.add(MRT_DEV_LEN) as usize).min(63);
+        core::ptr::copy_nonoverlapping(this.add(MRT_DEV), req.as_mut_ptr(), dn);
+        req[64..68].copy_from_slice(&ru32(this.add(MRT_BAUD)).to_le_bytes());
+        let tns = ri(this.add(MRT_TIMEOUT));
+        let tms = if tns > 0 {
+            (tns / 1_000_000).min(u32::MAX as i64) as u32
+        } else {
+            0
+        };
+        req[68..72].copy_from_slice(&tms.to_le_bytes());
+        req[72] = ru32(this.add(MRT_UNIT)) as u8;
+        req[73] = ru32(this.add(MRT_FUNC)) as u8;
+        req[74] = ru32(this.add(MRT_PARITY)) as u8;
+        req[75] = ru32(this.add(MRT_DBITS)) as u8;
+        req[76] = ru32(this.add(MRT_SBITS)) as u8;
+        let rlen = ru32(this.add(MRT_RLEN)).min(256) as u16;
+        req[78..80].copy_from_slice(&rlen.to_le_bytes());
+        let datap = this.add(MRT_DATA) as usize as u64;
+        req[80..88].copy_from_slice(&datap.to_le_bytes());
+        let mut h: u32 = 0;
+        let f: FMbBegin = core::mem::transmute(mbfn(svc, MB_SVC_BEGIN_RTU));
+        let rc = f(svc, req.as_ptr(), &mut h);
+        if rc != 0 {
+            mrt_fail(this, mb_errid(rc));
+            return 0;
+        }
+        wu32(this.add(MRT_HANDLE), h);
+    }
+
+    if !rb(this.add(MRT_BUSY)) {
+        return 0;
+    }
+    let svc = modbus_service(ctx);
+    if svc.is_null() {
+        mrt_fail(this, MBERR_NOSERVICE);
+        return 0;
+    }
+    /* TplcModbusResp (16 bytes): data ptr u64le @0, cap u16le @8,
+    len u16le @10, status u8 @12, exc u8 @13 */
+    let mut resp = [0u8; 16];
+    let datap = this.add(MRT_DATA) as usize as u64;
+    resp[0..8].copy_from_slice(&datap.to_le_bytes());
+    resp[8..10].copy_from_slice(&256u16.to_le_bytes());
+    let f: FMbPoll = core::mem::transmute(mbfn(svc, MB_SVC_POLL));
+    let rc = f(svc, ru32(this.add(MRT_HANDLE)), resp.as_mut_ptr());
+    match rc {
+        1 => {} // TPLC_MB_BUSY — keep polling
+        0 => {
+            let rlen = u16::from_le_bytes([resp[10], resp[11]]);
+            wu32(this.add(MRT_DLEN), rlen as u32);
+            wu32(this.add(MRT_EXC), resp[13] as u32);
+            wi32(this.add(MRT_RESULT), resp[12] as i32);
+            wb(this.add(MRT_BUSY), false);
+            wb(this.add(MRT_DONE), true);
+            wu32(this.add(MRT_HANDLE), 0);
+        }
+        e => mrt_fail(this, mb_errid(e)),
     }
     0
 }

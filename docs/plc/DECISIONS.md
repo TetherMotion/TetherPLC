@@ -904,3 +904,42 @@ peer covering the MBAP-declared length. All ten `FB_MBUdp*`
 wrappers share the TCP wrapper bodies plus `mb.UDP := TRUE`,
 completing Tc2_ModbusSrv at 20/20 catalog entries; `tc2_modbussrv`
 ctest covers both transports (TCP `0x3f`, UDP `0x1f`).
+
+## D-IMPL-44 — tplc-modbus RTU transport + FB_ModbusRtu builtin (plan 21 C4)
+
+`include/tplc/tplc_modbus.h` ABI v3 appends `TplcModbusRtuReq` and
+`mb_begin_rtu` to `TplcModbusService` (after `mb_begin_udp`,
+handles share the TCP/UDP namespace). The RTU codec lives in
+`ModbusService`: the serial device is opened per transaction with
+termios raw settings derived from baud/parity/databits/stopbits;
+the request frame is `unit | func | data | crc16lo | crc16hi`
+(CRC-16/Modbus, low byte first); responses are validated on unit
+id, CRC, and function code and then parsed by the shared
+`finishPdu` used by TCP/UDP. Expected response length is derived
+for fixed and byte-count functions; functions without a derivable
+length complete on the T3.5 inter-frame gap computed from baud.
+Nonblocking `read`/`write`; a 0-byte read under
+`VMIN=0`/`VTIME=0` means "no data this scan", not EOF (treating it
+as hangup desynced every transaction: each read the previous
+transaction's late response and failed func validation).
+PLC side: builtin `FB_ModbusRtu` (384-byte instance) mirrors
+`FB_Modbus` with `DEV/BAUD/PARITY/DBITS/SBITS/UNIT` replacing
+`HOST`/`PORT`. `compat/tc2/tc2_modbusrtu.st` wraps it as the ten
+`ModbusRtuMasterV2_*` actions (funcs 1/2/3/4/5/6/15/16/23/8) with
+serial settings as explicit inputs; `tc2_modbusrtu` ctest replays
+the six-transaction sequence against a python RTU slave on a pty
+pair (6 packed checks, `0x3f`).
+**Decisions:** (a) per-transaction open keeps the service
+stateless across scans like connect-per-transaction on TCP, at
+the cost of termios setup per exchange; (b) gap-based completion
+uses the last-byte timestamp (`last_rx_ns`) against the injected
+`steadyNs` clock, so `--sim` timeouts stay deterministic; (c) the
+RTU request reuses `TPLC_MODBUS_MAX_PDU` bounds since RTU ADUs
+are smaller than TCP ADUs; (d) Tc2_ModbusRTU stays in the plan
+catalog — slave blocks need RTU listen mode, `*_Generic`
+ComBuffer variants need the ComBuffer object model, and KL6x*B
+variants need EtherCAT terminal integration.
+**Consequence:** master-only Modbus RTU over POSIX serial devices
+(pty-verified); no RS-485 direction control beyond what the
+adapter/driver provides, no broadcast unit id 0 handling beyond
+normal framing, no slave mode.

@@ -60,7 +60,20 @@ live attach over tether_io, and the safety/security envelope.
   narrower members (clobbering adjacent inputs), and the ELF
   sandbox x86 length decoder desynced on `0F 8x` jumps and
   `0x66`-prefixed immediates, rejecting valid modules as
-  kernel-gate violations.
+  kernel-gate violations. Seventh tranche adds
+  `compat/tc2/tc2_modbusrtu.st` (Tc2_ModbusRTU V2-master FBs) over
+  the same `tplc-modbus` service — service ABI v3 adds
+  `mb_begin_rtu`/`TplcModbusRtuReq`: the serial device opens per
+  transaction with termios settings from the request, frames are
+  `unit|func|data|crc16` (CRC-16/Modbus), responses are
+  unit/CRC/func-validated and parsed by the shared PDU parser,
+  and variable-length functions complete on the T3.5 inter-frame
+  gap; builtin `FB_ModbusRtu` mirrors `FB_Modbus` with serial-line
+  inputs. Verified by a six-transaction RTU exchange against a
+  python RTU slave on a pty pair (ctest `tc2_modbusrtu`, mask
+  `0x3f`). One transport bug was caught by the e2e: a 0-byte
+  `read()` under `VMIN=0`/`VTIME=0` means "no data this scan", not
+  EOF — treating it as hangup desynced every transaction.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

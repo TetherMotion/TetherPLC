@@ -40,6 +40,12 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       WriteSingleReg/WriteCoils/WriteRegs/
                       ReadWriteRegs + FB_MBDiagnose, plus the ten
                       FB_MBUdp* UDP variants
+  tc2_modbusrtu.st   Tc2_ModbusRTU wrappers over the builtin
+                      FB_ModbusRtu (tplc-modbus RTU transport):
+                      the ten master FBs FB_MBRtuReadCoils/
+                      ReadInputs/ReadRegs/ReadInputRegs/
+                      WriteSingleCoil/WriteSingleReg/WriteCoils/
+                      WriteRegs/ReadWriteRegs + FB_MBRtuDiagnose
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -85,6 +91,16 @@ tests/compat/
                       (modbus_test_server.py)
   modbus_test_server.py  minimal Modbus TCP/UDP responder used by
                       tc2_modbussrv.sh
+  tc2_modbusrtu_case.st  autonomous Modbus RTU sequence program
+                      (6 packed checks: read regs, write single
+                      reg, write regs, read coils, exception read,
+                      read/write regs)
+  tc2_modbusrtu.sh   ctest tc2_modbusrtu: library + consumer +
+                      38-step sim replay expecting mask 0x3f,
+                      python Modbus RTU slave on a pty pair
+                      (modbus_rtu_test_server.py)
+  modbus_rtu_test_server.py  minimal Modbus RTU slave used by
+                      tc2_modbusrtu.sh
 ```
 
 ## Building and consuming
@@ -110,7 +126,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done — Tc2_ModbusSrv complete (20/20: TCP + UDP FBs, wire-protocol e2e); Tc2_ModbusRTU and sACN/BACnet/PJLink/S7/FTP/SMS/IEC 60870 remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done — Tc2_ModbusSrv complete (20/20: TCP + UDP FBs, wire-protocol e2e) + Tc2_ModbusRTU V2-master subset (all ten master actions as standalone FBs over the RTU transport, pty e2e); ModbusRtuSlave_*, ComBuffer Generic variants, KL6x* bus-terminal variants, and the obsolete non-V2 masters remain; sACN/BACnet/PJLink/S7/FTP/SMS/IEC 60870 remain |
 
 ### C1 coverage notes
 
@@ -302,7 +318,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   error produces is unspecified) and `TcEventEntry` needs a `GUID`
   type the dialect does not have.
 
-### C4 coverage notes (tplc-modbus / Tc2_ModbusSrv)
+### C4 coverage notes (tplc-modbus / Tc2_ModbusSrv + Tc2_ModbusRTU)
 
 - **Architecture**: same shape as the other service bridges — builtin
   `FB_Modbus` (`HOST/PORT/UNIT/TIMEOUT/FUNC/DATA/RLEN/DLEN/HANDLE/
@@ -339,21 +355,57 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   datagram from the request peer whose MBAP length is covered.
   `FB_Modbus.UDP` selects the transport per transaction; handles
   share the `mb_poll`/`mb_abort` namespace.
+- **RTU transport**: service ABI v3 appends `mb_begin_rtu` and
+  `TplcModbusRtuReq` (device path, baud, parity, data/stop bits,
+  unit id, timeout, function, request bytes). The serial device is
+  opened per transaction with termios raw settings matching the
+  request; the RTU frame is `unit | func | data | crc16lo |
+  crc16hi` (CRC-16/Modbus, transmitted low byte first). Responses
+  are validated on unit id, CRC, and function code, then the PDU
+  feeds the same `finishPdu` parser as TCP/UDP. Expected response
+  length is derived for fixed-size functions (echo + byte-count
+  functions); functions without a derivable length complete on the
+  T3.5 inter-frame gap measured from baud rate. Nonblocking
+  `read`/`write`; a 0-byte read under `VMIN=0`/`VTIME=0` means "no
+  data this scan", not EOF.
+- **RTU bridge**: builtin `FB_ModbusRtu` (384-byte instance,
+  `DEV/BAUD/PARITY/DBITS/SBITS/UNIT/TIMEOUT/FUNC/DATA/RLEN/DLEN/
+  HANDLE/RESULT/EXC/ERRID/EXEC/BUSY/DONE`) mirrors `FB_Modbus` with
+  serial-line inputs replacing `HOST`/`PORT`. Handles share the
+  same `mb_poll`/`mb_abort` namespace.
+- **RTU wrappers**: `compat/tc2/tc2_modbusrtu.st` exposes the ten
+  `ModbusRtuMasterV2_*` actions as standalone FBs
+  (`FB_MBRtuReadCoils` func 1, `FB_MBRtuReadInputs` 2,
+  `FB_MBRtuReadRegs` 3, `FB_MBRtuReadInputRegs` 4,
+  `FB_MBRtuWriteSingleCoil` 5, `FB_MBRtuWriteSingleReg` 6,
+  `FB_MBRtuWriteCoils` 15, `FB_MBRtuWriteRegs` 16,
+  `FB_MBRtuReadWriteRegs` 23, `FB_MBRtuDiagnose` 8) with serial
+  line settings as explicit inputs (`sDevice`, `nBaud`, `nParity`,
+  `nDataBits`, `nStopBits`) instead of TwinCAT System Manager COM
+  bindings. `POINTER TO BYTE` payloads are bounded
+  `ARRAY[0..255] OF BYTE` buffers.
 - **Verified**: `tc2_modbussrv` ctest replays a six-transaction
   TCP sequence (read regs, write single reg, write regs, read
   coils, exception read at addr>=99, read/write regs) plus a
   five-transaction UDP sequence through `tether-plc` +
   `tether-plc-sim` against `tests/compat/modbus_test_server.py`,
   a python Modbus TCP/UDP responder. 6 + 5 packed checks
-  (`0x3f` / `0x1f`).
+  (`0x3f` / `0x1f`). `tc2_modbusrtu` ctest replays the same
+  six-transaction sequence over RTU through `tether-plc` +
+  `tether-plc-sim` against `tests/compat/modbus_rtu_test_server.py`,
+  a python Modbus RTU slave on a pty pair, expecting mask `0x3f`.
 - **Honest gaps**:
   - IPv4 dotted-quad only; no DNS, no IPv6.
-  - `Tc2_ModbusRTU` (serial RTU framing, CRC16, T3.5 gap timing) is
-    not implemented; `tplc-serial` provides the byte transport but
-    the RTU codec does not exist yet.
+  - `Tc2_ModbusRTU` is partially covered: the V2 master action set
+    is implemented, but `ModbusRtuSlave_*` (needs RTU listen mode),
+    `*_Generic` ComBuffer variants (needs the TwinCAT ComBuffer
+    object model), the KL6x*B bus-terminal variants (need EtherCAT
+    terminal integration), and the obsolete non-V2 master FBs are
+    not provided.
   - `POINTER TO BYTE` payloads are bounded `ARRAY[0..255] OF BYTE`
     buffers; `cbLength`-style capacity args are advisory.
-  - Slave/server mode (listening Modbus TCP/UDP) is not provided.
+  - Slave/server mode (listening Modbus TCP/UDP/RTU) is not
+    provided.
   - UDP encapsulation assumes the same MBAP+PDU ADU per datagram;
     the TwinCAT manual does not specify a different framing.
 

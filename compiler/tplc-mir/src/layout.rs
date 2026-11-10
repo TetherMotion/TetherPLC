@@ -321,6 +321,53 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             appended last so earlier member offsets stay fixed */
             push(&mut off, "UDP", Type::Bool);
         }
+        /* FB_ModbusRtu — tplc-modbus RTU transport (Modbus RTU
+        master). Same transaction shape as FB_Modbus but over a
+        serial device: DEV is the device path, BAUD/PARITY/DBITS/
+        SBITS the termios settings (tplc-serial numeric codes),
+        UNIT the station address. DATA/RLEN/DLEN/RESULT/EXC/ERRID
+        mirror FB_Modbus. The service enforces TIMEOUT itself. */
+        "FB_ModbusRtu" => {
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "DEV", Type::Str { cap: 63 });
+            push(&mut off, "BAUD", udint());
+            push(&mut off, "PARITY", udint());
+            push(&mut off, "DBITS", udint());
+            push(&mut off, "SBITS", udint());
+            push(&mut off, "UNIT", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "FUNC", udint());
+            push(
+                &mut off,
+                "DATA",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 255,
+                },
+            );
+            push(&mut off, "RLEN", udint());
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "RESULT", dint());
+            push(&mut off, "EXC", udint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;
