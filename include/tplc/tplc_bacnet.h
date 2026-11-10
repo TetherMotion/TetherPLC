@@ -68,8 +68,10 @@ extern "C" {
 #define TPLC_BACNET_E_RANGE  -4   /* request out of range                */
 
 typedef struct TplcBacnetPeer {
-    uint8_t  ip[4];         /* IPv4, dotted quad in memory order    */
+    char     host[16];      /* dotted-quad IPv4 or "255.255.255.255"
+                               for broadcast Who-Is; "" = broadcast */
     uint16_t port;          /* 0 = TPLC_BACNET_PORT                 */
+    uint16_t reserved;
 } TplcBacnetPeer;
 
 /* one request; all fields fixed at bac_begin. For WHO_IS the
@@ -97,29 +99,27 @@ typedef struct TplcBacnetReq {
     uint8_t  val[TPLC_BACNET_MAX_VAL];
 } TplcBacnetReq;
 
-/* poll output; status drives the PLC-side state machine.
-   For READ_PROP the Complex-ACK value lands in val_type/val.
-   For WHO_IS each I-Am fills dev_id[i] = (type<<22)|instance and
-   dev_ip[i] the responder address (up to MAX_RESPONDERS); the
-   last responder's vendor/max-APDU/segmentation land in
-   dev_vendor/dev_max_apdu/dev_seg. */
-typedef struct TplcBacnetResp {
+/* poll output: scalar state only (fixed 64-byte layout). The
+   value payload and who-is responder table are copied into caller
+   buffers by bac_poll — see its signature. For READ_PROP the
+   Complex-ACK value lands in val_type/val; for WHO_IS each I-Am
+   fills dev_id[i] = (type<<22)|instance and dev_ip[i*4..i*4+3]
+   the responder IPv4 address. */
+typedef struct TplcBacnetRespInfo {
     int32_t  status;        /* TPLC_BACNET_ST_*                      */
     uint32_t service;       /* echoed service choice / apdu detail   */
-    uint32_t apdu_type;     /* last APDU type seen (0..7)            */
+    uint32_t apdu_type;     /* last APDU type seen (0..15)           */
     uint32_t obj_type;      /* read-ack object type                  */
     uint32_t obj_inst;
     uint32_t prop_id;
     uint32_t val_type;      /* app tag number of returned value      */
-    uint32_t val_len;
+    uint32_t val_len;       /* bytes available in the val buffer     */
     uint32_t dev_count;     /* who-is: responders collected          */
-    uint32_t dev_id[TPLC_BACNET_MAX_RESPONDERS];
-    uint32_t dev_vendor;
+    uint32_t dev_vendor;    /* last responder's vendor id            */
     uint32_t dev_max_apdu;
     uint32_t dev_seg;
-    uint8_t  dev_ip[TPLC_BACNET_MAX_RESPONDERS][4];
-    uint8_t  val[TPLC_BACNET_MAX_VAL];
-} TplcBacnetResp;
+    uint32_t reserved[4];
+} TplcBacnetRespInfo;         /* 64 bytes                            */
 
 typedef uint32_t TplcBacnetHandle;
 
@@ -133,10 +133,19 @@ typedef struct TplcBacnetService {
     int32_t (*bac_begin)(void* svc, const TplcBacnetReq* req,
                          TplcBacnetHandle* out);
     /* drain pending datagrams for the handle, match responses,
-       and fill resp. Always returns TPLC_BACNET_OK on a live
-       handle; resp->status reports PENDING/OK/TIMEOUT/ERROR. */
+       and fill info with the latest scalar state. The value
+       payload is copied into val (up to val_cap bytes; val_len in
+       info reports the full length even when truncated), and the
+       who-is responder table into dev_ids/dev_ips (up to
+       dev_cap entries each; dev_count reports the total seen).
+       Any buffer may be NULL to skip that copy. Always returns
+       TPLC_BACNET_OK on a live handle; info->status reports
+       PENDING/OK/TIMEOUT/ERROR. */
     int32_t (*bac_poll)(void* svc, TplcBacnetHandle h,
-                        TplcBacnetResp* resp);
+                        TplcBacnetRespInfo* info,
+                        uint8_t* val, uint32_t val_cap,
+                        uint32_t* dev_ids, uint8_t* dev_ips,
+                        uint32_t dev_cap);
     int32_t (*bac_abort)(void* svc, TplcBacnetHandle h);
 } TplcBacnetService;
 

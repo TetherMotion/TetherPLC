@@ -30,13 +30,20 @@ private:
         uint64_t deadline_ns = 0;
         bool sent = false;
         bool finished = false;
-        TplcBacnetResp resp{};
+        TplcBacnetRespInfo info{};
+        /* accumulated response payloads (copied out by poll) */
+        uint8_t val[TPLC_BACNET_MAX_VAL]{};
+        uint32_t val_total = 0;
+        uint32_t dev_id[TPLC_BACNET_MAX_RESPONDERS]{};
+        uint8_t dev_ip[TPLC_BACNET_MAX_RESPONDERS][4]{};
+        uint32_t dev_total = 0;
     };
 
     static BacnetService* self(void* p);
 
     int32_t begin(void*, const TplcBacnetReq*, TplcBacnetHandle*);
-    int32_t poll(void*, TplcBacnetHandle, TplcBacnetResp*);
+    int32_t poll(void*, TplcBacnetHandle, TplcBacnetRespInfo*,
+                 uint8_t*, uint32_t, uint32_t*, uint8_t*, uint32_t);
     int32_t abort(void*, TplcBacnetHandle);
 
     bool encode(Txn& t);
@@ -45,9 +52,12 @@ private:
     void drain(Txn& t);
     void finish(Txn& t, int32_t status);
 
+    /* svc_ must stay the first data member: the service-table
+       pointer handed to the vtable lambdas is &svc_, and self()
+       recovers the BacnetService* by treating it as `this`. */
+    TplcBacnetService svc_{};
     ClockFn clock_;
     void* clock_ctx_;
-    TplcBacnetService svc_{};
     std::unordered_map<uint32_t, Txn> txns_;
     uint32_t next_handle_ = 1;
     uint32_t next_invoke_ = 1;

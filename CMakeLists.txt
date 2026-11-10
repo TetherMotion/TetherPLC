@@ -587,6 +587,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc3_sacn PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc3_BACnet compat (plan 21 C4): tplc-bacnet BACnet/IP client e2e
+  # (Who-Is/I-Am, ReadProperty, WriteProperty, Error) against a
+  # python BACnet peer on UDP 47808
+  add_test(NAME tc3_bacnet
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_bacnet.sh)
+  set_tests_properties(tc3_bacnet PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

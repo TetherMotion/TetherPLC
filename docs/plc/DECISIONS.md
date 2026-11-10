@@ -1000,3 +1000,64 @@ blocker class as Tc3_EventLogger.
 multicast; discovery/sync packets are codec-complete but not
 PLC-exposed; callback-driven TwinCAT sACN code needs porting
 to the poll model.
+## D-IMPL-46 — tplc-bacnet service + FB_Bacnet builtin (plan 21 C4)
+
+`include/tplc/tplc_bacnet.h` defines `TplcBacnetService` (ABI v1):
+`bac_begin`/`bac_poll`/`bac_abort`, one transaction per handle,
+mirroring the modbus service shape. The host impl
+`BacnetService` (`runtime/host/src/BacnetService.cpp`) owns a
+nonblocking UDP socket per transaction (ephemeral port,
+`SO_BROADCAST` for limited broadcast) and implements the
+BACnet/IP (ASHRAE 135) BVLC + NPDU + APDU codec: BVLC type `0x81`
+with unicast `0x0A` / broadcast `0x0B` functions, NPDU version 1
+with the expecting-reply control bit for confirmed services,
+confirmed-request APDU type 0 matched by invoke ID against
+Simple-ACK (2) / Complex-ACK (3) / Error-Reject-Abort (5/6/7),
+and unconfirmed type 1 for Who-Is/I-Am. Encodings were verified
+against `bacpypes3` wire output.
+
+Three services are exposed: Who-Is (unconfirmed svc 8 with an
+optional device-instance range, collecting I-Am responses into a
+bounded 8-responder table of object ID + responder IPv4 +
+vendor/max-APDU/segmentation until the discovery deadline),
+ReadProperty (confirmed svc 12, Complex-ACK echo of
+object/property plus the first application-tagged value), and
+WriteProperty (confirmed svc 15, Simple-ACK, optional array index
+and write priority). Property values cross the ABI as raw
+application-tag payload bytes — `val_type` selects the tag and
+`val` carries the payload verbatim in wire byte order; the
+service frames and deframes tags but never interprets payloads.
+`bac_poll` uses a scalar `TplcBacnetRespInfo` (fixed 64-byte
+layout) plus caller-owned value/responder buffers so the no_std
+runtime bridge never hardcodes aggregate offsets; finished
+transactions are dropped on the terminal poll, matching the
+modbus model.
+
+PLC side: builtin `FB_Bacnet` (712-byte layout) with FUNC
+(1=Who-Is, 2=ReadProperty, 3=WriteProperty), dotted-quad HOST
+(`""`/`"255.255.255.255"` = broadcast), PORT, object/property
+fields, HAS_IDX/HAS_PRIO/HAS_RANGE qualifiers, raw `VAL[256]`,
+and outputs STATUS (0 pending, 1 ok, 2 timeout, 3 BACnet
+error, 4 bad response), R_* response echo, R_VAL payload, the
+DEV_* responder table, ERRID for service/transport faults, and
+EXEC/BUSY/DONE/`__last_exec` handshake. `compat/tc3/
+tc3_bacnet.st` wraps it as `FB_BACnet_WhoIs`,
+`FB_BACnet_ReadProperty`, `FB_BACnet_WriteProperty`.
+
+TwinCAT's real BACnet integration is device-configuration-driven
+(System Manager generates FBs per configured device; the plan
+catalog lists only three documentation examples), so the compat
+surface is the protocol layer plus poll-model wrappers, not a
+mirrored TwinCAT API. `tc3_bacnet` ctest replays a 350-step
+free-running sim against `bacnet_test_peer.py` — six packed
+checks (`0x3f`): broadcast Who-Is/I-Am with range, ReadProperty
+REAL, WriteProperty Simple-ACK, object-name charstring, Error on
+unknown object, directed unicast Who-Is.
+
+Two implementation defects were caught by the e2e: `BacnetService`
+declared `clock_`/`clock_ctx_` before `svc_`, breaking the
+`self()` = `&svc_` convention used by all host services (the vtable
+lambdas receive the table pointer, not `this`) — `svc_` must stay
+the first data member; and `bac_poll` originally retained finished
+transactions (and their sockets) forever — it now drops them on
+the terminal result like `ModbusService::mbPoll`.

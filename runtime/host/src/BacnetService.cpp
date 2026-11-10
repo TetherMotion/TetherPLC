@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -134,6 +135,24 @@ uint32_t u32_from_min_be(const uint8_t* d, uint32_t len) {
 uint32_t objid_bytes(uint32_t type, uint32_t inst) {
     return ((type & 0x3FF) << 22) | (inst & OBJ_DEV_MAX);
 }
+
+/* dotted-quad -> in_addr; "" and "broadcast"/"255.255.255.255"
+   all map to the limited-broadcast address */
+static bool parse_v4(const char* host, struct in_addr* out) {
+    if (!host || !*host || strcmp(host, "broadcast") == 0 ||
+        strcmp(host, "255.255.255.255") == 0) {
+        out->s_addr = htonl(INADDR_BROADCAST);
+        return true;
+    }
+    unsigned a, b, c, d;
+    char tail;
+    if (sscanf(host, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4 ||
+        a > 255 || b > 255 || c > 255 || d > 255)
+        return false;
+    uint32_t v = (a << 24) | (b << 16) | (c << 8) | d;
+    out->s_addr = htonl(v);
+    return true;
+}
 } /* namespace */
 
 BacnetService* BacnetService::self(void* p) {
@@ -144,12 +163,16 @@ BacnetService::BacnetService(ClockFn clock, void* clock_ctx)
     : clock_(clock), clock_ctx_(clock_ctx) {
     svc_.struct_size = sizeof(TplcBacnetService);
     svc_.abi_version = TPLC_BACNET_ABI_VERSION;
+    svc_.host = this;
     svc_.bac_begin = [](void* s, const TplcBacnetReq* r,
                         TplcBacnetHandle* o) {
         return self(s)->begin(s, r, o);
     };
-    svc_.bac_poll = [](void* s, TplcBacnetHandle h, TplcBacnetResp* r) {
-        return self(s)->poll(s, h, r);
+    svc_.bac_poll = [](void* s, TplcBacnetHandle h,
+                       TplcBacnetRespInfo* i, uint8_t* v,
+                       uint32_t vc, uint32_t* ids, uint8_t* ips,
+                       uint32_t dc) {
+        return self(s)->poll(s, h, i, v, vc, ids, ips, dc);
     };
     svc_.bac_abort = [](void* s, TplcBacnetHandle h) {
         return self(s)->abort(s, h);
@@ -167,10 +190,9 @@ bool BacnetService::encode(Txn& t) {
     /* BVLC header (patched length at the end) */
     if (n + 4 > cap) return false;
     b[n++] = BVLL_TYPE;
-    const bool bcast =
-        (r.func == TPLC_BACNET_F_WHO_IS) &&
-        (r.peer.ip[0] == 255 && r.peer.ip[1] == 255 &&
-         r.peer.ip[2] == 255 && r.peer.ip[3] == 255);
+    struct in_addr da{};
+    if (!parse_v4(r.peer.host, &da)) return false;
+    const bool bcast = da.s_addr == htonl(INADDR_BROADCAST);
     b[n++] = bcast ? BVLL_BCAST : BVLL_UCAST;
     size_t len_off = n;
     n += 2;
@@ -281,7 +303,7 @@ int32_t BacnetService::begin(void*, const TplcBacnetReq* req,
     uint32_t to = req->timeout_ms ? req->timeout_ms : 1000;
     if (to > 60000) to = 60000;
     t.deadline_ns = clock_(clock_ctx_) + uint64_t(to) * NS_PER_MS;
-    t.resp.status = TPLC_BACNET_ST_PENDING;
+    t.info.status = TPLC_BACNET_ST_PENDING;
     if (!encode(t)) {
         close(fd);
         txns_.erase(h);
@@ -290,19 +312,22 @@ int32_t BacnetService::begin(void*, const TplcBacnetReq* req,
     txns_.emplace(h, std::move(t));
     Txn& tt = txns_[h];
     /* send immediately; nonblocking UDP rarely fails */
-    sockaddr_in da{};
-    da.sin_family = AF_INET;
-    memcpy(&da.sin_addr, req->peer.ip, 4);
-    da.sin_port = htons(req->peer.port ? req->peer.port
-                                       : TPLC_BACNET_PORT);
-    ssize_t w = sendto(tt.fd, tt.pkt, tt.pkt_len, 0,
-                       reinterpret_cast<sockaddr*>(&da), sizeof(da));
-    tt.sent = w == ssize_t(tt.pkt_len);
-    if (!tt.sent) {
-        /* EAGAIN on a fresh datagram socket is unlikely; treat as
-           sent anyway — poll will retry the send once */
-        tt.sent = false;
+    struct in_addr da{};
+    if (!parse_v4(req->peer.host, &da)) {
+        txns_.erase(h);
+        close(fd);
+        return TPLC_BACNET_E_PARAM;
     }
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_addr = da;
+    dst.sin_port = htons(req->peer.port ? req->peer.port
+                                        : TPLC_BACNET_PORT);
+    ssize_t w = sendto(tt.fd, tt.pkt, tt.pkt_len, 0,
+                       reinterpret_cast<sockaddr*>(&dst),
+                       sizeof(dst));
+    tt.sent = w == ssize_t(tt.pkt_len);
+    /* a nonblocking sendto can still hit EAGAIN; poll retries once */
     *out = h;
     return TPLC_BACNET_OK;
 }
@@ -311,8 +336,8 @@ int32_t BacnetService::begin(void*, const TplcBacnetReq* req,
 
 void BacnetService::handleDatagram(Txn& t, const uint8_t* d,
                                    size_t n,
-                                   const struct sockaddr_in&) {
-    TplcBacnetResp& r = t.resp;
+                                   const struct sockaddr_in& from) {
+    TplcBacnetRespInfo& r = t.info;
     if (n < 4 || d[0] != BVLL_TYPE) return;
     uint8_t func = d[1];
     if (func != BVLL_UCAST && func != BVLL_BCAST) return;
@@ -375,20 +400,16 @@ void BacnetService::handleDatagram(Txn& t, const uint8_t* d,
             seen++;
         }
         if (oid == 0 && seen == 0) return;
-        if (r.dev_count < TPLC_BACNET_MAX_RESPONDERS) {
-            uint32_t k = r.dev_count++;
-            r.dev_id[k] = oid;
-            /* responder ip from sockaddr — caller passes it via
-               dev_ip fill below (kept in handleDatagram scope) */
+        if (t.dev_total < TPLC_BACNET_MAX_RESPONDERS) {
+            uint32_t k = t.dev_total++;
+            t.dev_id[k] = oid;
+            memcpy(t.dev_ip[k], &from.sin_addr.s_addr, 4);
         }
+        r.dev_count = t.dev_total;
         r.dev_vendor = vendor;
         r.dev_max_apdu = apdu;
         r.dev_seg = seg;
         r.service = SVC_I_AM;
-        /* stash ip for the slot just written */
-        if (r.dev_count > 0 && r.dev_count <= TPLC_BACNET_MAX_RESPONDERS) {
-            /* filled by caller through a side channel — see poll */
-        }
         return;
     }
 
@@ -420,10 +441,12 @@ void BacnetService::handleDatagram(Txn& t, const uint8_t* d,
                 /* Any value: first application tag is the value */
                 if (!got_val) {
                     r.val_type = num;
-                    r.val_len = pl > TPLC_BACNET_MAX_VAL
-                                    ? TPLC_BACNET_MAX_VAL
-                                    : pl;
-                    memcpy(r.val, pd, r.val_len);
+                    t.val_total = pl;
+                    r.val_len = pl;
+                    uint32_t cp = pl > TPLC_BACNET_MAX_VAL
+                                      ? TPLC_BACNET_MAX_VAL
+                                      : pl;
+                    memcpy(t.val, pd, cp);
                     got_val = true;
                 }
                 continue;
@@ -473,62 +496,76 @@ void BacnetService::drain(Txn& t) {
         ssize_t n = recvfrom(t.fd, buf, sizeof(buf), MSG_DONTWAIT,
                              reinterpret_cast<sockaddr*>(&from), &fl);
         if (n <= 0) break;
-        /* remember responder ip for who-is slots */
-        size_t before = t.resp.dev_count;
         handleDatagram(t, buf, size_t(n), from);
-        if (t.req.func == TPLC_BACNET_F_WHO_IS &&
-            t.resp.dev_count > before &&
-            t.resp.dev_count <= TPLC_BACNET_MAX_RESPONDERS) {
-            memcpy(t.resp.dev_ip[t.resp.dev_count - 1],
-                   &from.sin_addr.s_addr, 4);
-        }
     }
 }
 
 void BacnetService::finish(Txn& t, int32_t status) {
-    t.resp.status = status;
+    t.info.status = status;
     t.finished = true;
 }
 
 int32_t BacnetService::poll(void*, TplcBacnetHandle h,
-                            TplcBacnetResp* resp) {
+                            TplcBacnetRespInfo* info, uint8_t* val,
+                            uint32_t val_cap, uint32_t* dev_ids,
+                            uint8_t* dev_ips, uint32_t dev_cap) {
     auto it = txns_.find(h);
     if (it == txns_.end()) return TPLC_BACNET_E_STATE;
     Txn& t = it->second;
-    if (t.finished) {
-        if (resp) *resp = t.resp;
-        return TPLC_BACNET_OK;
-    }
-    /* retry the send once if the first attempt hit EAGAIN */
-    if (!t.sent) {
-        sockaddr_in da{};
-        da.sin_family = AF_INET;
-        memcpy(&da.sin_addr, t.req.peer.ip, 4);
-        da.sin_port =
-            htons(t.req.peer.port ? t.req.peer.port : TPLC_BACNET_PORT);
-        ssize_t w = sendto(t.fd, t.pkt, t.pkt_len, MSG_DONTWAIT,
-                           reinterpret_cast<sockaddr*>(&da),
-                           sizeof(da));
-        if (w == ssize_t(t.pkt_len)) t.sent = true;
-    }
-    drain(t);
     if (!t.finished) {
-        uint64_t now = clock_(clock_ctx_);
-        if (now >= t.deadline_ns) {
-            if (t.req.func == TPLC_BACNET_F_WHO_IS) {
-                /* discovery window elapsed: report what we saw */
-                t.resp.status = t.resp.dev_count
-                                    ? TPLC_BACNET_ST_OK
-                                    : TPLC_BACNET_ST_TIMEOUT;
-            } else {
-                t.resp.status = TPLC_BACNET_ST_TIMEOUT;
+        /* retry the send once if the first attempt hit EAGAIN */
+        if (!t.sent) {
+            struct in_addr da{};
+            if (parse_v4(t.req.peer.host, &da)) {
+                sockaddr_in dst{};
+                dst.sin_family = AF_INET;
+                dst.sin_addr = da;
+                dst.sin_port = htons(t.req.peer.port
+                                         ? t.req.peer.port
+                                         : TPLC_BACNET_PORT);
+                ssize_t w = sendto(t.fd, t.pkt, t.pkt_len,
+                                   MSG_DONTWAIT,
+                                   reinterpret_cast<sockaddr*>(&dst),
+                                   sizeof(dst));
+                if (w == ssize_t(t.pkt_len)) t.sent = true;
             }
-            t.finished = true;
-        } else {
-            t.resp.status = TPLC_BACNET_ST_PENDING;
+        }
+        drain(t);
+        if (!t.finished) {
+            uint64_t now = clock_(clock_ctx_);
+            if (now >= t.deadline_ns) {
+                if (t.req.func == TPLC_BACNET_F_WHO_IS) {
+                    /* discovery window elapsed: report what we saw */
+                    t.info.status = t.dev_total
+                                        ? TPLC_BACNET_ST_OK
+                                        : TPLC_BACNET_ST_TIMEOUT;
+                } else {
+                    t.info.status = TPLC_BACNET_ST_TIMEOUT;
+                }
+                t.finished = true;
+            } else {
+                t.info.status = TPLC_BACNET_ST_PENDING;
+            }
         }
     }
-    if (resp) *resp = t.resp;
+    if (info) *info = t.info;
+    if (val && val_cap) {
+        uint32_t cp = t.val_total < val_cap ? t.val_total : val_cap;
+        memcpy(val, t.val, cp);
+    }
+    if (dev_ids && dev_ips && dev_cap) {
+        uint32_t cp = t.dev_total < dev_cap ? t.dev_total : dev_cap;
+        for (uint32_t i = 0; i < cp; i++) {
+            dev_ids[i] = t.dev_id[i];
+            memcpy(dev_ips + i * 4, t.dev_ip[i], 4);
+        }
+    }
+    if (t.finished) {
+        /* terminal result delivered: release the transaction and
+           its socket, matching the modbus poll-drop model */
+        if (t.fd >= 0) close(t.fd);
+        txns_.erase(it);
+    }
     return TPLC_BACNET_OK;
 }
 

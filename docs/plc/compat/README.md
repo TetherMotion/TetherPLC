@@ -58,6 +58,13 @@ compat/tc3/
                       helpers F_HighLowArr_TO_UINT,
                       F_UNIVERSE_TO_MulticastAdr,
                       FB_UINT_TO_HighLowArr
+  tc3_bacnet.st       Tc3_BACnetRev14 over the builtin FB_Bacnet
+                      (tplc-bacnet service): BACnet/IP Who-Is /
+                      ReadProperty / WriteProperty wrappers
+                      (FB_BACnet_WhoIs, FB_BACnet_ReadProperty,
+                      FB_BACnet_WriteProperty); TwinCAT's BACnet
+                      FBs are device-config-generated, so these
+                      poll-model wrappers are the compat surface
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -118,6 +125,18 @@ tests/compat/
                       waits for the DUT's own SRC1 stream, then
                       injects priority-10 HIPRI and priority-200
                       LOWPR packets on a wall-clock schedule
+  tc3_bacnet_case.st  autonomous BACnet/IP program (6 packed
+                      checks: broadcast Who-Is/I-Am with range,
+                      ReadProperty REAL, WriteProperty Simple-ACK,
+                      object-name charstring, Error on unknown
+                      object, directed unicast Who-Is)
+  tc3_bacnet.sh       ctest tc3_bacnet: library + consumer +
+                      350-step sim replay expecting mask 0x3f,
+                      python BACnet/IP peer (bacnet_test_peer.py)
+  bacnet_test_peer.py  minimal BACnet/IP (ASHRAE 135) responder
+                      on UDP 47808 used by tc3_bacnet.sh: I-Am,
+                      Complex-ACK (real/unsigned/charstring),
+                      Simple-ACK, Error
 ```
 
 ## Building and consuming
@@ -143,7 +162,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); BACnet/PJLink/S7/FTP/SMS/IEC 60870 remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); PJLink/S7/FTP/SMS/IEC 60870 remain |
 
 ### C1 coverage notes
 
@@ -480,6 +499,67 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     needs porting to the poll model.
   - IPv4 multicast only; no IPv6, no unicast sACN (E1.31 is
     multicast-only for data).
+
+### C4 coverage notes (tplc-bacnet / Tc3_BACnetRev14)
+
+- **Architecture**: builtin `FB_Bacnet` bridges to the host
+  `tplc-bacnet` service (`include/tplc/tplc_bacnet.h`) through
+  `TplcServices.get_service`. One transaction per EXEC rising
+  edge; the service owns a nonblocking UDP socket per transaction
+  (ephemeral port, `SO_BROADCAST` for limited broadcast), sends
+  the request in `bac_begin`, and `bac_poll` drains datagrams,
+  matches APDU invoke IDs, and enforces the deadline via the
+  injected `steadyNs` clock. Completed transactions are dropped
+  on the terminal `bac_poll`, matching the modbus model.
+- **Protocol**: BACnet/IP (ASHRAE 135) BVLC (`0x81`, unicast
+  `0x0A` / broadcast `0x0B`, u16 length) + NPDU (version 1,
+  expecting-reply for confirmed) + APDU codec verified against
+  `bacpypes3` encodings: Who-Is (unconfirmed svc 8, optional
+  device-instance range) / I-Am collection into an 8-responder
+  table (object ID, responder IPv4, vendor, max-APDU,
+  segmentation), ReadProperty (confirmed svc 12 → Complex-ACK
+  object/property echo + first application-tagged value),
+  WriteProperty (confirmed svc 15 → Simple-ACK, optional array
+  index and write priority). Error/Reject/Abort APDUs surface as
+  `STATUS = 3`; malformed or wrong-invoke datagrams as
+  `STATUS = 4`; deadline expiry as `STATUS = 2` (Who-Is instead
+  reports `STATUS = 1` with whatever responders arrived).
+- **Values**: property values cross the ABI as raw BACnet
+  application-tag payload bytes — `nValueType`/`VAL_TYPE`
+  selects the tag (1 boolean, 2 unsigned, 3 integer, 4 real,
+  5 double, 6 octetString, 7 characterString, 9 enumerated,
+  12 objectIdentifier) and `pValue`/`VAL` holds the tag payload
+  in wire byte order. The service wraps/unwraps tag framing but
+  does not interpret payloads.
+- **Wrappers**: `compat/tc3/tc3_bacnet.st` provides
+  `FB_BACnet_WhoIs`, `FB_BACnet_ReadProperty`, and
+  `FB_BACnet_WriteProperty` in the same poll-driven shape as the
+  other compat libraries. TwinCAT's actual BACnet integration is
+  device-configuration-driven (the System Manager generates FBs
+  per configured BACnet device), so there is no static TwinCAT FB
+  API to mirror — the catalog's three entries are documentation
+  examples, not callable functions.
+- **Verified**: `tc3_bacnet` ctest builds the library and a
+  consumer program, then replays 350 free-running sim steps
+  against `tests/compat/bacnet_test_peer.py` — a python
+  BACnet/IP responder on UDP 47808. Six packed checks (`0x3f`):
+  broadcast Who-Is/I-Am with instance range, ReadProperty REAL
+  Complex-ACK, WriteProperty Simple-ACK, object-name
+  characterString, BACnet Error on unknown object, and directed
+  unicast Who-Is.
+- **Honest gaps**:
+  - No COV subscriptions/notifications, no event/alarm
+    services, no segmentation (max-APDU 1476 assumed), no
+    Who-Has/I-Have, no router (BBMD/FD) support.
+  - ReadProperty returns only the first application-tagged
+    value; multi-value properties and array-element reads beyond
+    a single optional index are not exposed.
+  - Peer addresses are dotted-quad IPv4 strings only; no DNS,
+    no IPv6.
+  - The TwinCAT device-configuration model (XML device imports,
+    generated per-device FBs, alarm routing to the TwinCAT
+    event system) is not reproduced; TwinCAT BACnet projects
+    need porting to the explicit Who-Is/Read/Write wrappers.
 
 ## Known limitations
 

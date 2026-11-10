@@ -96,7 +96,23 @@ live attach over tether_io, and the safety/security envelope.
   element 0 (now `llvm.memcpy` of the bounded aggregate size in
   FB/FUNCTION arg binding and whole-array assignment); and the
   receiver's priority comparison was inverted (it rejected
-  better-priority packets and accepted worse ones).
+  better-priority packets and accepted worse ones). Ninth
+  tranche adds `compat/tc3/tc3_bacnet.st` (Tc3_BACnetRev14) over
+  the new `tplc-bacnet` service — a `TplcBacnetService` vtable,
+  a BACnet/IP (ASHRAE 135) BVLC+NPDU+APDU codec over UDP 47808
+  (verified against bacpypes3 encodings), Who-Is/I-Am discovery
+  with device-instance range and an 8-responder table,
+  confirmed ReadProperty (Complex-ACK value decode) and
+  WriteProperty (Simple-ACK), raw application-tag value payloads,
+  injected-clock timeouts, and builtin `FB_Bacnet` with poll-model
+  wrappers `FB_BACnet_WhoIs`/`FB_BACnet_ReadProperty`/
+  `FB_BACnet_WriteProperty`. Verified by a real UDP exchange
+  against a python BACnet/IP peer — six packed checks (`0x3f`,
+  ctest `tc3_bacnet`): broadcast and directed Who-Is, REAL and
+  characterString reads, write ACK, and BACnet Error handling.
+  TwinCAT's BACnet FBs are device-config-generated, so the compat
+  surface is the protocol layer; COV/events/segmentation/router
+  support remain documented gaps.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.
