@@ -476,8 +476,12 @@ impl<'ctx> Gen<'ctx> {
         }
     }
 
-    fn write(&mut self, ctx: &Ctx, r: &Ref, v: BasicValueEnum<'ctx>) {
+    fn write(&mut self, ctx: &Ctx, r: &Ref, v: BasicValueEnum<'ctx>, from: &Type) {
         let (p, ty) = self.resolve(ctx, r);
+        /* narrow/widen the value to the slot width first — a literal
+        or wider expr into a BYTE/WORD member must not clobber the
+        neighbors (stores are raw-width, no implicit truncation) */
+        let v = self.coerce(v, from, &ty);
         let v = if is_bool(&ty) {
             self.b
                 .build_int_z_extend(v.into_int_value(), self.ctx.i8_type(), "z")
@@ -1332,6 +1336,27 @@ impl<'ctx> Gen<'ctx> {
         self.b.position_at_end(cont);
     }
 
+    /// copy an aggregate (ARRAY) actual into a slot — llty can't
+    /// carry array values, so element access is the only value path;
+    /// args/assignments move the bytes raw. Returns false when the
+    /// actual isn't a ref (arrays only exist behind refs).
+    fn agg_copy(&mut self, ctx: &Ctx, pe: &Expr, dst: PointerValue<'ctx>, bytes: u64) -> bool {
+        let ExprKind::Ref(r) = &pe.kind else {
+            return false;
+        };
+        let (sp, sty) = self.resolve(ctx, r);
+        self.b
+            .build_memcpy(
+                dst,
+                1,
+                sp,
+                1,
+                self.ctx.i64_type().const_int(bytes.min(sty.size()), false),
+            )
+            .unwrap();
+        true
+    }
+
     fn fb_call(&mut self, ctx: &Ctx, inst: &Ref, args: &[(String, Expr)]) {
         let (instp, ty) = self.resolve(ctx, inst);
         let fbname = match &ty {
@@ -1342,11 +1367,14 @@ impl<'ctx> Gen<'ctx> {
         // bind args into instance fields
         for (pname, pe) in args {
             if let Some((moff, mty)) = fbl.members.get(pname.as_str()).cloned() {
+                let p = self.off_ptr(instp, moff);
+                if matches!(mty, Type::Array { .. }) && self.agg_copy(ctx, pe, p, mty.size()) {
+                    continue;
+                }
                 let v = self.expr(ctx, pe);
                 /* narrow/widen to the member width first — a literal
                 i32 into a u16/u8 member must not clobber neighbors */
                 let v = self.coerce(v, &pe.ty, &mty);
-                let p = self.off_ptr(instp, moff);
                 let v = if is_bool(&mty) {
                     self.b
                         .build_int_z_extend(v.into_int_value(), self.ctx.i8_type(), "z")
@@ -2054,9 +2082,13 @@ impl<'ctx> Gen<'ctx> {
             } else {
                 pname.as_str()
             };
-            if let Some((moff, _mty)) = fbl.members.get(name).cloned() {
-                let v = self.expr(ctx, pe);
+            if let Some((moff, mty)) = fbl.members.get(name).cloned() {
                 let p = self.off_ptr(scratch, moff);
+                if matches!(mty, Type::Array { .. }) && self.agg_copy(ctx, pe, p, mty.size()) {
+                    continue;
+                }
+                let v = self.expr(ctx, pe);
+                let v = self.coerce(v, &pe.ty, &mty);
                 self.b.build_store(p, v).unwrap();
             }
         }
@@ -2075,6 +2107,7 @@ impl<'ctx> Gen<'ctx> {
     /// store a literal init value at blob+off
     fn lit_store(&mut self, blob: PointerValue<'ctx>, off: u64, ty: &Type, init: &Expr) {
         let v = self.expr(&Ctx::new(), init); // Lit → const, ctx unused
+        let v = self.coerce(v, &init.ty, ty);
         let p = self.off_ptr(blob, off);
         let v = if is_bool(ty) {
             self.b
@@ -2215,8 +2248,27 @@ impl<'ctx> Gen<'ctx> {
         }
         match &s.kind {
             StmtKind::Assign { lhs, rhs } => {
-                let v = self.expr(ctx, rhs);
-                self.write(ctx, lhs, v);
+                if matches!(rhs.ty, Type::Array { .. }) && matches!(rhs.kind, ExprKind::Ref(_)) {
+                    let ExprKind::Ref(r) = &rhs.kind else {
+                        unreachable!()
+                    };
+                    let (sp, _) = self.resolve(ctx, r);
+                    let (dp, dty) = self.resolve(ctx, lhs);
+                    self.b
+                        .build_memcpy(
+                            dp,
+                            1,
+                            sp,
+                            1,
+                            self.ctx
+                                .i64_type()
+                                .const_int(rhs.ty.size().min(dty.size()), false),
+                        )
+                        .unwrap();
+                } else {
+                    let v = self.expr(ctx, rhs);
+                    self.write(ctx, lhs, v, &rhs.ty);
+                }
             }
             StmtKind::If { branches, else_ } => {
                 let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
@@ -2294,7 +2346,7 @@ impl<'ctx> Gen<'ctx> {
                 let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
                 let vr = Ref::Var(var.clone());
                 let sv = self.expr(ctx, start);
-                self.write(ctx, &vr, sv);
+                self.write(ctx, &vr, sv, &start.ty);
                 let vt = self.read(ctx, &vr).into_int_value().get_type();
                 // step/end are arbitrary int widths — normalize to the
                 // loop variable's type before compare/add
