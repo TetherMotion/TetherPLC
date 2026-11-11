@@ -1162,3 +1162,50 @@ documented gap. `tc3_s7comm` ctest replays a 300-step
 free-running sim against `s7_test_peer.py` — nine packed
 checks (`0x1ff`): connect, DB read, write+readback, MK bit
 read/write, unregistered-area s7err, refused connect, close.
+
+## D-IMPL-49 — tplc-ftp service + FB_FtpConn/FB_FtpCmd/FB_FtpXfer builtins (plan 21 C4)
+
+`include/tplc/tplc_ftp.h` defines `TplcFtpService` (ABI v1):
+`ftp_open`/`ftp_conn_poll`/`ftp_close` for the control session,
+`ftp_cmd`/`ftp_txn_poll` for one control command per handle, and
+`ftp_xfer_begin`/`ftp_xfer_poll`/`ftp_xfer_feed`/`ftp_xfer_finish`/
+`ftp_abort` for RETR/STOR/LIST data transfers. The host impl
+`FtpService` (`runtime/host/src/FtpService.cpp`) owns one
+nonblocking TCP control socket per connection and drives TCP
+connect → 220 greeting → USER → PASS → Ready as an explicit
+stage machine; the control channel is line-based with
+multi-line reply handling (xxx- continuation vs xxx final).
+Each xfer serializes TYPE I → PASV (227 tuple parse) → nonblocking
+data connect → transfer command → 150 interim → stream → 226
+final inside one handle, one outstanding transaction per
+connection. `svc_` stays the first data member per the BACnet
+`self()` invariant.
+
+Scope is PASV passive data connections only — no PORT/active
+mode, EPSV, FTPS/TLS, SFTP/SSH, REST resume, MLSD/MLST, or DNS;
+hosts are dotted-quad IPv4. Downloads stream caller-sized chunks
+per poll; uploads queue through a bounded 4 KiB pending buffer
+fed by `ftp_xfer_feed` and closed by `ftp_xfer_finish`
+(SHUT_WR). All deadlines use the injected host clock so `--sim`
+stays deterministic.
+
+PLC side: builtins `FB_FtpConn` (HOST/PORT/USER/PASS/TIMEOUT,
+CONN_HANDLE out, STATUS 0 pending/1 ready/2 error, CLOSE edge),
+`FB_FtpCmd` (CONN_HANDLE/CMD, RESP_CODE + TEXT reply, STATUS
+0..5), and `FB_FtpXfer` (OP 0=RETR/1=STOR/2=LIST, PATH, BUF[512]
+download chunks with CHUNK/TOTAL, UP_DATA[512]/UP_LEN/UP_OFF
+auto-feed for uploads, STATUS adds 6=more-data). `compat/tc3/
+tc3_ftp.st` provides `FB_FTP_Connect`, `FB_FTP_Cmd`,
+`FB_FTP_Download`, `FB_FTP_Upload`, `FB_FTP_List`, and the
+`FB_FTP_MkDir`/`RemoveDir`/`DeleteFile`/`FileExists`/
+`DirExists`/`Rename` method wrappers covering the
+`FB_FtpConnection`/`FB_FtpExplorer`/`FB_FtpTransfer` objects and
+the `FB_FTP_*`/`FB_FTP_HostResolve`-adjacent Tc2 surface;
+rename sequences RNFR+RNTO inside the wrapper.
+
+Verified by `tc3_ftp` ctest: 500 free-running sim steps against
+`tests/compat/ftp_test_peer.py` (python RFC 959 PASV responder,
+TCP 2121), twelve packed checks (`0xfff`). A C++ harness
+drove the same service standalone first, which caught a
+reply-line scan off-by-one (`\n` at the buffer tail was never
+detected) before any PLC layer was built.

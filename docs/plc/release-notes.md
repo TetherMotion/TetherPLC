@@ -153,6 +153,26 @@ live attach over tether_io, and the safety/security envelope.
   routing) is adapted to explicit poll-model FBs, and the S5
   (3964/PKW) protocol behind `FB_NLink*` on S5 targets is a
   documented gap.
+  Twelfth tranche adds `compat/tc3/tc3_ftp.st`
+  (Tc3_FTP + Tc2_FTP) over the new `tplc-ftp` service — a
+  `TplcFtpService` vtable with connection, command, and
+  transfer handle spaces, an RFC 959 FTP client over TCP 21
+  with PASV passive data connections (line-based control
+  channel with multi-line reply handling, TYPE I → PASV 227
+  parse → data connect → RETR/STOR/LIST → 150 → stream →
+  226), injected-clock timeouts, and builtins
+  `FB_FtpConn`/`FB_FtpCmd`/`FB_FtpXfer` with poll-model
+  wrappers `FB_FTP_Connect`/`FB_FTP_Cmd`/`FB_FTP_Download`/
+  `FB_FTP_Upload`/`FB_FTP_List` plus MkDir/RemoveDir/
+  DeleteFile/FileExists/DirExists/Rename method wrappers
+  (RNFR+RNTO sequenced internally). The `tc3_ftp` ctest
+  replays a 500-step free-running sim against
+  `ftp_test_peer.py` — twelve packed checks (`0xfff`):
+  login, SIZE, MKD, RETR content, LIST, STOR + verify,
+  file/dir exists, rename, refused connect, close. TwinCAT's
+  profile objects, `I_TcMessage`/EventLogger/`HRESULT`
+  surfaces, and `FB_FTP_HostResolve` DNS are documented gaps;
+  FTPS/TLS and SFTP/SSH are not implemented.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

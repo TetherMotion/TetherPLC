@@ -50,19 +50,22 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     `BacnetService`), `tplc-pjlink`
     (`include/tplc/tplc_pjlink.h`, host impl `PjlinkService`),
     and `tplc-s7` (`include/tplc/tplc_s7.h`, host impl
-    `S7Service`) are
+    `S7Service`), and `tplc-ftp`
+    (`include/tplc/tplc_ftp.h`, host impl `FtpService`) are
     live, backed by nonblocking POSIX sockets,
     termios, an AMS/TCP ADS client, a timestamped mark ring, a
     Modbus client (TCP, UDP, and serial RTU transports), an E1.31
     sACN multicast source/receiver, a BACnet/IP (ASHRAE 135)
     client, a JBMIA PJLink (TCP 4352, MD5 auth) projector
-    client, and a Siemens S7comm (RFC1006, TCP 102) client
+    client, a Siemens S7comm (RFC1006, TCP 102) client, and an
+    RFC 959 FTP client (TCP 21, PASV data connections)
     respectively, and driven scan-side by the builtins
     `FB_Socket`/`FB_Serial`/`FB_Ads`/`FB_RtMon`/`FB_Modbus`/
     `FB_ModbusRtu`/`FB_SacnSource`/`FB_SacnReceiver`/`FB_Bacnet`/
-    `FB_Pjlink`/`FB_S7Conn`/`FB_S7Io`.
+    `FB_Pjlink`/`FB_S7Conn`/`FB_S7Io`/`FB_FtpConn`/`FB_FtpCmd`/
+    `FB_FtpXfer`.
     `RtmonService`, `ModbusService`, `BacnetService`,
-    `PjlinkService`, and `S7Service` take their
+    `PjlinkService`, `S7Service`, and `FtpService` take their
     clocks from `HostServices::steadyNs`, so `--sim` steps produce
     deterministic sim-time timestamps and timeouts.
   - `Scheduler` — single-thread CYCLIC/FREEWHEELING dispatch, priority

@@ -85,6 +85,18 @@ compat/tc3/
                       FB_S7CommConnection/AddReadVar/
                       AddReadBit/AddReadByteArray concepts and
                       the FB_NLinkOpen/Close/Fetch/Write set
+  tc3_ftp.st         Tc3_FTP + Tc2_FTP over the builtins
+                      FB_FtpConn / FB_FtpCmd / FB_FtpXfer
+                      (tplc-ftp service): FTP client over
+                      RFC 959 with PASV data connections —
+                      FB_FTP_Connect session wrapper,
+                      FB_FTP_Cmd generic control wrapper,
+                      FB_FTP_Download / FB_FTP_Upload /
+                      FB_FTP_List transfer wrappers, and
+                      MkDir/RemoveDir/DeleteFile/FileExists/
+                      DirExists/Rename method wrappers;
+                      covers FB_FtpConnection/FB_FtpExplorer/
+                      FB_FtpTransfer and the FB_FTP_* set
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -181,6 +193,19 @@ tests/compat/
                       tc3_s7comm.sh: TPKT + COTP CR/CC/DT,
                       setup communication, Read/Write Var;
                       DB1 + MK memory areas, spec bit semantics
+  tc3_ftp_case.st      autonomous FTP program (12 packed
+                      checks: login, SIZE, MKD, RETR, LIST,
+                      STOR, SIZE verify, file/dir exists,
+                      RNFR/RNTO rename, refused connect,
+                      session close)
+  tc3_ftp.sh           ctest tc3_ftp: library + consumer +
+                      500-step sim replay expecting mask 0xfff,
+                      python FTP peer (ftp_test_peer.py)
+  ftp_test_peer.py     minimal FTP (RFC 959, PASV) responder
+                      on TCP 2121 used by tc3_ftp.sh:
+                      USER/PASS login, MKD/RMD/DELE/SIZE/
+                      RNFR/RNTO, RETR/STOR/LIST/NLST over
+                      passive data connections
 ```
 
 ## Building and consuming
@@ -206,7 +231,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); FTP/SMS/IEC 60870 remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); SMS/IEC 60870 remain |
 
 ### C1 coverage notes
 
@@ -736,6 +761,60 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   - Rack/slot map only into the COTP called TSAP; no ISO-on-TCP
     port negotiation beyond the fixed/default port, no DNS,
     no IPv6.
+
+### C4 coverage notes (tplc-ftp / Tc3_FTP + Tc2_FTP)
+
+- **Transport**: `tplc-ftp` is an RFC 959 FTP *client* over TCP
+  (default port 21) with **PASV passive data connections
+  only**. The control channel is line-based (`USER`/`PASS`
+  login, greeting 220, multi-line reply handling); each data
+  transfer runs `TYPE I` -> `PASV` (227 tuple parse) -> data
+  connect -> `RETR`/`STOR`/`LIST` -> 150 interim -> stream ->
+  226 final. One outstanding control command or transfer per
+  connection.
+- **Builtins**: `FB_FtpConn` (connect/login/close session,
+  STATUS 0=pending 1=ready 2=error), `FB_FtpCmd` (one control
+  command, RESP_CODE + TEXT reply), `FB_FtpXfer` (OP 0=RETR
+  download / 1=STOR upload / 2=LIST; downloads stream 512-byte
+  chunks per scan into BUF with CHUNK/TOTAL, uploads feed
+  UP_DATA[0..UP_LEN) automatically; STATUS adds 6=more-data).
+- **Wrappers**: `compat/tc3/tc3_ftp.st` provides
+  `FB_FTP_Connect` (covers `FB_FtpConnection.Connect/Disconnect`
+  and `FB_FTP_Open`/`OpenEX`/`Close`/`CloseAll`/`Info`),
+  `FB_FTP_Cmd` (generic control command), `FB_FTP_Download` /
+  `FB_FTP_Upload` / `FB_FTP_List` (cover
+  `FB_FtpTransfer.Download/Upload` and
+  `FB_FTP_FileDownload(Ex)`/`FileUpload(Ex)`/`FileList(ListEx)`),
+  and `FB_FTP_MkDir`/`RemoveDir`/`DeleteFile`/`FileExists`/
+  `DirExists`/`Rename` (cover the `FB_FtpExplorer` methods and
+  the `FB_FTP_Dir*`/`File*` set). Rename is RNFR+RNTO sequenced
+  inside the wrapper.
+- **Verified**: `tc3_ftp` ctest builds the library and a
+  consumer program, then replays 500 free-running sim steps
+  against `tests/compat/ftp_test_peer.py` — a python RFC 959
+  responder on TCP 2121. Twelve packed checks (`0xfff`):
+  login, SIZE (213/"68"), MKD (257), RETR (68B content check),
+  LIST (non-empty), STOR (226) + SIZE verify, FileExists
+  (213), DirExists (LIST ok), RNFR/RNTO rename (250),
+  refused connect (STATUS 2), session close. The service was
+  additionally verified standalone by a C++ harness covering
+  the same exchange plus a 550 error path.
+- **Honest gaps**:
+  - PASV data connections only — no PORT/active mode, no EPSV,
+    no FTPS/TLS, no SFTP/SSH (TwinCAT FTP *and* SFTP profiles;
+    SFTP is a separate SSH protocol and is not implemented).
+  - No FTP profile objects (`AddProfile`/profile persistence),
+    no `I_TcMessage`/EventLogger/`HRESULT` surfaces, no AMS
+    routing — credentials are plain per-connection STRINGs.
+  - `FB_FTP_HostResolve` (DNS) is not implemented — hosts must
+    be dotted-quad IPv4; no DNS or IPv6 anywhere in the service.
+  - No REST resume, MLSD/MLST, SITE-specific extensions, or
+    FXP; `DirExists` is implemented as a LIST on the path
+    (listable = exists) rather than CWD probing.
+  - Uploads are capped at 512 bytes per transfer (UP_DATA);
+    downloads stream unlimited data in 512-byte chunks.
+  - Rename/move relies on RNFR+RNTO — semantics for
+    cross-directory moves depend on the server.
 
 ## Known limitations
 

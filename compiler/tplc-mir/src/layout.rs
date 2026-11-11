@@ -747,6 +747,132 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "DONE", Type::Bool);
             push(&mut off, "__last_exec", Type::Bool);
         }
+        /* FB_FtpConn — tplc-ftp service bridge (FTP client,
+        RFC 959 over TCP). EXEC rising edge opens a control
+        connection (TCP connect -> 220 greeting -> USER ->
+        PASS) polled via BUSY until STATUS leaves
+        0=pending; 1=ready, 2=error (ERRID carries errno).
+        CONN_HANDLE stays valid while STATUS=1 and feeds
+        FB_FtpCmd/FB_FtpXfer. CLOSE rising edge tears the
+        session down (CONN_HANDLE -> 0). HOST is a dotted-quad
+        IPv4 string, PORT 0 = 21. */
+        "FB_FtpConn" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "USER", Type::Str { cap: 31 });
+            push(&mut off, "PASS", Type::Str { cap: 31 });
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "CLOSE", Type::Bool);
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__last_close", Type::Bool);
+        }
+        /* FB_FtpCmd — tplc-ftp service bridge for one FTP
+        control command on an FB_FtpConn connection
+        (MKD/RMD/DELE/RNFR/RNTO/TYPE/SIZE/CWD/PWD/SYST/NOOP/
+        SITE/...). CONN_HANDLE comes from FB_FtpConn.
+        RESP_CODE is the final 3-digit reply code; TEXT the
+        reply text (last line, NUL-trimmed). STATUS
+        0=pending 1=ok (2xx) 2=fail (4xx/5xx) 3=timeout
+        4=error 5=badresp; ERRID the transport errno. One
+        outstanding command per connection. Data commands
+        (RETR/STOR/LIST/PASV) must use FB_FtpXfer. */
+        "FB_FtpCmd" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "CMD", Type::Str { cap: 127 });
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "RESP_CODE", udint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "TEXT", Type::Str { cap: 127 });
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
+        /* FB_FtpXfer — tplc-ftp service bridge for one RETR /
+        STOR / LIST transfer on an FB_FtpConn connection.
+        CONN_HANDLE comes from FB_FtpConn. OP 0=RETR
+        (download), 1=STOR (upload), 2=LIST/NLST (download
+        listing). For RETR/LIST each BUSY scan copies up to
+        512 received bytes into BUF (CHUNK = bytes this
+        scan, TOTAL cumulative); STATUS 6=more while data
+        flows, then 1=ok / 2=fail / 3=timeout / 4=error /
+        5=badresp terminal with RESP_CODE the final reply
+        code. For STOR the rt feeds UP_DATA[0..UP_LEN) into
+        the upload automatically; UP_OFF tracks accepted
+        bytes. One outstanding transfer per connection. */
+        "FB_FtpXfer" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "OP", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "RESP_CODE", udint());
+            push(&mut off, "CHUNK", udint());
+            push(&mut off, "TOTAL", udint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "UP_LEN", udint());
+            push(&mut off, "UP_OFF", udint());
+            push(
+                &mut off,
+                "BUF",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 511,
+                },
+            );
+            push(
+                &mut off,
+                "UP_DATA",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 511,
+                },
+            );
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__feed_done", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;

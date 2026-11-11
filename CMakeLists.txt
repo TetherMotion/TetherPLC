@@ -44,6 +44,7 @@ add_library(tplc_host STATIC
   runtime/host/src/BacnetService.cpp
   runtime/host/src/PjlinkService.cpp
   runtime/host/src/S7Service.cpp
+  runtime/host/src/FtpService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -611,6 +612,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_s7comm
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_s7comm.sh)
   set_tests_properties(tc3_s7comm PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc3_FTP + Tc2_FTP compat (plan 21 C4): tplc-ftp PASV client
+  # e2e (connect/size/mkd/retr/list/stor/exists/rename/connerr/
+  # close) against a python FTP peer on TCP 2121
+  add_test(NAME tc3_ftp
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_ftp.sh)
+  set_tests_properties(tc3_ftp PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy
