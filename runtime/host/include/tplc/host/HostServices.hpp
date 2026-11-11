@@ -10,6 +10,7 @@
 #include <tplc/host/BacnetService.hpp>
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/NetService.hpp>
+#include <tplc/host/PjlinkService.hpp>
 #include <tplc/host/RtmonService.hpp>
 #include <tplc/host/SacnService.hpp>
 #include <tplc/host/SerialService.hpp>
@@ -72,6 +73,7 @@ private:
     ModbusService modbus_;
     SacnService  sacn_;
     BacnetService bacnet_;
+    PjlinkService pjlink_;
 };
 
 } /* namespace tplc */

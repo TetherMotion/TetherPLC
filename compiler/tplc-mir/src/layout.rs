@@ -605,6 +605,51 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "DONE", Type::Bool);
             push(&mut off, "__last_exec", Type::Bool);
         }
+        /* FB_Pjlink — tplc-pjlink service bridge (JBMIA PJLink
+        projector client, TCP 4352). One transaction per EXEC edge:
+        HOST is a dotted-quad projector address, PORT 0 = 4352,
+        CLS the PJLink class digit (0..9, standard commands use
+        1), CMD the 4-char command body ("POWR","INPT","AVMT",
+        "ERST","INFO","NAME","INFM","LAMP", ...), PARAM the
+        transmission parameter ("?" for queries, <=128 chars),
+        PASSWORD the optional PJLink auth password (<=32 chars;
+        when the projector greets with `PJLINK 1 <nonce>` the
+        service prepends MD5(nonce+password) automatically).
+        R_VALUE is the response value text ("1","OK","ERR3",...),
+        R_CLS/R_CMD echo the response header, R_VLEN the full
+        value length, AUTHED 1 when the digest exchange ran.
+        STATUS 0=pending 1=ok 2=timeout 3=error 4=badresp
+        5=authfail. The service enforces TIMEOUT itself. */
+        "FB_Pjlink" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "CLS", udint());
+            push(&mut off, "CMD", Type::Str { cap: 4 });
+            push(&mut off, "PARAM", Type::Str { cap: 128 });
+            push(&mut off, "PASSWORD", Type::Str { cap: 32 });
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "R_ERR", dint());
+            push(&mut off, "R_CLS", udint());
+            push(&mut off, "R_CMD", udint());
+            push(&mut off, "R_VLEN", udint());
+            push(&mut off, "R_VALUE", Type::Str { cap: 127 });
+            push(&mut off, "AUTHED", Type::Bool);
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;

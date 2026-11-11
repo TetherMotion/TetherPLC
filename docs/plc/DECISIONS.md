@@ -1061,3 +1061,53 @@ lambdas receive the table pointer, not `this`) — `svc_` must stay
 the first data member; and `bac_poll` originally retained finished
 transactions (and their sockets) forever — it now drops them on
 the terminal result like `ModbusService::mbPoll`.
+
+## D-IMPL-47 — tplc-pjlink service + FB_Pjlink builtin (plan 21 C4)
+
+`include/tplc/tplc_pjlink.h` defines `TplcPjlinkService` (ABI v1):
+`pjl_begin`/`pjl_poll`/`pjl_abort`, one transaction per handle,
+mirroring the bacnet service shape. The host impl
+`PjlinkService` (`runtime/host/src/PjlinkService.cpp`) owns a
+nonblocking TCP socket per transaction (connect-per-command,
+`TCP_NODELAY`) and drives a Connect → Greet → Send → Recv state
+machine against JBMIA PJLink on TCP 4352: ASCII command lines
+`%<class><CMD4> <param>\r` (bare CR, no `$`), responses
+`%<class><CMD4>=<value>\r`, `?` parameter for queries, and
+PJLink-level `ERR1`–`ERR4` values distinguished from transport
+status.
+
+Authentication follows the spec: a projector may greet
+`PJLINK 0\r` or `PJLINK 1 <8-hex-nonce>\r`; for the latter the
+service prepends `MD5(nonce_ascii + password)` (32 lowercase hex
+chars, no separator) to the command line via a compact in-tree
+MD5 verified against the spec's worked example (`498e4a67` +
+`JBMIA` → `8a36d09a…`). Projectors sending no greeting within
+400 ms are treated as no-auth (legacy units). `PJLINK ERRA`
+surfaces as `STATUS = 5`. `pjl_poll` uses a scalar
+`TplcPjlinkRespInfo` (64-byte layout) plus a caller-owned value
+buffer; finished transactions close the socket and drop the map
+entry on the terminal poll.
+
+PLC side: builtin `FB_Pjlink` (~376-byte layout) with HOST
+(dotted-quad), PORT (0 = 4352), CLS (PJLink class digit),
+CMD (4-char body), PARAM, PASSWORD, TIMEOUT, and outputs
+STATUS (0 pending, 1 ok, 2 timeout, 3 error, 4 badresp,
+5 authfail), R_CLS/R_CMD header echo, R_VALUE response text,
+R_VLEN, AUTHED, ERRID, EXEC/BUSY/DONE handshake.
+`compat/tc3/tc3_pjlink.st` provides the generic `FB_PJLink`
+command wrapper plus `FB_PJLink_Power`/`FB_PJLink_Input`/
+`FB_PJLink_Mute` method-shaped wrappers for the most-used
+TwinCAT `FB_PJLink` operations.
+
+TwinCAT's `FB_PJLink` is an auto-managed connection object —
+`bKeepAliveSocket`, `tStatusUpdateTime`, `sServerNetID`,
+`eTraceLevel`, `eStep`, `ipResultMessage` (`I_TcMessage`),
+`stProjStatus`, `TcEventSeverity`/EventLogger, and `HRESULT`
+method returns have no poll-model equivalent and are documented
+incompatibilities; every command is a fresh TCP connection
+(PJLink's safe pattern) and cyclic status polling is the
+caller's job. `tc3_pjlink` ctest replays a 250-step free-running
+sim against `pjlink_test_peer.py` — seven packed checks
+(`0x7f`): unauthenticated POWR query, Power/Input/Mute
+wrappers, MD5 auth accept, wrong-password ERRA, and `ERR1`
+command-error surfacing.

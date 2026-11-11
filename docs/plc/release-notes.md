@@ -112,7 +112,25 @@ live attach over tether_io, and the safety/security envelope.
   characterString reads, write ACK, and BACnet Error handling.
   TwinCAT's BACnet FBs are device-config-generated, so the compat
   surface is the protocol layer; COV/events/segmentation/router
-  support remain documented gaps.
+  support remain documented gaps. Tenth tranche adds
+  `compat/tc3/tc3_pjlink.st` (Tc3_PJLink) over the new
+  `tplc-pjlink` service — a `TplcPjlinkService` vtable, a JBMIA
+  PJLink projector client over TCP 4352 (`%<class><CMD4>
+  <param>\r` commands, `%<class><CMD4>=<value>\r` responses),
+  `PJLINK 0`/`PJLINK 1 <nonce>` greeting handling with
+  `MD5(nonce+password)` digest auth (compact in-tree MD5
+  verified against the spec's worked example), `PJLINK ERRA`
+  auth-failure and `ERR1`–`ERR4` command-error surfacing,
+  injected-clock timeouts, and builtin `FB_Pjlink` with
+  poll-model wrappers `FB_PJLink`/`FB_PJLink_Power`/
+  `FB_PJLink_Input`/`FB_PJLink_Mute`. Verified by a real TCP
+  exchange against a python PJLink peer — seven packed checks
+  (`0x7f`, ctest `tc3_pjlink`): unauthenticated POWR query,
+  wrapper transactions, MD5 auth accept/reject, and command
+  error handling. TwinCAT's auto-managed `FB_PJLink` object
+  (keep-alive, status polling, AMS NetID, I_TcMessage,
+  EventLogger) is a documented incompatibility; the compat
+  surface is the protocol layer with connect-per-command.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

@@ -65,6 +65,15 @@ compat/tc3/
                       FB_BACnet_WriteProperty); TwinCAT's BACnet
                       FBs are device-config-generated, so these
                       poll-model wrappers are the compat surface
+  tc3_pjlink.st       Tc3_PJLink over the builtin FB_Pjlink
+                      (tplc-pjlink service): JBMIA PJLink
+                      projector client over TCP 4352 — generic
+                      FB_PJLink command wrapper plus
+                      FB_PJLink_Power / FB_PJLink_Input /
+                      FB_PJLink_Mute method-shaped wrappers;
+                      MD5(nonce+password) auth handled by the
+                      service when the projector greets
+                      `PJLINK 1`
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -137,6 +146,17 @@ tests/compat/
                       on UDP 47808 used by tc3_bacnet.sh: I-Am,
                       Complex-ACK (real/unsigned/charstring),
                       Simple-ACK, Error
+  tc3_pjlink_case.st   autonomous PJLink program (7 packed
+                      checks: POWR query, Power/Input/Mute
+                      wrappers, MD5 auth accept, auth reject,
+                      ERR1 command error)
+  tc3_pjlink.sh        ctest tc3_pjlink: library + consumer +
+                      250-step sim replay expecting mask 0x7f,
+                      python PJLink peer (pjlink_test_peer.py)
+  pjlink_test_peer.py  minimal PJLink (JBMIA) responder on TCP
+                      4352 used by tc3_pjlink.sh: connection-
+                      count greetings (PJLINK 0 / PJLINK 1
+                      nonce), digest verify, ERRA, ERR1
 ```
 
 ## Building and consuming
@@ -162,7 +182,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); PJLink/S7/FTP/SMS/IEC 60870 remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); S7/FTP/SMS/IEC 60870 remain |
 
 ### C1 coverage notes
 
@@ -560,6 +580,73 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     generated per-device FBs, alarm routing to the TwinCAT
     event system) is not reproduced; TwinCAT BACnet projects
     need porting to the explicit Who-Is/Read/Write wrappers.
+
+### C4 coverage notes (tplc-pjlink / Tc3_PJLink)
+
+- **Architecture**: builtin `FB_Pjlink` bridges to the host
+  `tplc-pjlink` service (`include/tplc/tplc_pjlink.h`) through
+  `TplcServices.get_service`. One transaction per EXEC rising
+  edge; the service owns a nonblocking TCP socket per
+  transaction (connect-per-command, `TCP_NODELAY`), drives a
+  Connect → Greet → Send → Recv state machine, and enforces the
+  deadline via the injected `steadyNs` clock. Completed
+  transactions close the socket and drop the map entry on the
+  terminal `pjl_poll`, matching the modbus/bacnet model.
+- **Protocol**: JBMIA PJLink over TCP 4352 — ASCII command
+  lines `%<class><CMD4> <param>\r` (bare CR terminator, no `$`),
+  responses `%<class><CMD4>=<value>\r`. The class digit selects
+  the PJLink class (standard commands use `1`); the command body
+  is a fixed 4-char field (`POWR`, `INPT`, `AVMT`, `ERST`,
+  `INFO`, `NAME`, `INFM`, `LAMP`, ...). `?` as the parameter
+  queries. PJLink-level command errors arrive as `ERR1`–`ERR4`
+  *values* (`%1POWR=ERR3`) with transport `STATUS = 1`;
+  `PJLINK ERRA` maps to `STATUS = 5`.
+- **Authentication**: on connect a PJLink projector may greet
+  `PJLINK 0\r` (no auth) or `PJLINK 1 <8-hex-nonce>\r`
+  (password required). For the latter the service prepends
+  `MD5(nonce_ascii + password)` — 32 lowercase hex chars, no
+  separator — to the command line, using a compact in-tree MD5
+  verified against the spec's worked example. Projectors that
+  send no greeting within 400 ms are treated as no-auth
+  (legacy behavior). The `PASSWORD` FB input therefore only
+  needs the plaintext password; the digest is per-connection
+  and never cached.
+- **Wrappers**: `compat/tc3/tc3_pjlink.st` provides the generic
+  `FB_PJLink` command FB (nCls/sCmd/sParam/sPassword in,
+  sValue/nRespCls/nRespCmd/nValueLen/bAuthed out) plus
+  method-shaped wrappers `FB_PJLink_Power` (POWR on/off/query),
+  `FB_PJLink_Input` (INPT set/query), and `FB_PJLink_Mute`
+  (AVMT mute on/off/query) covering the most-used TwinCAT
+  `FB_PJLink` methods in poll-model form.
+- **Verified**: `tc3_pjlink` ctest builds the library and a
+  consumer program, then replays 250 free-running sim steps
+  against `tests/compat/pjlink_test_peer.py` — a python PJLink
+  responder on TCP 4352 whose greeting is chosen by connection
+  count. Seven packed checks (`0x7f`): unauthenticated POWR
+  query with response-header echo, Power/Input/Mute wrapper
+  transactions, MD5 auth accept (`bAuthed`), wrong-password
+  `PJLINK ERRA` → `STATUS = 5`, and `ERR1` command-error
+  surfacing.
+- **Honest gaps**:
+  - TwinCAT's `FB_PJLink` is an auto-managed object: inputs
+    `bKeepAliveSocket`, `tStatusUpdateTime`, `sServerNetID`,
+    `eTraceLevel`, and outputs `eStep`/`ipResultMessage`/
+    `nErrID`/`sErrBlock`/`stProjStatus` have no poll-model
+    equivalent — `I_TcMessage`, `T_AmsNetId` routing,
+    `TcEventSeverity`/EventLogger, and `HRESULT` method returns
+    are documented incompatibilities.
+  - No persistent session or keep-alive: every command is a
+    fresh TCP connection (PJLink's safe pattern), so per-command
+    connect/greeting overhead applies and `tStatusUpdateTime`
+    cyclic polling is the caller's job.
+  - Class 1 commands only in practice (the digit is passed
+    through, but only class-1 semantics are exercised);
+    Class 2 expanded commands are not separately validated.
+  - IPv4 dotted-quad only; no DNS, no IPv6.
+  - The remaining TwinCAT method surface (freeze, increase/
+    decrease, lamp info, freeze status) is reachable through
+    the generic `FB_PJLink` command FB but has no dedicated
+    wrapper yet.
 
 ## Known limitations
 

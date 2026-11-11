@@ -47,14 +47,19 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     v2 adds `mb_begin_udp`, v3 adds `mb_begin_rtu`), `tplc-sacn`
     (`include/tplc/tplc_sacn.h`, host impl `SacnService`), and
     `tplc-bacnet` (`include/tplc/tplc_bacnet.h`, host impl
-    `BacnetService`) are live, backed by nonblocking POSIX sockets,
+    `BacnetService`), and `tplc-pjlink`
+    (`include/tplc/tplc_pjlink.h`, host impl `PjlinkService`) are
+    live, backed by nonblocking POSIX sockets,
     termios, an AMS/TCP ADS client, a timestamped mark ring, a
     Modbus client (TCP, UDP, and serial RTU transports), an E1.31
-    sACN multicast source/receiver, and a BACnet/IP (ASHRAE 135)
+    sACN multicast source/receiver, a BACnet/IP (ASHRAE 135)
+    client, and a JBMIA PJLink (TCP 4352, MD5 auth) projector
     client respectively, and driven scan-side by the builtins
     `FB_Socket`/`FB_Serial`/`FB_Ads`/`FB_RtMon`/`FB_Modbus`/
-    `FB_ModbusRtu`/`FB_SacnSource`/`FB_SacnReceiver`/`FB_Bacnet`.
-    `RtmonService`, `ModbusService`, and `BacnetService` take their
+    `FB_ModbusRtu`/`FB_SacnSource`/`FB_SacnReceiver`/`FB_Bacnet`/
+    `FB_Pjlink`.
+    `RtmonService`, `ModbusService`, `BacnetService`, and
+    `PjlinkService` take their
     clocks from `HostServices::steadyNs`, so `--sim` steps produce
     deterministic sim-time timestamps and timeouts.
   - `Scheduler` — single-thread CYCLIC/FREEWHEELING dispatch, priority
