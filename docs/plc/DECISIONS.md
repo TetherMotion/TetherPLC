@@ -1111,3 +1111,54 @@ sim against `pjlink_test_peer.py` — seven packed checks
 (`0x7f`): unauthenticated POWR query, Power/Input/Mute
 wrappers, MD5 auth accept, wrong-password ERRA, and `ERR1`
 command-error surfacing.
+
+## D-IMPL-48 — tplc-s7 service + FB_S7Conn/FB_S7Io builtins (plan 21 C4)
+
+`include/tplc/tplc_s7.h` defines `TplcS7Service` (ABI v1):
+`s7_open`/`s7_conn_poll`/`s7_close` for the persistent session
+plus `s7_read`/`s7_write`/`s7_poll`/`s7_abort` for transactions,
+split into connection and io handle spaces because S7comm is a
+persistent COTP session, unlike the connect-per-command
+services. The host impl `S7Service`
+(`runtime/host/src/S7Service.cpp`) owns one nonblocking TCP
+socket per connection and drives TCP connect → COTP CR/CC → S7
+Setup Communication → Ready as an explicit stage machine;
+transactions serialize one outstanding io per connection
+(E_BUSY otherwise). `svc_` stays the first data member per the
+BACnet `self()` invariant.
+
+Wire stack verified against the python-snap7 reference server
+(byte-exact read/write/bit round-trips): TPKT `03 00 <len16>`,
+COTP CR `06 E0` / CC `06 D0` / DT `02 F0 80`, S7 Job header 10B
+(`32 01`) vs Ack/Ack_Data header 12B with error class/code.
+Read Var func `0x04`, Write Var func `0x05`, Setup Comm
+func `0xF0` automatic on connect. COTP called TSAP folds
+rack/slot as `0x0100 | (rack<<5) | slot`. Addressing uses
+single-item S7-Any specs with the S7WordLen BYTE transport
+code for byte arrays (count = byte count); bit access uses
+BIT (`0x01`, `byte*8+bit`). Two codec subtleties were caught
+by the reference server: the address-spec transport byte is a
+type code, not a generic size (0x04 = WORD doubled the byte
+count), and data-section lengths are in bits only for
+transport sizes 0x04/0x05.
+
+PLC side: builtins `FB_S7Conn` (HOST/PORT/RACK/SLOT/TIMEOUT,
+CONN_HANDLE out, STATUS 0 pending/1 ready/2 error, CLOSE edge)
+and `FB_S7Io` (CONN_HANDLE/MODE/AREA/DB/BYTE_OFF/BIT_ACCESS/
+BIT_NO/LEN, DATA[240] write payload, R_DATA[240] read result,
+STATUS 0..5, ITEM_RC, DATA_LEN, ERRID). `compat/tc3/
+tc3_s7comm.st` provides `FB_S7_Connect`, `FB_S7_Read`,
+`FB_S7_Write`, `FB_S7_ReadBit`, `FB_S7_WriteBit` covering the
+`FB_S7CommConnection`/AddRead*/AddWrite* concepts and the
+`FB_NLinkOpen`/`Close`/`Fetch`/`Write` set.
+
+TwinCAT's `FB_S7CommConnection` request-queue model
+(`AddRequest`, `FB_S7CommCyclicRequest`, `I_S7CommRequest`,
+`PVOID`, `HRESULT`, AMS routing) is adapted to explicit
+poll-model FBs; `s7_abort` closes the connection rather than
+risk a stale response matching the next job's pdu_ref.
+S5 protocol (3964/PKW) behind `FB_NLink*` on S5 targets is a
+documented gap. `tc3_s7comm` ctest replays a 300-step
+free-running sim against `s7_test_peer.py` — nine packed
+checks (`0x1ff`): connect, DB read, write+readback, MK bit
+read/write, unregistered-area s7err, refused connect, close.

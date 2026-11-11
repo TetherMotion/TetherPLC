@@ -13,6 +13,7 @@
 #include <tplc/host/PjlinkService.hpp>
 #include <tplc/host/RtmonService.hpp>
 #include <tplc/host/SacnService.hpp>
+#include <tplc/host/S7Service.hpp>
 #include <tplc/host/SerialService.hpp>
 
 #include <cstdint>
@@ -74,6 +75,7 @@ private:
     SacnService  sacn_;
     BacnetService bacnet_;
     PjlinkService pjlink_;
+    S7Service    s7_;
 };
 
 } /* namespace tplc */

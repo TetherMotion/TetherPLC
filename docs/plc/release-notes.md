@@ -131,6 +131,28 @@ live attach over tether_io, and the safety/security envelope.
   (keep-alive, status polling, AMS NetID, I_TcMessage,
   EventLogger) is a documented incompatibility; the compat
   surface is the protocol layer with connect-per-command.
+  Eleventh tranche adds `compat/tc3/tc3_s7comm.st`
+  (Tc3_S7Comm + Tc2_S5S7Com) over the new `tplc-s7` service —
+  a `TplcS7Service` vtable with separate connection and io
+  handle spaces, a Siemens S7comm client over RFC1006
+  ISO-on-TCP (TPKT + COTP CR/CC/DT + S7comm, TCP 102) with a
+  persistent COTP session, Read Var / Write Var jobs
+  (func 0x04/0x05), automatic Setup Communication on connect,
+  S7-Any single-item addressing across PE/PA/MK/DB/CT/TM with
+  byte and bit access, injected-clock timeouts, and builtins
+  `FB_S7Conn`/`FB_S7Io` with poll-model wrappers
+  `FB_S7_Connect`/`FB_S7_Read`/`FB_S7_Write`/
+  `FB_S7_ReadBit`/`FB_S7_WriteBit`. The codec was verified
+  byte-exact against the python-snap7 reference server; the
+  `tc3_s7comm` ctest replays a 300-step free-running sim
+  against `s7_test_peer.py` — nine packed checks (`0x1ff`):
+  connect, DB read, write+readback, MK bit read/write,
+  unregistered-area s7err, refused connect, session close.
+  TwinCAT's request-queue model (`AddRequest`, cyclic
+  requests, `I_S7CommRequest`, `PVOID`/`HRESULT`, AMS
+  routing) is adapted to explicit poll-model FBs, and the S5
+  (3964/PKW) protocol behind `FB_NLink*` on S5 targets is a
+  documented gap.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

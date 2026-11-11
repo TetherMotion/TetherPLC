@@ -650,6 +650,103 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "DONE", Type::Bool);
             push(&mut off, "__last_exec", Type::Bool);
         }
+        /* FB_S7Conn — tplc-s7 service bridge (Siemens S7comm
+        client, RFC1006/TCP 102). EXEC rising edge opens a
+        persistent connection (TCP connect -> COTP CR/CC -> S7
+        Setup Communication) polled via BUSY until STATUS leaves
+        0=pending; 1=ready, 2=error (ERRID carries errno or the
+        S7 error word). CONN_HANDLE stays valid while STATUS=1
+        and feeds FB_S7Io. CLOSE rising edge tears the session
+        down (CONN_HANDLE -> 0). HOST is a dotted-quad IPv4
+        string, PORT 0 = 102, RACK 0..15, SLOT 0..31 folded
+        into the COTP called TSAP. */
+        "FB_S7Conn" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "RACK", udint());
+            push(&mut off, "SLOT", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "CLOSE", Type::Bool);
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__last_close", Type::Bool);
+        }
+        /* FB_S7Io — tplc-s7 service bridge for one Read Var /
+        Write Var transaction on an FB_S7Conn connection.
+        CONN_HANDLE comes from FB_S7Conn.CONN_HANDLE. MODE 0=read 1=write. AREA is the S7-Any area
+        code (0x81 PE, 0x82 PA, 0x83 MK, 0x84 DB, 0x1C CT,
+        0x1D TM); DB the data block number; BYTE_OFF the byte
+        offset (24-bit); BIT_ACCESS+BIT_NO select single-bit
+        access (BIT_NO 0..7); LEN the byte count for word access
+        (<=240). DATA carries the write payload (LEN bytes,
+        DATA[0]&1 for bit writes); R_DATA receives read bytes
+        (DATA_LEN valid). STATUS 0=pending 1=ok 2=timeout
+        3=error 4=badresp 5=s7err; ITEM_RC is the response item
+        return code (0xFF ok); ERRID the transport errno or S7
+        error word. One outstanding transaction per connection. */
+        "FB_S7Io" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "MODE", udint());
+            push(&mut off, "AREA", udint());
+            push(&mut off, "DB", udint());
+            push(&mut off, "BYTE_OFF", udint());
+            push(&mut off, "BIT_ACCESS", Type::Bool);
+            push(&mut off, "BIT_NO", udint());
+            push(&mut off, "LEN", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ITEM_RC", udint());
+            push(&mut off, "DATA_LEN", udint());
+            push(&mut off, "ERRID", udint());
+            push(
+                &mut off,
+                "DATA",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 239,
+                },
+            );
+            push(
+                &mut off,
+                "R_DATA",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 239,
+                },
+            );
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;

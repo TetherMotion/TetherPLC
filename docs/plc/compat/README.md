@@ -74,6 +74,17 @@ compat/tc3/
                       MD5(nonce+password) auth handled by the
                       service when the projector greets
                       `PJLINK 1`
+  tc3_s7comm.st      Tc3_S7Comm + Tc2_S5S7Com over the builtins
+                      FB_S7Conn / FB_S7Io (tplc-s7 service):
+                      Siemens S7comm client over RFC1006
+                      (TPKT + COTP + S7comm, TCP 102) —
+                      FB_S7_Connect session wrapper plus
+                      FB_S7_Read / FB_S7_Write /
+                      FB_S7_ReadBit / FB_S7_WriteBit
+                      transaction wrappers; covers the
+                      FB_S7CommConnection/AddReadVar/
+                      AddReadBit/AddReadByteArray concepts and
+                      the FB_NLinkOpen/Close/Fetch/Write set
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -157,6 +168,19 @@ tests/compat/
                       4352 used by tc3_pjlink.sh: connection-
                       count greetings (PJLINK 0 / PJLINK 1
                       nonce), digest verify, ERRA, ERR1
+  tc3_s7comm_case.st   autonomous S7comm program (9 packed
+                      checks: connect handshake, DB read,
+                      write+readback, MK bit read/write,
+                      unregistered-area s7err, refused connect,
+                      session close)
+  tc3_s7comm.sh        ctest tc3_s7comm: library + consumer +
+                      300-step sim replay expecting mask 0x1ff,
+                      python S7comm peer (s7_test_peer.py)
+  s7_test_peer.py      minimal Siemens S7comm (RFC1006)
+                      responder on TCP 1102 used by
+                      tc3_s7comm.sh: TPKT + COTP CR/CC/DT,
+                      setup communication, Read/Write Var;
+                      DB1 + MK memory areas, spec bit semantics
 ```
 
 ## Building and consuming
@@ -182,7 +206,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); S7/FTP/SMS/IEC 60870 remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); FTP/SMS/IEC 60870 remain |
 
 ### C1 coverage notes
 
@@ -647,6 +671,71 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     decrease, lamp info, freeze status) is reachable through
     the generic `FB_PJLink` command FB but has no dedicated
     wrapper yet.
+
+### C4 coverage notes (tplc-s7 / Tc3_S7Comm + Tc2_S5S7Com)
+
+- **Architecture**: two builtins bridge to the host `tplc-s7`
+  service (`include/tplc/tplc_s7.h`) through
+  `TplcServices.get_service`. `FB_S7Conn` owns the persistent
+  session: EXEC rising edge runs TCP connect → COTP CR/CC →
+  S7 Setup Communication, driven through `s7_conn_poll` while
+  BUSY; CLOSE rising edge tears the session down and clears
+  CONN_HANDLE. `FB_S7Io` runs one Read Var / Write Var
+  transaction per EXEC edge on a live CONN_HANDLE (MODE 0/1),
+  driven through `s7_poll`; one outstanding io per connection
+  (E_BUSY otherwise). Unlike PJLink's connect-per-command the
+  S7 session is persistent, matching TwinCAT's connection
+  object model.
+- **Protocol**: Siemens S7comm over RFC1006 ISO-on-TCP, TCP
+  port 102 (PORT 0). Wire stack verified against the
+  python-snap7 reference server: TPKT `03 00 <len16>`, COTP
+  CR/CC/DT (`06 E0`/`06 D0`/`02 F0 80`), S7 Job header 10B
+  (`32 01`), Ack/Ack_Data header 12B with error class/code.
+  Read Var func `0x04`, Write Var func `0x05`, Setup Comm
+  func `0xF0` run automatically on connect. The COTP called
+  TSAP folds rack/slot as `0x0100 | (rack<<5) | slot`.
+- **Addressing**: S7-Any single-item specs — area codes
+  `0x81` PE, `0x82` PA, `0x83` MK, `0x84` DB, `0x1C` CT,
+  `0x1D` TM; `BYTE_OFF` is a 24-bit byte offset sent as
+  `offset*8` bits; `BIT_ACCESS`+`BIT_NO` select single-bit
+  access (`byte*8+bit`). Byte-array access uses the S7WordLen
+  BYTE transport code so `LEN` is a plain byte count. Payloads
+  cap at 240 bytes per transaction.
+- **Wrappers**: `compat/tc3/tc3_s7comm.st` provides
+  `FB_S7_Connect` (covers `FB_S7CommConnection` and the
+  `FB_NLinkOpen`/`FB_NLinkClose` pair), `FB_S7_Read` /
+  `FB_S7_Write` (cover `AddReadVar`/`AddReadByteArray`/
+  `AddWriteVar`/`AddWriteByteArray` and `FB_NLinkFetch`/
+  `FB_NLinkWrite`), and `FB_S7_ReadBit`/`FB_S7_WriteBit`
+  (cover `AddReadBit` and bit writes). Bit reads return one
+  byte right-justified in `pData[0]`/`nBitValue`; bit writes
+  take `pData[0]&1`.
+- **Verified**: `tc3_s7comm` ctest builds the library and a
+  consumer program, then replays 300 free-running sim steps
+  against `tests/compat/s7_test_peer.py` — a python S7comm
+  responder on TCP 1102. Nine packed checks (`0x1ff`): connect
+  handshake, DB1 read with pattern check, write+readback,
+  MK bit read/write, unregistered-area item rc `0x0A` →
+  `STATUS = 5`, refused connect → conn `STATUS = 2`, session
+  close. The service codec was additionally verified
+  standalone against the python-snap7 reference `Server`
+  (read/write/bit round-trips byte-exact).
+- **Honest gaps**:
+  - TwinCAT's `FB_S7CommConnection` request-queue model
+    (`AddRequest`, `FB_S7CommCyclicRequest`, `I_S7CommRequest`
+    objects, `PVOID` buffers, `HRESULT` returns, AMS `T_AmsNetId`
+    routing) has no direct equivalent — requests are explicit
+    poll-model FBs, one outstanding transaction per connection.
+  - No cyclic/triggered request scheduling; the caller polls.
+  - Single-item requests only; no multi-item Read/Write Var,
+    no Read String with S7 string header, no area DB-symbolic
+    addressing, no PUT/GET, GET_PDU, SZL, or H-CPU functions.
+  - S5 protocol (3964/PKW) used by `FB_NLink*` on S5 targets is
+    not implemented — `tplc-s7` speaks S7comm only; S5 links
+    need a separate service.
+  - Rack/slot map only into the COTP called TSAP; no ISO-on-TCP
+    port negotiation beyond the fixed/default port, no DNS,
+    no IPv6.
 
 ## Known limitations
 

@@ -43,6 +43,7 @@ add_library(tplc_host STATIC
   runtime/host/src/SacnService.cpp
   runtime/host/src/BacnetService.cpp
   runtime/host/src/PjlinkService.cpp
+  runtime/host/src/S7Service.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -602,6 +603,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_pjlink
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_pjlink.sh)
   set_tests_properties(tc3_pjlink PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc3_S7Comm + Tc2_S5S7Com compat (plan 21 C4): tplc-s7
+  # S7comm client e2e (connect/read/write/bit/s7err/connerr/
+  # close) against a python S7 peer on TCP 1102
+  add_test(NAME tc3_s7comm
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_s7comm.sh)
+  set_tests_properties(tc3_s7comm PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy
