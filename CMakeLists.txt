@@ -697,6 +697,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_mc2_gear PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_NCI channel-interpolation e2e: 3-axis group powered, a
+  # coordinated FB_NciLine move streaming CSP setpoints, return move,
+  # and a group E-stop; in-process, no peer
+  add_test(NAME tc2_nci
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_nci.sh)
+  set_tests_properties(tc2_nci PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # tplc-motion over the Tether IO protocol e2e: the same
   # FB_MotionAxis case replayed against tether_io_motion_server
   # (SimulatedCiA402Drive, --clock sim) with TPLC_MOTION_IO set;
@@ -730,6 +738,14 @@ if(NOT CMAKE_CROSSCOMPILING)
       COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
         bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_gear_io.sh)
     set_tests_properties(tc2_mc2_gear_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+    # the Tc2_NCI channel-interpolation surface (3-axis CSP line
+    # move) driving the remote DS402 drive fleet over Tether IO
+    add_test(NAME tc2_nci_io
+      COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_nci_io.sh)
+    set_tests_properties(tc2_nci_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
 

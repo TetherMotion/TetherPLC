@@ -335,6 +335,18 @@ tests/compat/
                       protocol against tether_io_motion_server
                       (--clock sim, --axes 4) via TPLC_MOTION_IO; skips
                       when the Tether server binary is unavailable
+  tc2_nci_case.st    Tc2_NCI program (8 packed checks: 3-axis group,
+                      powered, FB_NciLine move to (1000,600,300),
+                      endpoints hit, path length, return move, origin,
+                      group E-stop)
+  tc2_nci.sh         ctest tc2_nci: builds tc2_mc2.st + tc2_nci.st as
+                      libraries, consumes via --lib, 501-step sim
+                      replay expecting mask 0xff, in-process tplc-motion
+  tc2_nci_io.sh      ctest tc2_nci_io: same tc2_nci_case.st replayed
+                      over the Tether IO protocol against
+                      tether_io_motion_server (--clock sim, --axes 4)
+                      via TPLC_MOTION_IO; skips when the Tether server
+                      binary is unavailable
 ```
 
 ## Building and consuming
@@ -362,6 +374,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
 | C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool), an 8-state PLCopen operating state, and coupling/probe blocks (MC_TouchProbe cycle-level latch, MC_GearIn velocity-ratio coupling, MC_GearOut; e2e on both backends); exact hardware-latch touch-probe, `MC_AbortTrigger`, phase-locked gearing/phasing/camming pending |
+| C6 | NC interpolation | `compat/tc2/tc2_nci.st` done: `FB_NciLine` coordinated 3-axis linear move streaming CSP (mode 8) setpoints, `F_NciSqrt` helper, `FB_NciEStop` group power-cut; e2e on both backends (fixed a server bug: dangling `slave` lambda capture). G-code/DIN-66025 interpreter, FIFO queue, circular/helical/spline, look-ahead pending |
 
 ### C1 coverage notes
 
@@ -1200,6 +1213,42 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   following-error dynamics, and torque-mode gain is a fixed sim
   constant. A production backend can map the same object dictionary
   onto Tether's DS402/EtherCAT drives (see DECISIONS D-IMPL-52).
+
+### C6 coverage notes (Tc2_NCI channel interpolation)
+
+- **Model**: TwinCAT's NC-I runs a G-code/FIFO interpreter in the NC
+  kernel that emits per-axis position setpoints each NC cycle to axes
+  in CyclicSyncPosition (CSP, mode 8). `compat/tc2/tc2_nci.st`
+  collapses one in-flight geometric block into each FB: `FB_NciLine`
+  parameterizes a straight line across a 3-axis group (X/Y/Z axis
+  handles), advances the path parameter `s` by `Velocity*CycleUs/1e6`
+  per scan, and streams per-axis targets (0x607A) to CSP axes — the
+  same way the NC kernel drives CSP axes. There is no backend group
+  registry, so a "3D group" is just the three axis handles passed to
+  the block (TwinCAT's `CfgBuild3DGroup` maps to passing handles).
+- **Time base**: the FB has no host clock, so `CycleUs` supplies the
+  scan period; path `Velocity` is user-units/second. Under `--sim`,
+  `CycleUs` = the step period makes the path advance a fixed amount
+  per step, and CSP snaps each axis to the streamed target so
+  commanded and actual positions match — deterministic on both
+  backends.
+- **Helpers**: `F_NciSqrt` is a fixed-iteration Newton square root
+  (no SQRT builtin) used to compute the Euclidean path length.
+  `FB_NciEStop` writes DisableVoltage to all three group axes.
+- **Verified**: `tc2_nci` and `tc2_nci_io` ctests replay
+  `tc2_nci_case.st` (mask `0xff`) on in-process and Tether IO
+  backends — power, a coordinated move to (1000,600,300) with every
+  axis hitting its coordinate, path length 1204, a return move, and a
+  group E-stop. Implementing it surfaced and fixed a real
+  `tether_io_motion_server` bug: the per-object `readFn`/`writeFn`
+  captured `slave` by reference (`[&, idx, sz]` drops it under the
+  `&` default), so every param operated on the last-configured slave
+  — invisible for single-axis use, breaking multi-axis groups.
+- **Honest gaps**: no G-code/DIN-66025 interpreter, no FIFO block
+  queue or look-ahead, no circular/helical/spline paths (need
+  sin/cos), no M-functions/tool/R-params/zero-shift, no multi-block
+  blending — these need an actual NC channel/interpreter object in
+  the backend (DECISIONS D-IMPL-56).
 
 ## Known limitations
 

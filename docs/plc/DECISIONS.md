@@ -1514,3 +1514,40 @@ provide — each `MC_TouchProbe` owns its `armed` flag, so a separate
 abort FB cannot see it. Supporting it needs the probe state moved into
 the axis/backend (a shared armed-slot per axis) — a real backend
 change deferred with the latch object above.
+
+## D-IMPL-56 — NC-I channel interpolation as FB-level CSP setpoint streaming
+
+TwinCAT NC-I (TF5100) is a G-code/FIFO interpreter in the NC kernel
+that emits per-axis CyclicSyncPosition setpoints every NC cycle. The
+compat model does not stand up a full interpreter; it collapses one
+in-flight geometric block into each function block so the same
+setpoint-streaming mechanism is exercised honestly.
+
+`FB_NciLine` parameterizes a straight line across a 3-axis group
+(X/Y/Z axis handles — there is no backend group registry, so a
+"group" is just the handles passed to the block, which is how
+`CfgBuild3DGroup` maps). On `Execute` it latches each axis's actual
+position as the segment start, computes deltas and the Euclidean path
+length via `F_NciSqrt` (a fixed-iteration Newton sqrt — the ST layer
+has no SQRT builtin), switches all three axes to CSP mode (0x6060=8),
+then each scan advances `s` by `Velocity*CycleUs/1e6` and streams each
+axis's interpolated `TargetPosition` (0x607A). CSP snaps `pos =
+targetPos` per cycle on both the in-process `MotionService` and the
+remote `SimulatedCiA402Drive`, so commanded and actual positions
+match and the move is a true straight line with simultaneous arrival.
+
+The FB has no host clock, so `CycleUs` supplies the scan period
+(time-based path velocity); under `--sim`, `CycleUs` = the step period
+keeps the replay deterministic. `FB_NciEStop` writes DisableVoltage to
+the group. Honest gaps needing a real backend channel object: the
+G-code/DIN-66025 interpreter, FIFO block queue and look-ahead,
+circular/helical/spline interpolation (sin/cos), M-functions,
+tool/R-params/zero-shift, and multi-block blending.
+
+This tranche also fixed a real `tether_io_motion_server` bug: the
+per-object `readFn`/`writeFn` lambdas captured `slave` by reference
+(`[&, idx, sz]` lets it fall under the `&` capture-default, leaving
+`slave` bound to a dead stack slot holding the last loop index). Every
+registered param therefore read/wrote the last-configured slave —
+invisible for single-axis use, breaking any multi-axis group. Captures
+now bind `slave` by value.

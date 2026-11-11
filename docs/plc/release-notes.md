@@ -364,6 +364,24 @@ live attach over tether_io, and the safety/security envelope.
   gear-out, halt, power-off. Exact hardware-latch touch-probe,
   `MC_AbortTrigger`, and phase-locked gearing/phasing/camming remain
   documented gaps needing Tether backend latch + coupling objects.
+- **Twenty-first tranche (C6 NC-I channel interpolation)**: adds
+  `compat/tc2/tc2_nci.st`, the NC interpolation core. TwinCAT's NC-I
+  runs a G-code/FIFO interpreter in the NC kernel emitting per-axis
+  CSP setpoints each cycle; the compat model collapses one geometric
+  block into `FB_NciLine`, which parameterizes a straight line over a
+  3-axis group, advances the path parameter by `Velocity*CycleUs`, and
+  streams per-axis targets (0x607A) to axes in CSP mode 8 — the same
+  mechanism the NC kernel uses. `F_NciSqrt` (Newton sqrt, no SQRT
+  builtin) computes the Euclidean path length; `FB_NciEStop` cuts
+  power to the group. The caller supplies `CycleUs` as the time base.
+  Verified `tc2_nci` + `tc2_nci_io` (mask `0xff`) on both backends.
+  Implementation surfaced and fixed a real `tether_io_motion_server`
+  bug: per-object `readFn`/`writeFn` captured `slave` by reference
+  (`[&, idx, sz]` lets it fall under the `&` default), so every param
+  hit the last-configured slave — invisible for single-axis, breaking
+  multi-axis groups. G-code interpreter, FIFO queue, circular/helical/
+  spline, look-ahead, M-functions, R-params remain gaps needing a real
+  NC channel object in the backend (D-IMPL-56).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.
