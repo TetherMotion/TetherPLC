@@ -30,6 +30,12 @@ compat/tc2/           TwinCAT 2/3-era library sources
   tc2_serialcom.st    Tc2_SerialCom wrappers over the builtin
                       FB_Serial (tplc-serial service): FB_SerialOpen/
                       Send/Receive/Close/Flush/Rs485
+  tc2_sms_sms.st      Tc2_SMS + Tc2_SMTP: FB_SendSMS GSM AT-command
+                      state machine over FB_Serial, FB_SmtpV3 /
+                      FB_SmtpV3_Full over the builtin FB_SmtpSend
+                      (tplc-smtp service), FB_Smtp / FB_SmtpFull
+                      aliases, FB_SmtpAttach (unsupported stub),
+                      FB_GetTcPlcSMS_Version
   tc2_system.st       Tc2_System ADS wrappers over the builtin
                       FB_Ads (tplc-ads service): FB_AdsConnect/
                       Read/Write/ReadState/WriteControl/Close
@@ -206,6 +212,23 @@ tests/compat/
                       USER/PASS login, MKD/RMD/DELE/SIZE/
                       RNFR/RNTO, RETR/STOR/LIST/NLST over
                       passive data connections
+  tc2_sms_sms_case.st  autonomous serial+SMTP program (9 packed
+                      checks: pty open, AT SMS, SMTP plain,
+                      SMTP AUTH LOGIN, RCPT 550 reject,
+                      attach-unsupported, version, refused
+                      connect, serial close)
+  tc2_sms_sms.sh       ctest tc2_sms_sms: both libraries +
+                      consumer + 700-step sim replay expecting
+                      mask 0x1ff; pty GSM modem peer
+                      (gsm_modem_peer.py) and RFC 5321 peer
+                      (smtp_test_peer.py) on TCP 2525
+  gsm_modem_peer.py    minimal GSM AT modem on a pty pair used
+                      by tc2_sms_sms.sh: AT / AT+CMGF=1 /
+                      AT+CMGS text-mode send with Ctrl-Z
+  smtp_test_peer.py    minimal SMTP (RFC 5321) responder on
+                      TCP 2525 used by tc2_sms_sms.sh:
+                      EHLO+AUTH LOGIN, MAIL/RCPT/DATA, 550 on
+                      "reject" recipients, MSG log lines
 ```
 
 ## Building and consuming
@@ -231,7 +254,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); SMS/IEC 60870 remain |
+| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); IEC 60870 remains |
 
 ### C1 coverage notes
 
@@ -815,6 +838,56 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
     downloads stream unlimited data in 512-byte chunks.
   - Rename/move relies on RNFR+RNTO — semantics for
     cross-directory moves depend on the server.
+
+### C4 coverage notes (tplc-smtp + GSM AT SMS / Tc2_SMS + Tc2_SMTP)
+
+- **SMTP transport**: `tplc-smtp` is a direct RFC 5321 SMTP
+  *client* over TCP (default port 25), TwinCAT's `FB_Smtp*`
+  blocks proxy through a TwinCAT SMTP server over ADS, which has
+  no equivalent here, so the compat layer talks SMTP directly.
+  Transaction: connect → 220 greeting → EHLO → optional
+  `AUTH LOGIN` (334/334/235 challenge, base64 credentials) →
+  MAIL FROM → RCPT TO → DATA → dot-stuffed headers+body →
+  "." terminator → 250 → QUIT → 221. Plain text bodies only,
+  one recipient, no TLS/attachments/receipts/MIME.
+- **Builtins**: `FB_SmtpSend` (HOST/PORT/USER/PASS/FROM/RCPT/
+  SUBJECT/TIMEOUT/BODY[255], EXEC edge, STATUS 0=pending
+  1=ok 2=smtp-fail 3=timeout 4=error 5=badresp, RESP_CODE holds
+  the transaction result code, the DATA-accept 250, not the
+  QUIT 221). The internal name avoids colliding with the
+  TwinCAT-compat `FB_Smtp` alias.
+- **Wrappers**: `compat/tc2/tc2_sms_sms.st` provides `FB_SmtpV3`
+  (unauthenticated) and `FB_SmtpV3_Full` (optional AUTH LOGIN),
+  `FB_Smtp`/`FB_SmtpFull` obsolete aliases, `FB_SmtpAttach`
+  (always fails with ERRID 90, attachments unsupported), and
+  `FB_GetTcPlcSMS_Version` (`TetherPLC-TcSMS 1.0`).
+- **SMS**: `FB_SendSMS` is a pure-ST GSM AT-command state
+  machine over the existing `FB_Serial` wrappers (tplc-serial):
+  `AT` → `AT+CMGF=1` → `AT+CMGS="<number>"` → wait `>` prompt →
+  text + Ctrl-Z → wait `+CMGS`/`OK`. Text mode only, single
+  GSM-7 segment (160 chars), no PDU mode/UCS2/concatenation/
+  status reports. nStatus: 0=ok 1=timeout 2=modem/protocol
+  3=serial 4=generic.
+- **Serial EXEC contract**: `FB_Serial` arms on a 0->1 EXEC
+  edge and `__last_exec` tracks the previous scan's EXEC. A
+  consumer that pulses EXEC must call the FB every scan so
+  EXEC sees a low scan between transactions; gating calls by
+  phase freezes EXEC high after a fast write and swallows the
+  next kick (phantom DONE). `FB_SendSMS` therefore drives both
+  serial FBs unconditionally with `bExecute` gated instead.
+- **Verified**: `tc2_sms_sms` ctest builds both libraries and
+  a consumer, then replays 700 free-running sim steps against
+  `tests/compat/gsm_modem_peer.py` (pty AT modem) and
+  `tests/compat/smtp_test_peer.py` (RFC 5321 on TCP 2525).
+  Nine packed checks (`0x1ff`): serial open, SMS send (peer
+  logged `SMS to=+4915123456`), SMTP plain + AUTH LOGIN (both
+  MSG lines), RCPT 550 reject, attach ERRID 90, version
+  string, refused connect, serial close.
+- **Honest gaps**: no TLS/SSL, attachments, delivery receipts,
+  Cc/Bcc, multi-recipient envelopes, or MIME headers beyond
+  From/To/Subject/Date; no TwinCAT SMTP-server ADS proxy; no
+  DNS (dotted-quad IPv4 only); SMS PDU/UCS2/concatenated/status
+  modes unimplemented; modem must support text mode AT.
 
 ## Known limitations
 

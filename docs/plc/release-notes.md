@@ -173,6 +173,32 @@ live attach over tether_io, and the safety/security envelope.
   profile objects, `I_TcMessage`/EventLogger/`HRESULT`
   surfaces, and `FB_FTP_HostResolve` DNS are documented gaps;
   FTPS/TLS and SFTP/SSH are not implemented.
+  Thirteenth tranche adds `compat/tc2/tc2_sms_sms.st`
+  (Tc2_SMS + Tc2_SMTP) over the new `tplc-smtp` service and
+  the existing `tplc-serial` service. `tplc-smtp` is an RFC
+  5321 SMTP client over TCP with a single-handle transaction
+  (connect → 220 → EHLO → optional AUTH LOGIN 334/334/235 →
+  MAIL → RCPT → DATA dot-stuffed → 250 → QUIT), exposed as
+  builtin `FB_SmtpSend` (STATUS 0..5, RESP_CODE keeps the
+  DATA-accept 250 rather than the QUIT 221). `FB_SendSMS` is
+  a pure-ST GSM AT-command state machine over the serial
+  wrappers (AT → AT+CMGF=1 → AT+CMGS → ">" → text+Ctrl-Z →
+  +CMGS/OK), with wrappers `FB_SmtpV3`/`FB_SmtpV3_Full`,
+  obsolete `FB_Smtp`/`FB_SmtpFull` aliases, `FB_SmtpAttach`
+  (ERRID 90 stub), and `FB_GetTcPlcSMS_Version`. The
+  `tc2_sms_sms` ctest replays a 700-step free-running sim
+  against `gsm_modem_peer.py` (pty AT modem) and
+  `smtp_test_peer.py` (RFC 5321 on TCP 2525) — nine packed
+  checks (`0x1ff`). Debugging surfaced and fixed a real
+  string-codegen bug: `CONCAT`/`str_fit`/`fb_call` did all
+  length math in the string element type, so capacities over
+  255 truncated to zero and produced empty strings; math now
+  runs in i32 with a final clamp. It also documented the
+  serial EXEC contract: pulsed EXEC requires the FB be
+  called every scan or `__last_exec` stays high and swallows
+  the next edge. TLS, attachments, Cc/Bcc, multi-recipient,
+  and the TwinCAT SMTP-server ADS proxy are documented gaps;
+  SMS PDU/UCS2/concatenation/status modes are unimplemented.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

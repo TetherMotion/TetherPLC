@@ -873,6 +873,44 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "__last_exec", Type::Bool);
             push(&mut off, "__feed_done", Type::Bool);
         }
+        /* FB_SmtpSend — tplc-smtp service bridge (SMTP client,
+        RFC 5321 over TCP 25/587, plain text + optional AUTH
+        LOGIN). EXEC rising edge begins one send transaction:
+        connect -> 220 -> EHLO -> [AUTH LOGIN] -> MAIL FROM ->
+        RCPT TO -> DATA -> service-generated headers + BODY
+        body (dot-stuffed) -> "." -> QUIT. BODY is a STRING[255]
+        fed automatically on the DATA phase; empty BODY sends
+        headers only. STATUS 0=pending 1=ok 2=fail(smtp code)
+        3=timeout 4=error 5=badresp; RESP_CODE the last SMTP
+        reply code; ERRID transport errno. */
+        "FB_SmtpSend" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "USER", Type::Str { cap: 31 });
+            push(&mut off, "PASS", Type::Str { cap: 31 });
+            push(&mut off, "FROM", Type::Str { cap: 63 });
+            push(&mut off, "RCPT", Type::Str { cap: 63 });
+            push(&mut off, "SUBJECT", Type::Str { cap: 63 });
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "RESP_CODE", udint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "BODY", Type::Str { cap: 255 });
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__feed_done", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;

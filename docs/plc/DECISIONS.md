@@ -1209,3 +1209,55 @@ TCP 2121), twelve packed checks (`0xfff`). A C++ harness
 drove the same service standalone first, which caught a
 reply-line scan off-by-one (`\n` at the buffer tail was never
 detected) before any PLC layer was built.
+
+## D-IMPL-50 — tplc-smtp service + FB_SmtpSend builtin + GSM AT SMS (plan 21 C4)
+
+`include/tplc/tplc_smtp.h` defines `TplcSmtpService` (ABI v1):
+`smtp_begin`/`smtp_poll`/`smtp_abort` drive one RFC 5321
+transaction per handle (connect -> 220 -> EHLO -> optional
+AUTH LOGIN 334/334/235 -> MAIL FROM -> RCPT TO -> DATA ->
+dot-stuffed headers+body -> "." -> 250 -> QUIT -> 221) on a
+single nonblocking TCP socket; `TplcSmtpInfo` carries STATUS
+(0 pending / 1 ok / 2 smtp-fail / 3 timeout / 4 error /
+5 badresp / 6 more-body), RESP_CODE (kept at the DATA-accept
+250 rather than overwritten by the QUIT 221), BODY_TOTAL,
+and ERRID. The host impl `SmtpService`
+(`runtime/host/src/SmtpService.cpp`) owns the socket per
+handle and resolves all stages inside `smtp_poll`.
+
+TwinCAT's `FB_SmtpV3`/`FB_SmtpV3_Full` proxy through a TwinCAT
+SMTP *server* over ADS (`sNetId`), which has no TetherPLC
+equivalent; the compat layer therefore speaks SMTP directly to
+the target server. Builtin `FB_SmtpSend` (named to avoid
+colliding with the compat `FB_Smtp` alias) exposes HOST/PORT/
+USER/PASS/FROM/RCPT/SUBJECT/TIMEOUT/BODY[255] with an EXEC
+edge; `compat/tc2/tc2_sms_sms.st` provides `FB_SmtpV3`,
+`FB_SmtpV3_Full`, obsolete `FB_Smtp`/`FB_SmtpFull` aliases,
+`FB_SmtpAttach` (ERRID 90 stub; attachments unsupported), and
+`FB_GetTcPlcSMS_Version`.
+
+SMS reuses `tplc-serial`: `FB_SendSMS` is a pure-ST AT-command
+state machine (AT -> AT+CMGF=1 -> AT+CMGS="n" -> ">" -> text +
+Ctrl-Z -> +CMGS/OK) over `FB_SerialSend`/`FB_SerialReceive`.
+Debugging surfaced two real bugs outside the feature itself:
+`BuiltinFn::Concat`, `str_fit`, and the `fb_call` string path
+all did capacity/index math in the string element type, so
+STRING capacities over 255 truncated constants to zero and
+produced empty strings (fixed by doing the math in i32 and
+clamping once at the end); and the serial EXEC contract was
+documented — `FB_Serial` arms on a 0->1 EXEC edge tracked by
+`__last_exec`, so a consumer pulsing EXEC must call the FB
+every scan or EXEC freezes high after a fast write and the
+next kick is swallowed as a phantom DONE. `FB_SendSMS` drives
+both serial FBs unconditionally with `bExecute` gated by phase
+for exactly this reason.
+
+Verified by `tc2_sms_sms` ctest: 700 free-running sim steps
+against `gsm_modem_peer.py` (pty AT modem answering
+AT/AT+CMGF=1/AT+CMGS text mode) and `smtp_test_peer.py` (RFC
+5321 responder on TCP 2525 with AUTH LOGIN and a 550 reject
+leg), nine packed checks (`0x1ff`). Documented gaps: no TLS,
+attachments, receipts, Cc/Bcc, multi-recipient envelopes, or
+MIME beyond From/To/Subject/Date; no ADS SMTP-server proxy;
+dotted-quad IPv4 only; SMS PDU/UCS2/concatenation/status
+reports unimplemented.

@@ -15,6 +15,7 @@
 #include <tplc/host/RtmonService.hpp>
 #include <tplc/host/SacnService.hpp>
 #include <tplc/host/S7Service.hpp>
+#include <tplc/host/SmtpService.hpp>
 #include <tplc/host/SerialService.hpp>
 
 #include <cstdint>
@@ -78,6 +79,7 @@ private:
     PjlinkService pjlink_;
     S7Service    s7_;
     FtpService   ftp_;
+    SmtpService  smtp_;
 };
 
 } /* namespace tplc */

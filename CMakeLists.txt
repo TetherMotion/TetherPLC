@@ -45,6 +45,7 @@ add_library(tplc_host STATIC
   runtime/host/src/PjlinkService.cpp
   runtime/host/src/S7Service.cpp
   runtime/host/src/FtpService.cpp
+  runtime/host/src/SmtpService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)

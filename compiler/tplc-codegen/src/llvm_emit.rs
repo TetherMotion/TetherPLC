@@ -529,16 +529,23 @@ impl<'ctx> Gen<'ctx> {
                 .build_extract_value(acc, 0, "tl")
                 .unwrap()
                 .into_int_value();
-            let max = elem.const_int((want - 1) as u64, false);
+            let i32t = self.ctx.i32_type();
+            let len32 = self.as_i32(len);
+            let max = i32t.const_int((want - 1) as u64, false);
             let over = self
                 .b
-                .build_int_compare(IntPredicate::UGT, len, max, "tov")
+                .build_int_compare(IntPredicate::UGT, len32, max, "tov")
                 .unwrap();
             let clamped = self
                 .b
-                .build_select(over, max, len, "tc")
+                .build_select(over, max, len32, "tc")
                 .unwrap()
                 .into_int_value();
+            let clamped = if elem.get_bit_width() < 32 {
+                self.b.build_int_truncate(clamped, elem, "tce").unwrap()
+            } else {
+                clamped
+            };
             acc = self
                 .b
                 .build_insert_value(acc, clamped, 0, "tsi")
@@ -1380,6 +1387,10 @@ impl<'ctx> Gen<'ctx> {
                         .build_int_z_extend(v.into_int_value(), self.ctx.i8_type(), "z")
                         .unwrap()
                         .into()
+                } else if let Type::Str { cap } = &mty {
+                    self.str_fit(v, 1 + *cap as u32)
+                } else if let Type::WStr { cap } = &mty {
+                    self.str_fit(v, 1 + *cap as u32)
                 } else {
                     v
                 };
@@ -1994,54 +2005,51 @@ impl<'ctx> Gen<'ctx> {
                     )
                     .unwrap();
 
-                let la = self.b.build_load(elem, pa, "la").unwrap().into_int_value();
-                let lb = self.b.build_load(elem, pb, "lb").unwrap().into_int_value();
+                let i32t = self.ctx.i32_type();
+                let la = self.as_i32(self.b.build_load(elem, pa, "la").unwrap().into_int_value());
+                let lb = self.as_i32(self.b.build_load(elem, pb, "lb").unwrap().into_int_value());
                 let sum = self.b.build_int_add(la, lb, "sum").unwrap();
-                let capv = elem.const_int(cap as u64, false);
+                let capv = i32t.const_int(cap as u64, false);
+                /* the len unit is unsigned: cap it at both the declared
+                capacity and what the len unit can represent */
+                let bits = elem.get_bit_width();
+                let lim = if bits >= 32 {
+                    capv
+                } else {
+                    let emax = i32t.const_int((1u64 << bits) - 1, false);
+                    let cm = self
+                        .b
+                        .build_int_compare(IntPredicate::ULT, capv, emax, "cm")
+                        .unwrap();
+                    self.b
+                        .build_select(cm, capv, emax, "lim")
+                        .unwrap()
+                        .into_int_value()
+                };
                 let over = self
                     .b
-                    .build_int_compare(IntPredicate::UGT, sum, capv, "ov")
+                    .build_int_compare(IntPredicate::UGT, sum, lim, "ov")
                     .unwrap();
                 let total = self
                     .b
-                    .build_select(over, capv, sum, "tot")
+                    .build_select(over, lim, sum, "tot")
                     .unwrap()
                     .into_int_value();
 
-                /* copy b[1..=lb] to pr[la+1 ..] */
-                let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
-                let pre = self.b.get_insert_block().unwrap();
-                let cond_bb = self.ctx.append_basic_block(f, "cc.cond");
-                let body_bb = self.ctx.append_basic_block(f, "cc.body");
-                let end_bb = self.ctx.append_basic_block(f, "cc.end");
-                self.b.build_unconditional_branch(cond_bb).unwrap();
-                self.b.position_at_end(cond_bb);
-                let j = self.b.build_phi(elem, "j").unwrap();
-                j.add_incoming(&[(&elem.const_int(1, false), pre)]);
-                let jv = j.as_basic_value().into_int_value();
-                let jc = self
+                /* copy b[1..=lb] to pr[la+1..] */
+                let di = self
                     .b
-                    .build_int_compare(IntPredicate::ULE, jv, lb, "jc")
+                    .build_int_add(la, i32t.const_int(1, false), "di")
                     .unwrap();
-                self.b
-                    .build_conditional_branch(jc, body_bb, end_bb)
-                    .unwrap();
-                self.b.position_at_end(body_bb);
-                let di = self.b.build_int_add(la, jv, "di").unwrap();
-                let dp = self.elem_ptr(pr, di, esz);
-                let sp = self.elem_ptr(pb, jv, esz);
-                let v = self.b.build_load(elem, sp, "v").unwrap();
-                self.b.build_store(dp, v).unwrap();
-                let jn = self
-                    .b
-                    .build_int_add(jv, elem.const_int(1, false), "jn")
-                    .unwrap();
-                j.add_incoming(&[(&jn, body_bb)]);
-                self.b.build_unconditional_branch(cond_bb).unwrap();
-                self.b.position_at_end(end_bb);
+                self.copy_units(pr, di, pb, i32t.const_int(1, false), lb, elem, esz, "u");
 
                 let p0 = self.b.build_pointer_cast(pr, self.i8p(), "p0").unwrap();
-                self.b.build_store(p0, total).unwrap();
+                let tot_e = if elem.get_bit_width() < 32 {
+                    self.b.build_int_truncate(total, elem, "te").unwrap()
+                } else {
+                    total
+                };
+                self.b.build_store(p0, tot_e).unwrap();
                 self.b
                     .build_load(elem.array_type(want), pr, "cat")
                     .unwrap()
