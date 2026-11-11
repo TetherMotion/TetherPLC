@@ -680,6 +680,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_mc2_motion PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_MC2 tranche-4 wrappers e2e: MC_MoveModulo (shortest +
+  # positive), MC_Write/ReadParameter, MC_Read/WriteBoolParameter,
+  # MC_SetOverride, PLCopen operating-state machine, MC_Halt;
+  # in-process, no peer
+  add_test(NAME tc2_mc2_modulo
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_modulo.sh)
+  set_tests_properties(tc2_mc2_modulo PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # tplc-motion over the Tether IO protocol e2e: the same
   # FB_MotionAxis case replayed against tether_io_motion_server
   # (SimulatedCiA402Drive, --clock sim) with TPLC_MOTION_IO set;
@@ -697,6 +706,14 @@ if(NOT CMAKE_CROSSCOMPILING)
       COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
         bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_motion_io.sh)
     set_tests_properties(tc2_mc2_motion_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+    # the tranche-4 MC2 wrappers (modulo/override/params/state)
+    # driving the remote DS402 drive over Tether IO
+    add_test(NAME tc2_mc2_modulo_io
+      COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_modulo_io.sh)
+    set_tests_properties(tc2_mc2_modulo_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
 

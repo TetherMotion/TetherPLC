@@ -322,6 +322,24 @@ live attach over tether_io, and the safety/security envelope.
   position readback, velocity InVelocity, quick-stop lock, halt,
   homing, jog, and power-off — identical results on both backends.
   Gearing/phasing/superposition remain for a later tranche.
+- **Nineteenth tranche (C5 MC2 modulo/override/params + PLCopen
+  state)**: extends `compat/tc2/tc2_mc2.st` with `MC_MoveModulo`
+  (shortest / positive / negative direction modulo positioning over
+  `ModuloFactor`), `MC_SetOverride` (velocity-override percent that
+  scales the `0x60FF` target for velocity modes and restores the
+  latched base on release), the axis-parameter accessors
+  `MC_ReadParameter`/`MC_WriteParameter`/`MC_ReadBoolParameter`/
+  `MC_WriteBoolParameter` (ParameterNumber is the DS402 object index,
+  giving generic object access through the PLCopen signature), and a
+  fuller PLCopen operating-state machine in `MC_ReadStatus`
+  (0=Disabled, 1=Standstill, 2=Homing, 3=DiscreteMotion,
+  4=ContinuousMotion, 6=Stopping, 7=ErrorStop; 5=SynchronizedMotion
+  reserved for gearing/camming). New `tc2_mc2_modulo` (in-process)
+  and `tc2_mc2_modulo_io` (Tether IO) ctests replay
+  `tc2_mc2_modulo_case.st` (mask `0xfff`) on both backends. Gearing,
+  phasing, camming and hardware touch-probe latch need multi-axis
+  coupling / latch objects the simulated backend does not expose and
+  remain documented gaps (DECISIONS D-IMPL-54).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

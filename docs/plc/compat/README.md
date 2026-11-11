@@ -56,17 +56,20 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       FB_MotionAxis (tplc-motion service): MC_Power,
                       MC_Reset, MC_SetPosition (abs+rel),
                       MC_ReadActualPosition/Velocity, MC_ReadAxisError,
-                      MC_ReadStatus, plus the command FBs
-                      MC_MoveAbsolute/Relative/Velocity, MC_Stop,
-                      MC_Halt, MC_Home, MC_Jog. AXIS_REF is a UDINT
-                      axis handle; positions are int32 user units
-                      (TwinCAT LREAL is a documented gap). The command
-                      FBs drive the DS402 controlword (NewSetPoint for
-                      PP/HM, QuickStop for MC_Stop) + mode/target
-                      objects; per-command Velocity/Acceleration/
-                      Deceleration are signature-compatible but the
-                      axis applies its configured dynamics. Gearing/
-                      phasing/superposition land in a later tranche.
+                      MC_ReadStatus (8-state PLCopen machine), plus the
+                      command FBs MC_MoveAbsolute/Relative/Modulo/
+                      Velocity, MC_Stop, MC_Halt, MC_Home, MC_Jog,
+                      MC_SetOverride, and the axis-parameter FBs
+                      MC_Read/WriteParameter + MC_Read/WriteBool-
+                      Parameter (ParameterNumber = DS402 object index).
+                      AXIS_REF is a UDINT axis handle; positions are
+                      int32 user units (TwinCAT LREAL is a documented
+                      gap). Command FBs drive the DS402 controlword
+                      (NewSetPoint PP/HM, QuickStop MC_Stop) + mode/
+                      target objects; per-command dynamics inputs are
+                      signature-compatible but the axis applies its
+                      configured limits. Gearing/phasing/camming/
+                      touch-probe land in a later tranche.
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -304,6 +307,21 @@ tests/compat/
                       IO protocol against tether_io_motion_server
                       (--clock sim) via TPLC_MOTION_IO; skips when the
                       Tether server binary is unavailable
+  tc2_mc2_modulo_case.st Tc2_MC2 tranche-4 program (12 packed checks:
+                      axis create, MC_Power enable, MC_MoveModulo
+                      shortest + positive-direction with readback,
+                      MC_Write/ReadParameter follow-window roundtrip,
+                      MC_Read/WriteBoolParameter, MC_MoveVelocity +
+                      MC_SetOverride halving + PLCopen state checks,
+                      MC_Halt, MC_Power disable)
+  tc2_mc2_modulo.sh    ctest tc2_mc2_modulo: builds tc2_mc2.st as a
+                      library, consumes via --lib, 401-step sim replay
+                      expecting mask 0xfff, in-process tplc-motion
+  tc2_mc2_modulo_io.sh ctest tc2_mc2_modulo_io: same
+                      tc2_mc2_modulo_case.st replayed over the Tether
+                      IO protocol against tether_io_motion_server
+                      (--clock sim) via TPLC_MOTION_IO; skips when the
+                      Tether server binary is unavailable
 ```
 
 ## Building and consuming
@@ -330,7 +348,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
-| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog, e2e on both backends); gearing/phasing/superposition pending |
+| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool) and an 8-state PLCopen operating state, e2e on both backends); gearing/phasing/camming/touch-probe pending |
 
 ### C1 coverage notes
 

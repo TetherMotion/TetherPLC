@@ -10,13 +10,14 @@
 // are the backend's native int32 user units (TwinCAT uses LREAL
 // engineering units; the LREAL<->int conversion is a documented
 // gap). This file implements the axis-management blocks
-// (MC_Power/MC_Reset/MC_SetPosition/MC_Read*) and the point-to-
-// point / velocity / stop / halt / homing / jog command blocks.
-// The motion-command FBs drive the DS402 controlword command
-// pattern (NewSetPoint for PP/HM, QuickStop for MC_Stop) and the
-// mode/target objects; per-command Velocity/Acceleration/
-// Deceleration inputs are accepted for signature compatibility but
-// the simulated axis applies its configured dynamics limits.
+// (MC_Power/MC_Reset/MC_SetPosition/MC_Read*), the point-to-point /
+// velocity / stop / halt / homing / jog command blocks, and the
+// modulo / override / axis-parameter FBs. The motion-command FBs
+// drive the DS402 controlword command pattern (NewSetPoint for
+// PP/HM, QuickStop for MC_Stop) and the mode/target objects;
+// per-command Velocity/Acceleration/Deceleration inputs are
+// accepted for signature compatibility but the simulated axis
+// applies its configured dynamics limits.
 // SPDX-License-Identifier: Apache-2.0 OR MPL-2.0
 
 // DS402 object indices used by the wrappers.
@@ -272,11 +273,12 @@ END_VAR
 END_FUNCTION_BLOCK
 
 // ---- MC_ReadStatus: read the axis operating state ----
-// Reports the PLCopen-style operating state derived from the
-// CiA402 status: 0=Disabled,1=Standstill,2=DiscreteMotion,
-// 3=ContinuousMotion,4=Homing, plus ErrorStop on fault. Valid
-// signals a successful read. (Full PLCopen state machine is a
-// later tranche; this maps the DS402 state directly.)
+// Reports the PLCopen operating state derived from the CiA402
+// status, mode display, actual velocity and fault flags:
+//   0=Disabled, 1=Standstill, 2=Homing, 3=DiscreteMotion,
+//   4=ContinuousMotion, 6=Stopping, 7=ErrorStop (-1=read fail).
+// (5=SynchronizedMotion is reserved for gearing/camming, not yet
+// produced.) Valid signals a successful read.
 FUNCTION_BLOCK MC_ReadStatus
 VAR_INPUT
     Enable : BOOL;
@@ -290,7 +292,9 @@ END_VAR
 VAR
     ax : FB_MotionAxis;
     stt : DINT;
-    mv : DINT;
+    md : DINT;
+    tr : DINT;
+    va : DINT;
 END_VAR
     ax.OP := 3; ax();
     ax.AXIS := Axis;
@@ -298,17 +302,25 @@ END_VAR
     ax();
     IF Enable AND ax.STATUS >= 0 THEN
         Valid := TRUE;
-        stt := ax.STATUS;   // CiA402 state
-        mv := ax.BUSY;      // motion-in-progress flag
-        // map DS402 state -> PLCopen operating state
-        IF stt = 8 OR stt = 15 THEN
-            OperatingState := 5;   // ErrorStop
-        ELSIF mv <> 0 THEN
-            OperatingState := 2;   // DiscreteMotion (moving to target)
-        ELSIF stt = 39 THEN
-            OperatingState := 1;   // Standstill (enabled, at rest)
+        stt := ax.STATUS;            // CiA402 state
+        md := ax.MODE;               // mode of operation display
+        tr := ax.TARGET_REACHED;
+        va := ax.VEL_ACTUAL;
+        IF ax.FAULT <> 0 OR stt = 8 OR stt = 15 THEN
+            OperatingState := 7;     // ErrorStop (fault latched)
+        ELSIF stt = 7 THEN
+            OperatingState := 6;     // Stopping (QuickStopActive)
+        ELSIF stt <> 39 THEN
+            OperatingState := 0;     // Disabled / not ready
+        ELSIF md = 6 THEN
+            OperatingState := 2;     // Homing
+        ELSIF md = 1 AND tr = 0 THEN
+            OperatingState := 3;     // DiscreteMotion (PP move active)
+        ELSIF (md = 2 OR md = 3 OR md = 8 OR md = 9 OR md = 10)
+              AND va <> 0 THEN
+            OperatingState := 4;     // ContinuousMotion (moving)
         ELSE
-            OperatingState := 0;   // Disabled / not ready
+            OperatingState := 1;     // Standstill (enabled, at rest)
         END_IF;
     ELSE
         Valid := FALSE;
@@ -692,4 +704,287 @@ END_VAR
     END_IF
     wasMoving := NOT stopped;
     Busy := NOT stopped;
+END_FUNCTION_BLOCK
+
+// ================================================================== //
+// Tranche-4 blocks: modulo positioning, velocity override and the
+// axis-parameter access FBs. The parameter FBs treat ParameterNumber
+// as the DS402 object-dictionary index (0x0000..0xFFFF), giving
+// generic object access through the PLCopen-style signature; the
+// TwinCAT numeric parameter ids map onto indices in a real system,
+// which is a documented simplification. Gearing/phasing/camming and
+// hardware touch-probe latch need multi-axis coupling / latch
+// objects the simulated backend does not expose — see README gaps.
+// ================================================================== //
+
+// ---- MC_MoveModulo: modulo positioning (PP mode) ----
+// Position is the modulo target in [0,ModuloFactor). Direction
+// selects the travel path: 0=shortest (default), 1=positive
+// direction only, 2=negative direction only. The absolute target
+// is computed from the current position so the axis lands on the
+// requested modulo angle, then a standard PP/NewSetPoint move runs.
+FUNCTION_BLOCK MC_MoveModulo
+VAR_INPUT
+    Execute : BOOL;
+    Position : DINT;
+    Velocity : DINT;
+    Acceleration : DINT;
+    Deceleration : DINT;
+    Direction : INT;
+    ModuloFactor : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    active : BOOL;
+    rel : BOOL;
+    cur : DINT;
+    tgt : DINT;
+    delta : DINT;
+    goal : DINT;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF NOT active AND exEdge THEN
+        IF ModuloFactor <= 0 THEN
+            Error := TRUE; ErrorID := 1;
+        ELSE
+            ax.OP := 4; ax.INDEX := 16#6064; ax();   // pos actual
+            // normalize current and target into [0,ModuloFactor)
+            cur := ax.VALUE - (ax.VALUE / ModuloFactor) * ModuloFactor;
+            IF cur < 0 THEN cur := cur + ModuloFactor; END_IF;
+            tgt := Position - (Position / ModuloFactor) * ModuloFactor;
+            IF tgt < 0 THEN tgt := tgt + ModuloFactor; END_IF;
+            delta := tgt - cur;
+            IF Direction = 1 THEN
+                IF delta < 0 THEN delta := delta + ModuloFactor; END_IF;
+            ELSIF Direction = 2 THEN
+                IF delta > 0 THEN delta := delta - ModuloFactor; END_IF;
+            ELSE
+                IF delta > ModuloFactor / 2 THEN
+                    delta := delta - ModuloFactor;
+                ELSIF delta < -ModuloFactor / 2 THEN
+                    delta := delta + ModuloFactor;
+                END_IF;
+            END_IF;
+            goal := ax.VALUE + delta;
+            ax.OP := 5; ax.INDEX := 16#6060; ax.VALUE := 1; ax();
+            ax.OP := 5; ax.INDEX := 16#607A; ax.VALUE := goal; ax();
+            ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#001F; ax();
+            IF ax.STATUS = 0 THEN
+                active := TRUE; rel := TRUE;
+            ELSE
+                Error := TRUE; ErrorID := ax.ERRID;
+            END_IF;
+        END_IF;
+    ELSIF active THEN
+        IF rel THEN
+            ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000F; ax();
+            rel := FALSE;
+        END_IF;
+        ax.OP := 6; ax();
+        IF ax.STATUS < 0 THEN
+            Error := TRUE; ErrorID := ax.ERRID; active := FALSE;
+        ELSIF ax.TARGET_REACHED = 1 THEN
+            Done := TRUE; active := FALSE;
+        END_IF;
+    END_IF
+    Busy := active;
+END_FUNCTION_BLOCK
+
+// ---- MC_SetOverride: velocity override factor ----
+// While Enable is held the velocity-mode target (0x60FF) is scaled
+// to baseVel * VelFactor / 100, where baseVel is latched on the
+// Enable rising edge; on release the unscaled base is restored.
+// VelFactor is an integer percent (100 = 100%, 0 = hold at rest).
+// Applies to velocity modes (PV/VL); ProfilePosition speed comes
+// from axis config so the write is a harmless no-op there.
+FUNCTION_BLOCK MC_SetOverride
+VAR_INPUT
+    Enable : BOOL;
+    VelFactor : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Enabled : BOOL;
+    Busy : BOOL;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    enPrev : BOOL;
+    hasBase : BOOL;
+    baseVel : DINT;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    IF Enable AND NOT enPrev THEN
+        ax.OP := 4; ax.INDEX := 16#60FF; ax();
+        baseVel := ax.VALUE;
+        hasBase := TRUE;
+    END_IF;
+    enPrev := Enable;
+    IF Enable AND hasBase THEN
+        ax.OP := 5; ax.INDEX := 16#60FF;
+        ax.VALUE := baseVel * VelFactor / 100; ax();
+        Enabled := (ax.STATUS = 0);
+    ELSIF (NOT Enable) AND hasBase THEN
+        ax.OP := 5; ax.INDEX := 16#60FF; ax.VALUE := baseVel; ax();
+        hasBase := FALSE;
+        Enabled := FALSE;
+    ELSE
+        Enabled := FALSE;
+    END_IF;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- MC_ReadParameter: read a DS402 object as an axis parameter ----
+// ParameterNumber is the DS402 object index. Valid reports a
+// successful read into Value.
+FUNCTION_BLOCK MC_ReadParameter
+VAR_INPUT
+    Enable : BOOL;
+    ParameterNumber : UDINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Valid : BOOL;
+    Value : DINT;
+    Busy : BOOL;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+END_VAR
+    ax.OP := 3; ax();
+    ax.AXIS := Axis;
+    ax.OP := 4;
+    ax.INDEX := ParameterNumber;
+    ax();
+    IF Enable AND ax.STATUS = 0 THEN
+        Valid := TRUE;
+        Value := ax.VALUE;
+    ELSE
+        Valid := FALSE;
+        Value := 0;
+    END_IF;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- MC_WriteParameter: write a DS402 object as an axis parameter ----
+// Execute edge writes Value to the object named by ParameterNumber.
+FUNCTION_BLOCK MC_WriteParameter
+VAR_INPUT
+    Execute : BOOL;
+    ParameterNumber : UDINT;
+    Value : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+END_VAR
+    ax.OP := 3; ax();
+    ax.AXIS := Axis;
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; Error := FALSE; ErrorID := 0;
+    IF exEdge THEN
+        ax.OP := 5;
+        ax.INDEX := ParameterNumber;
+        ax.VALUE := Value;
+        ax();
+        IF ax.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE; ErrorID := ax.ERRID;
+        END_IF;
+    END_IF;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- MC_ReadBoolParameter: read a DS402 object as a BOOL ----
+// Value is TRUE when the object at ParameterNumber is nonzero.
+FUNCTION_BLOCK MC_ReadBoolParameter
+VAR_INPUT
+    Enable : BOOL;
+    ParameterNumber : UDINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Valid : BOOL;
+    Value : BOOL;
+    Busy : BOOL;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+END_VAR
+    ax.OP := 3; ax();
+    ax.AXIS := Axis;
+    ax.OP := 4;
+    ax.INDEX := ParameterNumber;
+    ax();
+    IF Enable AND ax.STATUS = 0 THEN
+        Valid := TRUE;
+        Value := (ax.VALUE <> 0);
+    ELSE
+        Valid := FALSE;
+        Value := FALSE;
+    END_IF;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- MC_WriteBoolParameter: write a DS402 object from a BOOL ----
+// Execute edge writes 1/0 to the object named by ParameterNumber.
+FUNCTION_BLOCK MC_WriteBoolParameter
+VAR_INPUT
+    Execute : BOOL;
+    ParameterNumber : UDINT;
+    Value : BOOL;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    raw : DINT;
+END_VAR
+    ax.OP := 3; ax();
+    ax.AXIS := Axis;
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; Error := FALSE; ErrorID := 0;
+    IF exEdge THEN
+        IF Value THEN raw := 1; ELSE raw := 0; END_IF;
+        ax.OP := 5;
+        ax.INDEX := ParameterNumber;
+        ax.VALUE := raw;
+        ax();
+        IF ax.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE; ErrorID := ax.ERRID;
+        END_IF;
+    END_IF;
+    Busy := FALSE;
 END_FUNCTION_BLOCK
