@@ -252,11 +252,29 @@ live attach over tether_io, and the safety/security envelope.
   500-step sim driving create, a PP-position move to
   target-reached, velocity mode, bad-object/bad-mode/bad-handle
   error paths, and destroy; twelve packed checks (`0xfff`).
-  This tranche is the axis backend and builtin only; the
-  PLCopen MC2 wrappers (`compat/tc2/tc2_mc2.st`) and the
-  PLCopen state machine land next, and a production backend
-  can map the same object dictionary onto Tether's
-  DS402/EtherCAT drives (DECISIONS D-IMPL-52).
+  This tranche is the axis backend and builtin only; a
+  production backend can map the same object dictionary onto
+  Tether's DS402/EtherCAT drives (DECISIONS D-IMPL-52).
+- **Sixteenth tranche (C5 MC2 axis-management wrappers)**: adds
+  `compat/tc2/tc2_mc2.st`, the first PLCopen MC2 function blocks
+  over `FB_MotionAxis`: `MC_Power` (level-driven controlword
+  enable, `Status` from OperationEnabled), `MC_Reset`
+  (edge-triggered fault-reset pulse that releases the next scan
+  and leaves the controlword to `MC_Power` otherwise),
+  `MC_SetPosition` (edge-triggered absolute/relative
+  PositionActualValue write), `MC_ReadActualPosition` /
+  `MC_ReadActualVelocity` / `MC_ReadAxisError` (cyclic object
+  reads), and `MC_ReadStatus` (DS402 state to PLCopen
+  operating-state map). `AXIS_REF` is a UDINT axis handle and
+  positions are int32 user units, both documented
+  simplifications. `MC_SetPosition` writes only on its execute
+  edge so it neither fights `MC_Power` nor re-applies a stale
+  `Position` input. The `tc2_mc2` ctest builds the library,
+  consumes it via `--lib`, and replays a 300-step sim; ten
+  packed checks (`0x3ff`). The motion-command blocks
+  (`MC_Move*`/`MC_Stop`/`MC_Halt`/`MC_Home`/`MC_Jog`), the full
+  PLCopen state machine, and gearing/phasing/superposition land
+  in later tranches.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

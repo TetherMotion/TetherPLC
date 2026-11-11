@@ -52,6 +52,14 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       ReadInputs/ReadRegs/ReadInputRegs/
                       WriteSingleCoil/WriteSingleReg/WriteCoils/
                       WriteRegs/ReadWriteRegs + FB_MBRtuDiagnose
+  tc2_mc2.st         Tc2_MC2 PLCopen axis-management wrappers over
+                      the builtin FB_MotionAxis (tplc-motion
+                      service): MC_Power, MC_Reset, MC_SetPosition
+                      (abs+rel), MC_ReadActualPosition/Velocity,
+                      MC_ReadAxisError, MC_ReadStatus. AXIS_REF is a
+                      UDINT axis handle; positions are int32 user
+                      units. Motion-command FBs (MC_Move*/MC_Stop/
+                      MC_Home/MC_Jog) land in a later tranche.
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -262,6 +270,14 @@ tests/compat/
   tc2_motion.sh        ctest tc2_motion: consumer + 500-step sim
                       replay expecting mask 0xfff, in-process
                       tplc-motion service (no external peer)
+  tc2_mc2_case.st      PLCopen axis-management program (10 packed
+                      checks: axis create, MC_Power enable, MC_Set-
+                      Position abs+rel readback, MC_Read* validity,
+                      MC_Reset, MC_Power disable, disabled state)
+  tc2_mc2.sh           ctest tc2_mc2: builds compat/tc2/tc2_mc2.st
+                      as a library, consumes via --lib, 300-step sim
+                      replay expecting mask 0x3ff, in-process
+                      tplc-motion service (no external peer)
 ```
 
 ## Building and consuming
@@ -288,7 +304,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
-| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin, in-process e2e); MC2 wrappers pending (`compat/tc2/tc2_mc2.st`: MC_Power/MC_Reset/MC_Read*/MC_SetPosition then MC_Move*/MC_Stop/MC_Home/MC_Jog) |
+| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin, in-process e2e); `compat/tc2/tc2_mc2.st` axis-management wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_ReadActualPosition/Velocity/MC_ReadAxisError/MC_ReadStatus, in-process e2e); MC command FBs pending (MC_Move*/MC_Stop/MC_Halt/MC_Home/MC_Jog) then gearing/phasing/superposition |
 
 ### C1 coverage notes
 
@@ -1044,17 +1060,39 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   within the follow window, velocity mode settle, bad-object /
   bad-mode / bad-handle error paths, destroy, and destroyed-
   handle rejection.
-- **Honest gaps**: this tranche is the axis backend and the
-  `FB_MotionAxis` builtin only; the PLCopen MC2 wrappers
-  (`compat/tc2/tc2_mc2.st`: `MC_Power`, `MC_Reset`, `MC_Read*`,
-  `MC_SetPosition`, then `MC_MoveAbsolute`/`MC_MoveVelocity`/
-  `MC_Stop`/`MC_Halt`/`MC_Home`/`MC_Jog`) and the PLCopen state
-  machine land next. The model is a deterministic simulation,
+- **MC2 axis-management wrappers**: `compat/tc2/tc2_mc2.st`
+  provides `MC_Power` (level-driven controlword 0x6040: 0x000F
+  enable / 0x0000 disable, `Status` from OperationEnabled state
+  0x27), `MC_Reset` (edge-triggered 0x008F fault-reset pulse that
+  releases to 0x000F the next scan and leaves the controlword to
+  `MC_Power` otherwise), `MC_SetPosition` (edge-triggered
+  PositionActualValue 0x6064 write, absolute or relative via
+  `Mode`), `MC_ReadActualPosition`/`MC_ReadActualVelocity`/
+  `MC_ReadAxisError` (cyclic object reads with `Valid`), and
+  `MC_ReadStatus` (DS402 state to PLCopen operating-state map).
+  `AXIS_REF` is a UDINT axis handle and positions are int32 user
+  units, both documented simplifications. `MC_SetPosition` and
+  `MC_Reset` write only on their execute edge / reset window so
+  they do not fight `MC_Power` or re-apply a stale `Position`
+  input.
+- **Verified**: `tc2_mc2` ctest builds `tc2_mc2.st` as a library,
+  consumes it via `--lib` into `tests/compat/tc2_mc2_case.st`,
+  and replays 300 free-running sim steps. Ten packed checks
+  (`0x3ff`): axis create, `MC_Power` enable, `MC_SetPosition`
+  absolute and relative readback, `MC_Read*` validity,
+  `MC_Reset`, `MC_Power` disable, and disabled operating state.
+- **Honest gaps**: the MC2 command blocks
+  (`MC_MoveAbsolute`/`MC_MoveVelocity`/`MC_Stop`/`MC_Halt`/
+  `MC_Home`/`MC_Jog`), the full PLCopen state machine, and
+  gearing/phasing/superposition/touch-probe/parameter FBs land in
+  later tranches. `AXIS_REF` is a UDINT handle rather than the
+  TwinCAT structure, and positions/velocities are int32 user units
+  rather than LREAL engineering units (no `LREAL_TO_DINT`
+  conversion exists yet). The model is a deterministic simulation,
   not hardware: no EtherCAT/CiA-402-over-ADS transport, no real
-  following-error dynamics, no gearing/phasing/superposition/
-  touch-probe, and torque-mode gain is a fixed sim constant. A
-  production backend can map the same object dictionary onto
-  Tether's DS402/EtherCAT drives (see DECISIONS D-IMPL-52).
+  following-error dynamics, and torque-mode gain is a fixed sim
+  constant. A production backend can map the same object dictionary
+  onto Tether's DS402/EtherCAT drives (see DECISIONS D-IMPL-52).
 
 ## Known limitations
 

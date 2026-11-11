@@ -650,6 +650,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_motion PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_MC2 axis-management wrappers e2e (plan 21 C5): MC_Power /
+  # MC_Reset / MC_SetPosition (abs+rel) / MC_Read* over the
+  # simulated CiA402 axis; in-process, no peer
+  add_test(NAME tc2_mc2
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2.sh)
+  set_tests_properties(tc2_mc2 PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

@@ -1371,12 +1371,20 @@ service calls are immediate, so unlike the socket/serial
 builtins it needs no EXEC/BUSY/DONE edge machinery; the compat
 layer gates create/destroy timing.
 
-This tranche implements the axis backend and the DS402-shaped
-object surface only. The PLCopen MC2 wrappers
-(`MC_Power`…`MC_TorqueControl`) land in `compat/tc2/tc2_mc2.st`
-on top and implement the PLCopen state machine (Disabled /
-Standstill / DiscreteMotion / ContinuousMotion / Homing /
-ErrorStop) in pure ST. Real-axis binding is a documented
+The first MC2 tranche lands the axis-management wrappers in
+`compat/tc2/tc2_mc2.st` (`MC_Power`, `MC_Reset`, `MC_SetPosition`,
+`MC_ReadActualPosition`, `MC_ReadActualVelocity`, `MC_ReadAxisError`,
+`MC_ReadStatus`), which drive the axis through `FB_MotionAxis`
+object reads/writes. `AXIS_REF` is represented as the UDINT axis
+handle and positions/velocities as int32 user units, both
+documented simplifications pending an `LREAL` engineering-unit
+conversion. `MC_SetPosition` and `MC_Reset` write only on their
+execute edge / reset window so they neither fight `MC_Power` over
+the controlword nor re-apply a stale `Position` input each scan.
+The motion-command blocks (`MC_Move*`…`MC_TorqueControl`), the
+full PLCopen state machine, and gearing/phasing/superposition
+land in later tranches, still in pure ST on top of the same
+object surface. Real-axis binding is a documented
 adapter path: a production `tplc-motion` backend can map the
 same object dictionary onto Tether's DS402/EtherCAT drives or a
 CiA-402-over-ADS link; the simulated backend is the deterministic
