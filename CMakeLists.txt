@@ -47,6 +47,7 @@ add_library(tplc_host STATIC
   runtime/host/src/FtpService.cpp
   runtime/host/src/SmtpService.cpp
   runtime/host/src/Iec870Service.cpp
+  runtime/host/src/MotionService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -639,6 +640,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_iec870
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_iec870.sh)
   set_tests_properties(tc3_iec870 PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # tplc-motion / FB_MotionAxis e2e (plan 21 C5): simulated
+  # CiA402 axis create, PP-position move, velocity mode, error
+  # paths and destroy through tether-plc-sim; in-process, no peer
+  add_test(NAME tc2_motion
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_motion.sh)
+  set_tests_properties(tc2_motion PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy

@@ -254,6 +254,14 @@ tests/compat/
                       handshake, I/S APCI sequencing, C_IC_NA_1 ->
                       M_SP_NA_1+M_ME_NA_1, C_CS_NA_1 echo,
                       C_SC_NA_1 act-con
+  tc2_motion_case.st   deterministic CiA402 axis program (12
+                      packed checks: create, mode/target/controlword
+                      writes, operation-enabled, PP move target-
+                      reached, velocity mode, bad-object/bad-mode/
+                      bad-handle errors, destroy, destroyed-handle)
+  tc2_motion.sh        ctest tc2_motion: consumer + 500-step sim
+                      replay expecting mask 0xfff, in-process
+                      tplc-motion service (no external peer)
 ```
 
 ## Building and consuming
@@ -280,6 +288,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
+| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin, in-process e2e); MC2 wrappers pending (`compat/tc2/tc2_mc2.st`: MC_Power/MC_Reset/MC_Read*/MC_SetPosition then MC_Move*/MC_Stop/MC_Home/MC_Jog) |
 
 ### C1 coverage notes
 
@@ -982,6 +991,70 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   only, no DNS; k-window and sequence-number edge cases are
   handled at the protocol layer but not exhaustively fuzzed
   against every ASDU type.
+
+### C5 coverage notes (tplc-motion / FB_MotionAxis)
+
+- **Backend**: `include/tplc/tplc_motion.h` defines
+  `TplcMotionService` (ABI v1, service name `"tplc-motion"`): a
+  bounded pool of simulated CiA402/DS402-shaped axes. Each axis
+  exposes the DS402 object subset the MC layer needs
+  (Controlword 0x6040, Statusword 0x6041, ModesOfOperation
+  0x6060/Display 0x6061, TargetPosition 0x607A, TargetVelocity
+  0x60FF, TargetTorque 0x6071, PositionActualValue 0x6064,
+  VelocityActualValue 0x606C, TorqueActualValue 0x6077,
+  FollowingErrorWindow 0x6065, plus error code 0x603F and a sim
+  home-offset 0x607C) through `motion_axis_create` /
+  `motion_axis_destroy` / `motion_axis_poll` /
+  `motion_axis_info` / `motion_obj_read` / `motion_obj_write`.
+- **State machine**: `runtime/host/src/MotionService.cpp` runs
+  the CiA402 controlword-command model: the low nibble
+  (EnableVoltage/QuickStop/SwitchOn/EnableOperation) selects the
+  target state and bit 7 FaultReset clears a latched fault,
+  producing the standard statusword patterns (SwitchOnDisabled
+  0x40, ReadyToSwitchOn 0x21, SwitchedOn 0x23, OperationEnabled
+  0x27, QuickStopActive 0x07, Fault 0x08). Operating modes
+  mirror CiA402Defs: ProfilePosition=1, Velocity=2,
+  ProfileVelocity=3, ProfileTorque=4, Homing=6,
+  CyclicSyncPosition=8, CyclicSyncVelocity=9,
+  CyclicSyncTorque=10.
+- **Dynamics**: `motion_axis_poll` (and every obj read/write)
+  advances all axes by the elapsed `HostServices::steadyNs`
+  delta, so `--sim` steps replay deterministically. Profile
+  modes integrate position/velocity/torque toward the target
+  under configurable velocity/acceleration limits;
+  ProfilePosition honors the NewSetPoint edge and reports
+  TargetReached (statusword bit 10) inside the follow window;
+  cyclic-sync modes apply the target directly each cycle.
+- **Builtin**: `FB_MotionAxis` is a synchronous op-dispatch
+  bridge (`compiler/tplc-mir/src/layout.rs` +
+  `compiler/tplc-rt/src/lib.rs`): set `OP` plus the config /
+  `AXIS` / `INDEX` / `VALUE` fields and call; `STATUS` carries
+  the service return code (for `OP=6` info it carries the
+  CiA402 state). `OP` 1=create (returns `AXIS`), 2=destroy,
+  3=poll, 4=read object (`INDEX`->`VALUE`), 5=write object,
+  6=info (full snapshot into `MODE`/`FAULT`/`TARGET_REACHED`/
+  `BUSY`/`POS_ACTUAL`/`VEL_ACTUAL`). All calls are immediate;
+  the compat layer gates create/destroy timing, so no EXEC edge
+  is needed.
+- **Verified**: `tc2_motion` ctest builds
+  `tests/compat/tc2_motion_case.st` and replays 500 free-running
+  sim steps against the in-process `tplc-motion` service. Twelve
+  packed checks (`0xfff`): axis create, mode/target/controlword
+  writes, OperationEnabled reached, PP move target-reached
+  within the follow window, velocity mode settle, bad-object /
+  bad-mode / bad-handle error paths, destroy, and destroyed-
+  handle rejection.
+- **Honest gaps**: this tranche is the axis backend and the
+  `FB_MotionAxis` builtin only; the PLCopen MC2 wrappers
+  (`compat/tc2/tc2_mc2.st`: `MC_Power`, `MC_Reset`, `MC_Read*`,
+  `MC_SetPosition`, then `MC_MoveAbsolute`/`MC_MoveVelocity`/
+  `MC_Stop`/`MC_Halt`/`MC_Home`/`MC_Jog`) and the PLCopen state
+  machine land next. The model is a deterministic simulation,
+  not hardware: no EtherCAT/CiA-402-over-ADS transport, no real
+  following-error dynamics, no gearing/phasing/superposition/
+  touch-probe, and torque-mode gain is a fixed sim constant. A
+  production backend can map the same object dictionary onto
+  Tether's DS402/EtherCAT drives (see DECISIONS D-IMPL-52).
 
 ## Known limitations
 

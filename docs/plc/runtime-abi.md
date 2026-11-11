@@ -53,8 +53,10 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     `S7Service`), `tplc-ftp`
     (`include/tplc/tplc_ftp.h`, host impl `FtpService`),
     `tplc-smtp` (`include/tplc/tplc_smtp.h`, host impl
-    `SmtpService`), and `tplc-iec870`
-    (`include/tplc/tplc_iec870.h`, host impl `Iec870Service`)
+    `SmtpService`), `tplc-iec870`
+    (`include/tplc/tplc_iec870.h`, host impl `Iec870Service`),
+    and `tplc-motion`
+    (`include/tplc/tplc_motion.h`, host impl `MotionService`)
     are
     live, backed by nonblocking POSIX sockets,
     termios, an AMS/TCP ADS client, a timestamped mark ring, a
@@ -63,20 +65,24 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     client, a JBMIA PJLink (TCP 4352, MD5 auth) projector
     client, a Siemens S7comm (RFC1006, TCP 102) client, an
     RFC 959 FTP client (TCP 21, PASV data connections), an
-    RFC 5321 SMTP client (TCP 25, AUTH LOGIN), and an
+    RFC 5321 SMTP client (TCP 25, AUTH LOGIN), an
     IEC 60870-5-104 telecontrol client (TCP 2404, I/S/U APCI,
-    ASDU raw-payload passthrough)
+    ASDU raw-payload passthrough), and a deterministic
+    simulated CiA402/DS402-shaped axis pool (controlword/
+    statusword state machine, operating modes, trapezoidal
+    dynamics)
     respectively, and driven scan-side by the builtins
     `FB_Socket`/`FB_Serial`/`FB_Ads`/`FB_RtMon`/`FB_Modbus`/
     `FB_ModbusRtu`/`FB_SacnSource`/`FB_SacnReceiver`/`FB_Bacnet`/
     `FB_Pjlink`/`FB_S7Conn`/`FB_S7Io`/`FB_FtpConn`/`FB_FtpCmd`/
     `FB_FtpXfer`/`FB_SmtpSend`/`FB_Iec870Conn`/`FB_Iec870Tx`/
-    `FB_Iec870Rx`.
+    `FB_Iec870Rx`/`FB_MotionAxis`.
     `RtmonService`, `ModbusService`, `BacnetService`,
     `PjlinkService`, `S7Service`, `FtpService`, `SmtpService`,
-    and `Iec870Service` take their
+    `Iec870Service`, and `MotionService` take their
     clocks from `HostServices::steadyNs`, so `--sim` steps produce
-    deterministic sim-time timestamps and timeouts.
+    deterministic sim-time timestamps, timeouts, and axis
+    dynamics.
   - `Scheduler` — single-thread CYCLIC/FREEWHEELING dispatch, priority
     order within a tick, phase-stable `next_due` accumulation, per-task
     runs/late/faults stats.

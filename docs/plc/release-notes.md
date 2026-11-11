@@ -227,6 +227,36 @@ live attach over tether_io, and the safety/security envelope.
   5-101 serial, 5-102 HDLC, and 5-103 relay-protection
   transports are documented gaps; this tranche is the 104 wire
   protocol plus pure helpers only.
+- **Fifteenth tranche (C5 motion backend)**: adds the
+  `tplc-motion` service (`include/tplc/tplc_motion.h`, host
+  impl `runtime/host/src/MotionService.cpp`), a bounded pool of
+  deterministic simulated CiA402/DS402-shaped axes for the
+  PLCopen MC2 function blocks. Each axis exposes the DS402
+  object subset the MC layer needs (Controlword 0x6040,
+  Statusword 0x6041, ModesOfOperation 0x6060/Display 0x6061,
+  TargetPosition 0x607A, TargetVelocity 0x60FF, TargetTorque
+  0x6071, Position/Velocity/TorqueActualValue, FollowingError
+  Window, error code) through `motion_axis_create` /
+  `motion_axis_destroy` / `motion_axis_poll` /
+  `motion_axis_info` / `motion_obj_read` / `motion_obj_write`.
+  The axis runs the CiA402 controlword-command state machine
+  (EnableVoltage/QuickStop/SwitchOn/EnableOperation nibble +
+  FaultReset) producing the standard statusword patterns, and
+  integrates profile-position/velocity/torque and cyclic-sync
+  modes toward their targets under configurable limits on the
+  injected `HostServices::steadyNs` clock, so `--sim` steps
+  replay exactly. Builtin `FB_MotionAxis` is a synchronous
+  op-dispatch bridge (OP 1=create, 2=destroy, 3=poll, 4=read,
+  5=write, 6=info) with no EXEC edge; the compat layer gates
+  create/destroy timing. The `tc2_motion` ctest replays a
+  500-step sim driving create, a PP-position move to
+  target-reached, velocity mode, bad-object/bad-mode/bad-handle
+  error paths, and destroy; twelve packed checks (`0xfff`).
+  This tranche is the axis backend and builtin only; the
+  PLCopen MC2 wrappers (`compat/tc2/tc2_mc2.st`) and the
+  PLCopen state machine land next, and a production backend
+  can map the same object dictionary onto Tether's
+  DS402/EtherCAT drives (DECISIONS D-IMPL-52).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

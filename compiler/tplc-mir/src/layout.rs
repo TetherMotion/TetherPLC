@@ -1029,6 +1029,48 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             );
             push(&mut off, "DONE", Type::Bool);
         }
+        /* FB_MotionAxis — tplc-motion service bridge (simulated
+        CiA402/DS402-shaped axis). Synchronous op dispatch: set
+        OP + fields and call; STATUS reports the service return
+        code (for OP=6 info it carries the DS402 state). OP
+        1=create (uses the CFG fields, returns AXIS handle),
+        2=destroy, 3=poll (advance all axes), 4=read object
+        (INDEX -> VALUE), 5=write object (INDEX+VALUE), 6=info
+        (full axis snapshot into MODE/FAULT/TARGET_REACHED/
+        BUSY/POS_ACTUAL/VEL_ACTUAL/TORQUE_ACTUAL). All service
+        calls are immediate; the compat layer gates create/
+        destroy invocation, so no EXEC edge is needed. */
+        "FB_MotionAxis" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "AXIS", udint());
+            push(&mut off, "UNITS_PER_REV", dint());
+            push(&mut off, "MAX_VEL", dint());
+            push(&mut off, "MAX_ACCEL", dint());
+            push(&mut off, "MAX_DECEL", dint());
+            push(&mut off, "POS_MIN", dint());
+            push(&mut off, "POS_MAX", dint());
+            push(&mut off, "HOME_OFFSET", dint());
+            push(&mut off, "FOLLOW_WINDOW", dint());
+            push(&mut off, "FLAGS", udint());
+            push(&mut off, "INDEX", udint());
+            push(&mut off, "VALUE", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "MODE", dint());
+            push(&mut off, "FAULT", dint());
+            push(&mut off, "TARGET_REACHED", dint());
+            push(&mut off, "BUSY", dint());
+            push(&mut off, "POS_ACTUAL", dint());
+            push(&mut off, "VEL_ACTUAL", dint());
+        }
         _ => return None,
     }
     let align = 8u64;

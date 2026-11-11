@@ -1322,3 +1322,62 @@ mode; no AO database, AMS NetID routing,
 PVOID/pointer-to-array/interface/HRESULT object model,
 redundancy groups, file transfer, or TLS; dotted-quad IPv4
 only, no DNS.
+
+## D-IMPL-52 — tplc-motion service: self-contained simulated DS402-shaped axis (plan 21 C5)
+
+Plan 21 C5 (Motion core) needs an axis/motion backend for the
+PLCopen MC2 function blocks. The plan flagged "whether
+`tplc-motion` should live in this repo or in the sibling
+Tether motion framework" as an open question; the owner chose
+the hybrid: keep TetherPLC self-contained but shape the axis
+model on Tether's CiA402/DS402 semantics so a later adapter
+maps 1:1 onto `tether/motion` (`Cia402MotionController`,
+`DS402MachineAdapter`) without rework.
+
+`include/tplc/tplc_motion.h` defines `TplcMotionService` (ABI
+v1, service name `"tplc-motion"`): each axis is a simulated
+CiA402 drive exposing the DS402 object subset the MC layer
+needs — Controlword (0x6040), Statusword (0x6041),
+ModesOfOperation (0x6060)/Display (0x6061), TargetPosition
+(0x607A), TargetVelocity (0x60FF), TargetTorque (0x6071),
+PositionActualValue (0x6064), VelocityActualValue (0x606C),
+TorqueActualValue (0x6077), plus FollowingErrorWindow (0x6065).
+The host impl `MotionService`
+(`runtime/host/src/MotionService.cpp`) owns a bounded axis pool
+and advances deterministic dynamics on the injected host clock
+(`HostServices::steadyNs`), so `--sim` steps replay exactly.
+
+The axis runs the CiA402 controlword-command model: the low
+nibble (EnableVoltage/QuickStop/SwitchOn/EnableOperation) selects
+the target state and bit 7 FaultReset clears a latched fault,
+producing the statusword bit pattern (NotReadyToSwitchOn 0x00,
+SwitchOnDisabled 0x40, ReadyToSwitchOn 0x21, SwitchedOn 0x23,
+OperationEnabled 0x27, QuickStopActive 0x07,
+FaultReactionActive 0x0F, Fault 0x08). Operating modes mirror
+CiA402Defs: ProfilePosition=1, Velocity=2, ProfileVelocity=3,
+ProfileTorque=4, Homing=6, CyclicSyncPosition=8,
+CyclicSyncVelocity=9, CyclicSyncTorque=10. Mode handlers
+integrate actual position/velocity/torque toward the target on
+each poll with configurable velocity/acceleration limits;
+profile-position honors NewSetPoint and reports TargetReached
+(statusword bit 10).
+
+The ST-facing bridge is the synchronous op-dispatch builtin
+`FB_MotionAxis` (`compiler/tplc-mir/src/layout.rs` +
+`compiler/tplc-rt/src/lib.rs`): `OP` selects create / destroy /
+poll / read / write / info and `STATUS` carries the service
+return code (for `OP=6` info it carries the CiA402 state). All
+service calls are immediate, so unlike the socket/serial
+builtins it needs no EXEC/BUSY/DONE edge machinery; the compat
+layer gates create/destroy timing.
+
+This tranche implements the axis backend and the DS402-shaped
+object surface only. The PLCopen MC2 wrappers
+(`MC_Power`…`MC_TorqueControl`) land in `compat/tc2/tc2_mc2.st`
+on top and implement the PLCopen state machine (Disabled /
+Standstill / DiscreteMotion / ContinuousMotion / Homing /
+ErrorStop) in pure ST. Real-axis binding is a documented
+adapter path: a production `tplc-motion` backend can map the
+same object dictionary onto Tether's DS402/EtherCAT drives or a
+CiA-402-over-ADS link; the simulated backend is the deterministic
+test oracle.
