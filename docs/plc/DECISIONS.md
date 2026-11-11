@@ -1447,3 +1447,32 @@ drive, which uses its server-side configured dynamics; wire
 so the client pre-validates mode-of-operation and clamps the
 follow window to match the local backend. The in-process
 `MotionService` remains as the offline fallback.
+
+## D-IMPL-54 — MC command FBs share the DS402 controlword via edge writes
+
+The PLCopen command blocks (`MC_MoveAbsolute`/`MC_MoveRelative`,
+`MC_MoveVelocity`, `MC_Stop`, `MC_Halt`, `MC_Home`, `MC_Jog`) all
+drive one shared DS402 controlword, so the arbitration rule is
+"last writer wins per scan". To keep independent FBs from
+corrupting each other's command bits, every writer is
+edge-triggered: `MC_Power` writes EnableOperation (0x000F) /
+DisableVoltage (0) only on an `Enable` transition, and each command
+FB writes the controlword only on its `Execute` rising edge plus —
+for ProfilePosition/Homing — one follow-up scan that clears the
+NewSetPoint bit (0x001F then 0x000F). The drive holds the controlword
+as a level, so a held enable persists without per-scan rewrites.
+
+Mode/target selection per command: PP mode (0x6060=1) +
+TargetPosition (0x607A) for point-to-point moves, PV mode (0x6060=3)
++ TargetVelocity (0x60FF) for velocity/halt/jog, Homing (0x6060=6) +
+HomeOffset (0x607C) for `MC_Home`, and a cleared QuickStop bit
+(0x000B) for `MC_Stop` so the drive decelerates into
+QuickStopActive and stays locked until a new command re-asserts the
+enable pattern. Because each command edge re-asserts the enable
+pattern, a velocity move resumes cleanly after a quick-stop. A
+consequence: a command FB implicitly enables the axis (it writes
+the full enable pattern), which is a documented simplification over
+strict PLCopen power-state checking. `Done`/`InVelocity`/`Busy`
+come from `FB_MotionAxis` OP=6 info (TargetReached /
+VelocityActualValue); `CommandAborted` is currently always FALSE —
+mid-move abort detection is a documented gap.

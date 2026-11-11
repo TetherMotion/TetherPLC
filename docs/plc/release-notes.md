@@ -300,6 +300,28 @@ live attach over tether_io, and the safety/security envelope.
   config is validated but not propagated to the remote drive, and
   wire write errors cannot propagate so the client pre-validates
   mode-of-operation (DECISIONS D-IMPL-53).
+- **Eighteenth tranche (C5 MC2 command FBs)**: adds the PLCopen
+  motion-command blocks to `compat/tc2/tc2_mc2.st` —
+  `MC_MoveAbsolute`/`MC_MoveRelative` (ProfilePosition +
+  NewSetPoint), `MC_MoveVelocity`/`MC_Halt`/`MC_Jog` (ProfileVelocity),
+  `MC_Stop` (QuickStop controlword), and `MC_Home` (Homing mode).
+  `MC_Power` is now edge-triggered so the command FBs can layer
+  controlword command bits without being overwritten every scan;
+  each command writes the controlword only on its `Execute` edge
+  (plus the single NSP release scan) so a later `MC_Stop`/`MC_Power`
+  transition can override a running command and `MC_Power` disable
+  is not fought. The FBs expose the standard PLCopen outputs
+  (`Done`/`Busy`/`InVelocity`/`CommandAborted`/`Error`/`ErrorID`) and
+  drive both the in-process `MotionService` and the Tether-IO
+  `MotionIoService` unchanged. Positions/velocities stay int32 user
+  units (TwinCAT LREAL is a documented gap) and per-command
+  dynamics inputs are signature-compatible only — the axis applies
+  its configured limits. New `tc2_mc2_motion` (in-process) and
+  `tc2_mc2_motion_io` (Tether IO) ctests replay
+  `tc2_mc2_motion_case.st` (mask `0x1fff`): power, abs+rel move with
+  position readback, velocity InVelocity, quick-stop lock, halt,
+  homing, jog, and power-off — identical results on both backends.
+  Gearing/phasing/superposition remain for a later tranche.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

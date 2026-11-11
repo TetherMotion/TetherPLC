@@ -10,9 +10,13 @@
 // are the backend's native int32 user units (TwinCAT uses LREAL
 // engineering units; the LREAL<->int conversion is a documented
 // gap). This file implements the axis-management blocks
-// (MC_Power/MC_Reset/MC_SetPosition/MC_Read*); the motion-command
-// blocks (MC_Move*/MC_Stop/MC_Halt/MC_Home/MC_Jog) and the full
-// PLCopen state machine land in the next tranche.
+// (MC_Power/MC_Reset/MC_SetPosition/MC_Read*) and the point-to-
+// point / velocity / stop / halt / homing / jog command blocks.
+// The motion-command FBs drive the DS402 controlword command
+// pattern (NewSetPoint for PP/HM, QuickStop for MC_Stop) and the
+// mode/target objects; per-command Velocity/Acceleration/
+// Deceleration inputs are accepted for signature compatibility but
+// the simulated axis applies its configured dynamics limits.
 // SPDX-License-Identifier: Apache-2.0 OR MPL-2.0
 
 // DS402 object indices used by the wrappers.
@@ -20,8 +24,14 @@
 
 // ---- MC_Power: software enable of the axis ----
 // Enable=TRUE drives the controlword to EnableOperation (0x000F);
-// Enable=FALSE drives DisableVoltage (0x0000). Status is TRUE once
-// the axis reports CiA402 OperationEnabled (state 0x27 = 39).
+// Enable=FALSE drives DisableVoltage (0x0000). The controlword is
+// written only on an Enable transition (edge-triggered) so the
+// motion-command FBs can layer NewSetPoint/QuickStop command bits
+// on top without being overwritten every scan; the drive holds the
+// commanded state. Status is TRUE once the axis reports CiA402
+// OperationEnabled (state 0x27 = 39). Enable_Positive/
+// Enable_Negative are accepted for signature compatibility; the
+// simulated axis is bidirectional so only Enable gates power.
 FUNCTION_BLOCK MC_Power
 VAR_INPUT
     Enable : BOOL;
@@ -37,19 +47,24 @@ VAR_OUTPUT
 END_VAR
 VAR
     ax : FB_MotionAxis;
+    enPrev : BOOL;
 END_VAR
     // advance dynamics once per scan
     ax.OP := 3; ax();
-    // drive the controlword from the Enable level
     ax.AXIS := Axis;
-    ax.OP := 5;
-    ax.INDEX := 16#6040;
-    IF Enable THEN
-        ax.VALUE := 16#000F;
-    ELSE
-        ax.VALUE := 0;
+    // edge-trigger the enable command so command FBs own the
+    // controlword's command bits between transitions
+    IF Enable <> enPrev THEN
+        ax.OP := 5;
+        ax.INDEX := 16#6040;
+        IF Enable THEN
+            ax.VALUE := 16#000F;
+        ELSE
+            ax.VALUE := 0;
+        END_IF;
+        ax();
+        enPrev := Enable;
     END_IF;
-    ax();
     // snapshot for Status (CiA402 state in STATUS for OP=6)
     ax.OP := 6;
     ax();
@@ -300,4 +315,381 @@ END_VAR
         OperatingState := -1;
     END_IF;
     Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ================================================================== //
+// Motion-command FBs. Each drives the DS402 controlword command
+// pattern on its Execute edge: PP/HM modes pulse NewSetPoint
+// (0x0010) with the enable pattern for one scan then release to
+// 0x000F; velocity modes write mode+target velocity under the
+// enable pattern; MC_Stop commands QuickStop (controlword QS bit
+// cleared); MC_Halt ramps profile-velocity to zero. The controlword
+// is written only on the command edge (plus the single NSP release
+// scan), so MC_Power's edge-triggered enable is not fought and a
+// later MC_Stop/MC_Power transition can override a running command.
+// ================================================================== //
+
+// ---- MC_MoveAbsolute: absolute point-to-point move (PP mode) ----
+// Execute edge: mode=ProfilePosition, TargetPosition=Position,
+// controlword=EnableOperation|NewSetPoint (0x001F). Done when the
+// axis reports TargetReached (statusword bit 0x0400). Velocity/
+// Acceleration/Deceleration are signature-compatible; the axis
+// applies its configured dynamics.
+FUNCTION_BLOCK MC_MoveAbsolute
+VAR_INPUT
+    Execute : BOOL;
+    Position : DINT;
+    Velocity : DINT;
+    Acceleration : DINT;
+    Deceleration : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    active : BOOL;
+    rel : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF NOT active AND exEdge THEN
+        ax.OP := 5; ax.INDEX := 16#6060; ax.VALUE := 1; ax();
+        ax.OP := 5; ax.INDEX := 16#607A; ax.VALUE := Position; ax();
+        ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#001F; ax();
+        IF ax.STATUS = 0 THEN
+            active := TRUE; rel := TRUE;
+        ELSE
+            Error := TRUE; ErrorID := ax.ERRID;
+        END_IF;
+    ELSIF active THEN
+        IF rel THEN
+            ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000F; ax();
+            rel := FALSE;
+        END_IF;
+        ax.OP := 6; ax();
+        IF ax.STATUS < 0 THEN
+            Error := TRUE; ErrorID := ax.ERRID; active := FALSE;
+        ELSIF ax.TARGET_REACHED = 1 THEN
+            Done := TRUE; active := FALSE;
+        END_IF;
+    END_IF
+    Busy := active;
+END_FUNCTION_BLOCK
+
+// ---- MC_MoveRelative: relative point-to-point move (PP mode) ----
+// Execute edge reads PositionActualValue, adds Distance, then runs
+// the same PP/NewSetPoint sequence as MC_MoveAbsolute.
+FUNCTION_BLOCK MC_MoveRelative
+VAR_INPUT
+    Execute : BOOL;
+    Distance : DINT;
+    Velocity : DINT;
+    Acceleration : DINT;
+    Deceleration : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    active : BOOL;
+    rel : BOOL;
+    cur : DINT;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF NOT active AND exEdge THEN
+        ax.OP := 4; ax.INDEX := 16#6064; ax();   // read pos actual
+        cur := ax.VALUE;
+        ax.OP := 5; ax.INDEX := 16#6060; ax.VALUE := 1; ax();
+        ax.OP := 5; ax.INDEX := 16#607A; ax.VALUE := cur + Distance; ax();
+        ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#001F; ax();
+        IF ax.STATUS = 0 THEN
+            active := TRUE; rel := TRUE;
+        ELSE
+            Error := TRUE; ErrorID := ax.ERRID;
+        END_IF;
+    ELSIF active THEN
+        IF rel THEN
+            ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000F; ax();
+            rel := FALSE;
+        END_IF;
+        ax.OP := 6; ax();
+        IF ax.STATUS < 0 THEN
+            Error := TRUE; ErrorID := ax.ERRID; active := FALSE;
+        ELSIF ax.TARGET_REACHED = 1 THEN
+            Done := TRUE; active := FALSE;
+        END_IF;
+    END_IF
+    Busy := active;
+END_FUNCTION_BLOCK
+
+// ---- MC_MoveVelocity: endless travel at Velocity (PV mode) ----
+// Execute edge: mode=ProfileVelocity, TargetVelocity=Velocity,
+// controlword=EnableOperation. The axis ramps to the target velocity
+// and holds it; the move ends via MC_Stop/MC_Halt. ContinuousUpdate
+// rewrites TargetVelocity each scan for live dynamics changes.
+// InVelocity reports TargetReached (|vel-target| within window).
+FUNCTION_BLOCK MC_MoveVelocity
+VAR_INPUT
+    Execute : BOOL;
+    ContinuousUpdate : BOOL;
+    Velocity : DINT;
+    Acceleration : DINT;
+    Deceleration : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    InVelocity : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    engaged : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    InVelocity := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF exEdge THEN
+        ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000F; ax();
+        ax.OP := 5; ax.INDEX := 16#6060; ax.VALUE := 3; ax();
+        ax.OP := 5; ax.INDEX := 16#60FF; ax.VALUE := Velocity; ax();
+        engaged := TRUE;
+    END_IF
+    IF engaged AND ContinuousUpdate THEN
+        ax.OP := 5; ax.INDEX := 16#60FF; ax.VALUE := Velocity; ax();
+    END_IF
+    IF engaged THEN
+        ax.OP := 6; ax();
+        IF ax.STATUS < 0 THEN
+            Error := TRUE; ErrorID := ax.ERRID; engaged := FALSE;
+        ELSE
+            InVelocity := (ax.TARGET_REACHED = 1);
+        END_IF
+    END_IF
+    Busy := engaged;
+END_FUNCTION_BLOCK
+
+// ---- MC_Stop: quick stop, locks the axis ----
+// Execute edge commands QuickStop by clearing the controlword QS
+// bit (write 0x000B = enable pattern without QuickStop-request).
+// The drive decelerates to rest and holds QuickStopActive; Done
+// reports when VelocityActualValue reaches zero. A later motion
+// command re-asserts the enable pattern and resumes.
+FUNCTION_BLOCK MC_Stop
+VAR_INPUT
+    Execute : BOOL;
+    Deceleration : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    active : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF NOT active AND exEdge THEN
+        ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000B; ax();
+        IF ax.STATUS = 0 THEN
+            active := TRUE;
+        ELSE
+            Error := TRUE; ErrorID := ax.ERRID;
+        END_IF;
+    ELSIF active THEN
+        ax.OP := 6; ax();
+        IF ax.STATUS < 0 THEN
+            Error := TRUE; ErrorID := ax.ERRID; active := FALSE;
+        ELSIF ax.VEL_ACTUAL = 0 THEN
+            Done := TRUE; active := FALSE;
+        END_IF;
+    END_IF
+    Busy := active;
+END_FUNCTION_BLOCK
+
+// ---- MC_Halt: controlled stop with ramp (stays enabled) ----
+// Execute edge: mode=ProfileVelocity, TargetVelocity=0 under the
+// enable pattern, so the axis ramps to rest at its configured
+// deceleration and remains OperationEnabled. Done when velocity
+// reaches zero. Unlike MC_Stop the axis is not locked and a new
+// command can resume immediately.
+FUNCTION_BLOCK MC_Halt
+VAR_INPUT
+    Execute : BOOL;
+    Deceleration : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    active : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF NOT active AND exEdge THEN
+        ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000F; ax();
+        ax.OP := 5; ax.INDEX := 16#6060; ax.VALUE := 3; ax();
+        ax.OP := 5; ax.INDEX := 16#60FF; ax.VALUE := 0; ax();
+        active := TRUE;
+    ELSIF active THEN
+        ax.OP := 6; ax();
+        IF ax.STATUS < 0 THEN
+            Error := TRUE; ErrorID := ax.ERRID; active := FALSE;
+        ELSIF ax.VEL_ACTUAL = 0 THEN
+            Done := TRUE; active := FALSE;
+        END_IF;
+    END_IF
+    Busy := active;
+END_FUNCTION_BLOCK
+
+// ---- MC_Home: homing move to the home offset (HM mode) ----
+// Execute edge: writes HomeOffset=Position (0x607C, the reference
+// position after homing), mode=Homing, controlword=enable|NewSet-
+// Point. Done when the axis reports TargetReached/homing complete.
+FUNCTION_BLOCK MC_Home
+VAR_INPUT
+    Execute : BOOL;
+    Position : DINT;
+    Velocity : DINT;
+    Acceleration : DINT;
+    Deceleration : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    active : BOOL;
+    rel : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF NOT active AND exEdge THEN
+        ax.OP := 5; ax.INDEX := 16#607C; ax.VALUE := Position; ax();
+        ax.OP := 5; ax.INDEX := 16#6060; ax.VALUE := 6; ax();
+        ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#001F; ax();
+        IF ax.STATUS = 0 THEN
+            active := TRUE; rel := TRUE;
+        ELSE
+            Error := TRUE; ErrorID := ax.ERRID;
+        END_IF;
+    ELSIF active THEN
+        IF rel THEN
+            ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000F; ax();
+            rel := FALSE;
+        END_IF;
+        ax.OP := 6; ax();
+        IF ax.STATUS < 0 THEN
+            Error := TRUE; ErrorID := ax.ERRID; active := FALSE;
+        ELSIF ax.TARGET_REACHED = 1 THEN
+            Done := TRUE; active := FALSE;
+        END_IF;
+    END_IF
+    Busy := active;
+END_FUNCTION_BLOCK
+
+// ---- MC_Jog: manual jog while a direction key is held (PV mode) ----
+// JogForward/JogBackwards are level inputs: while held the axis ramps
+// to +/-Velocity in ProfileVelocity mode; on release TargetVelocity
+// returns to 0 and the axis ramps to rest. Busy is TRUE while a key
+// is held; Done pulses once the axis is back at rest after a jog.
+// The mode is latched to ProfileVelocity on the first key press.
+FUNCTION_BLOCK MC_Jog
+VAR_INPUT
+    JogForward : BOOL;
+    JogBackwards : BOOL;
+    Velocity : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    modeSet : BOOL;
+    wasMoving : BOOL;
+    key : BOOL;
+    stopped : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    key := JogForward OR JogBackwards;
+    Done := FALSE; Error := FALSE; ErrorID := 0;
+    IF key AND NOT modeSet THEN
+        ax.OP := 5; ax.INDEX := 16#6040; ax.VALUE := 16#000F; ax();
+        ax.OP := 5; ax.INDEX := 16#6060; ax.VALUE := 3; ax();
+        modeSet := TRUE;
+    END_IF
+    // velocity target follows the held key every scan
+    IF JogForward THEN
+        ax.OP := 5; ax.INDEX := 16#60FF; ax.VALUE := Velocity; ax();
+    ELSIF JogBackwards THEN
+        ax.OP := 5; ax.INDEX := 16#60FF; ax.VALUE := -Velocity; ax();
+    ELSE
+        ax.OP := 5; ax.INDEX := 16#60FF; ax.VALUE := 0; ax();
+    END_IF
+    ax.OP := 6; ax();
+    stopped := (NOT key) AND (ax.VEL_ACTUAL = 0);
+    IF stopped AND wasMoving THEN
+        Done := TRUE;
+    END_IF
+    wasMoving := NOT stopped;
+    Busy := NOT stopped;
 END_FUNCTION_BLOCK
