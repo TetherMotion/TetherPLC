@@ -48,6 +48,7 @@ add_library(tplc_host STATIC
   runtime/host/src/SmtpService.cpp
   runtime/host/src/Iec870Service.cpp
   runtime/host/src/MotionService.cpp
+  runtime/host/src/MotionIoService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -198,6 +199,18 @@ if(EXISTS "${TETHER_DIR}/include/tether/io/Server.hpp" AND
   message(STATUS "tplc-io: tether_io provider enabled (TETHER_DIR=${TETHER_DIR})")
 else()
   message(STATUS "tplc-io: skipped (set TETHER_DIR to a Tether checkout)")
+endif()
+
+# tplc_host: enable the IO-backed tplc-motion backend (MotionIoService)
+# when the sliced Tether IO static lib is available. Point it at a
+# Tether IO endpoint with TPLC_MOTION_IO; without it the in-process
+# MotionService remains the backend.
+if(TARGET tplc_tether_io)
+  set_source_files_properties(runtime/host/src/MotionIoService.cpp
+    PROPERTIES COMPILE_OPTIONS "-std=c++23")
+  target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_TETHER_IO)
+  target_link_libraries(tplc_host PUBLIC tplc_tether_io)
+  message(STATUS "tplc_host: Tether IO motion backend enabled")
 endif()
 
 # ------------------------------------------------------------------ #
@@ -657,6 +670,18 @@ if(NOT CMAKE_CROSSCOMPILING)
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2.sh)
   set_tests_properties(tc2_mc2 PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # tplc-motion over the Tether IO protocol e2e: the same
+  # FB_MotionAxis case replayed against tether_io_motion_server
+  # (SimulatedCiA402Drive, --clock sim) with TPLC_MOTION_IO set;
+  # skips when the Tether server binary is unavailable
+  if(TARGET tplc_tether_io)
+    add_test(NAME tc2_motion_io
+      COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_motion_io.sh)
+    set_tests_properties(tc2_motion_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  endif()
 
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration

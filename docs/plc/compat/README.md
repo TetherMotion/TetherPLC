@@ -278,6 +278,11 @@ tests/compat/
                       as a library, consumes via --lib, 300-step sim
                       replay expecting mask 0x3ff, in-process
                       tplc-motion service (no external peer)
+  tc2_motion_io.sh     ctest tc2_motion_io: same tc2_motion_case.st
+                      replayed over the Tether IO protocol against
+                      tether_io_motion_server (SimulatedCiA402Drive,
+                      --clock sim) via TPLC_MOTION_IO; skips when the
+                      Tether server binary is unavailable
 ```
 
 ## Building and consuming
@@ -304,7 +309,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
-| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin, in-process e2e); `compat/tc2/tc2_mc2.st` axis-management wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_ReadActualPosition/Velocity/MC_ReadAxisError/MC_ReadStatus, in-process e2e); MC command FBs pending (MC_Move*/MC_Stop/MC_Halt/MC_Home/MC_Jog) then gearing/phasing/superposition |
+| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_ReadActualPosition/Velocity/MC_ReadAxisError/MC_ReadStatus, e2e on both backends); MC command FBs pending (MC_Move*/MC_Stop/MC_Halt/MC_Home/MC_Jog) then gearing/phasing/superposition |
 
 ### C1 coverage notes
 
@@ -1060,6 +1065,33 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   within the follow window, velocity mode settle, bad-object /
   bad-mode / bad-handle error paths, destroy, and destroyed-
   handle rejection.
+- **Tether IO backend**: `runtime/host/src/MotionIoService.cpp`
+  implements the same `TplcMotionService` vtable over the Tether
+  IO protocol when `TPLC_MOTION_IO` names a reachable endpoint
+  (`tcp://host:port` or `host:port`); `HostServices` prefers it
+  over the in-process `MotionService`, which remains the offline
+  fallback. Object ops become `getParam`/`setParam` on the
+  `mc.<slave>.<index>` params that `tether_io_motion_server`
+  (Tether `examples/tether_io_motion_server.cpp`) exposes for its
+  `SimulatedCiA402Drive` fleet (`include/tether/io/
+  SimulatedCiA402Drive.hpp`, an `IMachineSdoAccess` backend running
+  the CiA402 state machine and profile dynamics). Axis handles map
+  to free slave indices; the service's `svc_` table is the first
+  member so the rt bridge's `&svc_` pointer recovers the object.
+  The server runs `--clock sim` (default) so a writable U64
+  `mc.time` param carries the PLC `--sim` timestamp (the service
+  writes host steady ns / 1000 before each op, deduplicated) and
+  replay stays deterministic; `--clock realtime` uses the wall
+  clock for live PLCs. Wire `writeFn` is void, so the client
+  pre-validates mode-of-operation and clamps the follow window to
+  match the local backend, and `motion_axis_create` validates but
+  does not propagate axis dynamics config to the remote drive.
+- **Verified**: `tc2_motion_io` ctest replays the same
+  `tc2_motion_case.st` (mask `0xfff`) through `tether-plc-sim`
+  against a live `tether_io_motion_server --clock sim`, exercising
+  create/mode/target/controlword writes, OperationEnabled, PP
+  target-reached, velocity mode, error paths and destroy over the
+  wire; `tc2_mc2` also passes against the remote backend.
 - **MC2 axis-management wrappers**: `compat/tc2/tc2_mc2.st`
   provides `MC_Power` (level-driven controlword 0x6040: 0x000F
   enable / 0x0000 disable, `Status` from OperationEnabled state

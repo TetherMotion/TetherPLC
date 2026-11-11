@@ -70,7 +70,10 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     ASDU raw-payload passthrough), and a deterministic
     simulated CiA402/DS402-shaped axis pool (controlword/
     statusword state machine, operating modes, trapezoidal
-    dynamics)
+    dynamics) — in-process via `MotionService`, or over the
+    Tether IO protocol via `MotionIoService` when
+    `TPLC_MOTION_IO` names a reachable `tether_io_motion_server`
+    endpoint (`mc.<slave>.<index>` params, `mc.time` sim clock)
     respectively, and driven scan-side by the builtins
     `FB_Socket`/`FB_Serial`/`FB_Ads`/`FB_RtMon`/`FB_Modbus`/
     `FB_ModbusRtu`/`FB_SacnSource`/`FB_SacnReceiver`/`FB_Bacnet`/
@@ -79,10 +82,11 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
     `FB_Iec870Rx`/`FB_MotionAxis`.
     `RtmonService`, `ModbusService`, `BacnetService`,
     `PjlinkService`, `S7Service`, `FtpService`, `SmtpService`,
-    `Iec870Service`, and `MotionService` take their
-    clocks from `HostServices::steadyNs`, so `--sim` steps produce
-    deterministic sim-time timestamps, timeouts, and axis
-    dynamics.
+    `Iec870Service`, `MotionService`, and `MotionIoService` take
+    their clocks from `HostServices::steadyNs`, so `--sim` steps
+    produce deterministic sim-time timestamps, timeouts, and axis
+    dynamics (the IO backend forwards that timestamp to the
+    server's `mc.time` param).
   - `Scheduler` — single-thread CYCLIC/FREEWHEELING dispatch, priority
     order within a tick, phase-stable `next_due` accumulation, per-task
     runs/late/faults stats.

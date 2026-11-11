@@ -11,6 +11,7 @@
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
+#include <tplc/host/MotionIoService.hpp>
 #include <tplc/host/MotionService.hpp>
 #include <tplc/host/NetService.hpp>
 #include <tplc/host/PjlinkService.hpp>
@@ -84,6 +85,9 @@ private:
     SmtpService  smtp_;
     Iec870Service iec870_;
     MotionService motion_;
+    /* IO-backed DS402 backend; active() only when TPLC_MOTION_IO names a
+       reachable Tether IO endpoint and the protocol lib is linked. */
+    MotionIoService motion_io_;
 };
 
 } /* namespace tplc */

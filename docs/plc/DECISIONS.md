@@ -1389,3 +1389,61 @@ adapter path: a production `tplc-motion` backend can map the
 same object dictionary onto Tether's DS402/EtherCAT drives or a
 CiA-402-over-ADS link; the simulated backend is the deterministic
 test oracle.
+
+## D-IMPL-53 — tplc-motion backed by Tether DS402 over the Tether IO protocol
+
+Supersedes the in-process simulated axis as the primary backend.
+TetherPLC motion now targets Tether's real CiA402/DS402 machinery
+through the Tether IO binary protocol, with the simulation living
+in Tether. The shared surface is the DS402 object dictionary: the
+same indices the `FB_MotionAxis`/`motion_obj_*` ABI already uses
+(Controlword 0x6040, Statusword 0x6041, ModesOfOperation 0x6060,
+TargetPosition 0x607A, TargetVelocity 0x60FF, TargetTorque 0x6071,
+Position/Velocity/TorqueActualValue 0x6064/0x606C/0x6077,
+FollowingErrorWindow 0x6065, error code 0x603F, home offset 0x607C).
+
+Tether exposes that dictionary over IO. `machine.cia402.v1` keeps
+`machine.sdo.list`/`read`/`write` for commissioning and object
+discovery behind `IMachineSdoAccess`, but those functions are
+authenticated, Technician-role and rate-limited to one write per
+50 ms, so they are unsuitable for cyclic controlword/target
+updates. Cyclic motion therefore travels as ordinary IO parameters:
+`tether_io_motion_server` registers each DS402 object as a
+`mc.<slave>.<index>` param (native width: I8 modes, I16 torque,
+I32 position/velocity, U16 control/status/error, U32 follow
+window) backed by `SimulatedCiA402Drive`, a new
+`IMachineSdoAccess` implementation in Tether
+(`include/tether/io/SimulatedCiA402Drive.hpp`) that interprets
+controlword/mode/target writes, runs the CiA402 state machine and
+profile dynamics (PP trapezoid, HM, VL, PV, TQ, CSP/CSV/CST) on an
+injected microsecond clock, and reports statusword/actuals on
+read. Swapping `SimulatedCiA402Drive` for `EtherCatSdoAccess`
+exposes the same param surface over real EtherCAT CoE drives.
+
+Mapping on the TetherPLC side (`MotionIoService`, selected by
+`HostServices` when `TPLC_MOTION_IO` names a reachable endpoint,
+else the in-process `MotionService`): `motion_obj_read/write`
+translate to `getParam`/`setParam` on the axis's `mc.<slave>.
+<index>` param after `listParams` discovery; `motion_axis_info`
+reads the statusword/mode/actual params; `motion_axis_create/
+destroy` map handles to free slave indices. `FB_MotionAxis` and
+all `compat/tc2/tc2_mc2.st` wrappers are unchanged (same C ABI).
+The service's `svc_` table stays the first member so the rt
+bridge's `&svc_` service pointer recovers the object.
+
+Determinism: `tether_io_motion_server --clock sim` advances the
+drives on a writable U64 `mc.time` param (microseconds) instead of
+the wall clock. `MotionIoService` holds the host steady clock and
+writes `mc.time` before each object op (deduplicated per tick), so
+`tether-plc-sim --sim` timestamps drive the remote drives exactly
+and replay is bit-identical. `--clock realtime` keeps wall-clock
+operation for live (non-sim) PLCs. The drive integrates in
+bounded <=100 us substeps so sparse client polls cannot overshoot.
+
+Known gaps: `motion_axis_create` validates the config but does not
+propagate units/velocity/accel/position-limit values to the remote
+drive, which uses its server-side configured dynamics; wire
+`writeFn` is void so drive-side write rejections cannot propagate,
+so the client pre-validates mode-of-operation and clamps the
+follow window to match the local backend. The in-process
+`MotionService` remains as the offline fallback.

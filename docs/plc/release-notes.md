@@ -275,6 +275,31 @@ live attach over tether_io, and the safety/security envelope.
   (`MC_Move*`/`MC_Stop`/`MC_Halt`/`MC_Home`/`MC_Jog`), the full
   PLCopen state machine, and gearing/phasing/superposition land
   in later tranches.
+- **Seventeenth tranche (C5 Tether-IO motion backend)**: adds
+  `MotionIoService`, a `TplcMotionService` implementation that
+  maps the DS402 object dictionary onto the Tether IO protocol.
+  `HostServices` selects it when `TPLC_MOTION_IO` names a
+  reachable `tether_io_motion_server` endpoint and otherwise
+  falls back to the in-process `MotionService`. Object reads and
+  writes become `getParam`/`setParam` on the `mc.<slave>.<index>`
+  params the server exposes for its `SimulatedCiA402Drive` fleet
+  (Tether `include/tether/io/SimulatedCiA402Drive.hpp`, an
+  `IMachineSdoAccess` backend running the CiA402 state machine
+  and PP/HM/VL/PV/TQ/CSP/CSV/CST dynamics). `tether_io_motion_server
+  --clock sim` advances the drives on a writable U64 `mc.time`
+  param; the service writes the host steady-clock timestamp
+  before each op so `tether-plc-sim --sim` replay stays
+  deterministic, and `--clock realtime` serves live PLCs. The
+  `svc_` table is the first member so the rt bridge's `&svc_`
+  pointer recovers the object (a mis-ordering segfaulted).
+  `FB_MotionAxis` and the MC2 wrappers are unchanged; the new
+  `tc2_motion_io` ctest replays `tc2_motion_case.st` (mask
+  `0xfff`) over the wire, and `tc2_mc2` passes on both backends.
+  `machine.sdo.*` stays the commissioning surface; cyclic motion
+  uses params because SDO writes are rate-limited. Axis dynamics
+  config is validated but not propagated to the remote drive, and
+  wire write errors cannot propagate so the client pre-validates
+  mode-of-operation (DECISIONS D-IMPL-53).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.
