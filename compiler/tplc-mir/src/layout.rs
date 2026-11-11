@@ -911,6 +911,124 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "__last_exec", Type::Bool);
             push(&mut off, "__feed_done", Type::Bool);
         }
+        /* FB_Iec870Conn — tplc-iec870 service bridge (IEC
+        60870-5-104 client, TCP 2404). EXEC rising edge opens a
+        connection (TCP connect -> STARTDT act/con) polled via
+        BUSY until STATUS leaves 0=pending; 1=ready, 2=error
+        (ERRID carries errno or a protocol code). SUBSTATE
+        0=none 1=tcp 2=startdt 3=active. CONN_HANDLE stays valid
+        while STATUS=1 and feeds FB_Iec870Tx/FB_Iec870Rx. CLOSE
+        rising edge sends STOPDT act and tears the session down
+        (CONN_HANDLE -> 0). HOST dotted-quad IPv4, PORT 0=2404,
+        CA_SIZE/COT_SIZE 0=2 (1 or 2 octets each). */
+        "FB_Iec870Conn" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "CA_SIZE", udint());
+            push(&mut off, "COT_SIZE", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "SUBSTATE", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "RX_DROPPED", udint());
+            push(&mut off, "CLOSE", Type::Bool);
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__last_close", Type::Bool);
+        }
+        /* FB_Iec870Tx — tplc-iec870 service bridge for one ASDU
+        send on an FB_Iec870Conn connection. CONN_HANDLE comes
+        from FB_Iec870Conn.CONN_HANDLE. TYPE_ID/VSQ/COT/CA are
+        the raw ASDU header fields (VSQ bit7=sequence flag,
+        bits0..6 object count; COT bits0..7 encoded COT octet,
+        bits8..15 originator address sent only when COT_SIZE=2;
+        CA low octets per CA_SIZE). PAYLOAD carries the
+        info-object bytes (LEN <= 240). One outstanding tx per
+        connection. STATUS 0=pending 1=ok 2=error; ERRID the
+        transport errno. */
+        "FB_Iec870Tx" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "TYPE_ID", udint());
+            push(&mut off, "VSQ", udint());
+            push(&mut off, "COT", udint());
+            push(&mut off, "CA", udint());
+            push(&mut off, "LEN", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(
+                &mut off,
+                "PAYLOAD",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 239,
+                },
+            );
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
+        /* FB_Iec870Rx — tplc-iec870 receive poll. Call every
+        scan with CONN_HANDLE from FB_Iec870Conn; DONE pulses
+        TRUE on the scan an ASDU is delivered (consume-on-read,
+        one ASDU per DONE). TYPE_ID/VSQ/COT/CA echo the raw ASDU
+        header fields parsed per the conn's COT_SIZE/CA_SIZE;
+        LEN the info-object byte count; PAYLOAD the info-object
+        bytes (LEN valid, <=240). I_FRAME_SEQ the I-frame send
+        sequence number (diagnostic). */
+        "FB_Iec870Rx" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "TYPE_ID", udint());
+            push(&mut off, "VSQ", udint());
+            push(&mut off, "COT", udint());
+            push(&mut off, "CA", udint());
+            push(&mut off, "LEN", udint());
+            push(&mut off, "I_FRAME_SEQ", udint());
+            push(&mut off, "ERRID", udint());
+            push(
+                &mut off,
+                "PAYLOAD",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 239,
+                },
+            );
+            push(&mut off, "DONE", Type::Bool);
+        }
         _ => return None,
     }
     let align = 8u64;

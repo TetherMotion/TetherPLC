@@ -24,7 +24,8 @@ HostServices::HostServices(uint32_t caps)
     : rtmon_(&host_steady_ns, this), modbus_(&host_steady_ns, this),
       sacn_(&host_steady_ns, this), bacnet_(&host_steady_ns, this),
       pjlink_(&host_steady_ns, this), s7_(&host_steady_ns, this),
-      ftp_(&host_steady_ns, this), smtp_(&host_steady_ns, this) {
+      ftp_(&host_steady_ns, this), smtp_(&host_steady_ns, this),
+      iec870_(&host_steady_ns, this) {
     svc_.struct_size  = sizeof(TplcServices);
     svc_.caps         = caps | TPLC_EXT_MOVABLE_BETWEEN;
     svc_.host         = this;
@@ -100,6 +101,8 @@ void* HostServices::getService(const char* name, uint32_t len) {
         return const_cast<TplcFtpService*>(&ftp_.table());
     if (len == 9 && memcmp(name, "tplc-smtp", 9) == 0)
         return const_cast<TplcSmtpService*>(&smtp_.table());
+    if (len == 11 && memcmp(name, "tplc-iec870", 11) == 0)
+        return const_cast<TplcIec870Service*>(&iec870_.table());
     return nullptr;
 }
 

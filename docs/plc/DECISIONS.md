@@ -1261,3 +1261,64 @@ attachments, receipts, Cc/Bcc, multi-recipient envelopes, or
 MIME beyond From/To/Subject/Date; no ADS SMTP-server proxy;
 dotted-quad IPv4 only; SMS PDU/UCS2/concatenation/status
 reports unimplemented.
+
+## D-IMPL-51 — tplc-iec870 service + FB_Iec870Conn/FB_Iec870Tx/FB_Iec870Rx builtins (plan 21 C4)
+
+`include/tplc/tplc_iec870.h` defines `TplcIec870Service` (ABI v1,
+service name `"tplc-iec870"`): `iec870_open`/`iec870_conn_poll`/
+`iec870_send`/`iec870_tx_poll`/`iec870_rx_poll`/`iec870_conn_close`
+drive an IEC 60870-5-104 telecontrol *client* on TCP (default
+port 2404). The host impl `Iec870Service`
+(`runtime/host/src/Iec870Service.cpp`) owns the socket per
+handle and resolves all stages inside the poll calls, driven by
+the injected host clock so deterministic sim replay holds.
+
+Wire format follows IEC 60870-5-104 / lib60870: every APDU is
+`0x68` + 1-byte length (bytes after the length octet) + 4-octet
+control field. I-format carries 15-bit send/recv sequence
+numbers shifted left one; S-format is the fixed 6-byte ack
+(`0x01` first control byte); U-format is the fixed 6-byte
+control frame (STARTDT ACT/CON `0x07`/`0x0B`, STOPDT
+`0x13`/`0x23`, TESTFR `0x43`/`0x83`). Handshake is TCP connect
+-> STARTDT ACT -> STARTDT CON -> active transfer; close sends
+STOPDT ACT then closes without awaiting confirm; TESTFR
+keepalive at the configured interval. ASDU header is type_id +
+vsq (bit7 sequence flag, low 7 bits object count) + COT (low
+byte cause, upper byte originator when COT size is 2) + common
+address + raw information-object payload, with CA/COT widths
+configurable 1 or 2 octets (default 2). The service does not
+implement per-type information-object codecs; user ST supplies
+and interprets raw payload bytes.
+
+Builtins `FB_Iec870Conn` (session), `FB_Iec870Tx` (one ASDU per
+EXEC edge, one outstanding transmit per connection, k-window
+aware) and `FB_Iec870Rx` (consume-on-read, one queued ASDU per
+DONE, bounded queue with drop accounting) bridge through
+`TplcServices.get_service`; `svc_` is deliberately the first
+data member so callbacks recover the containing object from the
+service-table pointer. `compat/tc3/tc3_iec870.st` adds
+`FB_IEC870_5_104Master`/`FB_IEC870_SendAsdu`/
+`FB_IEC870_RecvAsdu` wrappers plus pure helpers: COT/TYPEID
+strings for IEC 101/102/103, `SYSTEMTIME_TO_CP56Time2a` and
+`CP56Time2a_TO_SYSTEMTIME` FUNCTION_BLOCKs (multi-output time
+conversion, since FUNCTION VAR_OUTPUT params are not callable),
+CP56 to CP24/CP32 truncation, IOA composition, SPI/DPI/VTI bit
+helpers, and `GetIec870_Version` (`16#0100`).
+
+Debugging surfaced a FUNCTION_BLOCK array-binding subtlety:
+VAR_OUTPUT arrays bound via named call args do not write back
+to the caller's array (outputs stay on the instance), so the
+test copies `tenc.pTime[i]` into a local array before feeding
+`tdec`. Verified by `tc3_iec870` ctest: 400 free-running sim
+steps against `iec870_test_peer.py`, a python IEC
+60870-5-104 slave on TCP 2480, twelve packed checks (`0xfff`)
+covering connect/STARTDT, interrogation, M_SP+M_ME receive,
+clock sync echo, single-command act-con, refused-port error,
+helpers, and STOPDT close.
+
+Documented gaps: no IEC 60870-5-101 serial, 5-102 HDLC, or
+5-103 relay-protection transports (104 only); no slave/server
+mode; no AO database, AMS NetID routing,
+PVOID/pointer-to-array/interface/HRESULT object model,
+redundancy groups, file transfer, or TLS; dotted-quad IPv4
+only, no DNS.

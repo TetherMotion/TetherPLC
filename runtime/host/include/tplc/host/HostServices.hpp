@@ -9,6 +9,7 @@
 #include <tplc/host/AdsService.hpp>
 #include <tplc/host/BacnetService.hpp>
 #include <tplc/host/FtpService.hpp>
+#include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/NetService.hpp>
 #include <tplc/host/PjlinkService.hpp>
@@ -80,6 +81,7 @@ private:
     S7Service    s7_;
     FtpService   ftp_;
     SmtpService  smtp_;
+    Iec870Service iec870_;
 };
 
 } /* namespace tplc */

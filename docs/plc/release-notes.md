@@ -199,6 +199,34 @@ live attach over tether_io, and the safety/security envelope.
   the next edge. TLS, attachments, Cc/Bcc, multi-recipient,
   and the TwinCAT SMTP-server ADS proxy are documented gaps;
   SMS PDU/UCS2/concatenation/status modes are unimplemented.
+  Fourteenth tranche adds `compat/tc3/tc3_iec870.st`
+  (Tc2_IEC60870_5_10x) over the new `tplc-iec870` service, an
+  IEC 60870-5-104 telecontrol client on TCP 2404. The service
+  implements APCI I/S/U framing (`0x68`+len+4-octet control,
+  15-bit sequence numbers shifted left one), the
+  STARTDT/STOPDT/TESTFR handshake and TESTFR keepalive, and
+  ASDU header build/parse with configurable 1-or-2-octet CA/COT
+  widths and raw information-object payload passthrough (no
+  per-type codecs). Builtin `FB_Iec870Conn` (session),
+  `FB_Iec870Tx` (one ASDU per EXEC edge, k-window aware), and
+  `FB_Iec870Rx` (consume-on-read, bounded queue) bridge to the
+  host service; all ops are nonblocking on the injected host
+  clock. The compat layer adds `FB_IEC870_5_104Master`/
+  `FB_IEC870_SendAsdu`/`FB_IEC870_RecvAsdu` wrappers plus pure
+  helpers: COT/TYPEID strings for IEC 101/102/103,
+  `SYSTEMTIME_TO_CP56Time2a` and `CP56Time2a_TO_SYSTEMTIME`
+  FUNCTION_BLOCKs, CP56 to CP24/CP32 truncation, IOA
+  composition, SPI/DPI/VTI bit helpers, and
+  `GetIec870_Version`. The `tc3_iec870` ctest replays a
+  400-step free-running sim against `iec870_test_peer.py`, a
+  python IEC 60870-5-104 slave on TCP 2480; twelve packed
+  checks (`0xfff`) cover connect/STARTDT, interrogation,
+  M_SP+M_ME receive, clock sync echo, single-command act-con,
+  refused-port error, helpers, and STOPDT close. TwinCAT's
+  AO-database/AMS-object/PVOID/interface/HRESULT model and the
+  5-101 serial, 5-102 HDLC, and 5-103 relay-protection
+  transports are documented gaps; this tranche is the 104 wire
+  protocol plus pure helpers only.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

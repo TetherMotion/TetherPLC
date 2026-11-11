@@ -46,6 +46,7 @@ add_library(tplc_host STATIC
   runtime/host/src/S7Service.cpp
   runtime/host/src/FtpService.cpp
   runtime/host/src/SmtpService.cpp
+  runtime/host/src/Iec870Service.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -621,6 +622,23 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_ftp
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_ftp.sh)
   set_tests_properties(tc3_ftp PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_SMS + Tc2_SMTP compat (plan 21 C4): tplc-smtp RFC 5321
+  # client + GSM AT SMS over tplc-serial e2e against python peers
+  # (pty AT modem + TCP 2525 SMTP with AUTH LOGIN)
+  add_test(NAME tc2_sms_sms
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_sms_sms.sh)
+  set_tests_properties(tc2_sms_sms PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_IEC60870_5_10x compat (plan 21 C4): tplc-iec870
+  # IEC 60870-5-104 client e2e (STARTDT/STOPDT/TESTFR, I/S/U
+  # APCI, ASDU rx/tx, CP56Time2a, helpers) against a python
+  # 104 slave peer on TCP 2480
+  add_test(NAME tc3_iec870
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_iec870.sh)
+  set_tests_properties(tc3_iec870 PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy

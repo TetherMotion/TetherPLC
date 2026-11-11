@@ -103,6 +103,17 @@ compat/tc3/
                       DirExists/Rename method wrappers;
                       covers FB_FtpConnection/FB_FtpExplorer/
                       FB_FtpTransfer and the FB_FTP_* set
+  tc3_iec870.st      Tc2_IEC60870_5_10x over the builtins
+                      FB_Iec870Conn / FB_Iec870Tx / FB_Iec870Rx
+                      (tplc-iec870 service): IEC 60870-5-104
+                      client on TCP 2404; FB_IEC870_5_104Master
+                      session wrapper (STARTDT/STOPDT/TESTFR,
+                      I/S/U APCI), FB_IEC870_SendAsdu /
+                      FB_IEC870_RecvAsdu raw-ASDU wrappers, plus
+                      pure helpers: COT/TYPEID strings, CP56Time2a
+                      encode/decode, CP24/CP32 truncation, IOA
+                      composition, SPI/DPI/VTI bit helpers,
+                      GetIec870_Version
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -229,6 +240,20 @@ tests/compat/
                       TCP 2525 used by tc2_sms_sms.sh:
                       EHLO+AUTH LOGIN, MAIL/RCPT/DATA, 550 on
                       "reject" recipients, MSG log lines
+  tc3_iec870_case.st   autonomous IEC 60870-5-104 program (12
+                      packed checks: conn ready, interrogation
+                      sent, M_SP+M_ME recv, clock sync sent+recv,
+                      single command sent+recv, refused connect,
+                      helpers, STOPDT close)
+  tc3_iec870.sh        ctest tc3_iec870: library + consumer +
+                      400-step sim replay expecting mask 0xfff,
+                      python IEC 60870-5-104 slave peer
+                      (iec870_test_peer.py) on TCP 2480
+  iec870_test_peer.py  minimal IEC 60870-5-104 slave on TCP 2480
+                      used by tc3_iec870.sh: STARTDT/STOPDT U-frame
+                      handshake, I/S APCI sequencing, C_IC_NA_1 ->
+                      M_SP_NA_1+M_ME_NA_1, C_CS_NA_1 echo,
+                      C_SC_NA_1 act-con
 ```
 
 ## Building and consuming
@@ -254,7 +279,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C1 | T0 core | tranches 1+2 done: Tc2_Math (8/8), Tc2_Standard W* (9/9) + L* timers (3/3), Tc2_Utilities BCD pair + FB_EnumStringNumbers |
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
-| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); IEC 60870 remains |
+| C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
 
 ### C1 coverage notes
 
@@ -888,6 +913,75 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   From/To/Subject/Date; no TwinCAT SMTP-server ADS proxy; no
   DNS (dotted-quad IPv4 only); SMS PDU/UCS2/concatenated/status
   modes unimplemented; modem must support text mode AT.
+
+### C4 coverage notes (tplc-iec870 / Tc2_IEC60870_5_10x)
+
+- **Scope**: IEC 60870-5-104 telecontrol client over TCP
+  (default port 2404), the TCP variant of the IEC 60870-5-10x
+  family. TwinCAT's high-level FBs are driven by AO databases,
+  AMS objects, `PVOID` pointers to arrays, interfaces, HRESULTs,
+  and generated server objects, none of which the ST frontend or
+  runtime can express, so this tranche implements the wire
+  protocol plus the pure helper functions and documents the rest
+  as gaps (below).
+- **APCI framing**: `0x68` start octet + 1-byte length (counts
+  bytes after the length octet) + 4-octet control field.
+  I-format carries 15-bit send/recv sequence numbers shifted
+  left one; S-format is the fixed 6-byte ack (`0x01` first
+  control byte); U-format is the fixed 6-byte control frame
+  (STARTDT ACT/CON `0x07`/`0x0B`, STOPDT `0x13`/`0x23`, TESTFR
+  `0x43`/`0x83`). Handshake: TCP connect, STARTDT ACT, wait
+  STARTDT CON, then active data transfer. Close sends STOPDT
+  ACT and closes without awaiting confirm. TESTFR keepalive at
+  the configured interval.
+- **ASDU**: `type_id`, `vsq` (bit7 sequence-addressing, low 7
+  bits object count), COT (low byte cause, upper byte originator
+  when COT size is 2), common address, then raw information-
+  object payload. CA/COT widths configurable 1 or 2 octets
+  (default 2). The service does not implement per-type
+  information-object codecs; user ST supplies and interprets
+  the raw payload bytes.
+- **Builtins**: `FB_Iec870Conn` (session: sHost/nPort/nCA_Size/
+  nCOT_Size/bExecute/bClose/tTimeout, nConnHandle/nStatus/
+  nSubState/nErrId), `FB_Iec870Tx` (one ASDU per EXEC edge, one
+  outstanding transmit per connection, k-window aware),
+  `FB_Iec870Rx` (consume-on-read, one queued ASDU per DONE,
+  bounded queue with drop accounting). All service ops are
+  nonblocking and driven by the injected host clock, preserving
+  deterministic sim replay.
+- **Wrappers**: `compat/tc3/tc3_iec870.st` provides
+  `FB_IEC870_5_104Master` session wrapper,
+  `FB_IEC870_SendAsdu` / `FB_IEC870_RecvAsdu` raw-ASDU wrappers,
+  COT and TYPEID string helpers for IEC 101/102/103,
+  `SYSTEMTIME_TO_CP56Time2a` / `CP56Time2a_TO_SYSTEMTIME`
+  FUNCTION_BLOCKs (multi-output time conversion), CP56 to
+  CP24/CP32 truncation, IOA composition, `F_iecGetSPI`/
+  `F_iecGetDPI`/`F_iecIncVTI` bit helpers, and
+  `GetIec870_Version` (`16#0100`).
+- **CP56Time2a**: 7 octets; octets 0-1 are the little-endian
+  millisecond count within the minute (`second*1000 + ms`,
+  max 59999), octet 2 packs minute + SUC/IV, octet 3 hour +
+  summer-time, octet 4 day-of-week + day-of-month, octet 5
+  month, octet 6 year offset from 1900 with IV2.
+- **Verified**: `tc3_iec870` ctest builds the library and a
+  consumer, then replays 400 free-running sim steps against
+  `tests/compat/iec870_test_peer.py`, a python IEC
+  60870-5-104 slave on TCP 2480. Twelve packed checks
+  (`0xfff`): connection ready, C_IC_NA_1 interrogation sent,
+  M_SP_NA_1 + M_ME_NA_1 received, C_CS_NA_1 clock sync sent
+  and echoed, C_SC_NA_1 single command sent and act-con
+  received, refused-port connection error, CP56Time2a
+  roundtrip + string/IOA/bit/version helpers, and STOPDT
+  close.
+- **Honest gaps**: no IEC 60870-5-101 serial, 5-102 HDLC, or
+  5-103 relay-protection transports (104 only); no slave/server
+  mode; no per-type information-object codecs (raw payload
+  passthrough); no AO database, AMS NetID routing,
+  PVOID/pointer-to-array/interface/HRESULT object model,
+  redundancy groups, file transfer, or TLS; dotted-quad IPv4
+  only, no DNS; k-window and sequence-number edge cases are
+  handled at the protocol layer but not exhaustively fuzzed
+  against every ASDU type.
 
 ## Known limitations
 
