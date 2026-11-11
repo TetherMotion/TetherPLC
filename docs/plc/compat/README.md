@@ -322,6 +322,19 @@ tests/compat/
                       IO protocol against tether_io_motion_server
                       (--clock sim) via TPLC_MOTION_IO; skips when the
                       Tether server binary is unavailable
+  tc2_mc2_gear_case.st Tc2_MC2 tranche-5 program (9 packed checks:
+                      two axes created, both powered, master velocity,
+                      MC_TouchProbe latch in window, MC_GearIn 2:1
+                      coupling, MC_GearOut slave stop, MC_Halt master
+                      stop, both powered off)
+  tc2_mc2_gear.sh    ctest tc2_mc2_gear: builds tc2_mc2.st as a
+                      library, consumes via --lib, 501-step sim replay
+                      expecting mask 0x1ff, in-process tplc-motion
+  tc2_mc2_gear_io.sh ctest tc2_mc2_gear_io: same
+                      tc2_mc2_gear_case.st replayed over the Tether IO
+                      protocol against tether_io_motion_server
+                      (--clock sim, --axes 4) via TPLC_MOTION_IO; skips
+                      when the Tether server binary is unavailable
 ```
 
 ## Building and consuming
@@ -348,7 +361,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C2 | T1 services I | `tplc-net` done (FB_Socket + POSIX sockets + Tc2_TcpIp, loopback e2e); `tplc-serial` done (FB_Serial + termios + Tc2_SerialCom, pty e2e); `tplc-ads` done (FB_Ads + AMS/TCP ADS client + Tc2_System ADS FBs, wire-protocol e2e) |
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
-| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool) and an 8-state PLCopen operating state, e2e on both backends); gearing/phasing/camming/touch-probe pending |
+| C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool), an 8-state PLCopen operating state, and coupling/probe blocks (MC_TouchProbe cycle-level latch, MC_GearIn velocity-ratio coupling, MC_GearOut; e2e on both backends); exact hardware-latch touch-probe, `MC_AbortTrigger`, phase-locked gearing/phasing/camming pending |
 
 ### C1 coverage notes
 
@@ -1152,11 +1165,34 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   (`0x3ff`): axis create, `MC_Power` enable, `MC_SetPosition`
   absolute and relative readback, `MC_Read*` validity,
   `MC_Reset`, `MC_Power` disable, and disabled operating state.
-- **Honest gaps**: the MC2 command blocks
-  (`MC_MoveAbsolute`/`MC_MoveVelocity`/`MC_Stop`/`MC_Halt`/
-  `MC_Home`/`MC_Jog`), the full PLCopen state machine, and
-  gearing/phasing/superposition/touch-probe/parameter FBs land in
-  later tranches. `AXIS_REF` is a UDINT handle rather than the
+- **Coupling and probe wrappers**: `MC_TouchProbe` captures
+  `PositionActualValue` on the `TriggerInput` rising edge with
+  optional `WindowOnly`/`FirstPosition`/`LastPosition` gating, and
+  rearms on each `Execute` rising edge. `MC_GearIn` couples a slave
+  to a master by velocity ratio: on `Execute` it enables the slave
+  and selects ProfileVelocity, then each scan writes slave
+  `TargetVelocity` 0x60FF = master `VelocityActualValue` 0x606C *
+  `RatioNumerator` / `RatioDenominator` (zero denominator -> Error).
+  `MC_GearOut` writes slave 0x60FF = 0 on its edge and reports
+  `Done` at rest. `MC_AbortTrigger` is intentionally absent because
+  the model has no shared per-axis probe state (see DECISIONS
+  D-IMPL-55).
+- **Verified**: `tc2_mc2_gear` and `tc2_mc2_gear_io` ctests replay
+  `tc2_mc2_gear_case.st` (mask `0x1ff`) against the in-process and
+  Tether IO backends. Nine checks: two axes created, both powered,
+  master velocity, `MC_TouchProbe` latch inside one scan of the
+  trigger, `MC_GearIn` 2:1 slave velocity, `MC_GearOut` slave stop,
+  `MC_Halt` master stop, both powered off.
+- **Honest gaps**: `MC_TouchProbe` is a cycle-level software latch —
+  TwinCAT's hardware touch-probe latches sub-cycle against an encoder
+  event, but neither the in-process axis nor `SimulatedCiA402Drive`
+  exposes a hardware latch object, so capture latency is one scan and
+  trigger edges are scan-synchronous. `MC_GearIn` is velocity-ratio
+  coupling, not exact position-phase lock — TwinCAT gearing locks
+  phase via cyclic setpoint coupling, which needs a dedicated
+  coupling object or CSP setpoint streaming. `MC_AbortTrigger` needs
+  shared probe state, and phasing/camming/superposition land in later
+  tranches. `AXIS_REF` is a UDINT handle rather than the
   TwinCAT structure, and positions/velocities are int32 user units
   rather than LREAL engineering units (no `LREAL_TO_DINT`
   conversion exists yet). The model is a deterministic simulation,

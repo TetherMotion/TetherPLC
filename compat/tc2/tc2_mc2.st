@@ -988,3 +988,175 @@ END_VAR
     END_IF;
     Busy := FALSE;
 END_FUNCTION_BLOCK
+
+// ================================================================== //
+// Tranche-5 blocks: touch-probe latch and master/slave gearing.
+// MC_TouchProbe captures PositionActualValue on the TriggerInput
+// rising edge — a cycle-level software latch (TwinCAT latches in
+// drive hardware, sub-cycle; the simulated backend has no latch
+// object, so capture latency is one scan — documented gap).
+// MC_GearIn couples the slave axis to the master at a velocity
+// ratio by reading VelocityActualValue each scan and driving the
+// slave's TargetVelocity in PV mode — velocity-ratio coupling, not
+// an exact position-phase lock (that needs cyclic setpoint
+// coupling / a coupling object; documented gap). MC_AbortTrigger's
+// cross-FB probe cancel needs shared per-axis probe state and is a
+// documented gap; MC_TouchProbe self-aborts on a re-Execute.
+// ================================================================== //
+
+// ---- MC_TouchProbe: position capture on a trigger edge ----
+// Execute edge arms the probe. While armed the axis position is
+// polled each scan; on a TriggerInput rising edge the position is
+// recorded into RecordedPosition (optionally only when inside
+// [FirstPosition,LastPosition] when WindowOnly is TRUE). Done
+// reports a captured value. Re-executing while armed re-arms.
+FUNCTION_BLOCK MC_TouchProbe
+VAR_INPUT
+    Execute : BOOL;
+    TriggerInput : BOOL;
+    WindowOnly : BOOL;
+    FirstPosition : DINT;
+    LastPosition : DINT;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    RecordedPosition : DINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    armed : BOOL;
+    trigPrev : BOOL;
+    inWin : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF exEdge THEN
+        armed := TRUE;               // (re)arm the probe
+    END_IF;
+    IF armed THEN
+        ax.OP := 4; ax.INDEX := 16#6064; ax();   // pos actual
+        IF TriggerInput AND NOT trigPrev THEN
+            inWin := TRUE;
+            IF WindowOnly THEN
+                inWin := (ax.VALUE >= FirstPosition)
+                         AND (ax.VALUE <= LastPosition);
+            END_IF;
+            IF inWin THEN
+                RecordedPosition := ax.VALUE;
+                Done := TRUE;
+                armed := FALSE;
+            END_IF;
+        END_IF;
+    END_IF;
+    trigPrev := TriggerInput;
+    Busy := armed;
+END_FUNCTION_BLOCK
+
+// ---- MC_GearIn: velocity-ratio master/slave coupling ----
+// While Execute is held the slave axis runs in ProfileVelocity at
+// TargetVelocity = master VelocityActualValue * RatioNumerator /
+// RatioDenominator, so the slave velocity tracks the master at the
+// gear ratio (positions track proportionally but not phase-locked).
+// Engage edge puts the slave into PV mode + enable; on release the
+// slave keeps its last velocity until MC_GearOut/MC_Halt stops it.
+FUNCTION_BLOCK MC_GearIn
+VAR_INPUT
+    Execute : BOOL;
+    RatioNumerator : DINT;
+    RatioDenominator : DINT;
+    Acceleration : DINT;
+    Deceleration : DINT;
+    Master : UDINT;
+    Slave : UDINT;
+END_VAR
+VAR_OUTPUT
+    InGear : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    axM : FB_MotionAxis;
+    axS : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    mvel : DINT;
+END_VAR
+    axM.AXIS := Master;
+    axS.AXIS := Slave;
+    axM.OP := 3; axM();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    InGear := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
+    IF exEdge THEN
+        IF RatioDenominator = 0 THEN
+            Error := TRUE; ErrorID := 1;
+        ELSE
+            axS.OP := 5; axS.INDEX := 16#6040; axS.VALUE := 16#000F; axS();
+            axS.OP := 5; axS.INDEX := 16#6060; axS.VALUE := 3; axS();
+        END_IF;
+    END_IF;
+    IF Execute AND RatioDenominator <> 0 THEN
+        // slave velocity follows the master at the gear ratio
+        axM.OP := 4; axM.INDEX := 16#606C; axM();
+        mvel := axM.VALUE;
+        axS.OP := 5; axS.INDEX := 16#60FF;
+        axS.VALUE := mvel * RatioNumerator / RatioDenominator; axS();
+        axS.OP := 6; axS();
+        IF axS.STATUS < 0 THEN
+            Error := TRUE; ErrorID := axS.ERRID;
+        ELSE
+            InGear := TRUE;
+        END_IF;
+    END_IF;
+    Busy := Execute AND (RatioDenominator <> 0);
+END_FUNCTION_BLOCK
+
+// ---- MC_GearOut: uncouple the slave and ramp it to rest ----
+// Execute edge commands the slave TargetVelocity to 0 (PV decel);
+// Done when VelocityActualValue reaches zero. The slave stays
+// enabled in velocity mode; use MC_Halt/MC_Stop for a hard stop.
+FUNCTION_BLOCK MC_GearOut
+VAR_INPUT
+    Execute : BOOL;
+    Deceleration : DINT;
+    Slave : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    axS : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    active : BOOL;
+END_VAR
+    axS.AXIS := Slave;
+    axS.OP := 3; axS();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; Error := FALSE; ErrorID := 0;
+    IF NOT active AND exEdge THEN
+        axS.OP := 5; axS.INDEX := 16#60FF; axS.VALUE := 0; axS();
+        active := TRUE;
+    ELSIF active THEN
+        axS.OP := 6; axS();
+        IF axS.STATUS < 0 THEN
+            Error := TRUE; ErrorID := axS.ERRID; active := FALSE;
+        ELSIF axS.VEL_ACTUAL = 0 THEN
+            Done := TRUE; active := FALSE;
+        END_IF;
+    END_IF;
+    Busy := active;
+END_FUNCTION_BLOCK

@@ -340,6 +340,30 @@ live attach over tether_io, and the safety/security envelope.
   phasing, camming and hardware touch-probe latch need multi-axis
   coupling / latch objects the simulated backend does not expose and
   remain documented gaps (DECISIONS D-IMPL-54).
+- **Twentieth tranche (C5 MC2 coupling + touch probe)**: extends
+  `compat/tc2/tc2_mc2.st` with the two-axis and latch blocks as honest
+  software approximations over the existing object ops — no new ABI.
+  `MC_TouchProbe` arms/rearms on `Execute` and captures
+  `PositionActualValue` 0x6064 on the `TriggerInput` rising edge with
+  optional `WindowOnly`/`FirstPosition`/`LastPosition` gating; it is a
+  cycle-level software latch, not TwinCAT's sub-cycle hardware
+  encoder latch (the simulated drive exposes no latch object, so
+  capture latency is one scan). `MC_GearIn` couples a slave to a
+  master by velocity ratio — enable slave + ProfileVelocity on
+  `Execute`, then each scan write slave `TargetVelocity` 0x60FF =
+  master `VelocityActualValue` 0x606C * `RatioNumerator` /
+  `RatioDenominator` (zero denominator -> Error). `MC_GearOut` writes
+  slave 0x60FF = 0 on its edge and reports `Done` at rest. This is
+  velocity-ratio coupling, not exact phase lock — true TwinCAT
+  gearing needs cyclic setpoint coupling. `MC_AbortTrigger` is
+  intentionally omitted (no shared per-axis probe state; see
+  DECISIONS D-IMPL-55). New `tc2_mc2_gear` (in-process) and
+  `tc2_mc2_gear_io` (Tether IO) ctests replay
+  `tc2_mc2_gear_case.st` (mask `0x1ff`) on both backends — two axes,
+  both powered, master velocity, latch in window, 2:1 coupling,
+  gear-out, halt, power-off. Exact hardware-latch touch-probe,
+  `MC_AbortTrigger`, and phase-locked gearing/phasing/camming remain
+  documented gaps needing Tether backend latch + coupling objects.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

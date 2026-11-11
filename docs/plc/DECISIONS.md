@@ -1476,3 +1476,41 @@ strict PLCopen power-state checking. `Done`/`InVelocity`/`Busy`
 come from `FB_MotionAxis` OP=6 info (TargetReached /
 VelocityActualValue); `CommandAborted` is currently always FALSE —
 mid-move abort detection is a documented gap.
+
+## D-IMPL-55 — MC coupling/probe FBs are software approximations over object ops
+
+The two-axis and latch blocks (`MC_TouchProbe`, `MC_GearIn`,
+`MC_GearOut`) are implemented as pure-ST approximations on top of the
+existing `FB_MotionAxis` object ops — no new ABI, and they work
+unchanged on the in-process `MotionService` and the Tether IO
+`MotionIoService`/`SimulatedCiA402Drive`. Two simplifications are
+documented rather than faked:
+
+`MC_TouchProbe` is a cycle-level software latch, not a hardware
+touch-probe. On each `Execute` rising edge it arms a per-FB latch that
+reads `PositionActualValue` (0x6064) once per scan and captures it on
+the `TriggerInput` rising edge (optional `WindowOnly`/`FirstPosition`/
+`LastPosition` gating). TwinCAT's real touch-probe latches sub-cycle
+against an encoder event in the drive; neither the in-process axis nor
+`SimulatedCiA402Drive` exposes a latch object, so capture latency is
+one scan and trigger edges are scan-synchronous. Exact hardware-latch
+semantics need a DS402 latch object (e.g. 0x60B8/0x60B9/0x60BA) added
+to both backends.
+
+`MC_GearIn` is velocity-ratio coupling, not exact position-phase lock.
+On `Execute` it enables the slave and selects ProfileVelocity
+(0x6060=3), then each scan reads master `VelocityActualValue` (0x606C)
+and writes slave `TargetVelocity` (0x60FF) = master_vel *
+RatioNumerator / RatioDenominator (zero denominator -> Error). The
+slave's velocity tracks the master's scaled, but position phase is not
+locked — TwinCAT gearing couples cyclic position setpoints, which
+needs a dedicated coupling object or CSP setpoint streaming.
+`MC_GearOut` writes slave 0x60FF = 0 on its edge and reports `Done`
+when `VelocityActualValue` reaches zero.
+
+`MC_AbortTrigger` is intentionally omitted: aborting an armed probe
+requires shared per-axis probe state the FB-local latch model does not
+provide — each `MC_TouchProbe` owns its `armed` flag, so a separate
+abort FB cannot see it. Supporting it needs the probe state moved into
+the axis/backend (a shared armed-slot per axis) — a real backend
+change deferred with the latch object above.

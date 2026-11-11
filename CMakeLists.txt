@@ -689,6 +689,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_mc2_modulo PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_MC2 tranche-5 wrappers e2e: two simulated axes (master +
+  # slave), MC_TouchProbe position latch, MC_GearIn velocity-ratio
+  # coupling, MC_GearOut, MC_Halt; in-process, no peer
+  add_test(NAME tc2_mc2_gear
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_gear.sh)
+  set_tests_properties(tc2_mc2_gear PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # tplc-motion over the Tether IO protocol e2e: the same
   # FB_MotionAxis case replayed against tether_io_motion_server
   # (SimulatedCiA402Drive, --clock sim) with TPLC_MOTION_IO set;
@@ -714,6 +722,14 @@ if(NOT CMAKE_CROSSCOMPILING)
       COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
         bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_modulo_io.sh)
     set_tests_properties(tc2_mc2_modulo_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+    # the tranche-5 MC2 wrappers (2-axis gear coupling + touch probe)
+    # driving the remote DS402 drive fleet over Tether IO
+    add_test(NAME tc2_mc2_gear_io
+      COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_gear_io.sh)
+    set_tests_properties(tc2_mc2_gear_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
 
