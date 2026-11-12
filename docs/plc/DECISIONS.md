@@ -1796,3 +1796,14 @@ correct; the PackML tag/interface layer, unit mode vs unit state,
 and the suspend/hold sub-state detail are honest gaps.  No
 CONSTANT support in the dialect — state/command values are
 documented in the file header.
+
+## D-IMPL-69 — ControllerToolbox as pure-ST primitives
+
+**Decision.**  `tc2_controllertoolbox.st` is a pure-ST controller
+primitive library — no service or hardware.  `FB_Statistics`
+computes StdDev via Newton's sqrt iteration because the dialect
+has no SQRT builtin.
+
+**Consequences.**  `FB_DeadTime`/`Hysteresis`/`TwoPosition`/
+`ThreePosition`/`Statistics`/`Pwm` are the tranche; the full
+`FB_CTRL_*` catalog and feedforward structures are honest gaps.

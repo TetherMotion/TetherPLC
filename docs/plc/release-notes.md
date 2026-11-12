@@ -635,3 +635,15 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   Abort->Aborted->Clear->Idle at `0x3f`.  State names/constants are
   documented in the file header (no CONSTANT support in the
   dialect); the full PackML tag/interface layer is a gap.
+
+### C8 tranche 3 — ControllerToolbox (pure ST)
+
+  `compat/tc2/tc2_controllertoolbox.st` is the
+  Tc2_ControllerToolbox surface — pure-ST controller primitives:
+  `FB_DeadTime` (N-cycle delay), `FB_Hysteresis` (relay band),
+  `FB_TwoPosition` (on/off), `FB_ThreePosition` (deadband +
+  hysteresis), `FB_Statistics` (running mean/stddev/min/max —
+  stddev via Newton's sqrt, no SQRT builtin), and `FB_Pwm`
+  (duty-cycle converter).  `tc2_ctb_io` verifies
+  hysteresis/twopos/deadtime/stats/pwm at `0x1f`.  The full
+  `FB_CTRL_*` catalog and feedforward structures are gaps.
