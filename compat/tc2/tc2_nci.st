@@ -23,11 +23,19 @@
 // and CSP snaps each axis to the streamed target so commanded and
 // actual positions match.
 //
-// Honest gaps: no G-code/DIN-66025 interpreter, no FIFO block queue
-// or look-ahead, no circular/helical/spline paths (need trig), no
-// M-functions/tool/R-params/zero-shift, no multi-block blending.
-// Circular interpolation needs sin/cos the ST layer does not yet
-// provide; it lands in a later tranche. See DECISIONS D-IMPL-56.
+// G-code interpretation lives in Tether: tether_io_motion_server
+// exposes an nc.* channel that compiles program text with its G-code
+// interpreter, time-parameterizes it with the motion planner (corner
+// blending, jerk-limited profiles), and streams CSP setpoints to the
+// drives on the mc.time clock. The FB_NciChan blocks below are the
+// PLC-side control surface for that channel (TwinCAT Itp* shape);
+// there is no in-process interpreter — with no TPLC_MOTION_IO
+// endpoint the blocks report the service as unavailable.
+//
+// Honest gaps: FB_NciLine is the foundational interpreter-free path
+// (single block, no queue); the nc.* channel has no PLC-visible
+// M-function handshake, R-parameters, zero-shift, or cyclic-channel
+// offset tables yet. See DECISIONS D-IMPL-56.
 // SPDX-License-Identifier: Apache-2.0 OR MPL-2.0
 
 // ---- F_NciSqrt: Newton (Babylonian) square root for LREAL ----
@@ -216,4 +224,267 @@ END_VAR
     ax.AXIS := AxisZ; ax.OP := 6; ax();
     Status := Status AND (ax.STATUS <> 39);
     Busy := Execute AND NOT Status;
+END_FUNCTION_BLOCK
+
+// ---- NC interpreter channel (Tether-owned G-code) ----
+// Command codes written to FB_NciChan.CMD (nc.cmd on the wire):
+//   1=run 2=step 3=pause 4=resume 5=stop 6=reset 7=verify
+// Channel states reported by FB_NciChan.STATE (nc.state):
+//   0=idle 1=ready 2=running 3=paused 4=finished 5=error 6=stopped
+
+// ---- FB_ItpLoadText: upload inline program text to the channel ----
+// Rising edge on Execute writes PROG to nc.prog; the server compiles
+// it immediately. Done means the text was accepted (compile status is
+// visible via FB_ItpStatus/nc.state afterwards). TwinCAT loads files
+// through ItpLoadProg; inline text is the Tether-native path.
+FUNCTION_BLOCK FB_ItpLoadText
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+    ProgText : STRING[4095];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 1;
+        ch.CHAN := ChanId;
+        ch.PROG := ProgText;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpLoadProg: load a program file on the server host ----
+// Rising edge on Execute writes PathName to nc.prog_path; the server
+// opens and compiles the file. Mirrors TwinCAT ItpLoadProg(Ex).
+FUNCTION_BLOCK FB_ItpLoadProg
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+    PathName : STRING[127];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 2;
+        ch.CHAN := ChanId;
+        ch.PATH := PathName;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpStartStop: start/stop the NC channel ----
+// Rising edge on Start issues cmd RUN, on Stop issues cmd STOP.
+// Mirrors TwinCAT ItpStartStopEx (bStart/bStop).
+FUNCTION_BLOCK FB_ItpStartStop
+VAR_INPUT
+    Start : BOOL;
+    Stop : BOOL;
+    ChanId : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    stPrev : BOOL;
+    spPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Start AND NOT stPrev THEN
+        ch.OP := 3;
+        ch.CHAN := ChanId;
+        ch.CMD := 1;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    IF Stop AND NOT spPrev THEN
+        ch.OP := 3;
+        ch.CHAN := ChanId;
+        ch.CMD := 5;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    stPrev := Start;
+    spPrev := Stop;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpReset: reset the NC channel ----
+// Rising edge issues cmd RESET: clears program, state and errors.
+// Mirrors TwinCAT ItpResetEx.
+FUNCTION_BLOCK FB_ItpReset
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 3;
+        ch.CHAN := ChanId;
+        ch.CMD := 6;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpEStop: emergency stop on the channel ----
+// Rising edge issues cmd STOP: the channel drops out of RUNNING and
+// the planner holds the last setpoints (the sim axes freeze). A
+// machine E-stop also cuts axis power — compose with FB_NciEStop
+// for that. Mirrors TwinCAT ItpEStopEx.
+FUNCTION_BLOCK FB_ItpEStop
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 3;
+        ch.CHAN := ChanId;
+        ch.CMD := 5;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpStatus: cyclic channel status ----
+// Polls nc.state/line/total/errcode/progress/duration every scan and
+// mirrors them to the outputs (call unconditionally each cycle).
+// Finished is TRUE in FINISHED/ERROR/STOPPED; IsEStop is TRUE when
+// the channel is in STOPPED, matching TwinCAT ItpIsEStop semantics.
+FUNCTION_BLOCK FB_ItpStatus
+VAR_INPUT
+    ChanId : UDINT;
+END_VAR
+VAR_OUTPUT
+    Valid : BOOL;
+    State : DINT;
+    Line : UDINT;
+    Total : UDINT;
+    ErrCode : DINT;
+    Finished : BOOL;
+    IsEStop : BOOL;
+    ProgressMs : DINT;
+    DurationMs : DINT;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+END_VAR
+    ch.OP := 4;
+    ch.CHAN := ChanId;
+    ch();
+    Valid := (ch.STATUS = 0);
+    Error := NOT Valid;
+    ErrorID := ch.ERRID;
+    State := 0;
+    Line := 0;
+    Total := 0;
+    ErrCode := 0;
+    Finished := FALSE;
+    IsEStop := FALSE;
+    ProgressMs := 0;
+    DurationMs := 0;
+    IF Valid THEN
+        State := ch.STATE;
+        Line := ch.LINE;
+        Total := ch.TOTAL;
+        ErrCode := ch.NERR;
+        Finished := (State = 4) OR (State = 5) OR (State = 6);
+        IsEStop := (State = 6);
+        ProgressMs := ch.PROGRESS;
+        DurationMs := ch.DURATION;
+    END_IF;
 END_FUNCTION_BLOCK

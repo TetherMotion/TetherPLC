@@ -13,6 +13,7 @@
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/MotionIoService.hpp>
 #include <tplc/host/MotionService.hpp>
+#include <tplc/host/NciIoService.hpp>
 #include <tplc/host/NetService.hpp>
 #include <tplc/host/PjlinkService.hpp>
 #include <tplc/host/RtmonService.hpp>
@@ -88,6 +89,9 @@ private:
     /* IO-backed DS402 backend; active() only when TPLC_MOTION_IO names a
        reachable Tether IO endpoint and the protocol lib is linked. */
     MotionIoService motion_io_;
+    /* IO-backed NC interpreter channel; active() only when the
+       TPLC_MOTION_IO endpoint also exposes nc.* params. */
+    NciIoService  nci_io_;
 };
 
 } /* namespace tplc */

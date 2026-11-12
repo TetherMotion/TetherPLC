@@ -347,6 +347,16 @@ tests/compat/
                       tether_io_motion_server (--clock sim, --axes 4)
                       via TPLC_MOTION_IO; skips when the Tether server
                       binary is unavailable
+  tc2_nci_gcode_case.st
+                     Tc2_NCI G-code channel program (14 packed
+                      checks: text upload, file load, READY +
+                      block counts, run, mid-program line, finish,
+                      duration, stop, reset, IDLE)
+  tc2_nci_gcode_io.sh
+                     ctest tc2_nci_gcode_io: drives the server's
+                      nc.* channel over Tether IO (G-code
+                      interpreted by Tether's interpreter +
+                      motion planner, CSP streaming to the fleet)
 ```
 
 ## Building and consuming
@@ -374,7 +384,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
 | C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool), an 8-state PLCopen operating state, and coupling/probe blocks (MC_TouchProbe cycle-level latch, MC_GearIn velocity-ratio coupling, MC_GearOut; e2e on both backends); exact hardware-latch touch-probe, `MC_AbortTrigger`, phase-locked gearing/phasing/camming pending |
-| C6 | NC interpolation | `compat/tc2/tc2_nci.st` done: `FB_NciLine` coordinated 3-axis linear move streaming CSP (mode 8) setpoints, `F_NciSqrt` helper, `FB_NciEStop` group power-cut; e2e on both backends (fixed a server bug: dangling `slave` lambda capture). G-code/DIN-66025 interpreter, FIFO queue, circular/helical/spline, look-ahead pending |
+| C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus` wrappers (e2e `tc2_nci_gcode_io`); FIFO queue, M-function handshake, R-params/zero-shift, cyclic-channel offsets pending |
 
 ### C1 coverage notes
 
@@ -1244,11 +1254,43 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   captured `slave` by reference (`[&, idx, sz]` drops it under the
   `&` default), so every param operated on the last-configured slave
   — invisible for single-axis use, breaking multi-axis groups.
-- **Honest gaps**: no G-code/DIN-66025 interpreter, no FIFO block
-  queue or look-ahead, no circular/helical/spline paths (need
-  sin/cos), no M-functions/tool/R-params/zero-shift, no multi-block
-  blending — these need an actual NC channel/interpreter object in
-  the backend (DECISIONS D-IMPL-56).
+
+#### Tether-owned G-code channel (`nc.*`)
+
+- **Model**: G-code interpretation is owned by Tether, not the PLC.
+  `tether_io_motion_server` exposes an `nc.*` channel: `nc.prog`
+  (text) or `nc.prog_path` (server-side file) compiles the program
+  with `GCode::PlanningSegmentBuilder`; `nc.cmd` runs commands
+  (run/step/pause/resume/stop/reset/verify); on RUN the channel
+  builds a `MotionPlanner::MotionPlan` — corner blending plus the
+  planner's velocity profile over linear, arc and dwell segments —
+  then streams scaled CSP `0x607A` setpoints to slaves 0..2 on the
+  `mc.time` drive clock (deterministic under `--clock sim`).
+- **Status params**: `nc.state` (Idle/Ready/Running/Paused/
+  Finished/Error/Stopped), `nc.line` (executing source line),
+  `nc.total` (parsed blocks), `nc.errcode`, `nc.progress`/
+  `nc.duration` (plan seconds), `nc.scale`, `nc.feedovr`.
+- **PLC side**: `tplc-nci` service (`include/tplc/tplc_nci.h`) is
+  served by `NciIoService` only when `TPLC_MOTION_IO` names an
+  endpoint exposing `nc.*` — there is intentionally no in-process
+  interpreter, so `getService("tplc-nci")` returns null without a
+  Tether endpoint. `FB_NciChan` is the op-multiplexed builtin
+  (1=load text, 2=load file, 3=command, 4=status) and
+  `compat/tc2/tc2_nci.st` wraps it in TwinCAT `Itp*` shape:
+  `FB_ItpLoadText`, `FB_ItpLoadProg`, `FB_ItpStartStop`,
+  `FB_ItpReset`, `FB_ItpEStop`, `FB_ItpStatus`.
+- **Verified**: `tc2_nci_gcode_io` replays `tc2_nci_gcode_case.st`
+  (mask `0x3fff`) over Tether IO — inline-text upload (2 blocks),
+  server-side file load (7 blocks), run, mid-program line tracking,
+  finish, duration sanity, permissive stop, reset to IDLE. Step
+  semantics verified by direct probe (one source block per step,
+  then pause).
+- **Honest gaps**: no FIFO block queue (the whole program plans
+  ahead — that IS the look-ahead), no PLC-visible M-function
+  handshake, R-parameters, zero-shift, or cyclic-channel offset
+  tables; `FB_NciLine` remains the interpreter-free single-block
+  path. The in-process backend has no channel (by design).
+  (DECISIONS D-IMPL-56, D-IMPL-57).
 
 ## Known limitations
 

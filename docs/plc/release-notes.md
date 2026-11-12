@@ -382,6 +382,25 @@ live attach over tether_io, and the safety/security envelope.
   multi-axis groups. G-code interpreter, FIFO queue, circular/helical/
   spline, look-ahead, M-functions, R-params remain gaps needing a real
   NC channel object in the backend (D-IMPL-56).
+- **Twenty-second tranche (C6 Tether-owned G-code channel)**: adds
+  the `nc.*` interpreter channel. `tether_io_motion_server` compiles
+  `nc.prog` text or `nc.prog_path` files with
+  `GCode::PlanningSegmentBuilder`, time-parameterizes with
+  `MotionPlanner::MotionPlanBuilder` (corner blending, velocity
+  profile, linear/arc/dwell segments, zero-length moves skipped with
+  source-line mapping preserved), and streams scaled CSP `0x607A`
+  setpoints to slaves 0..2 on the `mc.time` clock. Commands
+  run/step/pause/resume/stop/reset/verify with InterpreterState
+  states; `nc.state`/`line`/`total`/`errcode`/`progress`/`duration`/
+  `scale`/`feedovr` report channel status. PLC side: `tplc-nci`
+  vtable + `NciIoService` (active only with a Tether endpoint; no
+  in-process interpreter by design), `FB_NciChan` builtin, and
+  `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/
+  `ItpStatus` wrappers in `tc2_nci.st`. Verified `tc2_nci_gcode_io`
+  (mask `0x3fff`) — text upload, file load, run, line tracking,
+  finish, duration, stop, reset; plus direct-probe step/pause/
+  resume. Remaining gaps: FIFO queue, M-function handshake,
+  R-params/zero-shift, cyclic-channel offsets (D-IMPL-57).
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

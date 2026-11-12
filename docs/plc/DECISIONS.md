@@ -1551,3 +1551,36 @@ per-object `readFn`/`writeFn` lambdas captured `slave` by reference
 registered param therefore read/wrote the last-configured slave —
 invisible for single-axis use, breaking any multi-axis group. Captures
 now bind `slave` by value.
+
+## D-IMPL-57 — G-code interpretation owned by Tether, PLC controls the channel
+
+TwinCAT NC-I's interpreter is a CNC program engine (G-code blocks,
+M-functions, look-ahead, R-parameters). Reimplementing that inside
+TetherPLC would duplicate Tether's existing state-of-the-art G-code
+subsystem, so interpretation was delegated: `tether_io_motion_server`
+exposes an `nc.*` parameter channel that compiles program text or
+files with `GCode::PlanningSegmentBuilder`, time-parameterizes the
+result with `MotionPlanner::MotionPlanBuilder` (corner blending plus
+the configured velocity profile over linear, arc and dwell segments;
+zero-length moves are dropped and a `planSegToSeg` map preserves
+source-line reporting), then streams scaled `0x607A` setpoints to
+slaves 0..2 in CSP mode on the `mc.time` drive clock — the same
+deterministic model the DS402 axes already use under `--clock sim`.
+
+The PLC surface is deliberately thin: a `tplc-nci` vtable
+(`load_text`/`load_file`/`command`/`status`), an `NciIoService` that
+maps ops to `nc.*` params (active only when `TPLC_MOTION_IO` names an
+endpoint that exposes them; no in-process fallback — honest absence
+rather than a second interpreter), the `FB_NciChan` builtin (OP
+1..4), and `FB_Itp*` wrappers in `tc2_nci.st` mirroring the TwinCAT
+`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpIsEStop`
+surface. Channel commands: run/step/pause/resume/stop/reset/verify;
+`stop` is permissive (any non-Idle/Error state drops to Stopped, like
+TwinCAT's `bStop`) and `step` runs one source block then pauses.
+`nc.scale`/`nc.feedovr` are RW config params.
+
+Programs are bounded by the ST string transport (PROG cap 4095,
+PATH cap 127); larger programs load by server-side path. `nc.cmd`
+values are `GCode::InterpreterState`-aligned for `nc.state`
+reporting; `nc.errcode` carries channel errors (1 bad cmd, 2 bad
+state, 3 compile, 4 plan build, 5 unsupported segment type).

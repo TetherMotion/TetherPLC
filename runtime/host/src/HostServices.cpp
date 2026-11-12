@@ -26,7 +26,7 @@ HostServices::HostServices(uint32_t caps)
       pjlink_(&host_steady_ns, this), s7_(&host_steady_ns, this),
       ftp_(&host_steady_ns, this), smtp_(&host_steady_ns, this),
       iec870_(&host_steady_ns, this), motion_(&host_steady_ns, this),
-      motion_io_(&host_steady_ns, this) {
+      motion_io_(&host_steady_ns, this), nci_io_(&host_steady_ns, this) {
     svc_.struct_size  = sizeof(TplcServices);
     svc_.caps         = caps | TPLC_EXT_MOVABLE_BETWEEN;
     svc_.host         = this;
@@ -111,6 +111,14 @@ void* HostServices::getService(const char* name, uint32_t len) {
         if (motion_io_.active())
             return const_cast<TplcMotionService*>(&motion_io_.table());
         return const_cast<TplcMotionService*>(&motion_.table());
+    }
+    if (len == 8 && memcmp(name, "tplc-nci", 8) == 0) {
+        /* G-code interpretation lives in Tether: the channel exists
+           only when the IO endpoint exposes nc.* — no in-process
+           fallback. */
+        if (nci_io_.active())
+            return const_cast<TplcNciService*>(&nci_io_.table());
+        return nullptr;
     }
     return nullptr;
 }

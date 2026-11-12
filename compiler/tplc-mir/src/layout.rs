@@ -1071,6 +1071,37 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "POS_ACTUAL", dint());
             push(&mut off, "VEL_ACTUAL", dint());
         }
+        /* FB_NciChan — tplc-nci service bridge (NC interpreter channel
+        on a Tether IO endpoint). Synchronous op dispatch like
+        FB_MotionAxis: set OP + fields and call. OP 1=load program
+        text (PROG string), 2=load program file on the server host
+        (PATH string), 3=command (CMD code), 4=status (fills
+        STATE/LINE/TOTAL/NERR/PROGRESS/DURATION). STATUS carries the
+        service return code, ERRID its positive form; NERR is the
+        channel's own error code from the last status read. */
+        "FB_NciChan" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "CHAN", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "PROG", Type::Str { cap: 4095 });
+            push(&mut off, "CMD", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "STATE", dint());
+            push(&mut off, "LINE", udint());
+            push(&mut off, "TOTAL", udint());
+            push(&mut off, "NERR", dint());
+            push(&mut off, "PROGRESS", dint());
+            push(&mut off, "DURATION", dint());
+        }
         _ => return None,
     }
     let align = 8u64;
