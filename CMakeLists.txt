@@ -1007,6 +1007,16 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_babasic_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_HVAC pure-ST HVAC blocks (C7): analog/actuators/pumps/
+  # mux/redundancy/2-point+step+PID ctrl/heating curve/alarm/
+  # anti-blocking/blink/BAR primitives
+  add_test(NAME tc2_hvac_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_hvac_io.sh)
+  set_tests_properties(tc2_hvac_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/
   # Average/Ramp pure-ST blocks — clamp/lag/track/average/slew
   add_test(NAME tc2_filter_io
