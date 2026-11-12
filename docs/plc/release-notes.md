@@ -543,3 +543,20 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   disconnect at `0x1f` against `mqtt_broker_fake.py`.  MQTT5
   properties, wildcard detail, QoS2, retained messages, and TLS are
   gaps.
+
+### C7 tranche 5 — OCPP-J client (`tplc-ocpp`)
+
+  `tplc-ocpp` is an OCPP-J (Open Charge Point Protocol over
+  WebSocket + JSON-RPC) charge-point client — the PLC is the
+  charge-point side, always available (TCP + RFC6455 WebSocket +
+  OCPP JSON-RPC array framing, hand-rolled like tplc-eip).
+  `FB_Ocpp` is the runtime builtin (connect/disconnect/status/
+  call/result/callerror/receive) and `FB_OcppConnect`/`Disconnect`/
+  `Call`/`Result`/`CallError`/`Receive` in `compat/tc2/tc2_ocpp.st`
+  are the TwinCAT-shaped wrappers (Tc3_OCPP/TF6741-ish).  Payloads
+  are raw JSON text bounded `STRING[255]`; `ACTION` is a reserved
+  keyword surfaced as `ACT`/`ActName`.  Every socket op is
+  poll-bounded under the scan-stall watchdog.  `tc2_ocpp_io`
+  verifies WS-upgrade/call/result/disconnect at `0xf` against
+  `ocpp_csms_fake.py`.  OCPP 2.x, security profiles, and schema
+  validation are gaps.

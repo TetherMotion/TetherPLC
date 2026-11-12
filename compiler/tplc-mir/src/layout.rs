@@ -1247,6 +1247,44 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ERRID", udint());
             push(&mut off, "CONNECTED", udint());
         }
+        /* FB_Ocpp — tplc-ocpp service bridge (OCPP-J client over
+        WebSocket + JSON-RPC). Synchronous op dispatch like FB_Eip:
+        set OP + fields and call. OP 1=connect (HOST/PORT/PATH/OCPPID
+        -> HANDLE), 2=disconnect, 3=status (-> STATE/RXTOT/TXTOT/
+        LASTERR), 4=call (MSGID/ACTION/PAYLOAD), 5=result (MSGID/
+        PAYLOAD), 6=callerror (MSGID/CODE/DESC/PAYLOAD), 7=receive
+        (-> RXACTION/RXPAYLOAD/RXMSGTYPE or NOMSG). STATUS carries
+        the service return code, ERRID its positive form. */
+        "FB_Ocpp" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "HOST", Type::Str { cap: 63 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "PATH", Type::Str { cap: 63 });
+            push(&mut off, "OCPPID", Type::Str { cap: 63 });
+            push(&mut off, "MSGID", Type::Str { cap: 63 });
+            push(&mut off, "ACT", Type::Str { cap: 63 });
+            push(&mut off, "CODE", Type::Str { cap: 63 });
+            push(&mut off, "DESC", Type::Str { cap: 127 });
+            push(&mut off, "PAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "RXACTION", Type::Str { cap: 63 });
+            push(&mut off, "RXPAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "RXMSGTYPE", udint());
+            push(&mut off, "STATE", dint());
+            push(&mut off, "RXTOT", udint());
+            push(&mut off, "TXTOT", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

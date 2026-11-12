@@ -18,6 +18,7 @@
 #include <tplc/host/MotionService.hpp>
 #include <tplc/host/NciIoService.hpp>
 #include <tplc/host/NetService.hpp>
+#include <tplc/host/OcppService.hpp>
 #include <tplc/host/OpcUaService.hpp>
 #include <tplc/host/PjlinkService.hpp>
 #include <tplc/host/RtmonService.hpp>
@@ -104,6 +105,8 @@ private:
     Iec61850Service iec61850_;
     /* MQTT client; inert when built without libpaho-mqtt3c. */
     MqttService   mqtt_;
+    /* OCPP-J client (WebSocket + JSON-RPC); always available. */
+    OcppService   ocpp_;
 };
 
 } /* namespace tplc */

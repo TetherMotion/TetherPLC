@@ -54,6 +54,7 @@ add_library(tplc_host STATIC
   runtime/host/src/EipService.cpp
   runtime/host/src/Iec61850Service.cpp
   runtime/host/src/MqttService.cpp
+  runtime/host/src/OcppService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -922,6 +923,17 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mqtt_io.sh)
   set_tests_properties(tc2_mqtt_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real
+  # WebSocket+JSON-RPC session against the python CSMS fake
+  # (ocpp_csms_fake.py — WS upgrade + OCPP-J echo) —
+  # connect/call/result/disconnect
+  add_test(NAME tc2_ocpp_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_ocpp_io.sh)
+  set_tests_properties(tc2_ocpp_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy

@@ -1703,3 +1703,20 @@ wrapper surfaces them as `RetainOn`/`FLG_RETAIN`.  MQTT5
 properties, wildcard-matching detail, QoS2 two-phase, retained
 messages, and TLS are honest gaps.  The e2e peer is a real
 CONNECT/CONNACK/SUBACK/PUBLISH-echo fake, not a stub.
+
+## D-IMPL-63 — OCPP-J via hand-rolled WebSocket + JSON-RPC, always on
+
+**Decision.**  The `tplc-ocpp` charge-point client is TCP +
+RFC6455 WebSocket + OCPP JSON-RPC array framing, hand-rolled like
+`tplc-eip` — the wire protocol is small enough that an external
+library adds dependency without surface value.  Always available
+(no opt-in lib).
+
+**Consequences.**  The `FB_Ocpp` surface is connect/disconnect/
+status/call/result/callerror/receive — the WebSocket upgrade plus
+the three OCPP-J frame types.  Payloads are raw JSON text the
+caller composes/parses (bounded `STRING[255]`); per-action schema
+validation is honest out-of-scope.  `ACTION` is a reserved keyword
+surfaced as `ACT`/`ActName`.  Socket IO is poll-bounded under the
+scan-stall watchdog.  The e2e peer is a real WS-upgrade +
+OCPP-J echo fake.

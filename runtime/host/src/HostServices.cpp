@@ -141,6 +141,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcMqttService*>(&mqtt_.table());
         return nullptr;
     }
+    if (len == 9 && memcmp(name, "tplc-ocpp", 9) == 0) {
+        /* OCPP-J client: WebSocket + JSON-RPC, always available. */
+        return const_cast<TplcOcppService*>(&ocpp_.table());
+    }
     return nullptr;
 }
 
