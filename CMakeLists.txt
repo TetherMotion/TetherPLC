@@ -62,10 +62,11 @@ add_library(tplc_host STATIC
   runtime/host/src/MpbusService.cpp
   runtime/host/src/DynmemService.cpp
   runtime/host/src/EventlogService.cpp
+  runtime/host/src/DbService.cpp
   runtime/host/src/MbusService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
-target_link_libraries(tplc_host PUBLIC tplc_image dl)
+target_link_libraries(tplc_host PUBLIC tplc_image dl sqlite3)
 
 # ------------------------------------------------------------------ #
 # Package library (.tplc C++ reader)
@@ -1064,6 +1065,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_jsonxml_io.sh)
   set_tests_properties(tc3_jsonxml_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_Database/Tc3_Database (C7 connectivity): tplc-db SQLite
+  # service — open/create/insert/select/error/close
+  add_test(NAME tc3_database_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_database_io.sh)
+  set_tests_properties(tc3_database_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/

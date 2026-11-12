@@ -9,6 +9,7 @@
 #include <tplc/host/AdsService.hpp>
 #include <tplc/host/Aes70Service.hpp>
 #include <tplc/host/BacnetService.hpp>
+#include <tplc/host/DbService.hpp>
 #include <tplc/host/DmxService.hpp>
 #include <tplc/host/DynmemService.hpp>
 #include <tplc/host/EipService.hpp>
@@ -129,6 +130,7 @@ private:
     MpbusService mpbus_;
     DynmemService dynmem_;
     EventlogService eventlog_;
+    DbService db_;
 };
 
 } /* namespace tplc */

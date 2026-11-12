@@ -177,6 +177,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* Bounded event journal (Tc3_EventLogger). */
         return const_cast<TplcEventlogService*>(&eventlog_.table());
     }
+    if (len == 7 && memcmp(name, "tplc-db", 7) == 0) {
+        /* SQLite-backed SQL service (Tc2/Tc3_Database). */
+        return const_cast<TplcDbService*>(&db_.table());
+    }
     return nullptr;
 }
 

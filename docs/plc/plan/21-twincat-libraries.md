@@ -28545,7 +28545,13 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6420_TC3_Database_Server_EN.pdf` · **API entries:** 153
-- **Status:** DB client needs a socket service + driver; feasible via the socket pattern — planned
+- **Status: IMPLEMENTED (PLC access blocks)** — `compat/tc3/tc3_database.st`
+  over the `tplc-db` service (embedded SQLite, no TF6420
+  Database Server, no ODBC driver manager): `FB_PLCDBOpen`,
+  `FB_PLCDBCreateEvt`, `FB_PLCDBWriteEvt`, `FB_PLCDBReadEvt`,
+  `FB_PLCDBGetError`.  Results cross as tab-separated rows in a
+  bounded 255-byte buffer.  TF6420 configuration/AutoLog/event
+  families documented as not modelled.  Ctest `tc3_database_io`.
 - **Integration:** SQL access needs DB drivers (ODBC/SQLite-class) via a database service.
 
 #### AutoLog groups List of configured AutoLog groups on the target system › Tc3_Database › Function blocks › Configure mode

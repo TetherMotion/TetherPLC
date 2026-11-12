@@ -1520,6 +1520,31 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "TEXT", Type::Str { cap: 80 });
             push(&mut off, "TXTO", Type::Str { cap: 80 });
         }
+        /* FB_Db — tplc-db SQLite bridge (Tc2/Tc3_Database).
+        OP 1=open (PATH -> HANDLE), 2=exec (SQL -> CHANGES),
+        3=query (SQL -> BUF/ROWS/COLS), 4=close, 5=error (-> ERR). */
+        "FB_Db" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "CHANGES", udint());
+            push(&mut off, "ROWS", udint());
+            push(&mut off, "COLS", udint());
+            push(&mut off, "ERRLEN", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "SQL", Type::Str { cap: 255 });
+            push(&mut off, "BUF", Type::Str { cap: 255 });
+            push(&mut off, "ERR", Type::Str { cap: 127 });
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,

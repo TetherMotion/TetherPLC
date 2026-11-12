@@ -2040,3 +2040,22 @@ Compiler notes surfaced by the work:
   commands in consecutive scans fire only the first.
 
 ctest `tc3_jsonxml_io` green (0x03ff).
+
+## D-IMPL-85 — tc3_database (tplc-db, SQLite-backed)
+
+`tplc-db` host service links the embedded SQLite engine
+(libsqlite3, no ODBC, no TF6420 Database Server): open/close,
+exec with change count, query returning tab-separated rows
+('\n' between rows) in a bounded 255-byte buffer plus
+rows/cols counts, and last-engine-error text.
+
+`FB_Db` builtin: OP 1=open 2=exec 3=query 4=close 5=error.
+`compat/tc3/tc3_database.st` maps the PLC access blocks
+(FB_PLCDBOpen/CreateEvt/WriteEvt/ReadEvt/GetError); METHOD
+calls become edge-triggered nCmd inputs.  TF6420's
+configuration/AutoLog/event families are documented as not
+modelled.
+
+Note: this ST has no doubled-quote escaping, so SQL literals in
+ST need numeric/parameterised forms — recorded for users.
+ctest `tc3_database_io` green (0x07ff).
