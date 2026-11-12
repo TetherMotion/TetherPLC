@@ -2118,3 +2118,14 @@ ctest `tc2_rfid_io` green (0x1f).
    ranges — only a gate opcode at a decoded instruction boundary
    is rejected.  `module_scan` still rejects the evil syscall /
    int80 fixtures, so the hardening is intact.
+
+## D-IMPL-89 — tplc_io_attach epoch expectation
+
+`tests/scan/tplc_io_attach.sh` asserted `schema_epoch = EP1 + 1`,
+but `tplc-io-probe` prints the epoch *before* its own
+`shadow.promote`, so two bumps occur between the two probes
+(promote + prepare).  The check is now `EP1 + 2`, matching the
+watcher's contract ("epoch = program-set changes seen").
+Suite state after this: the full ctest run is green serially
+(parallel runs collide on fixed service ports — run with -j1 for
+the wired bus tests).

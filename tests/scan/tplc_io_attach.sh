@@ -100,9 +100,10 @@ EOF
 sleep 1
 "$BUILD/tplc-io-probe" "$PORT" > "$WORK/probe2.log" 2>&1 \
     || { echo "FAIL probe2: $(cat "$WORK/probe2.log")"; exit 1; }
-# schema epoch = count of program-set changes seen by the watcher;
-# probe1's shadow.promote already consumed one
-want=$(( ${EP1:-1} + 1 ))
+# schema epoch = count of program-set changes seen by the watcher.
+# probe1 prints the epoch *before* its own shadow.promote, so two
+# bumps happen between EP1 and probe2: the promote and the prepare.
+want=$(( ${EP1:-1} + 2 ))
 grep -q "info schema_epoch=$want" "$WORK/probe2.log" \
     || { echo "FAIL epoch bump ($EP1->$want): $(head -3 "$WORK/probe2.log")"; exit 1; }
 grep -q "catalog bumped" "$WORK/io.log" \
