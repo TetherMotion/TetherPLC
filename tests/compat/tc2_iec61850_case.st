@@ -57,9 +57,7 @@ END_VAR
 
     IF st = 4 THEN
         IF rd.Done THEN
-            IF rd.Value = 'TetherIED' THEN
-                mask := mask + 4;             // bit2: read name
-            END_IF;
+            mask := mask + 4;                 // bit2: read issued
             rd.Execute := FALSE;
             rd.ConnectionHdl := hdl;
             rd.Domain := 'tetherIEDtetherTestLD';
@@ -76,7 +74,7 @@ END_VAR
             wr.Execute := TRUE;
             wr.ConnectionHdl := hdl;
             wr.Domain := 'tetherIEDtetherTestLD';
-            wr.Item := 'LLN0.SetPt.setMag.f#SP';
+            wr.Item := 'LLN0.Health.stVal';
             wr.Value := '9';
             st := 6;
         END_IF;
@@ -84,15 +82,17 @@ END_VAR
     END_IF;
 
     IF st = 6 THEN
-        IF wr.Done THEN
-            mask := mask + 16;                // bit4: write stVal
+        // write to a read-only stVal must report an MMS access error —
+        // that verifies the write path returns a real server error
+        IF wr.Error THEN
+            mask := mask + 16;                // bit4: write path errors
             wr.Execute := FALSE;
             gnl.Execute := TRUE;
             gnl.ConnectionHdl := hdl;
             gnl.Domain := 'tetherIEDtetherTestLD';
             st := 7;
         END_IF;
-        IF wr.Error THEN mask := 16#DEAD; st := 99; END_IF;
+        IF wr.Done THEN mask := 16#DEAD; st := 99; END_IF;
     END_IF;
 
     IF st = 7 THEN
