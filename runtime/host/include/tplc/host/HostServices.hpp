@@ -9,6 +9,7 @@
 #include <tplc/host/AdsService.hpp>
 #include <tplc/host/Aes70Service.hpp>
 #include <tplc/host/BacnetService.hpp>
+#include <tplc/host/DmxService.hpp>
 #include <tplc/host/EipService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
@@ -110,6 +111,8 @@ private:
     OcppService   ocpp_;
     /* AES70/OCA audio-control client; always available. */
     Aes70Service  aes70_;
+    /* DMX512 output (opt-in serial port); always available. */
+    DmxService    dmx_;
 };
 
 } /* namespace tplc */

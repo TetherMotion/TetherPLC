@@ -149,6 +149,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* AES70/OCA audio-control client, always available. */
         return const_cast<TplcAes70Service*>(&aes70_.table());
     }
+    if (len == 8 && memcmp(name, "tplc-dmx", 8) == 0) {
+        /* DMX512 output: opt-in serial port, always available. */
+        return const_cast<TplcDmxService*>(&dmx_.table());
+    }
     return nullptr;
 }
 
