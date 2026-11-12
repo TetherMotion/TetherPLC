@@ -485,3 +485,18 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   loaded host, the 5 ms lateness bound occasionally trips at
   ~18 ms. Cadence holds; the bound assumes an unloaded host.
 - **MCU target** (doc 18) is out of v1 scope.
+- **EtherNet/IP client (C7 tranche 2, tranche 25)**: `tplc-eip` is a
+  scanner-side explicit-messaging client — RegisterSession/
+  UnRegisterSession, ListIdentity discovery, and SendRRData carrying
+  unconnected CIP Get/Set_Attribute_Single on TCP 44818, all on
+  nonblocking connect+poll-bounded IO (fails fast, never stalls the
+  scan). `FB_Eip` ops 1-6 (open/close/status/listid/get/set) +
+  `FB_EipConnect`/`FB_EipDisconnect`/`FB_EipStatus`/`FB_EipListIdentity`/
+  `FB_EipGetAttribute`/`FB_EipSetAttribute` wrappers in
+  `compat/tc2/tc2_eip.st` (TwinCAT Tc3_EtherNetIP/TF6281 shape; CIP
+  class/instance/attribute u16 with auto 8/16-bit segments; attribute
+  payloads bounded STRING[255]). `tc2_eip_io` verifies
+  register/identity/attr r-w/disconnect at `0x7f` against
+  `eip_adapter_fake.py` (D-IMPL-60). Cyclic class-1 I/O, ForwardOpen,
+  other CIP services, and UDP multicast discovery are gaps; IEC 61850,
+  MQTT/IoT, OCPP, AES70, building buses are the rest of wave 2.

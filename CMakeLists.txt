@@ -789,6 +789,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
 
+  # EtherNet/IP client surface (C7): FB_Eip* wrappers drive a real
+  # explicit-messaging session against tests/compat/eip_adapter_fake.py
+  # (encapsulation + CIP Get/Set_Attribute_Single) — register,
+  # identity, attribute r/w, disconnect
+  add_test(NAME tc2_eip_io
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_eip_io.sh)
+  set_tests_properties(tc2_eip_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

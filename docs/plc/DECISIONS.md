@@ -1642,3 +1642,25 @@ then `tc2_opcua_io` drives the PLC client through connect → session →
 read `nc.state` → write+read `nc.scale` → ns-index → disconnect.
 Gaps kept honest: no browse/node-handle/subscription/method wrappers
 yet.
+
+## D-IMPL-60 — EtherNet/IP explicit messaging, bounded nonblocking IO
+
+TwinCAT's EtherNet/IP surface (Tc3_EtherNetIP / TF6281) is a
+scanner-side client over the encapsulation layer on TCP 44818. The
+service talks RegisterSession/UnRegisterSession, ListIdentity, and
+SendRRData carrying unconnected CIP Get/Set_Attribute_Single — the
+read/write/status core TwinCAT apps use most; cyclic implicit
+(class-1) I/O, ForwardOpen, and other CIP services are a separate
+surface kept out of scope.
+
+Every socket op is nonblocking with a `poll` budget (~150 ms) well
+under the PLC scan-stall watchdog — a stuck adapter fails the call
+(TPLC_EIP_E_IO) instead of stalling the task; a blocked `recv`/`connect`
+must never take a scan over the watchdog. CIP object addressing is
+class/instance/attribute u16 with automatic 8-bit/16-bit path-segment
+encoding; attribute payloads are bounded `STRING[255]` bytes (TwinCAT's
+PVOID buffers map to the string carrier). `FB_Eip` op-multiplexes
+connect/close/status/identity/get/set; `FB_Eip*` wrappers expose the
+TwinCAT shape. Verified at the wire level with `eip_adapter_fake.py`
+(RegisterSession, ListIdentity, attribute write+read roundtrip,
+unregister — `0x7f`).

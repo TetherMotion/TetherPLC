@@ -172,7 +172,7 @@ bool xact(int fd, uint16_t cmd, uint32_t session,
     if (!sendAll(fd, f.data(), f.size())) return false;
     uint8_t hdr[24];
     if (!recvN(fd, hdr, 24)) return false;
-    const uint16_t len = uint16_t(hdr[4] | (hdr[5] << 8));
+    const uint16_t len = uint16_t(hdr[2] | (hdr[3] << 8));
     status = uint32_t(hdr[8] | (hdr[9] << 8) | (hdr[10] << 16) | (hdr[11] << 24));
     resp.assign(len, 0);
     if (!recvN(fd, resp.data(), len)) return false;
@@ -232,14 +232,18 @@ int32_t EipService::open(void*, const char* host, uint32_t port,
             for (int k = 0; k < 8; ++k) f.push_back(0);
             put32(f, 0);
             f.insert(f.end(), body.begin(), body.end());
-            if (!sendAll(fd, f.data(), f.size())) { ::close(fd); return TPLC_EIP_E_IO; }
+            if (!sendAll(fd, f.data(), f.size())) {
+                ::close(fd); return TPLC_EIP_E_IO;
+            }
             uint8_t hdr[24];
-            if (!recvN(fd, hdr, 24)) { ::close(fd); return TPLC_EIP_E_IO; }
+            if (!recvN(fd, hdr, 24)) {
+                ::close(fd); return TPLC_EIP_E_IO;
+            }
             const uint16_t rcmd = uint16_t(hdr[0] | (hdr[1] << 8));
-            const uint16_t len = uint16_t(hdr[4] | (hdr[5] << 8));
-            const uint32_t sess = uint32_t(hdr[8] | (hdr[9] << 8) |
-                                     (hdr[10] << 16) | (hdr[11] << 24));
-            st = uint32_t(hdr[12] | (hdr[13] << 8) | (hdr[14] << 16) | (hdr[15] << 24));
+            const uint16_t len = uint16_t(hdr[2] | (hdr[3] << 8));
+            const uint32_t sess = uint32_t(hdr[4] | (hdr[5] << 8) |
+                                     (hdr[6] << 16) | (hdr[7] << 24));
+            st = uint32_t(hdr[8] | (hdr[9] << 8) | (hdr[10] << 16) | (hdr[11] << 24));
             std::vector<uint8_t> drain(len);
             if (!recvN(fd, drain.data(), len)) { /* drain is best-effort */ }
             if (rcmd != CMD_REGISTER_SESS || st != 0 || sess == 0) {

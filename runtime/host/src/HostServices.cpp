@@ -126,8 +126,9 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcOpcUaService*>(&opcua_.table());
         return nullptr;
     }
-    if (len == 8 && memcmp(name, "tplc-eip", 8) == 0)
+    if (len == 8 && memcmp(name, "tplc-eip", 8) == 0) {
         return const_cast<TplcEipService*>(&eip_.table());
+    }
     return nullptr;
 }
 

@@ -11,15 +11,13 @@ VAR
     st : INT;
     waitN : INT;
     mask AT %QD0 : UDINT;
-    st2 AT %QW4 : DINT;
-    cst2 AT %QD8 : DINT;
     hdl : UDINT;
 END_VAR
     IF st = 0 THEN
         mask := 0;
         con.Execute := TRUE;
         con.RemoteHost := '127.0.0.1';
-        con.RemotePort := 14482;
+        con.RemotePort := 14481;
         st := 1;
     END_IF;
 
@@ -49,7 +47,7 @@ END_VAR
                 sta.Execute := FALSE;
                 lid.Execute := TRUE;
                 lid.RemoteHost := '127.0.0.1';
-                lid.RemotePort := 14482;
+                lid.RemotePort := 14481;
                 st := 4;
             END_IF;
         END_IF;
@@ -119,6 +117,4 @@ END_VAR
     END_IF;
 
     con(); dis(); sta(); lid(); ga(); sa();
-    st2 := INT_TO_DINT(st);
-    cst2 := sta.SessionState;
 END_PROGRAM
