@@ -677,3 +677,14 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   builtin).  `tc2_pm_io` drives DC samples and verifies
   RMS/P/PF/energy at `0x1f`.  Three-phase and harmonic metering
   are gaps.
+
+### C8 tranche 7 — SPA signal analysis (pure ST)
+
+  `compat/tc2/tc2_spa.st` is the Tc2_SPA surface — signal
+  processing analysis in pure-ST: `FB_PeakDetect` (max/min/pp
+  over a window), `FB_Envelope` (full-wave rectify + attack/
+  release), `FB_DftBin` (dominant-bin magnitude — approximate,
+  no trig builtin), and `FB_XCorrQuality` (normalized cross-
+  correlation).  `tc2_spa_io` verifies peak/envelope/dft/xcorr at
+  `0x1f`.  A true FFT (needs trig builtins) and Bode analysis are
+  gaps.

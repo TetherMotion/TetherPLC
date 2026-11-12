@@ -1833,3 +1833,13 @@ RMS/P/S/Q/PF/energy over a rolling sample window, Newton's sqrt.
 
 **Consequences.**  Single-phase metering verified; three-phase and
 harmonic metering are honest gaps.
+
+## D-IMPL-73 — SPA as pure-ST signal analysis
+
+**Decision.**  `tc2_spa.st` is a pure-ST signal-analysis surface —
+peak detect, envelope, DFT-bin magnitude, cross-correlation.
+Newton's sqrt replaces SQRT; the DFT bin is an honest approximate
+because the dialect has no trig builtins.
+
+**Consequences.**  The analysis primitives are real; a true FFT
+and Bode analysis are honest gaps (need trig builtins).

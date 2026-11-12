@@ -1013,6 +1013,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_pm_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # SPA surface (C8): peak/envelope/dft-bin/xcorr signal analysis
+  add_test(NAME tc2_spa_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_spa_io.sh)
+  set_tests_properties(tc2_spa_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env
