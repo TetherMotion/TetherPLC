@@ -647,3 +647,13 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   (duty-cycle converter).  `tc2_ctb_io` verifies
   hysteresis/twopos/deadtime/stats/pwm at `0x1f`.  The full
   `FB_CTRL_*` catalog and feedforward structures are gaps.
+
+### C8 tranche 4 — TempController (pure ST)
+
+  `compat/tc2/tc2_tempcontroller.st` is the Tc2_TempController
+  surface — a temperature control loop in pure-ST: PT1 sensor
+  filter -> PID (SP - filtered PV) -> PWM duty output.  The caller
+  supplies the thermal plant and cycle time.  `tc2_tc_io` runs a
+  simulated plant (heater -> lag -> sensor) and verifies
+  heating/convergence at `0x1f`.  Auto-tuning and multi-zone are
+  gaps.

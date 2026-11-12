@@ -1807,3 +1807,12 @@ has no SQRT builtin.
 **Consequences.**  `FB_DeadTime`/`Hysteresis`/`TwoPosition`/
 `ThreePosition`/`Statistics`/`Pwm` are the tranche; the full
 `FB_CTRL_*` catalog and feedforward structures are honest gaps.
+
+## D-IMPL-70 — TempController as pure-ST PID+PWM loop
+
+**Decision.**  `FB_TempController` is a pure-ST temperature loop —
+sensor filter, PID, PWM duty output.  The thermal plant lives in
+the caller (or a simulated plant in the e2e).
+
+**Consequences.**  The loop is real; auto-tuning, multi-zone and
+the full `FB_Temp*` catalog are honest gaps.
