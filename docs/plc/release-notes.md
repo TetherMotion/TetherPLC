@@ -698,3 +698,15 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   (linear cam master->slave).  `tc2_cm_io` verifies
   funcgen/interp/cam at `0x1f`.  Spline interpolation and cam
   table management are gaps.
+
+### C8 tranche 9 — QRC result validation (pure ST)
+
+  `compat/tc2/tc2_qrc.st` is the Tc3_QRC surface — barcode/QR
+  result verification in pure-ST: `FB_QrcValidate` checks EAN-13
+  and UPC-A payloads (odd/even weighted check digit) so a decode
+  result arriving from an external scanner or camera is verified
+  on the payload channel.  `tc2_qrc_io` verifies valid/invalid
+  EAN-13 and valid UPC-A at `0x07`.  A true QR decoder (image
+  pipeline + Reed-Solomon) and the Q-SYS response-frame parser of
+  the Beckhoff library are gaps — they need camera/service
+  plumbing, not pure-ST math.

@@ -1851,3 +1851,15 @@ function generator, piecewise-linear interpolation, linear cam.
 
 **Consequences.**  FuncGen/LinInterp/CamProfile verified; spline
 interpolation and cam table management are honest gaps.
+
+## D-IMPL-75 — QRC as pure-ST payload validation
+
+**Decision.**  `tc2_qrc.st` implements the checkable part of a
+QR/barcode surface in pure-ST: `FB_QrcValidate` verifies EAN-13
+and UPC-A check digits on a decode result that arrives from an
+external scanner or camera.
+
+**Consequences.**  EAN-13/UPC-A validation verified (`0x07`).
+A true QR decoder needs an image pipeline and Reed-Solomon, and
+the Beckhoff Tc3_QRC Q-SYS response frames need the TCP service
+of the real library — both are honest gaps, not pure-ST math.
