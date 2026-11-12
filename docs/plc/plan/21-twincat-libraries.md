@@ -5144,7 +5144,12 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T1
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_DynamicMemory_EN.pdf` · **API entries:** 2
-- **Status:** dynamic-memory FBs (T_MEM) feasible via runtime heap service — planned
+- **Status: IMPLEMENTED** — `compat/tc3/tc3_dynmem.st` over the
+  `tplc-dynmem` bounded-arena host service (64 blocks / 64 KiB max
+  / 1 MiB arena, deterministic, no host heap).  Handles are
+  integer ids (no POINTER semantics — documented difference);
+  METHOD calls are edge-triggered `nCmd` inputs.  Ctest
+  `tc3_dynmem_io`.
 - **Integration:** Dynamic allocation needs a heap/arena service in the runtime; deterministic sizing rules required.
 
 #### Function blocks

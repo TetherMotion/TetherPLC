@@ -1988,3 +1988,18 @@ which made the byte order invisible.  A long hunt for
 byte-order issue plus one genuine bad test vector
 (SwiHys2P driven with fIn inside the hysteresis band).
 Not a compiler/runtime defect.
+
+## D-IMPL-82 — tc3_dynmem (Tc3_DynamicMemory bounded arena)
+
+`tplc-dynmem` host service: deterministic arena allocator —
+64 blocks / 64 KiB max block / 1 MiB fixed arena, first-fit
+with gap reuse, no host-heap calls after startup.  Blocks are
+integer handles (no pointers across the PLC ABI); byte access
+via read/write ops.
+
+`FB_DynMem` builtin: OP 1=alloc 2=free 3=resize
+4=read 5=write 6=stats.  `compat/tc3/tc3_dynmem.st` maps
+`FB_DynMem_Buffer`/`FB_DynMem_Manager`/`FB_DynMem_Access` —
+METHOD-style calls become edge-triggered `nCmd` inputs (the
+compiler has no METHOD support); documented difference.
+ctest `tc3_dynmem_io` green (0x01ff mask).

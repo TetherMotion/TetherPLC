@@ -1457,6 +1457,36 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ERRID", udint());
             push(&mut off, "RXB0", udint());
         }
+        /* FB_DynMem — tplc-dynmem bounded-arena bridge
+        (Tc3_DynamicMemory).  OP 1=alloc (SIZE/RESET -> ID),
+        2=free (ID), 3=resize (ID/SIZE/PRESERVE/RESET),
+        4=read (ID/OFFSET -> BYTE), 5=write (ID/OFFSET/BYTE),
+        6=stats -> LIVE/TOTAL/ARENA counters. */
+        "FB_DynMem" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "ID", udint());
+            push(&mut off, "SIZE", udint());
+            push(&mut off, "RESET", udint());
+            push(&mut off, "PRESERVE", udint());
+            push(&mut off, "OFFSET", udint());
+            push(&mut off, "BYTE", udint());
+            push(&mut off, "LIVEBLKS", udint());
+            push(&mut off, "LIVEBYTES", udint());
+            push(&mut off, "TOTALALLOCS", udint());
+            push(&mut off, "TOTALFREES", udint());
+            push(&mut off, "ARENABYTES", udint());
+            push(&mut off, "ARENAUSED", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,

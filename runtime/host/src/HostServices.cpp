@@ -169,6 +169,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* MP-Bus master: opt-in serial adapter. */
         return const_cast<TplcMpbusService*>(&mpbus_.table());
     }
+    if (len == 11 && memcmp(name, "tplc-dynmem", 11) == 0) {
+        /* Bounded deterministic dynamic-memory arena. */
+        return const_cast<TplcDynmemService*>(&dynmem_.table());
+    }
     return nullptr;
 }
 

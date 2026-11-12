@@ -10,6 +10,7 @@
 #include <tplc/host/Aes70Service.hpp>
 #include <tplc/host/BacnetService.hpp>
 #include <tplc/host/DmxService.hpp>
+#include <tplc/host/DynmemService.hpp>
 #include <tplc/host/EipService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
@@ -125,6 +126,7 @@ private:
     GenibusService genibus_;
     /* MP-Bus master (opt-in serial adapter); always on. */
     MpbusService mpbus_;
+    DynmemService dynmem_;
 };
 
 } /* namespace tplc */
