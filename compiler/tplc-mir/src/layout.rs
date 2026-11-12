@@ -1353,6 +1353,40 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
         }
+        /* FB_Mbus — tplc-mbus service bridge (wired M-Bus / EN 13757
+        metering master over an opt-in serial port at 2400 8E1).
+        Synchronous op dispatch like FB_Eip: set OP + fields and call.
+        OP 1=open (PATH -> HANDLE), 2=close, 3=status (-> STATE/
+        TXTOT/RXTOT/LASTERR), 4=short frame (CONTROL/ADDRESS),
+        5=long frame (CONTROL/ADDRESS/CI/DATA), 6=receive (-> KIND/
+        RXPAYLOAD or NOMSG). STATUS carries the service return code,
+        ERRID its positive form.  The serial port is only opened
+        when the surface is used. */
+        "FB_Mbus" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "CONTROL", udint());
+            push(&mut off, "ADDRESS", udint());
+            push(&mut off, "CI", udint());
+            push(&mut off, "DATA", Type::Str { cap: 255 });
+            push(&mut off, "KIND", udint());
+            push(&mut off, "RXPAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "TXTOT", udint());
+            push(&mut off, "RXTOT", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

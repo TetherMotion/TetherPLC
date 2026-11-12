@@ -57,6 +57,7 @@ add_library(tplc_host STATIC
   runtime/host/src/OcppService.cpp
   runtime/host/src/Aes70Service.cpp
   runtime/host/src/DmxService.cpp
+  runtime/host/src/MbusService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)

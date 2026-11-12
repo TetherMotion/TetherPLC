@@ -15,6 +15,7 @@
 #include <tplc/host/Iec61850Service.hpp>
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
+#include <tplc/host/MbusService.hpp>
 #include <tplc/host/MotionIoService.hpp>
 #include <tplc/host/MqttService.hpp>
 #include <tplc/host/MotionService.hpp>
@@ -113,6 +114,8 @@ private:
     Aes70Service  aes70_;
     /* DMX512 output (opt-in serial port); always available. */
     DmxService    dmx_;
+    /* M-Bus wired metering master (opt-in serial); always on. */
+    MbusService   mbus_;
 };
 
 } /* namespace tplc */

@@ -153,6 +153,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* DMX512 output: opt-in serial port, always available. */
         return const_cast<TplcDmxService*>(&dmx_.table());
     }
+    if (len == 9 && memcmp(name, "tplc-mbus", 9) == 0) {
+        /* M-Bus wired metering master: opt-in serial. */
+        return const_cast<TplcMbusService*>(&mbus_.table());
+    }
     return nullptr;
 }
 
