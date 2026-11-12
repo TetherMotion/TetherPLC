@@ -17,6 +17,7 @@
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/EnoceanService.hpp>
 #include <tplc/host/GenibusService.hpp>
+#include <tplc/host/MpbusService.hpp>
 #include <tplc/host/MbusService.hpp>
 #include <tplc/host/MotionIoService.hpp>
 #include <tplc/host/MqttService.hpp>
@@ -122,6 +123,8 @@ private:
     EnoceanService enocean_;
     /* GENIbus transceiver (opt-in serial); always on. */
     GenibusService genibus_;
+    /* MP-Bus master (opt-in serial adapter); always on. */
+    MpbusService mpbus_;
 };
 
 } /* namespace tplc */

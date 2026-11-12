@@ -165,6 +165,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* GENIbus serial transceiver: opt-in serial. */
         return const_cast<TplcGenibusService*>(&genibus_.table());
     }
+    if (len == 10 && memcmp(name, "tplc-mpbus", 10) == 0) {
+        /* MP-Bus master: opt-in serial adapter. */
+        return const_cast<TplcMpbusService*>(&mpbus_.table());
+    }
     return nullptr;
 }
 

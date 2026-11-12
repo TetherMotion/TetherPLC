@@ -1426,6 +1426,37 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ERRID", udint());
             push(&mut off, "RXB0", udint());
         }
+        /* FB_Mpbus — tplc-mpbus service bridge (Belimo MP-Bus
+        master over an opt-in serial adapter at 9600 8N1).
+        OP 1=open (PATH -> HANDLE), 2=close, 3=status,
+        4=transact (DA/CMD/APDU -> RDA/RCMD/RXAPDU/RXB0 or NOMSG),
+        5=receive (same outs). */
+        "FB_Mpbus" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "DA", udint());
+            push(&mut off, "CMD", udint());
+            push(&mut off, "APDU", Type::Str { cap: 250 });
+            push(&mut off, "RDA", udint());
+            push(&mut off, "RCMD", udint());
+            push(&mut off, "RXAPDU", Type::Str { cap: 250 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "TXTOT", udint());
+            push(&mut off, "RXTOT", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "RXB0", udint());
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,
