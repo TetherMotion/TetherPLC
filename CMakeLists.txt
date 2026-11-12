@@ -1086,6 +1086,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc3_xmlsrv_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_RFID (C7 connectivity): transparent reader transport over
+  # tplc-serial — open/READ/tag-received/close on a PTY reader fake
+  add_test(NAME tc2_rfid_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_rfid_io.sh)
+  set_tests_properties(tc2_rfid_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/
   # Average/Ramp pure-ST blocks — clamp/lag/track/average/slew
   add_test(NAME tc2_filter_io

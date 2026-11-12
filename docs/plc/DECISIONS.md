@@ -2078,3 +2078,23 @@ value element and consumed the whole document (close-tag scan),
 so the second write dropped the first entry.  Root is now a
 container (descend, don't skip).  ctest `tc3_xmlsrv_io` green
 (0x7f).
+
+## D-IMPL-87 — tc2_rfid (transparent reader transport)
+
+TF6600's library is one byte-transparent FB; `compat/tc2/
+tc2_rfid.st` keeps that shape on top of the `tplc-serial`
+service: open the reader port on the first execute, write
+TxBuffer, poll RxBuffer, close on bClose.  STRING[255] buffers
+replace ComBuffer/POINTER TO BYTE (this compiler has no
+pointers in ST).  Vendor framing stays application-level.
+
+Two real findings from the wired PTY test:
+- `FB_Serial`'s EXEC latch needs a release call between ops:
+  setting EXEC TRUE, calling, then setting FALSE without a
+  second call leaves __last_exec TRUE and the next op never
+  fires.  The FB now calls once more with EXEC=FALSE.
+- Reader replies arrive asynchronously: a single send+poll
+  cycle can miss them, so the FB is re-armed (execute edge
+  released, then asserted) and the case retries up to 20 times.
+
+ctest `tc2_rfid_io` green (0x1f).

@@ -31442,7 +31442,13 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6600_TC3_RFID_Reader_Communication_EN.pdf` · **API entries:** 1
-- **Status:** RFID readers are serial/USB HID — reader-specific service lands with chosen hardware
+- **Status: IMPLEMENTED (transparent transport)** — `compat/tc2/tc2_rfid.st`:
+  `FB_RFIDReader` over the `tplc-serial` service (open / write
+  TxBuffer / poll RxBuffer / close), matching TF6600's single
+  byte-transparent block.  STRING buffers replace
+  ComBuffer/POINTER TO BYTE (documented).  Vendor command sets
+  (Balluff/Turck/SICK) are application-level.  Ctest
+  `tc2_rfid_io` over a PTY reader fake.
 - **Integration:** RFID reader communication: serial or TCP transport to vendor readers.
 
 #### PLC API › Function block
