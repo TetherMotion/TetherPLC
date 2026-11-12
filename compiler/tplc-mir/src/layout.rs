@@ -1545,6 +1545,26 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "BUF", Type::Str { cap: 255 });
             push(&mut off, "ERR", Type::Str { cap: 127 });
         }
+        /* FB_XmlSrv — tplc-xmlsrv file-backed XML store bridge
+        (Tc2_XmlDataSrv).  OP 1=read (PATH/XPATH -> VAL),
+        2=write (PATH/XPATH/VAL). */
+        "FB_XmlSrv" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "VALLEN", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "XPATH", Type::Str { cap: 127 });
+            push(&mut off, "VAL", Type::Str { cap: 255 });
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,

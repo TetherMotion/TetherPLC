@@ -31629,7 +31629,12 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6421_TC3_XML_Server_EN.pdf` · **API entries:** 8
-- **Status:** XML data server is pure-ST/socket feasible — planned
+- **Status: IMPLEMENTED (file-backed store)** — `compat/tc3/tc3_xmlsrv.st`
+  over the `tplc-xmlsrv` service: `FB_XmlSrvRead`/`Write` +
+  `...ByName` variants and the obfuscation flag FBs.  Documents
+  are element maps under `<root>`; an XPath reduces to its last
+  segment (documented reduction vs TF6421 — no nested trees,
+  attributes or server process).  Ctest `tc3_xmlsrv_io`.
 - **Integration:** XML data server needs HTTP/socket service + XML store.
 
 #### PLC libraries › Function blocks

@@ -181,6 +181,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* SQLite-backed SQL service (Tc2/Tc3_Database). */
         return const_cast<TplcDbService*>(&db_.table());
     }
+    if (len == 11 && memcmp(name, "tplc-xmlsrv", 11) == 0) {
+        /* File-backed XML value store (Tc2_XmlDataSrv). */
+        return const_cast<TplcXmlsrvService*>(&xmlsrv_.table());
+    }
     return nullptr;
 }
 

@@ -63,6 +63,7 @@ add_library(tplc_host STATIC
   runtime/host/src/DynmemService.cpp
   runtime/host/src/EventlogService.cpp
   runtime/host/src/DbService.cpp
+  runtime/host/src/XmlsrvService.cpp
   runtime/host/src/MbusService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
@@ -1074,6 +1075,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_database_io.sh)
   set_tests_properties(tc3_database_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_XmlDataSrv (C7 connectivity): tplc-xmlsrv file-backed XML
+  # value store — write/read/ByName/missing-key/obfuscation
+  add_test(NAME tc3_xmlsrv_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_xmlsrv_io.sh)
+  set_tests_properties(tc3_xmlsrv_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/

@@ -35,6 +35,7 @@
 #include <tplc/host/S7Service.hpp>
 #include <tplc/host/SmtpService.hpp>
 #include <tplc/host/SerialService.hpp>
+#include <tplc/host/XmlsrvService.hpp>
 
 #include <cstdint>
 #include <functional>
@@ -131,6 +132,7 @@ private:
     DynmemService dynmem_;
     EventlogService eventlog_;
     DbService db_;
+    XmlsrvService xmlsrv_;
 };
 
 } /* namespace tplc */

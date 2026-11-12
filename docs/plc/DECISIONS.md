@@ -2059,3 +2059,22 @@ modelled.
 Note: this ST has no doubled-quote escaping, so SQL literals in
 ST need numeric/parameterised forms — recorded for users.
 ctest `tc3_database_io` green (0x07ff).
+
+## D-IMPL-86 — tc3_xmlsrv (Tc2_XmlDataSrv file-backed store)
+
+`tplc-xmlsrv` host service: reads/writes plain XML files whose
+body is an element map under `<root>`; an XPath reduces to its
+last segment.  Writes are atomic (tmp file + rename) and keep
+the other elements intact.  `FB_XmlSrv` builtin: OP 1=read
+(PATH/XPATH -> VAL), 2=write (PATH/XPATH/VAL).
+
+`compat/tc3/tc3_xmlsrv.st`: FB_XmlSrvRead/Write, ByName variants
+(same keyed lookup), and the obfuscation flag FBs — modelled as
+per-instance flags, `FB_XmlSrvObfuscationExport` is a documented
+no-op error.  No TF6421 server process.
+
+Bug found by the wired e2e: the parser treated `<root>` like a
+value element and consumed the whole document (close-tag scan),
+so the second write dropped the first entry.  Root is now a
+container (descend, don't skip).  ctest `tc3_xmlsrv_io` green
+(0x7f).
