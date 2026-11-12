@@ -200,7 +200,7 @@ END_VAR
 VAR
     integ : LREAL;
     prevE : LREAL;
-    e : LREAL;
+    er : LREAL;
     p : LREAL;
     i : LREAL;
     d : LREAL;
@@ -212,15 +212,15 @@ END_VAR
         prevE := 0.0;
     END_IF;
     IF Execute AND CycleTime > 0.0 THEN
-        e := Setpoint - Actual;
-        p := Kp * e;
+        er := Setpoint - Actual;
+        p := Kp * er;
         // integrator with Tn; clamped anti-reset-windup
         IF Tn > 0.0 THEN
-            integ := integ + e * CycleTime / Tn;
+            integ := integ + er * CycleTime / Tn;
         END_IF;
         i := Kp * integ;
         IF Tv > 0.0 THEN
-            d := Kp * Tv * (e - prevE) / CycleTime;
+            d := Kp * Tv * (er - prevE) / CycleTime;
         ELSE
             d := 0.0;
         END_IF;
@@ -234,8 +234,8 @@ END_VAR
             integ := (u - p - d) / Kp;
         END_IF;
         Output := u;
-        E := e;
-        prevE := e;
+        E := er;
+        prevE := er;
         Done := TRUE;
     END_IF;
 END_FUNCTION_BLOCK

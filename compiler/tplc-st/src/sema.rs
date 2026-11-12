@@ -133,10 +133,24 @@ struct Checker<'e> {
     used: BTreeSet<String>,
 }
 
-/// Declaration-level lints: shadowing of a visible outer name, and
+/// Declaration-level lints: duplicate identifiers (names are
+/// case-insensitive — `r` and `R` collide and would silently alias in
+/// the scope map), shadowing of a visible outer name, and
 /// `VAR_EXTERNAL` declarations coupling the POU to global state.
 fn decl_lints(pou: &Pou, scope: &Scope, diags: &mut Vec<Diag>) {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     for v in &pou.iface {
+        let un = v.name.to_ascii_uppercase();
+        if !seen.insert(un.clone()) {
+            diags.push(Diag::error(
+                codes::DUP_NAME,
+                format!(
+                    "duplicate identifier `{un}` — IEC names are case-insensitive"
+                ),
+                v.prov.clone(),
+            ));
+            continue;
+        }
         if v.kind == VarKind::External {
             diags.push(Diag::warning(
                 wcodes::EXTERNAL,

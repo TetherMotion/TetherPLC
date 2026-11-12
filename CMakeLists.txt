@@ -675,6 +675,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(library_pkg PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120)
 
+  # Atc_TempCtrl advanced temperature-control library (plan 21 C0
+  # consumer): PID/cascade/Smith, LQR/LQG + autotuners, profile
+  # programmer — packaged as --library, consumed via --lib, and
+  # self-checked on the MIR interpreter (vectors emit bits on %Q)
+  add_test(NAME tempctrl_lib
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/tempctrl/e2e.sh)
+  set_tests_properties(tempctrl_lib PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 300)
+
   # TwinCAT T0 compat libraries (plan 21 C1): compat/tc2/*.st as
   # --library packages consumed via --lib, replayed on the real runtime
   add_test(NAME tc2_compat

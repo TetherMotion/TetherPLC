@@ -33,7 +33,7 @@ VAR
     filt : LREAL;
     integ : LREAL;
     prevE : LREAL;
-    e : LREAL;
+    er : LREAL;
     p : LREAL;
     i : LREAL;
     d : LREAL;
@@ -57,14 +57,14 @@ END_VAR
             filt := Actual;
         END_IF;
         // PID on the filtered reading
-        e := Setpoint - filt;
-        p := Kp * e;
+        er := Setpoint - filt;
+        p := Kp * er;
         IF Tn > 0.0 THEN
-            integ := integ + e * CycleTime / Tn;
+            integ := integ + er * CycleTime / Tn;
         END_IF;
         i := Kp * integ;
         IF Tv > 0.0 THEN
-            d := Kp * Tv * (e - prevE) / CycleTime;
+            d := Kp * Tv * (er - prevE) / CycleTime;
         ELSE
             d := 0.0;
         END_IF;
@@ -81,8 +81,8 @@ END_VAR
         IF dd > 100.0 THEN dd := 100.0; END_IF;
         Pwm := (t < PwmPeriod * dd / 100.0);
         Filtered := filt;
-        E := e;
-        prevE := e;
+        E := er;
+        prevE := er;
         Done := TRUE;
     END_IF;
 END_FUNCTION_BLOCK
