@@ -161,6 +161,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* EnOcean ESP3 transceiver: opt-in serial. */
         return const_cast<TplcEnoceanService*>(&enocean_.table());
     }
+    if (len == 12 && memcmp(name, "tplc-genibus", 12) == 0) {
+        /* GENIbus serial transceiver: opt-in serial. */
+        return const_cast<TplcGenibusService*>(&genibus_.table());
+    }
     return nullptr;
 }
 

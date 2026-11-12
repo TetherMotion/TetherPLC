@@ -1951,3 +1951,21 @@ PTM radio → decode → close. Bugs found by the wired test:
 Open building-bus items: Tc2_DALI/Tc3_DALI need a Manchester-coded
 DALI master (not plain UART — documented hardware gap); KNX/LON
 remain host-interface gaps.
+
+## D-IMPL-80 — tc2_genibus wired e2e (tplc-genibus service)
+
+GENIbus (Grundfos, RS485 9600 8E1) host service + `FB_Genibus`
+builtin + `compat/tc2/tc2_genibus.st` surface.  Real wire
+framing: SD 0x27 / LE / LEr / DA / SA / APDU / CRC16-CCITT
+over LE..APDU.  `tc2_genibus_io` green: open → ping → slave
+ack → GET → APDU reply → close.
+
+Design notes:
+- `E_NOMSG = 0x100` from the start — the EnOcean payload-length
+  collision taught us NOMSG must live outside the 0..250 APDU
+  range.
+- TwinCAT's shared `ST_GENIbusCommandBuffer` arbitration is not
+  modeled: our surface is an explicit open/ping/telegram path
+  (documented difference in compat README style).
+- GENIprotocol data-item semantics (HEAD/FORM/TAIL, unit tables)
+  are a documented gap — Get/Set carry raw byte ids.

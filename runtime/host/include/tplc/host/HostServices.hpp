@@ -16,6 +16,7 @@
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/EnoceanService.hpp>
+#include <tplc/host/GenibusService.hpp>
 #include <tplc/host/MbusService.hpp>
 #include <tplc/host/MotionIoService.hpp>
 #include <tplc/host/MqttService.hpp>
@@ -119,6 +120,8 @@ private:
     MbusService   mbus_;
     /* EnOcean ESP3 transceiver (opt-in serial); always on. */
     EnoceanService enocean_;
+    /* GENIbus transceiver (opt-in serial); always on. */
+    GenibusService genibus_;
 };
 
 } /* namespace tplc */

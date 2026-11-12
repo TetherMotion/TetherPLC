@@ -1396,6 +1396,36 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ERRID", udint());
             push(&mut off, "RXB0", udint());
         }
+        /* FB_Genibus — tplc-genibus service bridge (GENIbus
+        telegrams over an opt-in serial port at 9600 8E1).
+        OP 1=open (PATH -> HANDLE), 2=close, 3=status, 4=send
+        (DA/SA/APDU), 5=receive (-> RDA/RSA/RXAPDU/RXB0 or NOMSG). */
+        "FB_Genibus" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "DA", udint());
+            push(&mut off, "SA", udint());
+            push(&mut off, "APDU", Type::Str { cap: 250 });
+            push(&mut off, "RDA", udint());
+            push(&mut off, "RSA", udint());
+            push(&mut off, "RXAPDU", Type::Str { cap: 250 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "TXTOT", udint());
+            push(&mut off, "RXTOT", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "RXB0", udint());
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,

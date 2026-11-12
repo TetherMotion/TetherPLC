@@ -58,6 +58,7 @@ add_library(tplc_host STATIC
   runtime/host/src/Aes70Service.cpp
   runtime/host/src/DmxService.cpp
   runtime/host/src/EnoceanService.cpp
+  runtime/host/src/GenibusService.cpp
   runtime/host/src/MbusService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
@@ -976,6 +977,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_enocean_io.sh)
   set_tests_properties(tc2_enocean_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # wired GENIbus master over PTY slave fake (C7 building buses):
+  # open/ping/get/apdu/close at 9600 8E1
+  add_test(NAME tc2_genibus_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_genibus_io.sh)
+  set_tests_properties(tc2_genibus_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/
