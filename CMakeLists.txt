@@ -623,6 +623,25 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(fbd_gallery_e2e PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # mixed FBD+ST compilation: one module, bidirectional POU calls,
+  # inline st blocks, multi-program packages, merge diagnostics
+  add_test(NAME mixed_fbd_st
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/mixed/e2e.sh)
+  set_tests_properties(mixed_fbd_st PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # ctl proxy compile path: browser src frame → tplcc → package
+  add_test(NAME ctl_proxy_compile
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/proxy/e2e.sh)
+  set_tests_properties(ctl_proxy_compile PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 180)
+
+  # device blocks: EK-style terminals alias located vars, DI→logic→DO
+  add_test(NAME device_blocks
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/device/e2e.sh)
+  set_tests_properties(device_blocks PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # shadow-run e2e (doc 19): candidate compare, isolation, promote
   add_test(NAME shadow_e2e
     COMMAND ${CMAKE_COMMAND} -E env

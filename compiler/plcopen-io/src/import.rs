@@ -211,6 +211,7 @@ impl P {
                     },
                     interface: vec![],
                     networks: vec![],
+                    ret_ty: None,
                     en_eno: "relaxed".into(),
                 });
             }
@@ -253,6 +254,7 @@ impl P {
                     instance: inst,
                     pos: Pos::default(),
                     params: BTreeMap::new(),
+                    pins: vec![],
                     exec_order: Self::attr(e, "executionOrderId")
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0),
@@ -276,6 +278,7 @@ impl P {
                     instance: None,
                     pos: Pos::default(),
                     params: BTreeMap::new(),
+                    pins: vec![],
                     exec_order: 0,
                     negated: vec![],
                     comment: String::new(),

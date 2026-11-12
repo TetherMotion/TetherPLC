@@ -18,10 +18,23 @@ Status: as-built for `compiler/fbd-model`.
   `Pou { id, name, kind, interface, networks, en_eno }`. `Network`
   carries `blocks | wires | assocs | comments | labels | jumps | returns`,
   `kind` reserved `fbd|ladder` (ladder = iter-2 hook, §11).
-- `Block` covers `fb | function | operator | variable | jump_target`;
-  variable blocks carry `role/name/at`. `PortSel` = index or pin name.
+- `Block` covers `fb | function | operator | variable | jump_target |
+  st | device`; variable blocks carry `role/name/at`, `st` blocks carry
+  `pins` + `params.CODE`, and `device` blocks carry `pins` channel
+  declarations. `PortSel` = index or pin name.
   `pos` is integer grid units — canvas floats are render-layer only
   (§4.2 determinism).
+- `device` blocks model fieldbus terminals (e.g. Beckhoff EK modules):
+  `type_ref` is the terminal name, each `pins[]` entry is a channel —
+  `var_output` = device→logic, `var_input` = logic→device,
+  `var_in_out` = both, and every pin must carry a valid `AT`
+  process-image binding (`%I`/`%Q`/`%M`). Lowering aliases each channel
+  to a located variable shared through the address map (two pins on the
+  same address see the same storage), emits one `Assign` per driven
+  input channel, and reads output channels as located-var references —
+  no runtime device call; the EtherCAT side owns image transport.
+  Device self-wiring (AI→AO on one terminal) is exempt from the
+  algebraic-cycle check since each pin is a distinct located var.
 - `Assoc` models the PLCopen wireless `formalParameter`+variable
   association (named stub edges, not wires).
 - Node-id uniqueness per POU is validated on load
@@ -110,11 +123,57 @@ Verified: the doc §8 debounce example end-to-end through `Rt`
 algebraic-cycle rejection vs legal FB feedback, fan-in/exec-order/
 undeclared-name errors.
 
+## Mixed FBD + ST (one module)
+
+`tplcc` compiles a source set containing `project.fbd.json` **plus any
+number of `.st` files** into a single module. The ST frontend receives
+a masked source list (`.fbd.json` entries as empty strings), so
+`Prov::St{file}` indices stay globally correct and diagnostics point at
+the real file.
+
+- **FBD → ST**: an `fb`/`function` block whose `type_ref` is not in the
+  fbd project resolves through the merged POU table (extern signature).
+  `VAR_IN_OUT` pins are typed from the merged decl.
+- **ST → FBD**: after merge, `module.pous` contains FBD-defined POUs, so
+  ST `named_ty` resolves them as nominal `Type::Fb` — an ST program can
+  declare and call an FBD `FUNCTION_BLOCK` directly.
+- **FBD `FUNCTION` POUs** carry `ret_ty`; the lowerer emits the implicit
+  return `Local` named after the POU, matching the ST frontend, so the
+  value extracts identically in both engines.
+- **Inline `st` blocks** (`BlockKind::St`, `pins`, `params.CODE`) are
+  expanded before lowering: each becomes `BlockKind::Fb` with generated
+  name `__fbd_st_<sanitized_pou>_<block_id>` and a generated
+  `FUNCTION_BLOCK` whose sections come from `block.pins`
+  (`var_input`/`var_output`/`var_in_out`/`var`); `CODE` is the body.
+- **Duplicate implementation** (same POU in both languages) →
+  `TPLC_E_MIX_DUP_POU`; a decl stub whose interface disagrees with the
+  ST impl → `TPLC_E_MIX_IFACE`. A stub with an empty interface and no
+  networks merges silently.
+- **Multiple programs**: `layout_module` lays every `PROGRAM` into one
+  state blob. With one program the field names are unchanged (no ABI
+  drift); with several they are qualified `PROG.var` and `pou_scope`
+  strips the prefix for per-program codegen. `tplc_init` runs every
+  program's declaration initializers; `__tplc_task_<N>` wrappers and the
+  descriptor's task table come from `module.tasks` (validated: a task
+  binding an uncompiled program is a build-time diagnostic).
+
+### `VAR_IN_OUT` (both languages)
+
+An inout slot is a `Type::Ref` (u64 blob offset, `u64::MAX` = null).
+Call sites bind the *caller's storage address*; the callee auto-derefs
+on read and write, so writes land in the caller's storage. Scalar and
+aggregate (array/struct/FB-typed) inouts both alias — this is what lets
+an inline ST block configure an `FB_AtcProfile` instance's `SEG` table
+member-wise (`PROF.SEG[1].KIND := …`) through a `var_in_out` pin.
+
+Note: the FBD lowerer orders calls by data dependency, so a block that
+writes an instance runs *after* the block that calls it. Config-style
+blocks must therefore be idempotent or the consumer must tolerate a
+one-scan delay (see `FB_AtcProfile`'s held run request).
+
 ## Not yet
 
 - TS type generation / editor bindings (TetherWebUI side).
-- InOut *value* semantics: bindings type-check but writes through the
-  ref aren't propagated back (same gap as ST sema).
 - Equivalence corpus: 10-pattern gallery ST↔FBD oracle diff (P4-06).
 - `en_eno` semantic implementation (field exists, honored by lowering).
 - `data_types`/`global_vars` decode is pass-through (`Value`) until

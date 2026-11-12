@@ -1754,23 +1754,32 @@ END_VAR
         RETURN;
     END_IF;
     IF RUN AND NOT runLast THEN
-        n := NUM_SEG;
-        IF n < 1 THEN n := 1; END_IF;
-        IF n > 32 THEN n := 32; END_IF;
-        FOR i := 1 TO 32 DO
-            lc[i] := TRUNC(SEG[i].P1);
-        END_FOR;
-        SegIdx := 1;
-        SegTime := 0.0;
-        IF PvStart THEN SP := PV; END_IF;
-        segStart := SP;
-        Busy := TRUE;
-        Done := FALSE;
-        Err := FALSE;
-        RateNow := 0.0;
-        RemTime := -1.0;
+        IF NUM_SEG < 1 THEN
+            // no segment table yet (e.g. config loads later in the
+            // scan): hold the request and retry — do NOT start a
+            // zero-segment profile, which would end immediately
+            Err := TRUE;
+        ELSE
+            n := NUM_SEG;
+            IF n > 32 THEN n := 32; END_IF;
+            FOR i := 1 TO 32 DO
+                lc[i] := TRUNC(SEG[i].P1);
+            END_FOR;
+            SegIdx := 1;
+            SegTime := 0.0;
+            IF PvStart THEN SP := PV; END_IF;
+            segStart := SP;
+            Busy := TRUE;
+            Done := FALSE;
+            Err := FALSE;
+            RateNow := 0.0;
+            RemTime := -1.0;
+            runLast := TRUE;
+        END_IF;
     END_IF;
-    runLast := RUN;
+    IF NOT RUN THEN
+        runLast := FALSE;
+    END_IF;
     IF Busy THEN
         IF CycleTime <= 0.0 THEN
             Err := TRUE;

@@ -18,7 +18,7 @@ use tplc_codegen::llvm_emit::{
     set_target,
 };
 use tplc_mir::desc;
-use tplc_mir::ir::{AtRegion, IoBind, Pou, PouKind, Prov};
+use tplc_mir::ir::{AtRegion, IoBind, Pou, PouKind, Prov, Type};
 use tplc_mir::layout::layout_program;
 use tplc_pkg::format::SectionType;
 use tplc_pkg::writer::PackageWriter;
@@ -26,11 +26,13 @@ use tplc_pkg::writer::PackageWriter;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
-        eprintln!("usage: tplcc <check|build|info|serve|vectors|sign> …");
+        eprintln!("usage: tplcc <check|blocks|build|info|serve|vectors|sign|src> …");
         return ExitCode::from(2);
     }
     match args[0].as_str() {
         "check" => cmd_check(&args[1..]),
+        "blocks" => cmd_blocks(&args[1..]),
+        "src" => cmd_src(&args[1..]),
         "build" => cmd_build(&args[1..]),
         "info" => cmd_info(&args[1..]),
         "serve" => cmd_serve(&args[1..]),
@@ -389,38 +391,198 @@ fn read_srcs(files: &[String]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Route sources to a frontend: a lone `.fbd.json` project goes through
-/// `fbd-model` + `fbd-lower`; everything else is ST via `tplc-st`.
-fn compile_srcs(srcs: &[(String, String)]) -> tplc_st::FrontendOutput {
-    if srcs.len() == 1 && srcs[0].0.ends_with(".fbd.json") {
-        let (fname, text) = &srcs[0];
-        return match fbd_model::from_json(text) {
-            Ok(project) => {
-                let out = fbd_lower::lower(&project);
-                tplc_st::FrontendOutput {
-                    module: out.module,
-                    io_bindings: out.io_bindings,
-                    diags: out.diags,
+/// Compile a mixed source set. `.fbd.json` files go through the FBD
+/// frontend, everything else through the ST frontend; the two modules
+/// merge into one namespace so POUs call across languages freely —
+/// FBD blocks instantiate ST FBs/FUNCTIONs (extern signatures), ST
+/// code declares/calls FBD-defined POUs (resolved post-merge in sema),
+/// and `st` blocks expand into generated FUNCTION_BLOCKs compiled as
+/// ordinary ST.
+///
+/// Returns the output plus the *effective* source list: st-block
+/// expansion may append generated sources, and `Prov::St{file}` diag
+/// indices refer into that list (`.fbd.json` entries are masked to
+/// empty text for the ST frontend so indices stay aligned).
+fn compile_srcs(srcs: &[(String, String)]) -> (tplc_st::FrontendOutput, Vec<(String, String)>) {
+    let has_fbd = srcs.iter().any(|(n, _)| n.ends_with(".fbd.json"));
+    if !has_fbd {
+        let refs: Vec<(&str, &str)> =
+            srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
+        return (tplc_st::compile(&refs), srcs.to_vec());
+    }
+
+    // Parse each FBD project; expand st blocks into generated sources.
+    let mut eff: Vec<(String, String)> = srcs.to_vec();
+    let mut projects = Vec::new();
+    let mut early_diags = Vec::new();
+    for (fname, text) in srcs {
+        if !fname.ends_with(".fbd.json") {
+            continue;
+        }
+        match fbd_model::from_json(text) {
+            Ok(mut project) => {
+                eff.extend(fbd_lower::expand_st_blocks(&mut project));
+                projects.push(project);
+            }
+            Err(e) => early_diags.push(tplc_mir::diag::Diag::error(
+                "TPLC_E_MODEL_SCHEMA",
+                format!("{fname}: {e}"),
+                tplc_mir::ir::Prov::None,
+            )),
+        }
+    }
+
+    // ST frontend over the masked list — .fbd.json positions stay
+    // occupied so Prov::St{file} matches `eff` indices exactly.
+    let st_refs: Vec<(&str, &str)> = eff
+        .iter()
+        .map(|(n, c)| {
+            (
+                n.as_str(),
+                if n.ends_with(".fbd.json") { "" } else { c.as_str() },
+            )
+        })
+        .collect();
+    let mut out = tplc_st::compile(&st_refs);
+
+    // FBD frontend per project — ST pous visible as extern signatures.
+    for project in &projects {
+        let lo = fbd_lower::lower_mixed(project, &out.module.pous);
+        merge_frontend(&mut out, lo.module, lo.io_bindings);
+        out.diags.extend(lo.diags);
+    }
+    out.diags.extend(early_diags);
+    (out, eff)
+}
+
+/// Merge an FBD-lowered module into the ST frontend output. Empty-body
+/// POUs are declaration stubs (the UI ships interface decls for pin
+/// info): a decl merges into the real impl if the visible interface
+/// matches; two impls or mismatched interfaces are hard errors.
+fn merge_frontend(
+    dst: &mut tplc_st::FrontendOutput,
+    module: tplc_mir::ir::Module,
+    io: Vec<tplc_st::IoBind>,
+) {
+    use tplc_mir::ir::{Body, Pou, PouKind};
+    let empty = |b: &Body| matches!(b, Body::Stmts(s) if s.is_empty());
+    let visible = |p: &Pou| -> Vec<String> {
+        let mut v: Vec<_> = p
+            .iface
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.kind,
+                    tplc_mir::ir::VarKind::Input
+                        | tplc_mir::ir::VarKind::Output
+                        | tplc_mir::ir::VarKind::InOut
+                )
+            })
+            .map(|v| {
+                format!(
+                    "{}|{:?}|{:?}",
+                    v.name.to_ascii_uppercase(),
+                    v.kind,
+                    v.ty
+                )
+                .to_ascii_uppercase()
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let mut errs: Vec<tplc_mir::diag::Diag> = Vec::new();
+    for pou in module.pous {
+        let dup = dst
+            .module
+            .pous
+            .iter_mut()
+            .find(|p| p.name.eq_ignore_ascii_case(&pou.name));
+        let Some(ex) = dup else {
+            dst.module.pous.push(pou);
+            continue;
+        };
+        if ex.kind != pou.kind {
+            errs.push(tplc_mir::diag::Diag::error(
+                "TPLC_E_MIX_DUP_POU",
+                format!(
+                    "POU {} declared as {:?} and {:?}",
+                    pou.name, ex.kind, pou.kind
+                ),
+                tplc_mir::ir::Prov::None,
+            ));
+            continue;
+        }
+        match (empty(&ex.body), empty(&pou.body)) {
+            (false, false) => errs.push(tplc_mir::diag::Diag::error(
+                "TPLC_E_MIX_DUP_POU",
+                format!("POU {} has two implementations", pou.name),
+                tplc_mir::ir::Prov::None,
+            )),
+            _ => {
+                if ex.kind == PouKind::Function
+                    && format!("{:?}", ex.ret_ty).to_ascii_uppercase()
+                        != format!("{:?}", pou.ret_ty).to_ascii_uppercase()
+                    || visible(ex) != visible(&pou)
+                {
+                    errs.push(tplc_mir::diag::Diag::error(
+                        "TPLC_E_MIX_IFACE",
+                        format!(
+                            "declared interface of {} does not match its implementation",
+                            pou.name
+                        ),
+                        tplc_mir::ir::Prov::None,
+                    ));
+                    continue;
+                }
+                if empty(&ex.body) {
+                    *ex = pou; // decl stub → impl
                 }
             }
-            Err(e) => tplc_st::FrontendOutput {
-                module: tplc_mir::ir::Module {
-                    pous: vec![],
-                    gvls: vec![],
-                    tasks: vec![],
-                    checked_arith: false,
-                },
-                io_bindings: vec![],
-                diags: vec![tplc_mir::diag::Diag::error(
-                    "TPLC_E_MODEL_SCHEMA",
-                    format!("{fname}: {e}"),
-                    tplc_mir::ir::Prov::None,
-                )],
-            },
-        };
+        }
     }
-    let refs: Vec<(&str, &str)> = srcs.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
-    tplc_st::compile(&refs)
+    for gvl in module.gvls {
+        let dup = dst
+            .module
+            .gvls
+            .iter_mut()
+            .find(|g| g.name.eq_ignore_ascii_case(&gvl.name));
+        let Some(g) = dup else {
+            dst.module.gvls.push(gvl);
+            continue;
+        };
+        g.retain |= gvl.retain;
+        for v in gvl.vars {
+            if g.vars.iter().any(|x| x.name.eq_ignore_ascii_case(&v.name)) {
+                errs.push(tplc_mir::diag::Diag::error(
+                    "TPLC_E_MIX_DUP_GVL",
+                    format!("global {}.{} declared in both ST and FBD", g.name, v.name),
+                    tplc_mir::ir::Prov::None,
+                ));
+            } else {
+                g.vars.push(v);
+            }
+        }
+    }
+    for t in module.tasks {
+        if dst
+            .module
+            .tasks
+            .iter()
+            .any(|x| x.name.eq_ignore_ascii_case(&t.name))
+        {
+            errs.push(tplc_mir::diag::Diag::error(
+                "TPLC_E_MIX_DUP_TASK",
+                format!("task {} defined in both ST and FBD", t.name),
+                tplc_mir::ir::Prov::None,
+            ));
+        } else {
+            dst.module.tasks.push(t);
+        }
+    }
+    dst.io_bindings.extend(io);
+    dst.module.checked_arith |= module.checked_arith;
+    dst.diags.extend(errs);
 }
 
 fn print_diags(diags: &[tplc_st::Diag], srcs: &[(String, String)]) -> usize {
@@ -594,7 +756,7 @@ fn serve_check(s: &mut std::os::unix::net::UnixStream) -> String {
         let text = String::from_utf8_lossy(&cb).into_owned();
         srcs.push((name, text));
     }
-    let mut out = compile_srcs(&srcs);
+    let (mut out, eff) = compile_srcs(&srcs);
     let mut diags = std::mem::take(&mut out.diags);
     if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
         diags.extend(tplc_st::sema::check(&mut out.module));
@@ -604,7 +766,7 @@ fn serve_check(s: &mut std::os::unix::net::UnixStream) -> String {
         .filter(|d| d.severity == tplc_st::Severity::Error)
         .count();
     serde_json::json!({
-        "compile": diag_report(&diags, &srcs, errs, None),
+        "compile": diag_report(&diags, &eff, errs, None),
         "exit": if errs > 0 { 1 } else { 0 },
     })
     .to_string()
@@ -620,7 +782,7 @@ fn cmd_check(args: &[String]) -> ExitCode {
         }
     }
     let srcs = read_srcs(&files);
-    let mut out = compile_srcs(&srcs);
+    let (mut out, eff) = compile_srcs(&srcs);
     let mut diags = std::mem::take(&mut out.diags);
     if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
         diags.extend(tplc_st::sema::check(&mut out.module));
@@ -630,9 +792,9 @@ fn cmd_check(args: &[String]) -> ExitCode {
         .filter(|d| d.severity == tplc_st::Severity::Error)
         .count();
     if json_mode {
-        println!("{}", diag_report(&diags, &srcs, errs, None));
+        println!("{}", diag_report(&diags, &eff, errs, None));
     } else {
-        print_diags(&diags, &srcs);
+        print_diags(&diags, &eff);
     }
     if errs > 0 {
         eprintln!("{errs} error(s)");
@@ -643,6 +805,262 @@ fn cmd_check(args: &[String]) -> ExitCode {
         }
         ExitCode::SUCCESS
     }
+}
+
+/// `tplcc blocks` — POU catalog for external tools (the web IDE's
+/// block palette). Compiles the given sources exactly like `check`
+/// (mixed ST + FBD + `.tplc` library packages), then emits every
+/// FUNCTION/FUNCTION_BLOCK interface as JSON:
+///
+///   tplcc blocks [--json] <src.st|project.fbd.json|lib.tplc>…
+///
+/// ```json
+/// {"pous":N,"errors":N,"blocks":[{"name","kind","ret_ty","file",
+///   "pins":[{"name","dir","ty","init"}]}],
+///  "enums":{"NAME":["A","B"]}}
+/// ```
+///
+/// `file` is the source the POU was declared in (for .tplc inputs the
+/// embedded ST_SOURCES name), so a client can fetch the implementation
+/// source for auto-attach. Warnings/diags do not fail the command —
+/// the catalog is best-effort.
+fn cmd_blocks(args: &[String]) -> ExitCode {
+    let mut json_mode = false;
+    let mut files: Vec<String> = Vec::new();
+    for a in args {
+        match a.as_str() {
+            "--json" => json_mode = true,
+            f => files.push(f.into()),
+        }
+    }
+    if files.is_empty() {
+        eprintln!("tplcc blocks: no sources");
+        return ExitCode::from(2);
+    }
+    let mut srcs: Vec<(String, String)> = Vec::new();
+    for f in &files {
+        if f.ends_with(".tplc") {
+            srcs.extend(lib_sources(f));
+        } else {
+            let bytes = std::fs::read(f).unwrap_or_else(|e| {
+                eprintln!("error: {f}: {e}");
+                std::process::exit(1);
+            });
+            let s = String::from_utf8_lossy(&bytes).into_owned();
+            srcs.push((f.clone(), s));
+        }
+    }
+    let (mut out, eff) = compile_srcs(&srcs);
+    let mut diags = std::mem::take(&mut out.diags);
+    if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
+        diags.extend(tplc_st::sema::check(&mut out.module));
+    }
+    let errs = diags
+        .iter()
+        .filter(|d| d.severity == tplc_st::Severity::Error)
+        .count();
+
+    use tplc_mir::ir::{Lit, Prov, VarKind};
+    let lit_str = |l: &Lit| -> Option<String> {
+        Some(match l {
+            Lit::Bool(b) => {
+                if *b {
+                    "TRUE".into()
+                } else {
+                    "FALSE".into()
+                }
+            }
+            Lit::Int(v) => v.to_string(),
+            Lit::UInt(v) => v.to_string(),
+            Lit::Real(v) => format!("{v:?}"),
+            Lit::TimeNs(ns) => {
+                const U: &[(&str, i64)] = &[
+                    ("d", 86_400_000_000_000),
+                    ("h", 3_600_000_000_000),
+                    ("m", 60_000_000_000),
+                    ("s", 1_000_000_000),
+                    ("ms", 1_000_000),
+                    ("us", 1_000),
+                ];
+                let mut rem = *ns;
+                let mut parts = String::new();
+                for (u, div) in U {
+                    let v = rem / div;
+                    if v > 0 {
+                        parts += &format!("{v}{u}");
+                        rem %= div;
+                    }
+                }
+                if rem > 0 {
+                    parts += &format!("{rem}ns");
+                }
+                if parts.is_empty() {
+                    "T#0s".into()
+                } else {
+                    format!("T#{parts}")
+                }
+            }
+            Lit::Str(s) => format!("'{}'", s.replace('\'', "''")),
+            Lit::WStr(s) => format!("'{}'", s.replace('\'', "''")),
+            Lit::EnumVal { val, .. } => val.clone(),
+        })
+    };
+    let expr_lit = |e: &tplc_mir::ir::Expr| -> Option<String> {
+        if let tplc_mir::ir::ExprKind::Lit(l) = &e.kind {
+            lit_str(l)
+        } else {
+            None
+        }
+    };
+
+    let mut blocks = Vec::new();
+    let mut enums = serde_json::Map::new();
+    for p in &out.module.pous {
+        if p.kind == PouKind::Program {
+            continue; // programs are tasks, not callable blocks
+        }
+        let kind = match p.kind {
+            PouKind::FunctionBlock => "fb",
+            PouKind::Function => "function",
+            PouKind::Program => unreachable!(),
+        };
+        let file = match &p.prov {
+            Prov::St { file, .. } => eff
+                .get(*file as usize)
+                .map(|(n, _)| n.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        // collect enum value sets for param-editor dropdowns
+        for v in &p.iface {
+            if let Type::Enum { name, values } = &v.ty {
+                enums
+                    .entry(name.clone())
+                    .or_insert_with(|| serde_json::json!(values));
+            }
+        }
+        let pins: Vec<serde_json::Value> = p
+            .iface
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.kind,
+                    VarKind::Input | VarKind::Output | VarKind::InOut
+                )
+            })
+            .map(|v| {
+                let dir = match v.kind {
+                    VarKind::Input => "in",
+                    VarKind::Output => "out",
+                    VarKind::InOut => "inout",
+                    _ => unreachable!(),
+                };
+                let mut o = serde_json::json!({
+                    "name": v.name,
+                    "dir": dir,
+                    "ty": tplc_mir::ty::ty_str(&v.ty),
+                });
+                if let Some(init) = v.init.as_ref().and_then(expr_lit) {
+                    o["init"] = serde_json::json!(init);
+                }
+                o
+            })
+            .collect();
+        blocks.push(serde_json::json!({
+            "name": p.name,
+            "kind": kind,
+            "ret_ty": p.ret_ty.as_ref().map(tplc_mir::ty::ty_str),
+            "file": file,
+            "pins": pins,
+        }));
+    }
+    let cat = serde_json::json!({
+        "pous": out.module.pous.len(),
+        "errors": errs,
+        "blocks": blocks,
+        "enums": enums,
+    });
+    if json_mode {
+        println!("{cat}");
+    } else {
+        for b in cat["blocks"].as_array().unwrap() {
+            let pins = b["pins"].as_array().map(|p| p.len()).unwrap_or(0);
+            println!(
+                "{} {} ({} pins){}",
+                b["kind"].as_str().unwrap_or("?"),
+                b["name"].as_str().unwrap_or("?"),
+                pins,
+                if b["file"].as_str().unwrap_or("").is_empty() {
+                    String::new()
+                } else {
+                    format!("  [{}]", b["file"].as_str().unwrap())
+                }
+            );
+        }
+        eprintln!("{} pou(s), {errs} error(s)", cat["pous"]);
+    }
+    if errs > 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// `tplcc src` — print the ST_SOURCES embedded in a `.tplc` package.
+///
+///   tplcc src <pkg.tplc> [name]     all sources, or one by name
+///
+/// Each source prints as `==== <name>` followed by its text (the same
+/// framing `lib_sources` parses). Used by the ctl proxy's /libsrc
+/// route so the web IDE can attach a library package's sources to a
+/// project without unpacking the package itself.
+fn cmd_src(args: &[String]) -> ExitCode {
+    let mut want: Option<String> = None;
+    let mut pkg: Option<String> = None;
+    for a in args {
+        if a.starts_with('-') {
+            eprintln!("tplcc src: unknown flag {a}");
+            return ExitCode::from(2);
+        }
+        if pkg.is_none() {
+            pkg = Some(a.clone());
+        } else {
+            want = Some(a.clone());
+        }
+    }
+    let Some(pkg) = pkg else {
+        eprintln!("usage: tplcc src <pkg.tplc> [name]");
+        return ExitCode::from(2);
+    };
+    let srcs = lib_sources(&pkg);
+    let mut n = 0;
+    for (name, text) in &srcs {
+        if let Some(w) = &want {
+            // embedded names carry the build-time path — match on the
+            // basename so callers can ask for "atc_tempctrl.st"
+            let base = name.rsplit('/').next().unwrap_or(name);
+            if !name.eq_ignore_ascii_case(w) && !base.eq_ignore_ascii_case(w) {
+                continue;
+            }
+        }
+        if want.is_none() {
+            println!("==== {name}");
+        }
+        print!("{text}");
+        if !text.ends_with('\n') {
+            println!();
+        }
+        n += 1;
+    }
+    if n == 0 {
+        if want.is_some() {
+            eprintln!("tplcc src: {pkg}: no source named {want:?}");
+        } else {
+            eprintln!("tplcc src: {pkg}: no ST_SOURCES");
+        }
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
 }
 
 fn cmd_build(args: &[String]) -> ExitCode {
@@ -723,7 +1141,8 @@ fn cmd_build(args: &[String]) -> ExitCode {
         ls.extend(srcs);
         srcs = ls;
     }
-    let mut out = compile_srcs(&srcs);
+    let (mut out, eff) = compile_srcs(&srcs);
+    let srcs = eff;
     let mut diags = std::mem::take(&mut out.diags);
     if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
         diags.extend(tplc_st::sema::check(&mut out.module));
@@ -762,16 +1181,30 @@ fn cmd_build(args: &[String]) -> ExitCode {
         );
     }
 
-    let program: Pou = out
+    let progs: Vec<&Pou> = out
         .module
         .pous
         .iter()
-        .find(|p| p.kind == PouKind::Program)
-        .cloned()
-        .unwrap_or_else(|| panic!("no PROGRAM found"));
+        .filter(|p| p.kind == PouKind::Program)
+        .collect();
+    if progs.is_empty() {
+        eprintln!("tplcc build: no PROGRAM found");
+        return ExitCode::FAILURE;
+    }
+    for t in &out.module.tasks {
+        for pn in &t.programs {
+            if !progs.iter().any(|p| p.name.eq_ignore_ascii_case(pn)) {
+                eprintln!("tplcc build: task {} binds unknown program {pn}", t.name);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let program: Pou = progs[0].clone();
     let prog_name = program.name.clone();
 
-    let mut layout = layout_program(&out.module, &program);
+    // multi-program image: every PROGRAM pou shares one state blob,
+    // field names qualified PROGRAM.var when more than one exists
+    let mut layout = tplc_mir::layout::layout_module(&out.module);
     // io triples for descriptor channels
     let io_triples: Vec<(String, tplc_mir::ir::At, u64)> = out
         .io_bindings
@@ -780,9 +1213,10 @@ fn cmd_build(args: &[String]) -> ExitCode {
         .collect();
     let prov_of = |name: &str| -> Option<Prov> {
         let short = name.rsplit('/').next().unwrap_or(name);
-        program
-            .iface
+        let short = short.rsplit('.').next().unwrap_or(short);
+        progs
             .iter()
+            .flat_map(|p| p.iface.iter())
             .find(|v| v.name == short)
             .map(|v| v.prov.clone())
             .or_else(|| {
@@ -1641,7 +2075,7 @@ fn compile_run(f: &str, src_dir: &std::path::Path, id: &str) -> Result<VecRun, S
     let prog_file = src_dir.join(f);
     let src =
         std::fs::read_to_string(&prog_file).map_err(|e| format!("{id}: {prog_file:?}: {e}"))?;
-    let mut out = compile_srcs(&[(prog_file.to_string_lossy().into(), src)]);
+    let (mut out, _eff) = compile_srcs(&[(prog_file.to_string_lossy().into(), src)]);
     let mut diags = std::mem::take(&mut out.diags);
     diags.extend(tplc_st::sema::check(&mut out.module));
     if diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
@@ -2044,5 +2478,520 @@ fn cmd_vectors(args: &[String]) -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod mixed_tests {
+    use super::*;
+    use tplc_mir::interp::{Rt, Value};
+
+    /// st library side of the mixed fixture: an FB, a FUNCTION, and a
+    /// PROGRAM that calls the FBD-defined FB `FbdFb`.
+    const ST: &str = r#"
+FUNCTION_BLOCK StFb
+VAR_INPUT X : LREAL; END_VAR
+VAR_OUTPUT Y : LREAL; END_VAR
+Y := X * 2.0;
+END_FUNCTION_BLOCK
+
+FUNCTION StFn : LREAL
+VAR_INPUT A : LREAL; END_VAR
+StFn := A + 10.0;
+END_FUNCTION
+
+PROGRAM StProg
+VAR f : FbdFb; r : BOOL; END_VAR
+f(IN := FALSE);
+r := f.OUT;
+END_PROGRAM
+"#;
+
+    /// FBD side: Main instantiates ST's StFb + StFn + an inline st
+    /// block; FbdFb is defined here and called from the ST program.
+    fn fbd(extra_pou: &str) -> String {
+        format!(
+            r#"{{
+  "schema": "fbd.v1",
+  "project": "mixed",
+  "pous": [
+    {{
+      "id": "p1", "name": "Main", "kind": "program",
+      "interface": [
+        {{"name": "pv", "kind": "var", "type": "LREAL", "init": "21.0"}},
+        {{"name": "r1", "kind": "var", "type": "LREAL"}},
+        {{"name": "r2", "kind": "var", "type": "LREAL"}},
+        {{"name": "r3", "kind": "var", "type": "LREAL"}}
+      ],
+      "networks": [{{
+        "id": "n1",
+        "blocks": [
+          {{"id": 1, "kind": "variable", "role": "in", "name": "pv"}},
+          {{"id": 2, "kind": "fb", "type_ref": "StFb", "instance": "st1"}},
+          {{"id": 3, "kind": "st",
+             "pins": [
+               {{"name": "A", "kind": "var_input", "type": "LREAL"}},
+               {{"name": "Q", "kind": "var_output", "type": "LREAL"}}
+             ],
+             "params": {{"CODE": "Q := A * 3.0;"}}}},
+          {{"id": 4, "kind": "function", "type_ref": "StFn"}},
+          {{"id": 5, "kind": "variable", "role": "out", "name": "r1"}},
+          {{"id": 6, "kind": "variable", "role": "out", "name": "r2"}},
+          {{"id": 7, "kind": "variable", "role": "out", "name": "r3"}}
+        ],
+        "wires": [
+          {{"id": 10, "src": {{"block": 1, "port": 0}}, "dsts": [{{"block": 2, "port": "X"}}, {{"block": 3, "port": "A"}}]}},
+          {{"id": 11, "src": {{"block": 2, "port": "Y"}}, "dsts": [{{"block": 4, "port": 0}}, {{"block": 5, "port": 0}}]}},
+          {{"id": 12, "src": {{"block": 4, "port": 0}}, "dsts": [{{"block": 6, "port": 0}}]}},
+          {{"id": 14, "src": {{"block": 3, "port": "Q"}}, "dsts": [{{"block": 7, "port": 0}}]}}
+        ]
+      }}]
+    }},
+    {{
+      "id": "p2", "name": "FbdFb", "kind": "function_block",
+      "interface": [
+        {{"name": "IN", "kind": "var_input", "type": "BOOL"}},
+        {{"name": "OUT", "kind": "var_output", "type": "BOOL"}}
+      ],
+      "networks": [{{
+        "id": "n1",
+        "blocks": [
+          {{"id": 60, "kind": "variable", "role": "in", "name": "IN"}},
+          {{"id": 61, "kind": "operator", "type_ref": "NOT"}},
+          {{"id": 62, "kind": "variable", "role": "out", "name": "OUT"}}
+        ],
+        "wires": [
+          {{"id": 63, "src": {{"block": 60, "port": 0}}, "dsts": [{{"block": 61, "port": 0}}]}},
+          {{"id": 64, "src": {{"block": 61, "port": 0}}, "dsts": [{{"block": 62, "port": 0}}]}}
+        ]
+      }}]
+    }}{extra_pou}
+  ],
+  "tasks": [{{"name": "main", "period_ns": 10000000, "programs": ["Main", "StProg"]}}]
+}}"#
+        )
+    }
+
+    fn compile_all(srcs: &[(String, String)]) -> tplc_st::FrontendOutput {
+        let (mut out, _eff) = compile_srcs(srcs);
+        out.diags.extend(tplc_st::sema::check(&mut out.module));
+        out
+    }
+
+    fn errs(out: &tplc_st::FrontendOutput) -> Vec<String> {
+        out.diags
+            .iter()
+            .filter(|d| d.severity == tplc_st::Severity::Error)
+            .map(|d| format!("{} {}", d.code, d.message))
+            .collect()
+    }
+
+    /// Run every program in the module once against a *shared* state
+    /// blob — the multi-program image layout the runtime uses.
+    fn exec_all(out: &tplc_st::FrontendOutput) -> (tplc_mir::layout::Layout, Vec<u8>) {
+        let layout = tplc_mir::layout::layout_module(&out.module);
+        let mut blob = vec![0u8; layout.total_size as usize];
+        for pou in out
+            .module
+            .pous
+            .iter()
+            .filter(|p| p.kind == tplc_mir::ir::PouKind::Program)
+        {
+            let ctx = tplc_mir::interp::pou_scope(&layout, &pou.name);
+            let stmts = match &pou.body {
+                tplc_mir::ir::Body::Stmts(s) => s.clone(),
+                _ => panic!("body not stmts"),
+            };
+            let mut rt = Rt::new(&mut blob, &layout, &out.module, 0);
+            rt.run_inits(&ctx);
+            rt.exec_all(&ctx, &stmts);
+        }
+        (layout, blob)
+    }
+
+    /// Read a program var by qualified "PROG.name" or bare name.
+    fn read<'a>(
+        rt: &Rt<'a>,
+        layout: &tplc_mir::layout::Layout,
+        prog: &str,
+        name: &str,
+    ) -> Value {
+        let key = if layout.fields.contains_key(&format!("{prog}.{name}")) {
+            format!("{prog}.{name}")
+        } else {
+            name.to_string()
+        };
+        rt.read_field(&key)
+    }
+
+    #[test]
+    fn mixed_bidirectional() {
+        let srcs = vec![
+            ("project.fbd.json".to_string(), fbd("")),
+            ("lib.st".to_string(), ST.to_string()),
+        ];
+        let out = compile_all(&srcs);
+        assert_eq!(errs(&out), Vec::<String>::new());
+
+        // shared blob — one image, both programs' vars coexisting
+        let (layout, mut blob) = exec_all(&out);
+        let rt = Rt::new(&mut blob, &layout, &out.module, 0);
+        // FBD program: r1 = 21*2 = 42 (StFb), r2 = 42+10 = 52 (StFn),
+        // r3 = 21*3 = 63 (inline st block)
+        assert_eq!(read(&rt, &layout, "Main", "r1"), Value::F(42.0));
+        assert_eq!(read(&rt, &layout, "Main", "r2"), Value::F(52.0));
+        assert_eq!(read(&rt, &layout, "Main", "r3"), Value::F(63.0));
+        // ST program: r = NOT FALSE = TRUE via the FBD-defined FbdFb
+        assert_eq!(read(&rt, &layout, "StProg", "r"), Value::Bool(true));
+    }
+
+    #[test]
+    fn mixed_inout_st_block() {
+        // an `st` block's var_in_out pin aliases the bound FBD variable;
+        // writes inside the generated FB land in the caller's storage.
+        // The ST program exercises the same semantics pure-ST (the FB
+        // call's inout arg binds n2 by reference).
+        let fbd = r#"{
+  "schema": "fbd.v1",
+  "project": "io",
+  "pous": [
+    {
+      "id": "p1", "name": "Main", "kind": "program",
+      "interface": [
+        {"name": "n", "kind": "var", "type": "DINT", "init": "5"},
+        {"name": "out", "kind": "var", "type": "DINT"}
+      ],
+      "networks": [{
+        "id": "n1",
+        "blocks": [
+          {"id": 1, "kind": "variable", "role": "in", "name": "n"},
+          {"id": 2, "kind": "st",
+             "pins": [
+               {"name": "BUF", "kind": "var_in_out", "type": "DINT"},
+               {"name": "Q", "kind": "var_output", "type": "DINT"}
+             ],
+             "params": {"CODE": "BUF := BUF + 7; Q := BUF;"}},
+          {"id": 3, "kind": "variable", "role": "out", "name": "out"}
+        ],
+        "wires": [
+          {"id": 10, "src": {"block": 1, "port": 0}, "dsts": [{"block": 2, "port": "BUF"}]},
+          {"id": 11, "src": {"block": 2, "port": "Q"}, "dsts": [{"block": 3, "port": 0}]}
+        ]
+      }]
+    }
+  ],
+  "tasks": [{"name": "main", "period_ns": 10000000, "programs": ["Main", "StIo"]}]
+}"#;
+        let st = r#"
+FUNCTION_BLOCK IoFb
+VAR_IN_OUT BUF : DINT; END_VAR
+BUF := BUF + 1;
+END_FUNCTION_BLOCK
+PROGRAM StIo
+VAR a : IoFb; n2 : DINT; END_VAR
+a(BUF := n2);
+END_PROGRAM
+"#;
+        let srcs = vec![
+            ("project.fbd.json".to_string(), fbd.to_string()),
+            ("lib.st".to_string(), st.to_string()),
+        ];
+        let out = compile_all(&srcs);
+        assert_eq!(errs(&out), Vec::<String>::new());
+        let (layout, mut blob) = exec_all(&out);
+        let rt = Rt::new(&mut blob, &layout, &out.module, 0);
+        // inout write-through: n = 5+7, out mirrors it; n2 = 0+1
+        assert_eq!(read(&rt, &layout, "Main", "n"), Value::I(12));
+        assert_eq!(read(&rt, &layout, "Main", "out"), Value::I(12));
+        assert_eq!(read(&rt, &layout, "StIo", "n2"), Value::I(1));
+    }
+
+    #[test]
+    fn mixed_dup_impl_errors() {
+        // FbdFb also implemented in ST → duplicate impl error
+        let st = format!(
+            "{}\nFUNCTION_BLOCK FbdFb\nVAR_INPUT IN : BOOL; END_VAR\nVAR_OUTPUT OUT : BOOL; END_VAR\nOUT := IN;\nEND_FUNCTION_BLOCK\n",
+            ST.replace("PROGRAM StProg", "PROGRAM_UNUSED StProg")
+        );
+        let srcs = vec![
+            ("project.fbd.json".to_string(), fbd("")),
+            ("lib.st".to_string(), st),
+        ];
+        let out = compile_all(&srcs);
+        assert!(errs(&out).iter().any(|e| e.contains("TPLC_E_MIX_DUP_POU")),
+            "expected dup impl error, got {:?}", errs(&out));
+    }
+
+    #[test]
+    fn mixed_decl_stub_merges() {
+        // an interface decl for StFb inside the fbd project must merge
+        // silently when it matches the ST impl
+        let decl = r#",{
+      "id": "d1", "name": "StFb", "kind": "function_block",
+      "interface": [
+        {"name": "X", "kind": "var_input", "type": "LREAL"},
+        {"name": "Y", "kind": "var_output", "type": "LREAL"}
+      ],
+      "networks": []
+    }"#;
+        let srcs = vec![
+            ("project.fbd.json".to_string(), fbd(decl)),
+            ("lib.st".to_string(), ST.to_string()),
+        ];
+        let out = compile_all(&srcs);
+        assert_eq!(errs(&out), Vec::<String>::new());
+        let stfb = out.module.pous.iter().filter(|p| p.name == "StFb").count();
+        assert_eq!(stfb, 1);
+    }
+
+    #[test]
+    fn mixed_iface_mismatch_errors() {
+        // decl with wrong pin type → iface mismatch error
+        let decl = r#",{
+      "id": "d1", "name": "StFb", "kind": "function_block",
+      "interface": [
+        {"name": "X", "kind": "var_input", "type": "INT"},
+        {"name": "Y", "kind": "var_output", "type": "LREAL"}
+      ],
+      "networks": []
+    }"#;
+        let srcs = vec![
+            ("project.fbd.json".to_string(), fbd(decl)),
+            ("lib.st".to_string(), ST.to_string()),
+        ];
+        let out = compile_all(&srcs);
+        assert!(errs(&out).iter().any(|e| e.contains("TPLC_E_MIX_IFACE")),
+            "expected iface mismatch, got {:?}", errs(&out));
+    }
+
+    /// An FBD-authored `FUNCTION` POU (ret_ty + implicit return var)
+    /// called from ST: the return extracts like an ST function's.
+    #[test]
+    fn mixed_fbd_function_from_st() {
+        let fbd = r#"{
+  "schema": "fbd.v1",
+  "project": "fn",
+  "pous": [
+    {
+      "id": "f1", "name": "FnX", "kind": "function", "ret_ty": "LREAL",
+      "interface": [{"name": "IN", "kind": "var_input", "type": "LREAL"}],
+      "networks": [{
+        "id": "n1",
+        "blocks": [
+          {"id": 1, "kind": "variable", "role": "in", "name": "IN"},
+          {"id": 2, "kind": "variable", "role": "out", "name": "FnX"}
+        ],
+        "wires": [
+          {"id": 3, "src": {"block": 1, "port": 0}, "dsts": [{"block": 2, "port": 0}]}
+        ]
+      }]
+    }
+  ],
+  "tasks": [{"name": "main", "period_ns": 10000000, "programs": ["FnProg"]}]
+}"#;
+        let st = r#"
+PROGRAM FnProg
+VAR r : LREAL; END_VAR
+r := FnX(21.0) * 2.0;
+END_PROGRAM
+"#;
+        let srcs = vec![
+            ("project.fbd.json".to_string(), fbd.to_string()),
+            ("lib.st".to_string(), st.to_string()),
+        ];
+        let out = compile_all(&srcs);
+        assert_eq!(errs(&out), Vec::<String>::new());
+        let (layout, mut blob) = exec_all(&out);
+        let rt = Rt::new(&mut blob, &layout, &out.module, 0);
+        assert_eq!(read(&rt, &layout, "FnProg", "r"), Value::F(42.0));
+    }
+
+    /// The TetherWebUI curve editor emits `tests/mixed/ui_profile.fbd.json`:
+    /// an FB_AtcProfile instance, an inline `st` block that loads the SEG
+    /// table member-wise through a var_in_out pin, and an FB_AtcPid wired
+    /// SP/PV/OUT. This runs that exact document against the shipped
+    /// library and checks the profile actually ramps and soaks.
+    #[test]
+    fn ui_curve_profile_runs() {
+        let srcs = vec![
+            (
+                "project.fbd.json".to_string(),
+                include_str!("../../../tests/mixed/ui_profile.fbd.json").to_string(),
+            ),
+            (
+                "Atc_TempCtrl.st".to_string(),
+                include_str!("../../../libraries/tempctrl/atc_tempctrl.st").to_string(),
+            ),
+        ];
+        let out = compile_all(&srcs);
+        assert_eq!(errs(&out), Vec::<String>::new());
+
+        let layout = tplc_mir::layout::layout_module(&out.module);
+        let mut blob = vec![0u8; layout.total_size as usize];
+        let prog = out
+            .module
+            .pous
+            .iter()
+            .find(|p| p.name == "Main")
+            .expect("Main program");
+        let ctx = tplc_mir::interp::pou_scope(&layout, "Main");
+        let stmts = match &prog.body {
+            tplc_mir::ir::Body::Stmts(s) => s.clone(),
+            _ => panic!("body not stmts"),
+        };
+        let mut rt = Rt::new(&mut blob, &layout, &out.module, 0);
+        rt.run_inits(&ctx);
+        // run enable + a PV that trails the setpoint (one program → the
+        // layout keeps bare field names; qualify only when prefixed)
+        let q = |n: &str| {
+            if layout.fields.contains_key(&format!("Main.{n}")) {
+                format!("Main.{n}")
+            } else {
+                n.to_string()
+            }
+        };
+        rt.write_field(&q("Run"), &Value::Bool(true));
+        rt.write_field(&q("Pv"), &Value::F(25.0));
+
+        // cycle time 0.1 s: seg1 ramps 25→150 over 60 s (600 cycles),
+        // seg2 soaks at 150 for 120 s. Sample at 30 s and 90 s.
+        // The lowerer orders calls by data dependency, so the config
+        // block (it writes `prof`) runs after the profile call — the
+        // run request is held and starts on scan 2.
+        let member = |rt: &mut Rt, inst: &str, name: &str| {
+            rt.read_ref(
+                &ctx,
+                &tplc_mir::ir::Ref::Field(
+                    Box::new(tplc_mir::ir::Ref::Var(inst.to_string())),
+                    name.to_string(),
+                ),
+            )
+        };
+        let f = |v: Value| match v {
+            Value::F(x) => x,
+            v => panic!("not float: {v:?}"),
+        };
+        let mut sp30 = 0.0;
+        let mut sp90 = 0.0;
+        for i in 0..=900 {
+            rt.exec_all(&ctx, &stmts);
+            let t = (i + 1) as f64 * 0.1;
+            if (t - 30.0).abs() < 1e-6 {
+                sp30 = f(member(&mut rt, "prof", "SP"));
+            }
+            if (t - 90.0).abs() < 1e-6 {
+                sp90 = f(member(&mut rt, "prof", "SP"));
+            }
+        }
+        // halfway through the time-ramp: SP must sit near 25+(150-25)/2
+        assert!((sp30 - 87.5).abs() < 5.0, "SP at 30 s = {sp30}, want ~87.5");
+        // soak reached: SP pinned at the segment target
+        assert!((sp90 - 150.0).abs() < 0.5, "SP at 90 s = {sp90}, want 150");
+        // config block loaded the whole table: 4 segments, no END yet
+        assert_eq!(member(&mut rt, "prof", "NUM_SEG"), Value::I(4));
+        assert_eq!(member(&mut rt, "prof", "SegIdx"), Value::I(2));
+        // controller runs off the profile SP (PID seeded Kp=2, Tn=60)
+        let out_v = f(member(&mut rt, "ctl", "Out"));
+        assert!(out_v > 0.0, "controller output {out_v} should be positive");
+    }
+
+    /// EK-terminal device blocks end-to-end: a DI channel enables the
+    /// PID + PWM, an analog channel feeds the PV, and the PWM bit lands
+    /// on a DO channel — the exact graphical wiring the web FBD editor
+    /// produces (tests/device/ek_pid.fbd.json is editor-shaped JSON).
+    #[test]
+    fn ek_device_pid_pwm_chain() {
+        let srcs = vec![
+            (
+                "ek_pid.fbd.json".to_string(),
+                include_str!("../../../tests/device/ek_pid.fbd.json").to_string(),
+            ),
+            (
+                "Atc_TempCtrl.st".to_string(),
+                include_str!("../../../libraries/tempctrl/atc_tempctrl.st").to_string(),
+            ),
+        ];
+        let out = compile_all(&srcs);
+        assert_eq!(errs(&out), Vec::<String>::new());
+
+        // every channel is a real process-image binding
+        let binds: Vec<(String, String)> = out
+            .io_bindings
+            .iter()
+            .map(|b| (b.name.clone(), format!("{:?}", b.at)))
+            .collect();
+        for want in [
+            "EK_PID.__dev10_DI0",
+            "EK_PID.__dev10_DI1",
+            "EK_PID.__dev11_AI0",
+            "EK_PID.__dev12_DO0",
+        ] {
+            assert!(binds.iter().any(|(n, _)| n == want), "missing io binding {want}");
+        }
+
+        let layout = tplc_mir::layout::layout_module(&out.module);
+        let mut blob = vec![0u8; layout.total_size as usize];
+        let prog = out
+            .module
+            .pous
+            .iter()
+            .find(|p| p.name == "EK_PID")
+            .expect("EK_PID program");
+        let ctx = tplc_mir::interp::pou_scope(&layout, "EK_PID");
+        let stmts = match &prog.body {
+            tplc_mir::ir::Body::Stmts(s) => s.clone(),
+            _ => panic!("body not stmts"),
+        };
+        let mut rt = Rt::new(&mut blob, &layout, &out.module, 0);
+        rt.run_inits(&ctx);
+        let q = |n: &str| {
+            if layout.fields.contains_key(&format!("EK_PID.{n}")) {
+                format!("EK_PID.{n}")
+            } else {
+                n.to_string()
+            }
+        };
+        // bus side: DI0 = run, AI0 = 20.0 °C process value
+        rt.write_field(&q("__dev10_DI0"), &Value::Bool(true));
+        rt.write_field(&q("__dev11_AI0"), &Value::F(20.0));
+
+        let member = |rt: &mut Rt, inst: &str, name: &str| {
+            rt.read_ref(
+                &ctx,
+                &tplc_mir::ir::Ref::Field(
+                    Box::new(tplc_mir::ir::Ref::Var(inst.to_string())),
+                    name.to_string(),
+                ),
+            )
+        };
+        let f = |v: Value| match v {
+            Value::F(x) => x,
+            v => panic!("not float: {v:?}"),
+        };
+        // P-only loop: Out = 0.5*(75-20) = 27.5 → Duty 27.5 % of a 10 s
+        // period → Ton = 2.75 s → Q high for t < 2.75 s (≈ scan 275).
+        let mut do_early = false;
+        let mut do_late = true;
+        let mut pid_out = 0.0;
+        for i in 0..=400 {
+            rt.exec_all(&ctx, &stmts);
+            let t = (i + 1) as f64 * 0.01;
+            if (t - 2.0).abs() < 1e-6 {
+                do_early = matches!(
+                    rt.read_field(&q("__dev12_DO0")),
+                    Value::Bool(true)
+                );
+            }
+            if (t - 4.0).abs() < 1e-6 {
+                do_late = matches!(
+                    rt.read_field(&q("__dev12_DO0")),
+                    Value::Bool(true)
+                );
+                pid_out = f(member(&mut rt, "pid", "Out"));
+            }
+        }
+        assert!(pid_out > 20.0, "PID out {pid_out} should be ~27.5");
+        assert!(do_early, "DO0 should be high during the PWM on-window");
+        assert!(!do_late, "DO0 should be low after Ton elapsed");
     }
 }

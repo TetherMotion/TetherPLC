@@ -16,6 +16,7 @@ fn var_block(id: u64, role: VarRole, name: &str, at: Option<&str>, x: u32, y: u3
         instance: None,
         pos: Pos { x, y },
         params: Default::default(),
+        pins: vec![],
         exec_order: 0,
         negated: vec![],
         comment: String::new(),
@@ -39,6 +40,7 @@ fn op_block(id: u64, op: &str, x: u32, y: u32) -> Block {
         instance: None,
         pos: Pos { x, y },
         params: Default::default(),
+        pins: vec![],
         exec_order: 0,
         negated: vec![],
         comment: String::new(),
@@ -59,6 +61,7 @@ fn fb_block(id: u64, ty: &str, inst: &str, params: &[(&str, &str)], x: u32, y: u
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
+        pins: vec![],
         exec_order: 0,
         negated: vec![],
         comment: String::new(),
@@ -97,6 +100,7 @@ fn debounce_project() -> FbdProject {
             id: "p1".into(),
             name: "DEB".into(),
             kind: PouKind::Program,
+            ret_ty: None,
             en_eno: "relaxed".into(),
             interface: vec![],
             networks: vec![Network {
@@ -404,6 +408,7 @@ fn inout_host_project(dst: Block, extra_wire: Option<Wire>) -> FbdProject {
         id: "fb_acc".into(),
         name: "ACCUM".into(),
         kind: PouKind::FunctionBlock,
+        ret_ty: None,
         en_eno: "relaxed".into(),
         interface: vec![IfaceVar {
             name: "total".into(),

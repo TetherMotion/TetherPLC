@@ -64,6 +64,11 @@ pub struct Pou {
     pub interface: Vec<IfaceVar>,
     #[serde(default)]
     pub networks: Vec<Network>,
+    /// FUNCTION return type (IEC type expression, e.g. "LREAL").
+    /// Required for `kind == "function"` POUs to carry a value back to
+    /// callers; ignored for program/function_block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ret_ty: Option<String>,
     /// EN/ENO config: "relaxed" (default) | "strict-iec" (doc 06 §4.5).
     #[serde(default = "default_en_eno")]
     pub en_eno: String,
@@ -166,6 +171,20 @@ pub enum BlockKind {
     Operator,
     Variable,
     JumpTarget,
+    /// Inline Structured-Text block: `pins` declares typed
+    /// VAR_INPUT/VAR_OUTPUT pins, `params["CODE"]` holds the ST body.
+    /// `tplcc` expands each ST block into a generated FUNCTION_BLOCK
+    /// (`__fbd_st_*`) compiled with the project's ST sources; the FBD
+    /// network then calls it like any other FB.
+    St,
+    /// I/O device block (fieldbus terminal, e.g. a Beckhoff EK remote
+    /// I/O station). `type_ref` names the device, `pins` declares the
+    /// channels: var_output pins are device→logic outputs (block out
+    /// pins), var_input pins are logic→device inputs (block in pins).
+    /// Every pin carries an `at` process-image binding (`%I`/`%Q`/`%M`)
+    /// so each channel aliases a located var — wires on the pins read
+    /// and write the image directly, no call is emitted.
+    Device,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,8 +211,13 @@ pub struct Block {
     #[serde(default)]
     pub pos: Pos,
     /// literal/customized parameters keyed by pin name ("PT":"T#200ms").
+    /// For `st` blocks, `params["CODE"]` holds the ST statement body.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, String>,
+    /// typed pin declarations for `st` blocks (VarInput/VarOutput
+    /// entries become the generated FB's interface).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<IfaceVar>,
     /// explicit order override; 0 = auto topo (doc 06 §4.1).
     #[serde(default)]
     pub exec_order: u32,

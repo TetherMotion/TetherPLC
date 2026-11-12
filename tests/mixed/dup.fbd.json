@@ -1,0 +1,18 @@
+{
+  "schema": "fbd.v1",
+  "project": "dup",
+  "pous": [
+    {
+      "id": "p1", "name": "Main", "kind": "program",
+      "interface": [{"name": "x", "kind": "var", "type": "BOOL"}],
+      "networks": [{
+        "id": "n1",
+        "blocks": [
+          {"id": 1, "kind": "variable", "role": "in", "name": "x"},
+          {"id": 2, "kind": "variable", "role": "out", "name": "x"}
+        ],
+        "wires": [{"id": 3, "src": {"block": 1, "port": 0}, "dsts": [{"block": 2, "port": 0}]}]
+      }]
+    }
+  ]
+}

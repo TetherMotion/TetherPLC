@@ -104,8 +104,14 @@ HTTP/1.1 server (`tools/tplc_ctl_proxy.cpp`, no deps) exposing:
 | any | OPTIONS | CORS preflight (`Access-Control-Allow-Origin: *`) |
 
 The src frame is `[u16 count][u16 nameLen,name,u32 len,content]×N` LE;
-names are basename-sanitized, ≤64 files × 4 MB. Build responses include
-the `.tplc` as base64.
+names are basename-sanitized, ≤64 files × 4 MB. The frame carries every
+source of a mixed project (`project.fbd.json` + all `.st`), which is why
+the IDE's build & deploy path works for FBD+ST modules. Build responses
+include the `.tplc` as base64. `exit` mirrors the compiler's verdict:
+the proxy ignores `SIGCHLD` (auto-reap for `/events` children), so
+`pclose()` may report `ECHILD`; a `"ok":true` in the wrapped JSON is
+treated as exit 0 and still attaches the package
+(`tests/proxy/e2e.sh` guards this).
 
 Flags: `--socket` (ctl UDS, default `/tmp/tplc-image.ctl`), `--port`,
 `--bind`, `--tplcc` (compiler path for the popen path), `--tplccd`

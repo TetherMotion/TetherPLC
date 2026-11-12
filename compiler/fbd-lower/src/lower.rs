@@ -19,8 +19,8 @@ use tplc_mir::ir::{
 use tplc_mir::ty::{compatible, convertible, literal_fits, unify_num};
 
 use crate::resolve::{
-    builtin_sig, cast_target, op_arity, op_in_index, op_in_name, op_kind, pou_sig, topo_order, Op,
-    Sig,
+    builtin_sig, cast_target, device_sig, op_arity, op_in_index, op_in_name, op_kind, pou_sig,
+    topo_order, Op, Sig,
 };
 use crate::ty::{parse_at, parse_lit, parse_type, ty_for_width};
 
@@ -78,6 +78,14 @@ fn lit_ty(l: &Lit) -> Type {
 }
 
 pub fn lower(project: &FbdProject) -> LowerOutput {
+    lower_mixed(project, &[])
+}
+
+/// Lower with an extern POU table — POUs compiled from other sources
+/// (mixed FBD+ST projects). Extern FBs and FUNCTIONs are resolvable
+/// as block types/callables; their signatures feed pin binding and
+/// type checks exactly like in-project decl POUs.
+pub fn lower_mixed(project: &FbdProject, externs: &[ir::Pou]) -> LowerOutput {
     let mut out = LowerOutput {
         module: ir::Module {
             pous: Vec::new(),
@@ -90,7 +98,7 @@ pub fn lower(project: &FbdProject) -> LowerOutput {
     };
 
     // FB type names resolvable as `Type::Fb` (user-declared POUs).
-    let fb_names: BTreeSet<String> = project
+    let mut fb_names: BTreeSet<String> = project
         .pous
         .iter()
         .filter(|p| p.kind == PouKind::FunctionBlock)
@@ -101,6 +109,17 @@ pub fn lower(project: &FbdProject) -> LowerOutput {
         .iter()
         .map(|p| (p.name.to_ascii_uppercase(), p))
         .collect();
+    // extern POUs (e.g. ST-defined FBs/FUNCTIONs in mixed projects)
+    let ext_pous: BTreeMap<String, &ir::Pou> = externs
+        .iter()
+        .map(|p| (p.name.to_ascii_uppercase(), p))
+        .collect();
+    fb_names.extend(
+        externs
+            .iter()
+            .filter(|p| p.kind == ir::PouKind::FunctionBlock)
+            .map(|p| p.name.to_ascii_uppercase()),
+    );
 
     // project-level globals → one GVL named GVL
     if !project.global_vars.is_empty() {
@@ -126,19 +145,22 @@ pub fn lower(project: &FbdProject) -> LowerOutput {
             programs: t
                 .programs
                 .iter()
-                .filter_map(|id| {
+                .map(|id| {
                     project
                         .pous
                         .iter()
                         .find(|p| &p.id == id || &p.name == id)
                         .map(|p| p.name.clone())
+                        // program defined in another language (mixed
+                        // FBD+ST) — keep the name for sema to resolve
+                        .unwrap_or_else(|| id.clone())
                 })
                 .collect(),
         });
     }
 
     for pou in &project.pous {
-        let mut cx = Cx::new(pou, &fb_names, &pou_by_name, project);
+        let mut cx = Cx::new(pou, &fb_names, &pou_by_name, &ext_pous, project);
         let p = cx.lower_pou();
         out.io_bindings.extend(cx.io_bindings);
         out.diags.extend(cx.diags);
@@ -199,11 +221,37 @@ fn decl_of(v: &IfaceVar, fb_names: &BTreeSet<String>, diags: &mut Vec<Diag>) -> 
     })
 }
 
+/// `Sig` of an extern MIR POU (ST-compiled) — same binding view as
+/// `pou_sig`: inputs+inouts in decl order, then outputs; FUNCTIONs get
+/// their return value as implicit first output.
+fn mir_sig(pou: &ir::Pou) -> Sig {
+    let mut sig = Sig::default();
+    for v in &pou.iface {
+        match v.kind {
+            VarKind::Input => sig.ins.push((v.name.clone(), v.ty.clone())),
+            VarKind::InOut => {
+                sig.inouts.insert(sig.ins.len() as u32);
+                sig.ins.push((v.name.clone(), v.ty.clone()));
+            }
+            VarKind::Output => sig.outs.push((v.name.clone(), v.ty.clone())),
+            _ => {}
+        }
+    }
+    if pou.kind == ir::PouKind::Function {
+        sig.outs.insert(
+            0,
+            (pou.name.clone(), pou.ret_ty.clone().unwrap_or(Type::Bool)),
+        );
+    }
+    sig
+}
+
 /// Per-POU lowering context.
 struct Cx<'a> {
     pou: &'a Pou,
     fb_names: &'a BTreeSet<String>,
     pous: &'a BTreeMap<String, &'a Pou>,
+    ext_pous: &'a BTreeMap<String, &'a ir::Pou>,
     project: &'a FbdProject,
     /// ordered var decls (iface + synthesized + instances + temps)
     vars: Vec<VarDecl>,
@@ -218,8 +266,11 @@ struct Cx<'a> {
     probes: BTreeMap<NodeId, String>,
     io_bindings: Vec<IoBind>,
     diags: Vec<Diag>,
-    /// block id → resolved sig (fb/function blocks)
+    /// block id → resolved sig (fb/function/device blocks)
     sigs: BTreeMap<NodeId, Sig>,
+    /// (device block id, pin name upper) → vars index of the located
+    /// channel var the pin aliases
+    dev_vars: BTreeMap<(NodeId, String), usize>,
     sheet: u32,
     /// blocks currently being folded (algebraic-cycle guard)
     expanding: BTreeSet<NodeId>,
@@ -230,12 +281,14 @@ impl<'a> Cx<'a> {
         pou: &'a Pou,
         fb_names: &'a BTreeSet<String>,
         pous: &'a BTreeMap<String, &'a Pou>,
+        ext_pous: &'a BTreeMap<String, &'a ir::Pou>,
         project: &'a FbdProject,
     ) -> Self {
         Cx {
             pou,
             fb_names,
             pous,
+            ext_pous,
             project,
             vars: Vec::new(),
             var_by_name: BTreeMap::new(),
@@ -246,6 +299,7 @@ impl<'a> Cx<'a> {
             io_bindings: Vec::new(),
             diags: Vec::new(),
             sigs: BTreeMap::new(),
+            dev_vars: BTreeMap::new(),
             sheet: 0,
             expanding: BTreeSet::new(),
         }
@@ -305,6 +359,39 @@ impl<'a> Cx<'a> {
             }
         }
 
+        // FUNCTION return value — implicit local var named after the
+        // POU (mirrors the ST frontend): `variable-out` blocks named
+        // `pou.name` then write the return value.
+        let ret_ty = self
+            .pou
+            .ret_ty
+            .as_ref()
+            .map(|t| parse_type(t, self.fb_names).unwrap_or(Type::Bool));
+        if kind == ir::PouKind::Function {
+            let ty = ret_ty.clone().unwrap_or(Type::Bool);
+            if self
+                .var_by_name
+                .contains_key(&self.pou.name.to_ascii_uppercase())
+            {
+                self.err(
+                    codes::INST_REUSE,
+                    format!("interface var shadows return value {}", self.pou.name),
+                    0,
+                );
+            } else {
+                self.declare(VarDecl {
+                    name: self.pou.name.clone(),
+                    kind: VarKind::Local,
+                    ty,
+                    init: None,
+                    retain: false,
+                    at: None,
+                    probe: false,
+                    prov: Prov::Generated,
+                });
+            }
+        }
+
         // pass 1: instance decls + sigs + located shadows + probes
         for ni in 0..self.pou.networks.len() {
             self.sheet = ni as u32;
@@ -323,7 +410,7 @@ impl<'a> Cx<'a> {
             name: self.pou.name.clone(),
             iface: std::mem::take(&mut self.vars),
             body: ir::Body::Stmts(stmts),
-            ret_ty: None,
+            ret_ty,
             prov: self.prov(0, 0),
         }
     }
@@ -350,6 +437,7 @@ impl<'a> Cx<'a> {
                 BlockKind::Fb => self.fb_decl(b),
                 BlockKind::Function => self.fn_sig(b),
                 BlockKind::Variable => self.var_decl(b),
+                BlockKind::Device => self.device_decl(b),
                 _ => {}
             }
         }
@@ -382,8 +470,14 @@ impl<'a> Cx<'a> {
             );
             return;
         }
-        let sig =
-            builtin_sig(&tref).or_else(|| self.pous.get(&tref).map(|p| pou_sig(p, self.fb_names)));
+        let sig = builtin_sig(&tref)
+            .or_else(|| self.pous.get(&tref).map(|p| pou_sig(p, self.fb_names)))
+            .or_else(|| {
+                self.ext_pous
+                    .get(&tref)
+                    .filter(|p| p.kind == ir::PouKind::FunctionBlock)
+                    .map(|p| mir_sig(p))
+            });
         let Some(sig) = sig else {
             self.err(
                 codes::UNKNOWN,
@@ -409,7 +503,10 @@ impl<'a> Cx<'a> {
         self.declare(VarDecl {
             name: inst,
             kind: VarKind::Local,
-            ty: Type::Fb { name: tref },
+            // original case — layout resolves Type::Fb verbatim
+            ty: Type::Fb {
+                name: b.type_ref.clone(),
+            },
             init: None,
             retain: false,
             at: None,
@@ -421,16 +518,27 @@ impl<'a> Cx<'a> {
     /// FUNCTION block → sig only (no instance state).
     fn fn_sig(&mut self, b: &Block) {
         let tref = b.type_ref.to_ascii_uppercase();
-        match self.pous.get(&tref) {
-            Some(p) if p.kind == PouKind::Function => {
-                self.sigs.insert(b.id, pou_sig(p, self.fb_names));
-            }
-            _ => self.err(
-                codes::UNKNOWN,
-                format!("unknown FUNCTION {}", b.type_ref),
-                b.id,
-            ),
+        if let Some(p) = self
+            .pous
+            .get(&tref)
+            .filter(|p| p.kind == PouKind::Function)
+        {
+            self.sigs.insert(b.id, pou_sig(p, self.fb_names));
+            return;
         }
+        if let Some(p) = self
+            .ext_pous
+            .get(&tref)
+            .filter(|p| p.kind == ir::PouKind::Function)
+        {
+            self.sigs.insert(b.id, mir_sig(p));
+            return;
+        }
+        self.err(
+            codes::UNKNOWN,
+            format!("unknown FUNCTION {}", b.type_ref),
+            b.id,
+        );
     }
 
     /// Variable block → located shadow or iface binding (FBD008).
@@ -530,6 +638,81 @@ impl<'a> Cx<'a> {
                 "variable block with neither name nor at",
                 b.id,
             ),
+        }
+    }
+
+    /// Device block → located channel vars, one per pin (FBD device
+    /// blocks). Each channel pin must carry an `at` binding; the pin
+    /// aliases a located var shared through `at_vars` so overlapping
+    /// addresses across blocks see the same channel. The pin→var
+    /// binding lands in `dev_vars`; the signature lands in `sigs` so
+    /// wire/param/type machinery treats the block like any other.
+    fn device_decl(&mut self, b: &Block) {
+        self.sigs.insert(b.id, device_sig(b, self.fb_names));
+        for v in &b.pins {
+            if !matches!(
+                v.kind,
+                IfaceKind::VarInput | IfaceKind::VarOutput | IfaceKind::VarInOut
+            ) {
+                continue;
+            }
+            let pname = v.name.to_ascii_uppercase();
+            let Some(at_s) = v.at.as_deref() else {
+                self.err(
+                    codes::BAD_AT,
+                    format!("device pin {} has no AT binding", v.name),
+                    b.id,
+                );
+                continue;
+            };
+            let Some(a) = parse_at(at_s) else {
+                self.err(codes::BAD_AT, format!("malformed AT {at_s}"), b.id);
+                continue;
+            };
+            let ty = match parse_type(&v.ty, self.fb_names) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.err(codes::PARSE, format!("device pin {}: {e}", v.name), b.id);
+                    Type::Bool
+                }
+            };
+            // share storage with any var already bound to this address
+            let key = format!("{:?}{}x{}", a.region, a.byte, a.bit.unwrap_or(255));
+            let idx = match self.at_vars.get(&key) {
+                Some(&i) => i,
+                None => {
+                    let ident: String = v
+                        .name
+                        .chars()
+                        .map(|c| {
+                            if c.is_ascii_alphanumeric() || c == '_' {
+                                c
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect();
+                    let name = format!("__dev{}_{}", b.id, ident);
+                    let i = self.declare(VarDecl {
+                        name: name.clone(),
+                        kind: VarKind::Local,
+                        ty: ty.clone(),
+                        init: None,
+                        retain: false,
+                        at: Some(a.clone()),
+                        probe: false,
+                        prov: self.prov(b.id, 0),
+                    });
+                    self.io_bindings.push(IoBind {
+                        name: format!("{}.{}", self.pou.name, name),
+                        at: a,
+                        ty,
+                    });
+                    self.at_vars.insert(key, i);
+                    i
+                }
+            };
+            self.dev_vars.insert((b.id, pname), idx);
         }
     }
 
@@ -650,9 +833,15 @@ impl<'a> Cx<'a> {
     ) {
         match b.kind {
             BlockKind::Variable => self.emit_var_block(net, b, blocks, stmts),
+            BlockKind::Device => self.emit_device(net, b, blocks, stmts),
             BlockKind::Fb => self.emit_fb(net, b, blocks, stmts),
             BlockKind::Operator => self.emit_op(net, b, blocks, stmts),
             BlockKind::Function | BlockKind::JumpTarget => {}
+            BlockKind::St => self.err(
+                codes::UNSUPPORTED,
+                "st block not expanded — use expand_st_blocks (tplcc mixed mode)",
+                b.id,
+            ),
         }
     }
 
@@ -680,6 +869,33 @@ impl<'a> Cx<'a> {
             kind: StmtKind::Assign { lhs, rhs: e },
             prov: self.prov(b.id, 0),
         });
+    }
+
+    /// device block → Assign per driven input channel. Output
+    /// channels need no code — consumers read the located var
+    /// directly through `src_expr`.
+    fn emit_device(
+        &mut self,
+        net: &Network,
+        b: &Block,
+        blocks: &BTreeMap<NodeId, &Block>,
+        stmts: &mut Vec<Stmt>,
+    ) {
+        let sig = self.sigs.get(&b.id).cloned().unwrap_or_default();
+        for (i, (pname, pty)) in sig.ins.iter().enumerate() {
+            let Some(e) = self.dst_input(net, b, i as u32, blocks) else {
+                continue; // undriven channel holds its image value
+            };
+            let Some(&vi) = self.dev_vars.get(&(b.id, pname.to_ascii_uppercase())) else {
+                continue;
+            };
+            let lhs = Ref::Var(self.vars[vi].name.clone());
+            self.check_coerce(&e, &pty, b.id);
+            stmts.push(Stmt {
+                kind: StmtKind::Assign { lhs, rhs: e },
+                prov: self.prov(b.id, i as u16),
+            });
+        }
     }
 
     /// fb block → Call stmt (EN-gated when EN is bound).
@@ -1083,7 +1299,7 @@ impl<'a> Cx<'a> {
                     return u32::MAX;
                 }
                 match b.kind {
-                    BlockKind::Fb | BlockKind::Function => self
+                    BlockKind::Fb | BlockKind::Function | BlockKind::Device => self
                         .sigs
                         .get(&b.id)
                         .and_then(|s| {
@@ -1105,7 +1321,7 @@ impl<'a> Cx<'a> {
     /// Name of input pin `want` on `b` (for param lookup).
     fn in_name(&self, b: &Block, want: u32) -> Option<String> {
         match b.kind {
-            BlockKind::Fb | BlockKind::Function => self
+            BlockKind::Fb | BlockKind::Function | BlockKind::Device => self
                 .sigs
                 .get(&b.id)
                 .and_then(|s| s.ins.get(want as usize))
@@ -1169,6 +1385,25 @@ impl<'a> Cx<'a> {
                     prov: self.prov(b.id, i as u16),
                 })
             }
+            BlockKind::Device => {
+                let sig = self.sigs.get(&b.id).cloned().unwrap_or_default();
+                let i = match &pref.port {
+                    PortSel::Index(i) => *i,
+                    PortSel::Name(n) => sig
+                        .outs
+                        .iter()
+                        .position(|(pn, _)| pn.eq_ignore_ascii_case(n))
+                        .map(|i| i as u32)
+                        .unwrap_or(u32::MAX),
+                };
+                let (pn, pty) = sig.outs.get(i as usize)?.clone();
+                let &vi = self.dev_vars.get(&(b.id, pn.to_ascii_uppercase()))?;
+                Some(Expr {
+                    kind: ExprKind::Ref(Ref::Var(self.vars[vi].name.clone())),
+                    ty: pty,
+                    prov: self.prov(b.id, i as u16),
+                })
+            }
             BlockKind::Function => {
                 if !self.expanding.insert(b.id) {
                     self.err(codes::ALG_CYCLE, format!("cycle at node {}", b.id), b.id);
@@ -1187,17 +1422,31 @@ impl<'a> Cx<'a> {
                     }
                 }
                 self.expanding.remove(&b.id);
+                // out pin 0 of a FUNCTION sig is the return value
+                let ret = sig
+                    .outs
+                    .first()
+                    .map(|(_, t)| t.clone())
+                    .unwrap_or(Type::Bool);
                 Some(Expr {
                     kind: ExprKind::Call {
                         fun: b.type_ref.clone(),
                         args,
                     },
-                    ty: Type::Bool, // sema retypes (functions declare ret_ty)
+                    ty: ret,
                     prov: self.prov(b.id, 0),
                 })
             }
             BlockKind::Operator => self.op_expr(net, b, blocks),
             BlockKind::JumpTarget => None,
+            BlockKind::St => {
+                self.err(
+                    codes::UNSUPPORTED,
+                    "st block not expanded — use expand_st_blocks (tplcc mixed mode)",
+                    b.id,
+                );
+                None
+            }
         }
     }
 
@@ -1500,4 +1749,82 @@ fn region_ch(r: AtRegion) -> char {
         AtRegion::Q => 'q',
         AtRegion::M => 'm',
     }
+}
+
+/* ---------------- inline ST blocks ---------------- */
+
+/// Rewrite `st` blocks into generated FUNCTION_BLOCK sources for mixed
+/// FBD+ST compilation. Returns `(source_name, source_text)` pairs —
+/// the caller appends them to the project's ST source list and compiles
+/// before lowering. Each `st` block mutates into an `fb` block whose
+/// `type_ref` is the generated POU name, so wire/param/EN-ENO binding
+/// works unchanged.
+///
+/// Pins: `block.pins` entries (VarInput/VarOutput/VarInOut/Var) become
+/// the generated FB's interface; `params["CODE"]` is the body — full
+/// IEC 61131-3 ST, including FB calls and member/array writes (which
+/// is also how aggregate config like `FB_AtcProfile.SEG` is authored).
+pub fn expand_st_blocks(project: &mut FbdProject) -> Vec<(String, String)> {
+    let mut srcs = Vec::new();
+    for pou in &mut project.pous {
+        for net in &mut pou.networks {
+            for b in &mut net.blocks {
+                if b.kind != BlockKind::St {
+                    continue;
+                }
+                let name = format!(
+                    "__fbd_st_{}_{}",
+                    pou.name
+                        .chars()
+                        .map(|c| if c.is_ascii_alphanumeric() || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        })
+                        .collect::<String>(),
+                    b.id
+                );
+                srcs.push((format!("{name}.st"), gen_st_fb_source(&name, b)));
+                b.kind = BlockKind::Fb;
+                b.type_ref = name;
+            }
+        }
+    }
+    srcs
+}
+
+/// Generated FB source for one `st` block: declared pin groups + the
+/// CODE body verbatim (parsed by the normal ST frontend — syntax and
+/// type errors carry that file's provenance).
+fn gen_st_fb_source(name: &str, b: &Block) -> String {
+    let mut s = format!("FUNCTION_BLOCK {name}\n");
+    for (kw, want) in [
+        ("VAR_INPUT", IfaceKind::VarInput),
+        ("VAR_OUTPUT", IfaceKind::VarOutput),
+        ("VAR_IN_OUT", IfaceKind::VarInOut),
+        ("VAR", IfaceKind::Var),
+    ] {
+        let pins: Vec<&IfaceVar> = b.pins.iter().filter(|p| p.kind == want).collect();
+        if pins.is_empty() {
+            continue;
+        }
+        s.push_str(kw);
+        s.push('\n');
+        for v in pins {
+            s.push_str("    ");
+            s.push_str(&v.name);
+            s.push_str(" : ");
+            s.push_str(&v.ty);
+            if let Some(i) = &v.init {
+                s.push_str(" := ");
+                s.push_str(i);
+            }
+            s.push_str(";\n");
+        }
+        s.push_str("END_VAR\n");
+    }
+    let code = b.params.get("CODE").map(String::as_str).unwrap_or("");
+    s.push_str(code);
+    s.push_str("\nEND_FUNCTION_BLOCK\n");
+    s
 }

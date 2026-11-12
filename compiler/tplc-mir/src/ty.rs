@@ -164,6 +164,37 @@ pub fn convertible(a: &Type, b: &Type) -> bool {
     )
 }
 
+/// Canonical IEC type name for a `Type` — the inverse of the frontend
+/// parsers (`fbd-lower::ty::parse_type`, `tplc-st` type resolution).
+/// Used by `tplcc blocks` to describe POU interfaces to external tools
+/// (the web IDE's block palette).
+pub fn ty_str(t: &Type) -> String {
+    match t {
+        Type::Bool => "BOOL".into(),
+        Type::Int { signed, bits } => match (signed, bits) {
+            (true, 8) => "SINT".into(),
+            (true, 16) => "INT".into(),
+            (true, 32) => "DINT".into(),
+            (true, 64) => "LINT".into(),
+            (false, 8) => "USINT".into(),
+            (false, 16) => "UINT".into(),
+            (false, 32) => "UDINT".into(),
+            (false, 64) => "ULINT".into(),
+            (true, b) | (false, b) => format!("INT{b}"),
+        },
+        Type::Real { bits } => match bits {
+            64 => "LREAL".into(),
+            _ => "REAL".into(),
+        },
+        Type::Time => "TIME".into(),
+        Type::Str { cap } => format!("STRING({cap})"),
+        Type::WStr { cap } => format!("WSTRING({cap})"),
+        Type::Ref { to } => format!("REF_TO {}", ty_str(to)),
+        Type::Array { elem, lo, hi } => format!("ARRAY[{lo}..{hi}] OF {}", ty_str(elem)),
+        Type::Struct { name, .. } | Type::Enum { name, .. } | Type::Fb { name } => name.clone(),
+    }
+}
+
 /// Numeric result type of a binary op (doc 05 coercion matrix).
 pub fn unify_num(a: &Type, b: &Type) -> Type {
     if matches!(a, Type::Real { .. }) || matches!(b, Type::Real { .. }) {

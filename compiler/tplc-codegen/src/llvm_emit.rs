@@ -22,7 +22,7 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 use std::collections::BTreeMap;
-use tplc_mir::interp::{fb_ctx, program_ctx, Ctx};
+use tplc_mir::interp::{fb_ctx, pou_scope, program_ctx, Ctx};
 use tplc_mir::ir::AtRegion;
 use tplc_mir::ir::*;
 use tplc_mir::layout::{builtin_fb_layout, Layout};
@@ -256,6 +256,10 @@ pub struct Gen<'ctx> {
     ctx_ptr: PointerValue<'ctx>,
     this_ptr: PointerValue<'ctx>,
     abi: AbiOffsets,
+    /// VAR_IN_OUT names of the pou currently being emitted — their
+    /// Ref-typed member slots hold caller-storage pointers and any
+    /// access auto-derefs (see resolve Ref::Var).
+    cur_inouts: std::collections::HashSet<String>,
 }
 
 /// inclusive (lo, hi) of an int type as i128 — checked-arith
@@ -420,7 +424,28 @@ impl<'ctx> Gen<'ctx> {
                     .get(name.as_str())
                     .cloned()
                     .unwrap_or_else(|| panic!("unresolved var {name}"));
-                (self.off_ptr(self.blob_ptr(), o), t)
+                let p = self.off_ptr(self.blob_ptr(), o);
+                /* VAR_IN_OUT slot: an i64 holding the caller storage
+                pointer — null → TPLC_TASK_E_PANIC like a null REF */
+                if let Type::Ref { to } = &t {
+                    if self.cur_inouts.contains(name.as_str()) {
+                        let i64t = self.ctx.i64_type();
+                        let iv = self.b.build_load(i64t, p, "iop").unwrap().into_int_value();
+                        let f = self.b.get_insert_block().unwrap().get_parent().unwrap();
+                        let ok_bb = self.ctx.append_basic_block(f, "io.ok");
+                        let null = self
+                            .b
+                            .build_int_compare(IntPredicate::EQ, iv, i64t.const_int(0, false), "ion")
+                            .unwrap();
+                        self.b
+                            .build_conditional_branch(null, self.panic_bb.unwrap(), ok_bb)
+                            .unwrap();
+                        self.b.position_at_end(ok_bb);
+                        let pp = self.b.build_int_to_ptr(iv, self.i8p(), "iopd").unwrap();
+                        return (pp, (**to).clone());
+                    }
+                }
+                (p, t)
             }
             Ref::Field(inner, name) => {
                 let (p, ty) = self.resolve(ctx, inner);
@@ -1381,10 +1406,38 @@ impl<'ctx> Gen<'ctx> {
             _ => panic!("call on non-FB"),
         };
         let fbl = self.member_of(&fbname);
+        /* VAR_IN_OUT slots hold raw pointers to the caller's lvalue
+        (distinct from REF vars, which hold blob offsets — both are
+        Type::Ref members, so gate on the callee's declared inouts) */
+        let inouts: std::collections::HashSet<&str> = self
+            .mir
+            .pous
+            .iter()
+            .find(|p| p.name == fbname && p.kind == PouKind::FunctionBlock)
+            .map(|p| {
+                p.iface
+                    .iter()
+                    .filter(|v| v.kind == VarKind::InOut)
+                    .map(|v| v.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
         // bind args into instance fields
         for (pname, pe) in args {
             if let Some((moff, mty)) = fbl.members.get(pname.as_str()).cloned() {
                 let p = self.off_ptr(instp, moff);
+                if inouts.iter().any(|n| n.eq_ignore_ascii_case(pname)) {
+                    let ExprKind::Ref(r) = &pe.kind else {
+                        panic!("inout {pname} bound to non-reference")
+                    };
+                    let (op_ptr, _) = self.resolve(ctx, r);
+                    let iv = self
+                        .b
+                        .build_ptr_to_int(op_ptr, self.ctx.i64_type(), "iop")
+                        .unwrap();
+                    self.b.build_store(p, iv).unwrap();
+                    continue;
+                }
                 if matches!(mty, Type::Array { .. }) && self.agg_copy(ctx, pe, p, mty.size()) {
                     continue;
                 }
@@ -2102,6 +2155,22 @@ impl<'ctx> Gen<'ctx> {
             };
             if let Some((moff, mty)) = fbl.members.get(name).cloned() {
                 let p = self.off_ptr(scratch, moff);
+                // VAR_IN_OUT slot: pointer to the caller's lvalue
+                if inputs
+                    .iter()
+                    .any(|v| v.kind == VarKind::InOut && v.name.eq_ignore_ascii_case(name))
+                {
+                    let ExprKind::Ref(r) = &pe.kind else {
+                        panic!("inout {name} bound to non-reference")
+                    };
+                    let (op_ptr, _) = self.resolve(ctx, r);
+                    let iv = self
+                        .b
+                        .build_ptr_to_int(op_ptr, self.ctx.i64_type(), "iop")
+                        .unwrap();
+                    self.b.build_store(p, iv).unwrap();
+                    continue;
+                }
                 if matches!(mty, Type::Array { .. }) && self.agg_copy(ctx, pe, p, mty.size()) {
                     continue;
                 }
@@ -2503,6 +2572,9 @@ impl<'ctx> Gen<'ctx> {
 
     /// descriptor globals + tplc_get_descriptor + tplc_task_run
     /// dispatcher (task_fns table + bounds check + indirect call).
+    /// `tasks` is the resolved task table (module.tasks, or the
+    /// synthesized single MAIN task) — one TplcTaskDesc + one
+    /// __tplc_task_<i> entry fn each.
     #[allow(clippy::too_many_arguments)]
     fn emit_descriptor(
         &mut self,
@@ -2512,15 +2584,12 @@ impl<'ctx> Gen<'ctx> {
         uuid: [u8; 16],
         layout_hash: [u8; 32],
         has_migrate: bool,
-        task_period_ns: u64,
+        tasks: &[TaskDecl],
     ) {
         let lctx = self.ctx;
         let i8p = self.i8p();
 
-        // -- TplcTaskDesc[1]: MAIN cyclic enabled-at-start
-        let mut name_b = [0u8; 32];
-        name_b[..4].copy_from_slice(b"MAIN");
-        let name_init = lctx.const_string(&name_b, false);
+        // -- TplcTaskDesc[N]: cyclic tasks enabled-at-start
         let task_ty = lctx.struct_type(
             &[
                 lctx.i8_type().array_type(32).into(), // name[32]
@@ -2535,21 +2604,30 @@ impl<'ctx> Gen<'ctx> {
             ],
             false,
         );
-        let task0 = lctx.const_struct(
-            &[
-                name_init.into(),
-                lctx.i8_type().const_int(0, false).into(), // CYCLIC
-                lctx.i8_type().const_int(3, false).into(), // ENABLED|WATCHDOGGED
-                lctx.i8_type().const_int(10, false).into(),
-                lctx.i8_type().const_zero().into(),
-                lctx.i64_type().const_int(task_period_ns, false).into(),
-                lctx.i64_type().const_zero().into(), // wcet_hint
-                lctx.i32_type().const_zero().into(), // entry 0
-                lctx.i32_type().const_zero().into(),
-            ],
-            false,
-        );
-        let tasks_arr = task_ty.const_array(&[task0]);
+        let task_consts: Vec<_> = tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let mut name_b = [0u8; 32];
+                let nb = t.name.as_bytes();
+                name_b[..nb.len().min(32)].copy_from_slice(&nb[..nb.len().min(32)]);
+                lctx.const_struct(
+                    &[
+                        lctx.const_string(&name_b, false).into(),
+                        lctx.i8_type().const_int(0, false).into(), // CYCLIC
+                        lctx.i8_type().const_int(3, false).into(), // ENABLED|WATCHDOGGED
+                        lctx.i8_type().const_int(t.priority as u64, false).into(),
+                        lctx.i8_type().const_zero().into(),
+                        lctx.i64_type().const_int(t.period_ns, false).into(),
+                        lctx.i64_type().const_int(t.wcet_hint_ns, false).into(),
+                        lctx.i32_type().const_int(i as u64, false).into(),
+                        lctx.i32_type().const_zero().into(),
+                    ],
+                    false,
+                )
+            })
+            .collect();
+        let tasks_arr = task_ty.const_array(&task_consts);
         let g_tasks = self
             .module
             .add_global(tasks_arr.get_type(), None, "__tplc_tasks");
@@ -2557,9 +2635,17 @@ impl<'ctx> Gen<'ctx> {
         g_tasks.set_constant(true);
         g_tasks.set_linkage(Linkage::Internal);
 
-        // -- task_fns[1] = { __tplc_task_0 }
-        let tfn = self.module.get_function("__tplc_task_0").unwrap();
-        let fns_arr = i8p.const_array(&[tfn.as_global_value().as_pointer_value()]);
+        // -- task_fns[N] = { __tplc_task_<i> }
+        let tfns: Vec<_> = (0..tasks.len())
+            .map(|i| {
+                self.module
+                    .get_function(&format!("__tplc_task_{i}"))
+                    .unwrap()
+                    .as_global_value()
+                    .as_pointer_value()
+            })
+            .collect();
+        let fns_arr = i8p.const_array(&tfns);
         let g_fns = self
             .module
             .add_global(fns_arr.get_type(), None, "__tplc_task_fns");
@@ -2581,11 +2667,17 @@ impl<'ctx> Gen<'ctx> {
             ],
             false,
         );
-        let scope = program_ctx(self.layout);
         let entries: Vec<_> = io_binds
             .iter()
             .filter_map(|b| {
-                let (off, ty) = scope.get(b.name.split('.').next_back().unwrap_or(&b.name))?;
+                // "PROG.var" or bare "var" — resolve inside the
+                // owning program's scope (multi-program fields are
+                // qualified PROG.var)
+                let sc = match b.name.split_once('.') {
+                    Some((p, _)) => pou_scope(self.layout, p),
+                    None => program_ctx(self.layout),
+                };
+                let (off, ty) = sc.get(b.name.split('.').next_back().unwrap_or(&b.name))?;
                 let (region, tc, unit) = io_codes(&b.at, ty);
                 Some(self.ctx.const_struct(
                     &[
@@ -2670,11 +2762,15 @@ impl<'ctx> Gen<'ctx> {
                     .const_int(img_bytes(io_binds, AtRegion::M), false)
                     .into(),
                 lctx.i32_type().const_zero().into(),
-                lctx.i32_type().const_int(1, false).into(), // task_count
+                lctx.i32_type()
+                    .const_int(tasks.len() as u64, false)
+                    .into(), // task_count
                 lctx.i32_type().const_zero().into(),
                 g_tasks.as_pointer_value().into(),
                 g_fns.as_pointer_value().into(),
-                lctx.i32_type().const_int(1, false).into(), // task_fn_count
+                lctx.i32_type()
+                    .const_int(tasks.len() as u64, false)
+                    .into(), // task_fn_count
                 lctx.i32_type().const_zero().into(),
                 g_io.as_pointer_value().into(),
                 lctx.i32_type()
@@ -2863,6 +2959,12 @@ impl<'ctx> Gen<'ctx> {
         } else {
             None
         };
+        self.cur_inouts = pou
+            .iface
+            .iter()
+            .filter(|v| v.kind == VarKind::InOut)
+            .map(|v| v.name.clone())
+            .collect();
         let ob = self.ctx.append_basic_block(f, "overrun");
         self.overrun_bb = Some(ob);
         self.b.position_at_end(ob);
@@ -3261,6 +3363,7 @@ pub fn emit_program_for_target<'ctx>(
         abort_bb: None,
         retok_bb: None,
         cur_fn: None,
+        cur_inouts: std::collections::HashSet::new(),
         overrun_bb: None,
         panic_bb: None,
         bounds_bb: None,
@@ -3337,7 +3440,12 @@ pub fn emit_program_for_target<'ctx>(
     }
     // literal default inits; retain zeroing + retain literal inits are
     // skipped when the host signals a warm restore
-    let scope0 = program_ctx(layout);
+    let progs: Vec<&Pou> = mir
+        .pous
+        .iter()
+        .filter(|p| p.kind == PouKind::Program)
+        .collect();
+    let scopes: Vec<Ctx> = progs.iter().map(|p| pou_scope(layout, &p.name)).collect();
     g.this_ptr = blob;
     let cf = g
         .ctx_load(g.abi.ctx_flags, lctx.i32_type().into(), "cf")
@@ -3347,20 +3455,26 @@ pub fn emit_program_for_target<'ctx>(
             .unwrap();
     let retain_bb = lctx.append_basic_block(f, "i.ret");
     let done_bb = lctx.append_basic_block(f, "i.done");
-    let plain: Vec<&VarDecl> = program
-        .iface
-        .iter()
-        .filter(|v| !v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_))))
-        .collect();
-    let retains: Vec<&VarDecl> = program
-        .iface
-        .iter()
-        .filter(|v| v.retain && matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_))))
-        .collect();
-    for v in &plain {
-        if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
-            g.lit_store(blob, off, &ty, v.init.as_ref().unwrap());
+    let lit_inits = |retain: bool| -> Vec<(u64, Type, Expr)> {
+        let mut out = Vec::new();
+        for (p, sc) in progs.iter().zip(&scopes) {
+            for v in &p.iface {
+                if v.retain != retain
+                    || !matches!(v.init.as_ref().map(|i| &i.kind), Some(ExprKind::Lit(_)))
+                {
+                    continue;
+                }
+                if let Some((off, ty)) = sc.get(v.name.as_str()) {
+                    out.push((*off, ty.clone(), v.init.clone().unwrap()));
+                }
+            }
         }
+        out
+    };
+    let plain = lit_inits(false);
+    let retains = lit_inits(true);
+    for (off, ty, init) in &plain {
+        g.lit_store(blob, *off, ty, init);
     }
     if retains.is_empty() && rsize == 0 {
         g.b.build_unconditional_branch(done_bb).unwrap();
@@ -3396,10 +3510,8 @@ pub fn emit_program_for_target<'ctx>(
             )
             .unwrap();
         }
-        for v in &retains {
-            if let Some((off, ty)) = scope0.get(v.name.as_str()).cloned() {
-                g.lit_store(blob, off, &ty, v.init.as_ref().unwrap());
-            }
+        for (off, ty, init) in &retains {
+            g.lit_store(blob, *off, ty, init);
         }
         g.b.build_unconditional_branch(done_bb).unwrap();
     }
@@ -3416,11 +3528,10 @@ pub fn emit_program_for_target<'ctx>(
     g.b.position_at_end(bb);
     g.b.build_return(None).unwrap();
 
-    // per-POU fns (program first so its fn exists for task_run)
-    let scope = program_ctx(layout);
+    // per-POU fns — each PROGRAM gets its own var scope
     for pou in &mir.pous {
         let sc: Ctx = match pou.kind {
-            PouKind::Program => scope.clone(),
+            PouKind::Program => pou_scope(layout, &pou.name),
             PouKind::FunctionBlock => {
                 let fbl = layout
                     .fb_types
@@ -3438,28 +3549,71 @@ pub fn emit_program_for_target<'ctx>(
         g.emit_pou(pou, &sc);
     }
 
-    // __tplc_task_0(tctx) -> i32 : ctx=tctx->prog; run program pou
+    // task table: mir.tasks, or a synthesized MAIN task running every
+    // PROGRAM in decl order when no task config is declared
+    let tasks: Vec<TaskDecl> = if mir.tasks.is_empty() {
+        vec![TaskDecl {
+            name: "MAIN".into(),
+            period_ns: task_period_ns,
+            wcet_hint_ns: 0,
+            priority: 10,
+            programs: progs.iter().map(|p| p.name.clone()).collect(),
+        }]
+    } else {
+        mir.tasks.clone()
+    };
+    for t in &tasks {
+        for pn in &t.programs {
+            if !mir
+                .pous
+                .iter()
+                .any(|p| p.kind == PouKind::Program && p.name.eq_ignore_ascii_case(pn))
+            {
+                return Err(format!("task {} binds unknown program {pn}", t.name));
+            }
+        }
+    }
+
+    // __tplc_task_<i>(tctx) -> i32 : run each bound program in order;
+    // all programs share the state blob (their fields are disjoint).
     let ft = lctx.i32_type().fn_type(&[i8p.into()], false);
-    let f = g
-        .module
-        .add_function("__tplc_task_0", ft, Some(Linkage::Internal));
-    let bb = lctx.append_basic_block(f, "e");
-    g.b.position_at_end(bb);
-    let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
-    g.ctx_ptr = tctx;
-    let prog = g
-        .ctx_load(g.abi.tctx_prog, i8p.into(), "prog")
-        .into_pointer_value();
-    g.ctx_ptr = prog;
-    let blob = g
-        .ctx_load(g.abi.ctx_state_blob, i8p.into(), "blob")
-        .into_pointer_value();
-    let pf = g.pou_fn(&program.name);
-    let cs =
-        g.b.build_call(pf, &[prog.into(), blob.into()], "run")
-            .unwrap();
-    let rc = cs.try_as_basic_value().expect_basic("rc");
-    g.b.build_return(Some(&rc)).unwrap();
+    for (ti, t) in tasks.iter().enumerate() {
+        let f = g.module.add_function(
+            &format!("__tplc_task_{ti}"),
+            ft,
+            Some(Linkage::Internal),
+        );
+        let bb = lctx.append_basic_block(f, "e");
+        g.b.position_at_end(bb);
+        let tctx = f.get_nth_param(0).unwrap().into_pointer_value();
+        g.ctx_ptr = tctx;
+        let prog = g
+            .ctx_load(g.abi.tctx_prog, i8p.into(), "prog")
+            .into_pointer_value();
+        g.ctx_ptr = prog;
+        let blob = g
+            .ctx_load(g.abi.ctx_state_blob, i8p.into(), "blob")
+            .into_pointer_value();
+        let mut rc = lctx.i32_type().const_zero();
+        for pn in &t.programs {
+            let pou = mir
+                .pous
+                .iter()
+                .find(|p| p.kind == PouKind::Program && p.name.eq_ignore_ascii_case(pn))
+                .unwrap();
+            let pf = g.pou_fn(&pou.name);
+            let cs = g
+                .b
+                .build_call(pf, &[prog.into(), blob.into()], "run")
+                .unwrap();
+            let v = cs.try_as_basic_value().expect_basic("rc");
+            rc = g
+                .b
+                .build_or(rc, v.into_int_value(), "rc")
+                .unwrap();
+        }
+        g.b.build_return(Some(&rc)).unwrap();
+    }
 
     if let Some(m) = migrate {
         g.emit_migrate(m);
@@ -3471,7 +3625,7 @@ pub fn emit_program_for_target<'ctx>(
         uuid,
         layout_hash,
         migrate.is_some(),
-        task_period_ns,
+        &tasks,
     );
     Ok(g.module)
 }
@@ -3497,6 +3651,7 @@ pub fn emit_library_for_target<'ctx>(
         abort_bb: None,
         retok_bb: None,
         cur_fn: None,
+        cur_inouts: std::collections::HashSet::new(),
         overrun_bb: None,
         panic_bb: None,
         bounds_bb: None,

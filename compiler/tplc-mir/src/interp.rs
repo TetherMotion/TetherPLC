@@ -75,6 +75,25 @@ pub fn program_ctx(layout: &Layout) -> Ctx {
         .collect()
 }
 
+/// Build the ctx for one program in a (possibly multi-program) layout:
+/// fields qualified `PROG.name` by `layout_module` are stripped back to
+/// bare names; falls back to the flat program ctx when no qualified
+/// fields exist (single-program layouts keep bare names).
+pub fn pou_scope(layout: &Layout, prog: &str) -> Ctx {
+    let prefix = format!("{}.", prog.to_ascii_uppercase());
+    let m: Ctx = layout
+        .fields
+        .iter()
+        .filter(|(k, _)| k.to_ascii_uppercase().starts_with(&prefix))
+        .map(|(k, f)| (k[prefix.len()..].to_string(), (f.offset, f.ty.clone())))
+        .collect();
+    if m.is_empty() {
+        program_ctx(layout)
+    } else {
+        m
+    }
+}
+
 /// Build the ctx for an FB body: member → (member offset, ty), resolved
 /// relative to the instance base.
 pub fn fb_ctx(fbl: &FbLayout) -> Ctx {
@@ -856,8 +875,8 @@ impl<'a> Rt<'a> {
             .iter()
             .find(|p| p.name == fun && p.kind == PouKind::Function)
             .unwrap_or_else(|| panic!("no FUNCTION {fun}"));
-        // evaluate args in caller ctx first
-        let argv: Vec<Value> = args.iter().map(|(_, e)| self.eval(caller, e)).collect();
+        // evaluate args lazily — inout operands are lvalues, not values
+        // (aggregate operands have no Value representation at all)
         // lay out fn vars (inputs + locals + implicit return var)
         let fbl = layout_members(&pou.iface, self.layout.fb_types.clone());
         let base = SCRATCH + self.scratch.len() as u64;
@@ -873,15 +892,36 @@ impl<'a> Rt<'a> {
             .iter()
             .filter(|v| matches!(v.kind, VarKind::Input | VarKind::InOut))
             .collect();
-        for (i, (pname, _)) in args.iter().enumerate() {
+        // inouts alias caller storage: bound names remap into ctx,
+        // unbound names fault on access like an unresolved var
+        for v in pou.iface.iter().filter(|v| v.kind == VarKind::InOut) {
+            ctx.remove(v.name.as_str());
+        }
+        for (i, (pname, pe)) in args.iter().enumerate() {
             let name = if pname.is_empty() {
                 inputs.get(i).map(|v| v.name.clone())
             } else {
                 Some(pname.clone())
             };
             if let Some(n) = name {
-                if let Some((o, t)) = ctx.get(&n).cloned() {
-                    self.wr(o, &t, &argv[i]);
+                let is_inout = inputs
+                    .iter()
+                    .any(|v| v.kind == VarKind::InOut && v.name.eq_ignore_ascii_case(&n));
+                if is_inout {
+                    let ExprKind::Ref(r) = &pe.kind else {
+                        panic!("inout {n} bound to non-reference")
+                    };
+                    let decl = inputs
+                        .iter()
+                        .find(|v| v.name.eq_ignore_ascii_case(&n))
+                        .unwrap()
+                        .name
+                        .clone();
+                    let (o, t) = self.resolve(caller, r);
+                    ctx.insert(decl, (o, t));
+                } else if let Some((o, t)) = ctx.get(&n).cloned() {
+                    let v = self.eval(caller, pe);
+                    self.wr(o, &t, &v);
                 }
             }
         }
@@ -1041,8 +1081,33 @@ impl<'a> Rt<'a> {
             _ => panic!("call on non-FB ref"),
         };
         let fbl = self.member_of(&fbname);
+        // VAR_IN_OUT params of user FBs alias the bound lvalue — record
+        // the operand's (offset, type) and remap the name in the callee
+        // ctx below rather than copying through a member.
+        let inouts: std::collections::HashMap<String, String> = self
+            .module
+            .pous
+            .iter()
+            .find(|p| p.name == fbname && p.kind == PouKind::FunctionBlock)
+            .map(|p| {
+                p.iface
+                    .iter()
+                    .filter(|v| v.kind == VarKind::InOut)
+                    .map(|v| (v.name.to_ascii_uppercase(), v.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut io_binds: Vec<(String, u64, Type)> = Vec::new();
         // bind named args to instance fields (evaluate in caller ctx)
         for (pname, pe) in args {
+            if let Some(decl) = inouts.get(&pname.to_ascii_uppercase()) {
+                let ExprKind::Ref(r) = &pe.kind else {
+                    panic!("inout {pname} bound to non-reference")
+                };
+                let (o, t) = self.resolve(ctx, r);
+                io_binds.push((decl.clone(), o, t));
+                continue;
+            }
             if let Some((moff, mty)) = fbl.members.get(pname.as_str()) {
                 let v = self.eval(ctx, pe);
                 let (o, t) = (off + *moff, mty.clone());
@@ -1229,6 +1294,14 @@ impl<'a> Rt<'a> {
                         let mut sub = fb_ctx(&fbl);
                         for v in sub.values_mut() {
                             v.0 += off;
+                        }
+                        // inouts alias the caller's storage — unbound
+                        // names fault on access like an unresolved var
+                        for n in inouts.values() {
+                            sub.remove(n.as_str());
+                        }
+                        for (n, o, t) in io_binds {
+                            sub.insert(n, (o, t));
                         }
                         return self.exec_all(&sub, stmts);
                     }

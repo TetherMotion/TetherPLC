@@ -1,0 +1,66 @@
+{
+  "schema": "fbd.v1",
+  "project": "mixed",
+  "pous": [
+    {
+      "id": "p1", "name": "Main", "kind": "program",
+      "interface": [
+        {"name": "pv", "kind": "var", "type": "LREAL", "init": "21.0"},
+        {"name": "r1", "kind": "var", "type": "LREAL"},
+        {"name": "r2", "kind": "var", "type": "LREAL"},
+        {"name": "r3", "kind": "var", "type": "LREAL"}
+      ],
+      "networks": [{
+        "id": "n1",
+        "blocks": [
+          {"id": 1, "kind": "variable", "role": "in", "name": "pv"},
+          {"id": 2, "kind": "fb", "type_ref": "StFb", "instance": "st1"},
+          {"id": 3, "kind": "st",
+             "pins": [
+               {"name": "A", "kind": "var_input", "type": "LREAL"},
+               {"name": "Q", "kind": "var_output", "type": "LREAL"}
+             ],
+             "params": {"CODE": "Q := A * 3.0;"}},
+          {"id": 4, "kind": "function", "type_ref": "StFn"},
+          {"id": 5, "kind": "variable", "role": "out", "name": "r1"},
+          {"id": 6, "kind": "variable", "role": "out", "name": "r2"},
+          {"id": 7, "kind": "variable", "role": "out", "name": "r3"}
+        ],
+        "wires": [
+          {"id": 10, "src": {"block": 1, "port": 0}, "dsts": [{"block": 2, "port": "X"}, {"block": 3, "port": "A"}]},
+          {"id": 11, "src": {"block": 2, "port": "Y"}, "dsts": [{"block": 4, "port": 0}, {"block": 5, "port": 0}]},
+          {"id": 12, "src": {"block": 4, "port": 0}, "dsts": [{"block": 6, "port": 0}]},
+          {"id": 14, "src": {"block": 3, "port": "Q"}, "dsts": [{"block": 7, "port": 0}]}
+        ]
+      }]
+    },
+    {
+      "id": "p2", "name": "FbdFb", "kind": "function_block",
+      "interface": [
+        {"name": "IN", "kind": "var_input", "type": "BOOL"},
+        {"name": "OUT", "kind": "var_output", "type": "BOOL"}
+      ],
+      "networks": [{
+        "id": "n1",
+        "blocks": [
+          {"id": 60, "kind": "variable", "role": "in", "name": "IN"},
+          {"id": 61, "kind": "operator", "type_ref": "NOT"},
+          {"id": 62, "kind": "variable", "role": "out", "name": "OUT"}
+        ],
+        "wires": [
+          {"id": 63, "src": {"block": 60, "port": 0}, "dsts": [{"block": 61, "port": 0}]},
+          {"id": 64, "src": {"block": 61, "port": 0}, "dsts": [{"block": 62, "port": 0}]}
+        ]
+      }]
+    },
+    {
+      "id": "d1", "name": "StFb", "kind": "function_block",
+      "interface": [
+        {"name": "X", "kind": "var_input", "type": "LREAL"},
+        {"name": "Y", "kind": "var_output", "type": "LREAL"}
+      ],
+      "networks": []
+    }
+  ],
+  "tasks": [{"name": "main", "period_ns": 10000000, "programs": ["Main", "StProg"]}]
+}

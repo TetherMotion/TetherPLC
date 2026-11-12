@@ -1655,17 +1655,22 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
 
 /// Lay out an ordered VarDecl list as a struct (declaration order,
 /// natural alignment ≤8). Used for FB types, FUNCTION call scopes, and
-/// STRUCT member tables. VAR_IN_OUT gets no stored field (call-scoped
-/// binding, doc 07 §3.2).
+/// STRUCT member tables. VAR_IN_OUT is laid out as a pointer-sized
+/// `Type::Ref` slot (doc 07 §3.2): the caller stores the bound lvalue's
+/// address/offset at call time and the callee dereferences on access.
 pub fn layout_members(vars: &[VarDecl], fb_types: BTreeMap<String, FbLayout>) -> FbLayout {
     let mut members = BTreeMap::new();
     let mut off = 0u64;
     let mut align = 1u64;
     for v in vars {
-        if v.kind == VarKind::InOut {
-            continue;
-        }
-        let (size, a) = if let Type::Fb { name } = &v.ty {
+        let ty = if v.kind == VarKind::InOut {
+            Type::Ref {
+                to: Box::new(v.ty.clone()),
+            }
+        } else {
+            v.ty.clone()
+        };
+        let (size, a) = if let Type::Fb { name } = &ty {
             let sub = fb_types
                 .get(name)
                 .cloned()
@@ -1673,11 +1678,11 @@ pub fn layout_members(vars: &[VarDecl], fb_types: BTreeMap<String, FbLayout>) ->
                 .unwrap_or_else(|| panic!("unknown FB type {name}"));
             (sub.size, sub.align)
         } else {
-            (v.ty.size(), v.ty.align())
+            (ty.size(), ty.align())
         };
         align = align.max(a);
         off = (off + a - 1) & !(a - 1);
-        members.insert(v.name.clone(), (off, v.ty.clone()));
+        members.insert(v.name.clone(), (off, ty));
         off += size;
     }
     let size = (off + align - 1) & !(align - 1);
@@ -1712,6 +1717,25 @@ fn layout_fb_named(name: &str, fb_types: &mut BTreeMap<String, FbLayout>) -> FbL
 
 /// Collect one program's leaf fields (qualified paths) into regions.
 pub fn layout_program(module: &Module, program: &Pou) -> Layout {
+    layout_impl(module, &[program.clone()], false)
+}
+
+/// Collect *all* programs' leaf fields into one shared state blob
+/// (multi-program packages: FBD + ST programs in one image). GVL
+/// fields keep their `GVL.x` names; each program's own vars qualify
+/// as `PROGRAM.var` — only when more than one program exists, so a
+/// single-program package keeps byte-identical field names/hash.
+pub fn layout_module(module: &Module) -> Layout {
+    let progs: Vec<Pou> = module
+        .pous
+        .iter()
+        .filter(|p| p.kind == PouKind::Program)
+        .cloned()
+        .collect();
+    layout_impl(module, &progs, progs.len() > 1)
+}
+
+fn layout_impl(module: &Module, programs: &[Pou], qualify: bool) -> Layout {
     let mut fb_types: BTreeMap<String, FbLayout> = BTreeMap::new();
     // Pre-layout all declared FB types (decl-order within each type).
     for pou in &module.pous {
@@ -1733,20 +1757,27 @@ pub fn layout_program(module: &Module, program: &Pou) -> Layout {
             buckets[region as usize].push((v, format!("{}.{}", gvl.name, v.name)));
         }
     }
-    for v in &program.iface {
-        // VAR_IN_OUT is host-provided; VAR_EXTERNAL only names a GVL
-        // var — it aliases that storage instead of owning a field
-        if matches!(v.kind, VarKind::InOut | VarKind::External) {
-            continue;
+    for pou in programs {
+        for v in &pou.iface {
+            // VAR_IN_OUT is host-provided; VAR_EXTERNAL only names a GVL
+            // var — it aliases that storage instead of owning a field
+            if matches!(v.kind, VarKind::InOut | VarKind::External) {
+                continue;
+            }
+            let region = if v.retain {
+                REGION_RETAIN
+            } else if matches!(v.ty, Type::Fb { .. }) {
+                REGION_FB
+            } else {
+                REGION_GLOBAL
+            };
+            let qname = if qualify {
+                format!("{}.{}", pou.name, v.name)
+            } else {
+                v.name.clone()
+            };
+            buckets[region as usize].push((v, qname));
         }
-        let region = if v.retain {
-            REGION_RETAIN
-        } else if matches!(v.ty, Type::Fb { .. }) {
-            REGION_FB
-        } else {
-            REGION_GLOBAL
-        };
-        buckets[region as usize].push((v, v.name.clone()));
     }
 
     // Name-sort within each region; assign offsets (doc 07 §3.3).
@@ -1799,19 +1830,26 @@ pub fn layout_program(module: &Module, program: &Pou) -> Layout {
 
     // VAR_EXTERNAL decls get no storage — they alias the matching GVL
     // var's field so reads/writes hit shared global state
-    for v in &program.iface {
-        if v.kind != VarKind::External || fields.contains_key(&v.name) {
-            continue;
-        }
-        let target = module.gvls.iter().find_map(|g| {
-            g.vars
-                .iter()
-                .find(|gv| gv.name.eq_ignore_ascii_case(&v.name))
-                .map(|gv| format!("{}.{}", g.name, gv.name))
-        });
-        if let Some(tq) = target {
-            if let Some(tf) = fields.get(&tq) {
-                fields.insert(v.name.clone(), tf.clone());
+    for pou in programs {
+        for v in &pou.iface {
+            let alias = if qualify {
+                format!("{}.{}", pou.name, v.name)
+            } else {
+                v.name.clone()
+            };
+            if v.kind != VarKind::External || fields.contains_key(&alias) {
+                continue;
+            }
+            let target = module.gvls.iter().find_map(|g| {
+                g.vars
+                    .iter()
+                    .find(|gv| gv.name.eq_ignore_ascii_case(&v.name))
+                    .map(|gv| format!("{}.{}", g.name, gv.name))
+            });
+            if let Some(tq) = target {
+                if let Some(tf) = fields.get(&tq) {
+                    fields.insert(alias, tf.clone());
+                }
             }
         }
     }

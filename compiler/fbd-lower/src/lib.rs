@@ -11,4 +11,4 @@ mod lower;
 mod resolve;
 mod ty;
 
-pub use lower::{codes, lower, LowerDiag, LowerOutput};
+pub use lower::{codes, expand_st_blocks, lower, lower_mixed, LowerDiag, LowerOutput};

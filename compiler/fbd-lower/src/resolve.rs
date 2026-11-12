@@ -82,7 +82,34 @@ pub fn pou_sig(pou: &Pou, fb_names: &BTreeSet<String>) -> Sig {
     }
     if pou.kind == PouKind::Function {
         // FUNCTION return value is an implicit first output
-        sig.outs.insert(0, (pou.name.clone(), Type::Bool));
+        let rt = pou
+            .ret_ty
+            .as_ref()
+            .and_then(|t| crate::ty::parse_type(t, fb_names).ok())
+            .unwrap_or(Type::Bool);
+        sig.outs.insert(0, (pou.name.clone(), rt));
+    }
+    sig
+}
+
+/// Signature of a `device` block from its channel pins — same
+/// direction convention as `st` blocks: var_input/var_in_out → in
+/// pins, var_output/var_in_out → out pins. Pin types come from the
+/// declared `type` string; `at` bindings are checked separately.
+pub fn device_sig(b: &Block, fb_names: &BTreeSet<String>) -> Sig {
+    let mut sig = Sig::default();
+    for v in &b.pins {
+        let ty = crate::ty::parse_type(&v.ty, fb_names).unwrap_or(Type::Bool);
+        match v.kind {
+            fbd_model::IfaceKind::VarInput => sig.ins.push((v.name.clone(), ty)),
+            fbd_model::IfaceKind::VarInOut => {
+                sig.inouts.insert(sig.ins.len() as u32);
+                sig.ins.push((v.name.clone(), ty.clone()));
+                sig.outs.push((v.name.clone(), ty));
+            }
+            fbd_model::IfaceKind::VarOutput => sig.outs.push((v.name.clone(), ty)),
+            _ => {}
+        }
     }
     sig
 }
@@ -215,6 +242,12 @@ pub fn topo_order(net: &Network) -> Result<Vec<NodeId>, Vec<NodeId>> {
             if !blocks.contains_key(&d.block) || !blocks.contains_key(&w.src.block) {
                 continue;
             }
+            // a device block may legitimately wire its own pins
+            // (e.g. AI0 → AO0 on one terminal) — each pin aliases a
+            // distinct located var, so there is no ordering cycle
+            if w.src.block == d.block && blocks[&d.block].kind == BlockKind::Device {
+                continue;
+            }
             *indeg.entry(d.block).or_insert(0) += 1;
             edge_into_fb.entry(w.src.block).or_default().insert(d.block);
         }
@@ -268,6 +301,9 @@ pub fn topo_order(net: &Network) -> Result<Vec<NodeId>, Vec<NodeId>> {
     for w in &net.wires {
         for d in &w.dsts {
             if !stuck.contains(&w.src.block) || !stuck.contains(&d.block) {
+                continue;
+            }
+            if w.src.block == d.block && blocks[&d.block].kind == BlockKind::Device {
                 continue;
             }
             if blocks[&d.block].kind == BlockKind::Fb {

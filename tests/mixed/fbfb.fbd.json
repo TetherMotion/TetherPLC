@@ -1,0 +1,23 @@
+{
+  "schema": "fbd.v1", "project": "fbfb",
+  "pous": [{
+    "id": "p2", "name": "FbdFb", "kind": "function_block",
+    "interface": [
+      {"name": "IN", "kind": "var_input", "type": "BOOL"},
+      {"name": "OUT", "kind": "var_output", "type": "BOOL"}
+    ],
+    "networks": [{
+      "id": "n1",
+      "blocks": [
+        {"id": 60, "kind": "variable", "role": "in", "name": "IN"},
+        {"id": 61, "kind": "operator", "type_ref": "NOT"},
+        {"id": 62, "kind": "variable", "role": "out", "name": "OUT"}
+      ],
+      "wires": [
+        {"id": 63, "src": {"block": 60, "port": 0}, "dsts": [{"block": 61, "port": 0}]},
+        {"id": 64, "src": {"block": 61, "port": 0}, "dsts": [{"block": 62, "port": 0}]}
+      ]
+    }]
+  }],
+  "tasks": [{"name": "main", "period_ns": 10000000, "programs": ["StProg"]}]
+}

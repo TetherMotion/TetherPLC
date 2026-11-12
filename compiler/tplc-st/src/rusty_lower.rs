@@ -746,7 +746,9 @@ pub fn compile(sources: &[(&str, &str)]) -> FrontendOutput {
                 iface,
                 body,
                 ret_ty,
-                prov: mir::Prov::None,
+                // provenance at the POU name — lets catalog/tooling
+                // attribute the declaration to its source file
+                prov: ctx.sloc(&pou.name_location),
             });
         }
 

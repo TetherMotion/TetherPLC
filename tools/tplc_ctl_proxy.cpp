@@ -43,6 +43,9 @@
 static const char* g_sock = "/tmp/tplc-image.ctl";
 static std::string g_tplcc = "tplcc";
 static std::string g_tplccd = "/tmp/tplccd.sock";
+static std::vector<std::string> g_libdirs;
+static std::string g_blocks_cache;
+static bool g_blocks_dirty = true;
 
 static void http_reply(int fd, int code, const char* text,
                        const uint8_t* body, size_t blen,
@@ -195,6 +198,149 @@ static bool parse_srcs(const std::vector<uint8_t>& body,
     return o == body.size() && !files.empty();
 }
 
+/* collect *.st / *.tplc under dir (non-recursive) */
+static void collect_lib_files(const std::string& dir,
+                              std::vector<std::string>& out) {
+    std::string cmd = "ls \"" + dir + "\" 2>/dev/null";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return;
+    char b[4096];
+    while (fgets(b, sizeof b, p)) {
+        std::string n = b;
+        while (!n.empty() && (n.back() == '\n' || n.back() == '\r')) n.pop_back();
+        if (n.size() > 3 &&
+            (n.rfind(".st") == n.size() - 3 || n.rfind(".tplc") == n.size() - 5))
+            out.push_back(dir + "/" + n);
+    }
+    pclose(p);
+}
+
+static std::string json_escape(const std::string& s) {
+    std::string o;
+    for (char c : s) {
+        if (c == '"' || c == '\\') o += '\\';
+        if (c == '\n') o += "\\n"; else if (c != '\r') o += c;
+    }
+    return o;
+}
+
+/* GET /blocks: run `tplcc blocks --json` over every --libdir's sources,
+ * tag each block with its library (dir basename) and file, merge into
+ * one catalog. Cached until ?refresh=1 — libraries are static at
+ * runtime. */
+static void handle_blocks(int cfd, bool refresh) {
+    if (g_blocks_dirty || refresh || g_blocks_cache.empty()) {
+        std::string merged = "{\"libs\":[";
+        bool first_lib = true;
+        for (auto& dir : g_libdirs) {
+            std::vector<std::string> files;
+            collect_lib_files(dir, files);
+            if (files.empty()) continue;
+            std::string cmd = g_tplcc + " blocks --json";
+            for (auto& f : files) cmd += " \"" + f + "\"";
+            cmd += " 2>/dev/null";
+            FILE* p = popen(cmd.c_str(), "r");
+            std::string out;
+            if (p) {
+                char b[65536];
+                while (size_t n = fread(b, 1, sizeof b, p)) out.append(b, n);
+                pclose(p);
+            }
+            if (out.empty() || out.front() != '{') continue;
+            /* basename of dir = library label; each lib's catalog is
+             * emitted verbatim inside its wrapper */
+            std::string lib = dir;
+            while (lib.size() > 1 && lib.back() == '/') lib.pop_back();
+            lib = lib.substr(lib.find_last_of('/') + 1);
+            if (!first_lib) merged += ",";
+            first_lib = false;
+            merged += "{\"name\":\"" + json_escape(lib) + "\",\"dir\":\"" +
+                      json_escape(dir) + "\",\"catalog\":" + out + "}";
+        }
+        merged += "]}";
+        g_blocks_cache = merged;
+        g_blocks_dirty = false;
+    }
+    http_reply(cfd, 200, "OK", (const uint8_t*)g_blocks_cache.data(),
+               g_blocks_cache.size(), "application/json");
+}
+
+/* GET /libsrc?lib=<dir-index-or-name>&file=<basename>: serve one
+ * library source file so the IDE can attach it to a project.
+ * .st files are read directly; .tplc packages go through `tplcc src`. */
+static void handle_libsrc(int cfd, const std::string& query) {
+    auto qval = [&](const char* key) -> std::string {
+        std::string k = std::string(key) + "=";
+        size_t p = query.find(k);
+        if (p == std::string::npos) return "";
+        p += k.size();
+        size_t e = query.find('&', p);
+        std::string v = query.substr(p, e == std::string::npos ? e : e - p);
+        /* url-decode the few chars we emit */
+        std::string o;
+        for (size_t i = 0; i < v.size(); i++) {
+            if (v[i] == '%' && i + 2 < v.size()) {
+                o += (char)strtoul(v.substr(i + 1, 2).c_str(), nullptr, 16);
+                i += 2;
+            } else if (v[i] == '+') o += ' ';
+            else o += v[i];
+        }
+        return o;
+    };
+    std::string lib = qval("lib"), file = qval("file");
+    if (lib.empty() || file.empty() || file.find("..") != std::string::npos ||
+        file.find('/') != std::string::npos) {
+        const char* m = "bad libsrc query";
+        http_reply(cfd, 400, "Bad Request", (const uint8_t*)m, strlen(m), "text/plain");
+        return;
+    }
+    /* resolve lib → dir: index into g_libdirs or basename match */
+    std::string dir;
+    char* end = nullptr;
+    long idx = strtol(lib.c_str(), &end, 10);
+    if (end && *end == 0 && idx >= 0 && (size_t)idx < g_libdirs.size()) {
+        dir = g_libdirs[idx];
+    } else {
+        for (auto& d : g_libdirs) {
+            std::string b = d;
+            while (b.size() > 1 && b.back() == '/') b.pop_back();
+            if (b.substr(b.find_last_of('/') + 1) == lib) { dir = d; break; }
+        }
+    }
+    if (dir.empty()) {
+        const char* m = "unknown lib";
+        http_reply(cfd, 404, "Not Found", (const uint8_t*)m, strlen(m), "text/plain");
+        return;
+    }
+    /* file names a source: try <dir>/<file> directly (.st libraries),
+     * then each .tplc package in the dir via `tplcc src <pkg> <name>`
+     * (packages embed their ST sources). */
+    std::string path = dir + "/" + file;
+    std::vector<uint8_t> body;
+    bool ok = read_file(path, body);
+    if (!ok) {
+        std::vector<std::string> pkgs;
+        collect_lib_files(dir, pkgs);
+        for (auto& p : pkgs) {
+            if (p.size() < 5 || p.rfind(".tplc") != p.size() - 5) continue;
+            std::string cmd = g_tplcc + " src \"" + p + "\" \"" + file + "\"";
+            FILE* fp = popen(cmd.c_str(), "r");
+            if (!fp) continue;
+            body.clear();
+            char b[65536]; size_t n;
+            while ((n = fread(b, 1, sizeof b, fp))) body.insert(body.end(), b, b + n);
+            ok = pclose(fp) == 0 && !body.empty();
+            if (ok) break;
+        }
+    }
+    if (!ok || body.empty()) {
+        const char* m = "not found";
+        http_reply(cfd, 404, "Not Found", (const uint8_t*)m, strlen(m), "text/plain");
+        return;
+    }
+    http_reply(cfd, 200, "OK", body.data(), body.size(), "text/plain; charset=utf-8");
+}
+
 /* POST /compile: write the src frame to a temp dir, run tplcc --json,
  * wrap its stdout JSON; build mode appends the .tplc as base64. */
 static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build) {
@@ -254,6 +400,16 @@ static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build
     }
     int rc = pipe ? pclose(pipe) : -1;
     int exit_code = (rc >= 0 && WIFEXITED(rc)) ? WEXITSTATUS(rc) : -1;
+    /* SIGCHLD is SIG_IGN (auto-reap for the /events children), so
+     * pclose() can report ECHILD (-1) even when the compiler ran fine.
+     * Fall back to the compiler's own verdict, which is what the
+     * client reads anyway. */
+    bool ok = exit_code == 0;
+    if (exit_code < 0 && !out.empty() &&
+        out.find("\"ok\":true") != std::string::npos) {
+        ok = true;
+        exit_code = 0;
+    }
 
     std::string resp;
     if (!out.empty() && out.front() == '{') {
@@ -275,7 +431,7 @@ static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build
     }
     if (build) {
         std::vector<uint8_t> pkg;
-        if (rc == 0 && read_file(dir + "/out.tplc", pkg))
+        if (ok && read_file(dir + "/out.tplc", pkg))
             resp += ",\"package\":\"" + b64_encode(pkg.data(), pkg.size()) + "\"";
     }
     resp += "}";
@@ -393,6 +549,11 @@ static void serve(int cfd) {
         else http_reply(cfd, 503, "Service Unavailable", (const uint8_t*)"down", 4, "text/plain");
     } else if (method == "POST" && path.rfind("/compile", 0) == 0) {
         handle_compile(cfd, body, path.find("build") != std::string::npos);
+    } else if (method == "GET" && path.rfind("/blocks", 0) == 0) {
+        handle_blocks(cfd, path.find("refresh") != std::string::npos);
+    } else if (method == "GET" && path.rfind("/libsrc", 0) == 0) {
+        size_t q = path.find('?');
+        handle_libsrc(cfd, q == std::string::npos ? "" : path.substr(q + 1));
     } else if (method == "GET" && path == "/events") {
         handle_events(cfd);             /* parent closes; child owns */
         return;
@@ -422,8 +583,9 @@ int main(int argc, char** argv) {
         else if (a == "--bind") bind_addr = next();
         else if (a == "--tplcc") g_tplcc = next();
         else if (a == "--tplccd") g_tplccd = next();
+        else if (a == "--libdir") g_libdirs.push_back(next());
         else {
-            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr] [--tplcc path] [--tplccd uds|off]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr] [--tplcc path] [--tplccd uds|off] [--libdir dir]...\n", argv[0]);
             return 2;
         }
     }

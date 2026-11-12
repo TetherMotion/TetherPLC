@@ -95,9 +95,26 @@ inputs cannot be call-bound — write members before calling:
 
 `RUN` rising edge starts at segment 1 (`SP := PV` when `PvStart` —
 bumpless PV-start), `HOLD` freezes ramp progress and dwell timers,
-`RESET` aborts with `SP := PV` (no thermal jump). Outputs: `SP`,
+`RESET` aborts with `SP := PV` (no thermal jump). A run request that
+arrives before a segment table exists (`NUM_SEG < 1`, e.g. a config
+block that the FBD lowerer orders after the profile call) is **held**,
+not started: `Err` is set and the next scan retries once the table
+loads — a boot-time `RUN` never starts a zero-segment profile that
+would end immediately. Outputs: `SP`,
 `SegIdx`, `SegTime`, `SegTgt`, `RateNow`, `RemTime` (−1 unbounded),
 `EV` (active segment's event word), `Done`/`Busy`/`Err`.
+
+### Graphical programming (TetherWebUI)
+
+The Web IDE's **Curves** pane (`src/plc/tempcurve.ts` + `curve.ts`)
+edits this table graphically — segment rows, SP-vs-time preview with
+draggable points, `PvStart`/`CycleTime`/controller selection — and
+**insert**s it into an FBD network as an inline `st` block that writes
+`PROF.SEG[i].*` one-shot through a `var_in_out` pin, or **export**s it
+as a standalone `FUNCTION_BLOCK` ST source. Both forms compile to the
+same logic; see `web-ide.md` §4b. `tests/mixed/ui_profile.fbd.json` is
+that editor's output and is executed by `tplcc`'s
+`ui_curve_profile_runs` test.
 
 ## Math helpers (internal, exported for reuse)
 
