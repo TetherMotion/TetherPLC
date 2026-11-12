@@ -667,3 +667,13 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   done feed outputs.  `tc2_weighing_io` simulates a filling cell
   and verifies tare/net/dose/stable at `0x1f`.  Multi-range,
   auto-calibration and belt-weighing are gaps.
+
+### C8 tranche 6 — PowerMonitoring (pure ST)
+
+  `compat/tc2/tc2_powermonitoring.st` is the Tc2_PowerMonitoring
+  surface — single-phase AC metering in pure-ST: RMS voltage and
+  current over a rolling window, real/apparent/reactive power,
+  power factor, and accumulated energy (Newton's sqrt, no SQRT
+  builtin).  `tc2_pm_io` drives DC samples and verifies
+  RMS/P/PF/energy at `0x1f`.  Three-phase and harmonic metering
+  are gaps.

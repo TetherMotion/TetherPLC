@@ -1004,6 +1004,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_weighing_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # PowerMonitoring surface (C8): FB_PowerMonitor RMS/P/S/Q/PF/
+  # energy metering (Newton's sqrt)
+  add_test(NAME tc2_pm_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_pm_io.sh)
+  set_tests_properties(tc2_pm_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

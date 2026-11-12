@@ -1825,3 +1825,11 @@ signal lives in the caller.
 
 **Consequences.**  Tare/net/stable/dosing verified; multi-range,
 auto-calibration and belt-weighing are honest gaps.
+
+## D-IMPL-72 — PowerMonitoring as pure-ST metering
+
+**Decision.**  `FB_PowerMonitor` is a pure-ST single-phase meter —
+RMS/P/S/Q/PF/energy over a rolling sample window, Newton's sqrt.
+
+**Consequences.**  Single-phase metering verified; three-phase and
+harmonic metering are honest gaps.
