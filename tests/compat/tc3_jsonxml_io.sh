@@ -32,7 +32,7 @@ trap 'rm -rf "$WORK"' EXIT
     for i in $(seq 0 80); do
         t=$((i * 10000000))
         if [ "$i" -eq 80 ]; then
-            echo "step $i time=$t in 0=00 expect 0=ff03"
+            echo "step $i time=$t in 0=00 expect 0=ffff01"
         else
             echo "step $i time=$t in 0=00"
         fi

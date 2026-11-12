@@ -8621,13 +8621,16 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T1
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_JsonXml_EN.pdf` · **API entries:** 322
-- **Status: IMPLEMENTED (flat-JSON core)** — `compat/tc3/tc3_jsonxml.st`:
+- **Status: IMPLEMENTED (JSON core, nested)** — `compat/tc3/tc3_jsonxml.st`:
   `FB_JsonSaxWriter` (Begin/AddString/AddInt/AddReal/AddBool/
-  AddNull/End/Clear building a flat object in a STRING),
-  `FB_JsonSaxReader` (Load + GetString/GetInt/GetReal/GetBool by
-  key), `FB_JsonWriter`/`FB_JsonReader` aliases.  Documented
-  reductions: flat objects only (no nested DOM/arrays),
-  no escaping, no file persistence, 3-decimal REAL printing.
+  AddNull/End/Clear plus ObjBegin/ArrBegin/EndAny on a 16-level
+  container stack; `"`/`\` escaping), `FB_JsonSaxReader`
+  (Load + GetString/GetInt/GetReal/GetBool by dotted path —
+  objects via member names, arrays via numeric indices;
+  container values return raw JSON text), `FB_JsonWriter`/
+  `FB_JsonReader` aliases.  Documented reductions: no XML
+  codec, no file persistence, 3-decimal REAL printing,
+  255-char documents, `.`-separated path keys.
   Ctest `tc3_jsonxml_io`.
 - **Integration:** JSON/XML codecs are pure (T0); file persistence needs a filesystem service.
 
