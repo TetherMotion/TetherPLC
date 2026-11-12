@@ -1969,3 +1969,22 @@ Design notes:
   (documented difference in compat README style).
 - GENIprotocol data-item semantics (HEAD/FORM/TAIL, unit tables)
   are a documented gap — Get/Set carry raw byte ids.
+
+## D-IMPL-81 — tc3_ba_common e2e (BA_Common/BA2_Common pure-ST)
+
+`compat/tc3/tc3_ba_common.st` implements the shared building-
+automation common layer (Tc3_BA_Common + Tc3_BA2_Common core):
+time helpers, ATrigCOV, RampLmt, Swi2P/SwiHys2P, PIDCtrl,
+SeqCtrl, DynamicArray, RFTrig.  `tc3_ba_common_io` green
+(0x7fff mask over 121 sim steps).
+
+Debug lesson (cost a session, recorded): `tether-plc-sim`
+`expect <off>=<hex>` compares **raw image bytes in order** —
+a UDINT mask at `%QD0` is little-endian in the image, so a
+mask of 0x7fff must be written `expect 0=ff7f`.  All earlier
+e2e masks were single-byte or palindromic (0x3f, 0x1f, 0xffff),
+which made the byte order invisible.  A long hunt for
+"member-offset corruption" was actually an expectation
+byte-order issue plus one genuine bad test vector
+(SwiHys2P driven with fIn inside the hysteresis band).
+Not a compiler/runtime defect.
