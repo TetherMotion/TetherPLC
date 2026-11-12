@@ -1064,6 +1064,18 @@ if(NOT CMAKE_CROSSCOMPILING)
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_analytics_io.sh)
   set_tests_properties(tc3_analytics_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  add_test(NAME tc3_vision_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_vision_io.sh)
+  set_tests_properties(tc3_vision_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  add_test(NAME tc3_robotics_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_robotics_io.sh)
+  set_tests_properties(tc3_robotics_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration

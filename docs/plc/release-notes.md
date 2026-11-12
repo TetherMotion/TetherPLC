@@ -729,3 +729,16 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   it now exits normally (rc=0), storing the result member for
   FUNCTION pous.  Previously unexercised because all compat e2es
   kept Execute/Enable asserted.
+
+- **C9/C10 close-out (T4 engines + licensed):**
+  `compat/tc3/tc3_vision.st` (`FB_VN_GevCamera`,
+  `FB_VN_AcquireImage`, `FB_VN_JobControl`) and
+  `compat/tc3/tc3_robotics.st` (`FB_RobotGroup`,
+  `FB_RobotCommand` covering the mxAutomation/uniVAL command
+  spine).  Both are honest engine/license-absent surfaces:
+  validated inputs, bounded Busy handshake, then `ErrorId=1`
+  (engine) — no image data, algorithm result, robot state, or
+  motion is ever faked.  The ~2,400 Tc3_Vision algorithm APIs
+  and the proprietary mxA/CS8 protocol surfaces stay documented
+  engine-required in plan/21-twincat-libraries.md.
+  e2e masks: vision `0x3f`, robotics `0x3f`.
