@@ -209,7 +209,10 @@ int32_t MbusService::receive(void*, uint32_t h, uint32_t* out_kind,
     ssize_t r = read(p.fd, tmp, sizeof(tmp));
     if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         return TPLC_MBUS_E_NOMSG;
-    if (r <= 0) { p.last_error = errno; return TPLC_MBUS_E_IO; }
+    /* VMIN=0/VTIME=0 raw mode: an empty read returns 0, not
+       EAGAIN — that is normal no-data, not an IO error */
+    if (r == 0) return TPLC_MBUS_E_NOMSG;
+    if (r < 0) { p.last_error = errno; return TPLC_MBUS_E_IO; }
     if (p.rxlen + size_t(r) > sizeof(p.rxbuf)) p.rxlen = 0;
     std::memcpy(p.rxbuf + p.rxlen, tmp, size_t(r));
     p.rxlen += size_t(r);

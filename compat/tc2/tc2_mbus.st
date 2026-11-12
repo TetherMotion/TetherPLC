@@ -180,13 +180,13 @@ END_VAR
         ch.OP := 6;
         ch.HANDLE := PortHdl;
         ch();
-        IF ch.STATUS >= 0 THEN
+        IF ch.STATUS = 1 THEN
+            Done := TRUE;               // NOMSG: still waiting
+        ELSIF ch.STATUS >= 0 THEN
             Done := TRUE;
             Message := TRUE;
             Kind := ch.KIND;
             Payload := ch.RXPAYLOAD;
-        ELSIF ch.STATUS = 1 THEN
-            Done := TRUE;
         ELSE
             Error := TRUE;
             ErrorID := ch.ERRID;

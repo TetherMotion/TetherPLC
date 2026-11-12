@@ -1914,3 +1914,17 @@ RETURN → rc=0. (An earlier theory that calls to undeclared FB
 instances compile silently was wrong — sema emits UNKNOWN_NAME
 correctly; the observed -22 run was a stale package and was the
 RETURN bug itself.)
+
+## D-IMPL-78 — tc2_mbus rx.Error/EIO: two layered bugs (fixed)
+
+1. `MbusService::receive` mapped `read() <= 0` to E_IO.  With the
+   port's VMIN=0/VTIME=0 raw termios an empty nonblocking read
+   returns **0**, not -1/EAGAIN — every idle poll reported an IO
+   error.  Now `r == 0` → E_NOMSG (strace-verified: reads return
+   0 on empty, 13 on data).
+2. `FB_MbusReceive` checked `ch.STATUS >= 0` before the NOMSG
+   branch, so NOMSG (STATUS=1) was reported as `Message := TRUE`
+   with the previous frame's stale KIND (0xE5) — the case saw a
+   "message" with the wrong kind and closed early.  NOMSG is now
+   checked first.  Result: `tc2_mbus_io` green end-to-end
+   (open → SND_NKE → E5 → REQ_UD2 → 68-frame → close).
