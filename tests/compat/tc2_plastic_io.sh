@@ -29,9 +29,13 @@ trap 'rm -rf "$WORK"' EXIT
          echo "== $pass pass, $fail fail"; exit 1; }
 
 {
-    for i in $(seq 0 160); do
+    # Free-run: the shot cycle completes in well under 60 task
+    # cycles; 300 steps give ample margin past PLC boot latency.
+    # mask bits are OR-accumulated so the count of fill scans does
+    # not matter — final value is exactly 0x3f.
+    for i in $(seq 0 300); do
         t=$((i * 10000000))
-        if [ "$i" -eq 160 ]; then
+        if [ "$i" -eq 300 ]; then
             echo "step $i time=$t in 0=00 expect 0=3f"
         else
             echo "step $i time=$t in 0=00"

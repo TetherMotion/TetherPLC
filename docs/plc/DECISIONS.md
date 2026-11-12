@@ -1864,38 +1864,34 @@ A true QR decoder needs an image pipeline and Reed-Solomon, and
 the Beckhoff Tc3_QRC Q-SYS response frames need the TCP service
 of the real library — both are honest gaps, not pure-ST math.
 
-## D-IMPL-76 — tc2_plastic e2e: deep debug findings (open)
+## D-IMPL-76 — tc2_plastic e2e: RESOLVED (test artifact, not a compiler bug)
 
-Context: `tests/compat/tc2_plastic_case.st` ends at mask 0x17 (expected
-0x3f) despite a fully-verified library.
+Context: `tests/compat/tc2_plastic_case.st` ended at mask 0x17
+(expected 0x3f) despite a fully-verified library.
 
-Established facts (all verified by disassembly of the packaged .so and
-`expectf` blob reads, 2026 session):
+Root cause — two test-harness artifacts, no compiler/runtime defect:
 
-- Pou logic is correct (isolated probe drives 0→4 through all phases).
-- Consumer-side `layout.fb_types["FB_PlasticShot"]` dumped: MoldTarget@0,
-  Execute@8, StartCycle@9, ScrewPos@16, CavityPressure@24, FillVel@32,
-  CoolTime@40, ShotSize@48, VpSwitchPos@56, CycleTime@64, Reset@72,
-  Done@73, Error@74, CycleActive@75, CycleFinished@76, ErrorID@80,
-  Phase@84, PressureSetpoint@88, VelSetpoint@96, ph@104, fin@108,
-  tHold@112, vel@120, pOut@128; size=136. Program blob: cavity@0,
-  mask@8, n@12, pSeen@16, screw@24, st@32, shot@40 (total 176).
-- Program vars are **name-sorted within regions** (layout_program), not
-  declaration order — do not hand-compute offsets from source order.
-- Caller .so disasm: every member access at the correct offset
-  (verified instruction by instruction). Pou .so disasm: correct too.
-- `expectf` DBG_READ data contradicts live execution: StartCycle@49
-  reads 1 while the running program provably wrote 0 (st advanced past
-  the clearing state). → the DBG blob is a snapshot/stale buffer, not
-  the live frame. Treat expectf values with caution.
-- In the live program: Phase reaches 3 (+1,+2,+4,+16 land), ScrewPos
-  accumulates, but `pSeen := shot.PressureSetpoint` yields ~128
-  (ScrewPos-like) and `CycleFinished` never reads TRUE even after the
-  `fin` latch fix.
+1. Free-run starvation: in `tether-plc-sim` free-run mode the PLC task
+   executes far fewer cycles than replay steps (boot latency plus
+   wall-clock scheduling). The case's slow screw ramp (0.5/cycle
+   toward VpSwitchPos=40) needed ~80 fill cycles; the program died
+   mid-cycle at every tested step count. `--scan` mode proved the
+   whole sequence correct (1 task cycle per step), but its ctl
+   TASK_STEP audit gate fires after ~40-110 ops, so scan scenarios
+   must stay short.
+2. Non-idempotent mask: the case added `+2` per fill scan, so the
+   final mask depended on scan count (observed 0x51 = all six
+   milestones fired: 1 + 10*2 + 4 + 8 + 16 + 32 = 81). Switching
+   milestone writes to `mask := mask OR n` made the final value
+   exactly 0x3f regardless of cycle count.
 
-Remaining hypothesis to check next session: two different instance
-pointers — the DBG_READ snapshot buffer vs the live frame — would mean
-expectf offsets need mapping through the snapshot layout, and the real
-+8/+32 failure needs a runtime-side trace (printf in the pou .so, or a
-watch on the live frame via TPLC_OP watch/trace ctl ops — see
-runtime/tether-plc-sim/main.cpp --scan path).
+Fixes landed: drive ScrewPos/CavityPressure directly (deterministic,
+~10-cycle shot), `ELSIF` one-state-per-scan, `StartCycle` release
+(the pou waits on `NOT StartCycle` in complete), `fin` latch so
+`CycleFinished` survives the same-call `ph` reset, and the
+`prs`→`pOut` internal-name collision rename.
+
+Note: `expectf`/DBG_READ reads a snapshot buffer, not the live frame —
+do not use it to infer live FB member state.
+
+Result: `tests/compat/tc2_plastic_io.sh` green, mask 0x3f.
