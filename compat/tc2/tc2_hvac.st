@@ -165,21 +165,21 @@ VAR_OUTPUT
     bAlarm : BOOL;
 END_VAR
 VAR
-    lead : INT;
+    leadN : INT;
 END_VAR
-    IF lead = 0 THEN lead := 1; END_IF;
+    IF leadN = 0 THEN leadN := 1; END_IF;
     IF bSwap THEN
-        IF lead = 1 THEN lead := 2; ELSE lead := 1; END_IF;
+        IF leadN = 1 THEN leadN := 2; ELSE leadN := 1; END_IF;
     END_IF;
-    Lead := lead;
+    Lead := leadN;
     IF NOT bEnable OR NOT bDemand THEN
         bPump1 := FALSE;
         bPump2 := FALSE;
         bAlarm := bFault1 AND bFault2;
         RETURN;
     END_IF;
-    bPump1 := lead = 1 AND NOT bFault1;
-    bPump2 := (lead = 2 OR bFault1) AND NOT bFault2;
+    bPump1 := leadN = 1 AND NOT bFault1;
+    bPump2 := (leadN = 2 OR bFault1) AND NOT bFault2;
     bAlarm := bFault1 AND bFault2;
 END_FUNCTION_BLOCK
 
@@ -287,31 +287,31 @@ VAR_OUTPUT
     bAlarm : BOOL;
 END_VAR
 VAR
-    lead : INT;
+    leadN : INT;
     want : INT;
     ok1 : BOOL;
     ok2 : BOOL;
     ok3 : BOOL;
 END_VAR
-    IF lead = 0 THEN lead := 1; END_IF;
+    IF leadN = 0 THEN leadN := 1; END_IF;
     IF bRotate THEN
-        lead := lead + 1;
-        IF lead > 3 THEN lead := 1; END_IF;
+        leadN := leadN + 1;
+        IF leadN > 3 THEN leadN := 1; END_IF;
     END_IF;
-    Lead := lead;
+    Lead := leadN;
     ok1 := NOT bFault1;
     ok2 := NOT bFault2;
     ok3 := NOT bFault3;
     want := Required;
     bOut1 := FALSE; bOut2 := FALSE; bOut3 := FALSE;
     IF bEnable THEN
-        // start at lead, wrap, pick healthy units
+        // start at leadN, wrap, pick healthy units
         IF want > 0 THEN
-            IF lead = 1 THEN
+            IF leadN = 1 THEN
                 IF ok1 THEN bOut1 := TRUE; want := want - 1; END_IF;
                 IF want > 0 AND ok2 THEN bOut2 := TRUE; want := want - 1; END_IF;
                 IF want > 0 AND ok3 THEN bOut3 := TRUE; want := want - 1; END_IF;
-            ELSIF lead = 2 THEN
+            ELSIF leadN = 2 THEN
                 IF ok2 THEN bOut2 := TRUE; want := want - 1; END_IF;
                 IF want > 0 AND ok3 THEN bOut3 := TRUE; want := want - 1; END_IF;
                 IF want > 0 AND ok1 THEN bOut1 := TRUE; want := want - 1; END_IF;

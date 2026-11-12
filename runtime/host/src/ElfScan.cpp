@@ -395,14 +395,20 @@ Status scan(const uint8_t* d, size_t n) {
             uint64_t fb = std::max(f.first, cur);
             uint64_t fe = std::min(f.first + f.second, end);
             if (fb >= fe) continue;
-            if (fb > cur && hasForbiddenBytes(body + (cur - s.addr), fb - cur))
+            /* symbol-less gap (crt stubs have st_size 0): decode it
+               as code — an immediate byte that merely looks like a
+               gate opcode is not one.  Only a gate opcode at a
+               decoded instruction boundary is rejected. */
+            if (fb > cur &&
+                !scanExecX86(body + (cur - s.addr), fb - cur, cur, why))
                 return Status::Err(TPLC_E_PKG_SYSCALL,
                                    "kernel-gate bytes outside symbols");
             if (!scanExecX86(body + (fb - s.addr), fe - fb, fb, why))
                 return Status::Err(TPLC_E_PKG_SYSCALL, why);
             cur = fe;
         }
-        if (end > cur && hasForbiddenBytes(body + (cur - s.addr), end - cur))
+        if (end > cur &&
+            !scanExecX86(body + (cur - s.addr), end - cur, cur, why))
             return Status::Err(TPLC_E_PKG_SYSCALL,
                                "kernel-gate bytes outside symbols");
     }

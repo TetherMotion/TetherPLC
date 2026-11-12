@@ -2098,3 +2098,23 @@ Two real findings from the wired PTY test:
   released, then asserted) and the case retries up to 20 times.
 
 ctest `tc2_rfid_io` green (0x1f).
+
+## D-IMPL-88 — two regressions surfaced by the full compat sweep
+
+1. `compat/tc2/tc2_hvac.st` had a local `lead` and an output `Lead`
+   in the same FB — legal to write, but IEC names are
+   case-insensitive, so a stricter duplicate-name check rejects
+   the library.  Renamed the locals to `leadN` (both lead-swap
+   FBs).  Lesson: never rely on case to distinguish identifiers.
+
+2. `ElfScan` rejected packages with
+   "-216 kernel-gate bytes outside symbols".  Symbol-less .text
+   gaps (crt stubs such as `__do_global_dtors_aux` carry
+   `st_size == 0`) were literal-scanned, so an *immediate* byte
+   that happens to be 0xCE/0xCD inside a valid instruction
+   tripped the gate.  Adding services shifted the link layout and
+   made this fire on tc3_sacn / tc3_bacnet / tc3_s7comm.
+   Fix: uncovered gaps are decoded as code like symbol-covered
+   ranges — only a gate opcode at a decoded instruction boundary
+   is rejected.  `module_scan` still rejects the evil syscall /
+   int80 fixtures, so the hardening is intact.
