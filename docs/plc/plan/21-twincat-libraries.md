@@ -5245,7 +5245,13 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T1
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_EventLogger_EN.pdf` · **API entries:** 146
-- **Status:** event-logger surface feasible via the log/diag host service — planned
+- **Status: IMPLEMENTED (core surface)** — `compat/tc3/tc3_eventlog.st`
+  over the `tplc-eventlog` bounded journal (128 entries,
+  raise/clear/confirm lifecycle).  `FB_TcEvent`/`FB_TcMessage`/
+  `FB_TcAlarm`/`FB_TcEventQuery`; METHOD calls become
+  edge-triggered `nCmd` inputs, event classes are UDINT ids,
+  async text-request/remote-logger families documented as
+  reduced.  Ctest `tc3_eventlog_io`.
 - **Integration:** Event service exists in TetherPLC (raise/query); needs severity/category model parity.
 
 #### Functions and function blocks › Asynchronous text requests › FB_AsyncStrResult

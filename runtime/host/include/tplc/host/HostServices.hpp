@@ -17,6 +17,7 @@
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/EnoceanService.hpp>
+#include <tplc/host/EventlogService.hpp>
 #include <tplc/host/GenibusService.hpp>
 #include <tplc/host/MpbusService.hpp>
 #include <tplc/host/MbusService.hpp>
@@ -127,6 +128,7 @@ private:
     /* MP-Bus master (opt-in serial adapter); always on. */
     MpbusService mpbus_;
     DynmemService dynmem_;
+    EventlogService eventlog_;
 };
 
 } /* namespace tplc */

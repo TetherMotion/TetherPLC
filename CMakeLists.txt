@@ -61,6 +61,7 @@ add_library(tplc_host STATIC
   runtime/host/src/GenibusService.cpp
   runtime/host/src/MpbusService.cpp
   runtime/host/src/DynmemService.cpp
+  runtime/host/src/EventlogService.cpp
   runtime/host/src/MbusService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
@@ -1045,6 +1046,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_dynmem_io.sh)
   set_tests_properties(tc3_dynmem_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc3_EventLogger (C-stdlib): tplc-eventlog bounded journal —
+  # message send, alarm raise/clear/confirm, query, stats
+  add_test(NAME tc3_eventlog_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_eventlog_io.sh)
+  set_tests_properties(tc3_eventlog_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/

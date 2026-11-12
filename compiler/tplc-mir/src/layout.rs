@@ -1487,6 +1487,39 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
         }
+        /* FB_EventLog — tplc-eventlog journal bridge
+        (Tc3_EventLogger).  OP 1=raise (EECLASS/EVTID/SEV/TEXT/ARGS
+        -> ID), 2=clear (ID), 3=confirm (ID), 4=query (ID ->
+        STATE/SEVO/CLSO/EVTIDO/TXTO), 5=stats -> counters. */
+        "FB_EventLog" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "ID", udint());
+            push(&mut off, "ECLASS", udint());
+            push(&mut off, "EVTID", udint());
+            push(&mut off, "SEV", udint());
+            push(&mut off, "ARGS", udint());
+            push(&mut off, "STATE", udint());
+            push(&mut off, "SEVO", udint());
+            push(&mut off, "CLSO", udint());
+            push(&mut off, "EVTIDO", udint());
+            push(&mut off, "LIVE", udint());
+            push(&mut off, "RAISED", udint());
+            push(&mut off, "CLEARED", udint());
+            push(&mut off, "CONFIRMED", udint());
+            push(&mut off, "DROPPED", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "TEXT", Type::Str { cap: 80 });
+            push(&mut off, "TXTO", Type::Str { cap: 80 });
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,

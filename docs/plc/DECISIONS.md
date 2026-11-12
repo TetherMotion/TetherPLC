@@ -2003,3 +2003,19 @@ via read/write ops.
 METHOD-style calls become edge-triggered `nCmd` inputs (the
 compiler has no METHOD support); documented difference.
 ctest `tc3_dynmem_io` green (0x01ff mask).
+
+## D-IMPL-83 — tc3_eventlog (Tc3_EventLogger bounded journal)
+
+`tplc-eventlog` host service: fixed 128-entry journal with the
+TwinCAT event lifecycle raised -> cleared -> confirmed
+(confirm releases the slot); severity levels verbose..critical;
+dropped-counter on ring overflow.  `FB_EventLog` builtin:
+OP 1=raise 2=clear 3=confirm 4=query 5=stats.
+
+`compat/tc3/tc3_eventlog.st` maps `FB_TcEvent`/`FB_TcMessage`/
+`FB_TcAlarm`/`FB_TcEventQuery` — METHOD-style calls become
+edge-triggered `nCmd` inputs (no METHOD support); event classes
+are UDINT ids (no GUID); async text-request and remote-logger
+families are a documented reduction.  `CLASS` is a reserved
+token in this ST — builtin member is `ECLASS`.  ctest
+`tc3_eventlog_io` green (0x7f).
