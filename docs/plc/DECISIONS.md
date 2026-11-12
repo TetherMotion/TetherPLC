@@ -1895,3 +1895,21 @@ Note: `expectf`/DBG_READ reads a snapshot buffer, not the live frame —
 do not use it to infer live FB member state.
 
 Result: `tests/compat/tc2_plastic_io.sh` green, mask 0x3f.
+
+## D-IMPL-77 — RETURN lowered to task-abort (fixed, real codegen bug)
+
+`StmtKind::Return` branched to `abort_bb` (rc=-22 → program fault).
+IEC 61131-3 RETURN ends the invocation normally; in this codebase it
+was never exercised: every compat e2e kept Enable/Execute TRUE, so
+`IF NOT x THEN RETURN` never ran at runtime. Found via
+FB_AnalyticsCounter with Enable:=FALSE (rc=-22, program fault).
+
+Fix in `tplc-codegen/llvm_emit.rs`: new `retok_bb` (return 0) —
+RETURN branches there; for FUNCTION pous, `RETURN <expr>` stores
+the value into the result member named after the pou first (same
+convention as the function-call site reads it).
+
+Regression coverage: tc3_analytics e2e exercises Enable:=FALSE →
+RETURN → rc=0. Secondary finding: calls to undeclared FB instances
+(`sts()` after a rename missed the call site) produce a runtime
+-22 rather than a compile error — worth a frontend diagnostic.

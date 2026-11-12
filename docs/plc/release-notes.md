@@ -710,3 +710,22 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   pipeline + Reed-Solomon) and the Q-SYS response-frame parser of
   the Beckhoff library are gaps — they need camera/service
   plumbing, not pure-ST math.
+
+- **C9 tranche (T4 engines):** `compat/tc3/tc3_speech.st`
+  (`FB_TextToSpeech`, `FB_SpeechRecognition`),
+  `compat/tc3/tc3_mll.st` (`FB_MllPrediction`), and
+  `compat/tc3/tc3_analytics.st` (`FB_AnalyticsCounter`,
+  `FB_AnalyticsStats`, `FB_AnalyticsLogger`, `FB_AnalyticsStore`).
+  The engine-backed surfaces are honest engine-absent blocks —
+  bounded Busy handshake then `ErrorId=1`, parameter validation
+  (`ErrorId=2/3`) up front; no result is ever faked.  The
+  measurement-side primitives (counter+rate, windowed
+  min/max/mean, 8-deep ring logger) are real pure-ST
+  implementations, and `FB_MllPrediction` adds a pure-ST linear
+  simulation path (`y=W·x+Bias`) for logic testing.  e2e masks:
+  speech `0x1f`, mll `0x1f`, analytics `0x3f`.
+- **Compiler fix (D-IMPL-77):** `RETURN` in a POU previously
+  branched to the task-abort block (rc=-22 → program fault);
+  it now exits normally (rc=0), storing the result member for
+  FUNCTION pous.  Previously unexercised because all compat e2es
+  kept Execute/Enable asserted.

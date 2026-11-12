@@ -232,6 +232,12 @@ pub struct Gen<'ctx> {
     layout: &'static Layout,
     mir: &'static Module,
     abort_bb: Option<BasicBlock<'ctx>>,
+    /// RETURN statement target: normal exit rc=0 (IEC RETURN ends
+    /// the invocation; it is not an abort)
+    retok_bb: Option<BasicBlock<'ctx>>,
+    /// name of the FUNCTION pou being emitted (RETURN <expr>
+    /// writes the result member named after the pou)
+    cur_fn: Option<String>,
     overrun_bb: Option<BasicBlock<'ctx>>,
     /// null-reference deref → -17, out-of-range deref → -18
     panic_bb: Option<BasicBlock<'ctx>>,
@@ -2455,10 +2461,22 @@ impl<'ctx> Gen<'ctx> {
                 self.b.position_at_end(end_bb);
             }
             StmtKind::Call { inst, args } => self.fb_call(ctx, inst, args),
-            StmtKind::Return(_) => {
+            StmtKind::Return(e) => {
+                if let Some(e) = e {
+                    if let Some(fname) = self.cur_fn.clone() {
+                        // FUNCTION: result lives in the member named
+                        // after the pou (same convention as the
+                        // function-call site)
+                        let (rp, rty) =
+                            self.resolve(ctx, &Ref::Var(fname));
+                        let v = self.expr(ctx, e);
+                        let v = self.coerce(v, &e.ty, &rty);
+                        self.b.build_store(rp, v).unwrap();
+                    }
+                }
                 self.b
                     .build_unconditional_branch(
-                        self.abort_bb.unwrap_or_else(|| panic!("return outside fn")),
+                        self.retok_bb.unwrap_or_else(|| panic!("return outside fn")),
                     )
                     .unwrap();
             }
@@ -2747,6 +2765,17 @@ impl<'ctx> Gen<'ctx> {
         self.b
             .build_return(Some(&self.ctx.i32_type().const_int((-22i64) as u64, true)))
             .unwrap();
+        let rk = self.ctx.append_basic_block(f, "ret.ok");
+        self.retok_bb = Some(rk);
+        self.b.position_at_end(rk);
+        self.b
+            .build_return(Some(&self.ctx.i32_type().const_zero()))
+            .unwrap();
+        self.cur_fn = if pou.kind == PouKind::Function {
+            Some(pou.name.clone())
+        } else {
+            None
+        };
         let ob = self.ctx.append_basic_block(f, "overrun");
         self.overrun_bb = Some(ob);
         self.b.position_at_end(ob);
@@ -3143,6 +3172,8 @@ pub fn emit_program_for_target<'ctx>(
         layout,
         mir,
         abort_bb: None,
+        retok_bb: None,
+        cur_fn: None,
         overrun_bb: None,
         panic_bb: None,
         bounds_bb: None,
@@ -3377,6 +3408,8 @@ pub fn emit_library_for_target<'ctx>(
         layout,
         mir,
         abort_bb: None,
+        retok_bb: None,
+        cur_fn: None,
         overrun_bb: None,
         panic_bb: None,
         bounds_bb: None,
