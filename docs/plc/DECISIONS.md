@@ -1737,3 +1737,18 @@ the caller serializes; the full OCA class catalog, notification
 subscriptions, and property shorthands are honest gaps.  `METHOD`
 is a reserved keyword surfaced as `METH`.  Socket IO is
 poll-bounded under the scan-stall watchdog.
+
+## D-IMPL-65 — building buses deferred, serial plumbing already exists
+
+**Decision.**  The building-bus surfaces (DALI, DMX512, EIB/KNX,
+LON, M-Bus, EnOcean) are documented as a gap rather than faked.
+The serial plumbing already exists (`tplc-serial` + `FB_Serial`,
+`tc2_serialcom.st`), and DMX-over-IP is covered by `tplc-sacn`; the
+missing piece is each bus's framing/management layer, not hardware
+access.  A real per-bus layer is deferred to a serial-media
+tranche or a bus-specific service.
+
+**Consequences.**  C7 connectivity wave 2 closes with six real
+client surfaces (OPC UA, EtherNet/IP, IEC 61850, MQTT/IoT, OCPP,
+AES70) all verified by protocol-level e2e.  The building-bus gap is
+documented honestly rather than stubbed.

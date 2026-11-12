@@ -577,3 +577,19 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   at `0x1f` against `aes70_device_fake.py` (a real OCP1 frame peer).
   Notification subscriptions, the full OCA class catalog, and
   property shorthands are gaps.
+
+### C7 tranche 7 — building buses close-out (documented gap)
+
+  The building-bus surfaces (DALI, DMX512, EIB/KNX, LON, M-Bus,
+  EnOcean) layer per-bus framing and device management on top of
+  serial/RS-485 or dedicated physical media.  The serial plumbing
+  already exists — `tplc-serial` + `FB_Serial` (`tc2_serialcom.st`)
+  gives raw UART/PTY access — so the honest gap is the per-bus
+  framing/management layer, not hardware access.  DMX-over-IP is
+  already covered by `tplc-sacn` (sACN/E1.31 multicast universe
+  packets).  A real DMX512/EIB/LON/MBus/EnOcean framing layer is
+  out of scope for an IP-only tranche and is documented as a gap
+  pending a serial-media tranche or a bus-specific service.
+  Connectivity wave 2 closes with six real client surfaces: OPC UA,
+  EtherNet/IP, IEC 61850, MQTT/IoT, OCPP, AES70 — all verified by
+  protocol-level e2e against real fake peers.
