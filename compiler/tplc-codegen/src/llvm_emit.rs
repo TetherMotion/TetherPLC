@@ -167,14 +167,10 @@ fn abi_offsets_for_triple(triple: &str) -> Result<AbiOffsets, String> {
     Ok(abi_offsets(ptr, i64a))
 }
 
-/// Type → TplcIoType code (tplc_abi.h §enum TplcIoType); unit = bit idx.
-fn io_codes(at: &At, ty: &Type) -> (u8, u8, u8) {
-    let region = match at.region {
-        AtRegion::I => 0,
-        AtRegion::Q => 1,
-        AtRegion::M => 2,
-    };
-    let tc = match ty {
+/// TplcIoType code for a type (shared by io bindings and the
+/// by-name variable table).
+fn io_type_code(ty: &Type) -> u8 {
+    match ty {
         Type::Bool => 0,
         Type::Int {
             signed: false,
@@ -211,8 +207,16 @@ fn io_codes(at: &At, ty: &Type) -> (u8, u8, u8) {
         Type::Real { bits: 32 } => 9,
         Type::Real { bits: 64 } => 10,
         _ => 15,
+    }
+}
+
+fn io_codes(at: &At, ty: &Type) -> (u8, u8, u8) {
+    let region = match at.region {
+        AtRegion::I => 0,
+        AtRegion::Q => 1,
+        AtRegion::M => 2,
     };
-    (region, tc, at.bit.unwrap_or(0))
+    (region, io_type_code(ty), at.bit.unwrap_or(0))
 }
 
 /// highest byte touched in an image region (descriptor image_*_bytes)
@@ -2684,6 +2688,89 @@ impl<'ctx> Gen<'ctx> {
         g_desc.set_initializer(&desc);
         g_desc.set_constant(true);
         g_desc.set_linkage(Linkage::Internal);
+
+        // -- variable table export (tplc_sym.h): by-name access
+        let var_ty = lctx.struct_type(
+            &[
+                lctx.i8_type().array_type(32).into(), // name[32]
+                lctx.i32_type().into(),               // offset
+                lctx.i32_type().into(),               // size
+                lctx.i8_type().into(),                // type_code
+                lctx.i8_type().into(),                // is_at
+                lctx.i8_type().into(),                // region
+                lctx.i8_type().into(),                // unit
+                lctx.i32_type().into(),               // _pad
+            ],
+            false,
+        );
+        let vscope = program_ctx(self.layout);
+        let ventries: Vec<_> = vscope
+            .iter()
+            .filter_map(|(name, (off, ty))| {
+                let mut nb = [0u8; 32];
+                let bytes = name.as_bytes();
+                if bytes.len() >= 32 {
+                    return None;
+                }
+                nb[..bytes.len()].copy_from_slice(bytes);
+                let (is_at, region, tc, unit) = match io_binds
+                    .iter()
+                    .find(|b| b.name.split('.').next_back() == Some(name.as_str()))
+                {
+                        Some(b) => {
+                            let (r, t, u) = io_codes(&b.at, ty);
+                            (1u64, r, t, u)
+                        }
+                        None => (0u64, 0u8, io_type_code(ty), 0u8),
+                    };
+                Some(self.ctx.const_struct(
+                    &[
+                        lctx.const_string(&nb, false).into(),
+                        lctx.i32_type().const_int(*off, false).into(),
+                        lctx.i32_type().const_int(ty.size(), false).into(),
+                        lctx.i8_type().const_int(tc as u64, false).into(),
+                        lctx.i8_type().const_int(is_at, false).into(),
+                        lctx.i8_type().const_int(region as u64, false).into(),
+                        lctx.i8_type().const_int(unit as u64, false).into(),
+                        lctx.i32_type().const_zero().into(),
+                    ],
+                    false,
+                ))
+            })
+            .collect();
+        let g_vars = self.module.add_global(
+            var_ty.array_type(ventries.len().max(1) as u32),
+            None,
+            "__tplc_vars",
+        );
+        if ventries.is_empty() {
+            g_vars.set_initializer(&var_ty.const_zero());
+        } else {
+            g_vars.set_initializer(&var_ty.const_array(&ventries));
+        }
+        g_vars.set_constant(true);
+        g_vars.set_linkage(Linkage::Internal);
+
+        // tplc_get_vars(uint32_t* count) -> const TplcVarDesc*
+        let ft = i8p.fn_type(&[i8p.into()], false);
+        let fv = self.module.add_function(
+            "tplc_get_vars",
+            ft,
+            Some(Linkage::External),
+        );
+        let vb = lctx.append_basic_block(fv, "e");
+        self.b.position_at_end(vb);
+        let cp = fv.get_nth_param(0).unwrap().into_pointer_value();
+        self.b
+            .build_store(
+                cp,
+                lctx.i32_type()
+                    .const_int(ventries.len() as u64, false),
+            )
+            .unwrap();
+        self.b
+            .build_return(Some(&g_vars.as_pointer_value()))
+            .unwrap();
 
         // tplc_get_descriptor() -> ptr
         let ft = i8p.fn_type(&[], false);

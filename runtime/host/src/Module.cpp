@@ -67,6 +67,11 @@ Result<Module> Module::open(const std::string& path, uint32_t host_caps) {
         (decltype(m.sym_.migrate))dlsym(h, TPLC_SYM_MIGRATE);
     dlerror(); /* optional — absence is legal */
 
+    dlerror();
+    m.sym_.get_vars =
+        (decltype(m.sym_.get_vars))dlsym(h, "tplc_get_vars");
+    dlerror(); /* optional — library packages have no var table */
+
     /* ABI version gate (doc 02 §1.2: exact match in v1) */
     if (m.sym_.abi_version() != TPLC_ABI_VERSION)
         return Result<Module>::Err(TPLC_E_ABI_MISMATCH,

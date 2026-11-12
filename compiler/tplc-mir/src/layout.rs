@@ -1565,6 +1565,33 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "XPATH", Type::Str { cap: 127 });
             push(&mut off, "VAL", Type::Str { cap: 255 });
         }
+        /* FB_Sym — tplc-sym by-name variable access
+        (Tc2_DataExchange).  OP 1=read bytes (-> VAL/TYPE/SIZE),
+        2=write bytes (VAL), 3=write int (IB), 4=write real (FB),
+        5=write bool (BB), 6=read int (-> IB), 7=read real (-> FB),
+        8=read bool (-> BB), 9=find (-> TYPE/SIZE/FOUND). */
+        "FB_Sym" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "VTYP", udint());
+            push(&mut off, "SIZE", udint());
+            push(&mut off, "VALLEN", udint());
+            push(&mut off, "FOUND", Type::Bool);
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "IB", dint());
+            push(&mut off, "FB", Type::Real { bits: 64 });
+            push(&mut off, "BB", Type::Bool);
+            push(&mut off, "NAME", Type::Str { cap: 63 });
+            push(&mut off, "VAL", Type::Str { cap: 255 });
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,

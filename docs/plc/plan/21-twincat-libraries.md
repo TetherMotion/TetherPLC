@@ -398,7 +398,15 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T2
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_DataExchange_EN.pdf` · **API entries:** 10
-- **Status:** data-exchange maps onto the ADS/tplc-io channel already provided by Tc2_System/TcpIp surfaces
+- **Status: IMPLEMENTED (local by-name)** — `compat/tc2/tc2_dataexchange.st`
+  over the `tplc-sym` service: packages now export a variable
+  table (`tplc_get_vars`) and `FB_Sym` reads/writes program
+  variables by name against the live state blob.
+  `FB_ReadAdsSymByName`/`FB_WriteAdsSymByName`, the six
+  `...OnDelta` writers, and `FB_CheckWatchdog`/`FB_WriteWatchdog`.
+  Documented difference: names address the local program (no AMS
+  routing — sNetId is accepted and ignored).  Ctest
+  `tc2_dataexchange_io`.
 - **Integration:** Symbolic data exchange needs a named-variable transport (ADS-compatible or native).
 
 #### Event driven data exchange

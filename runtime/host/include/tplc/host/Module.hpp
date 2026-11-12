@@ -6,6 +6,7 @@
 #define TPLC_HOST_MODULE_HPP
 
 #include <tplc/tplc_abi.h>
+#include <tplc/tplc_sym.h>
 #include <tplc/host/Status.hpp>
 
 #include <string>
@@ -19,6 +20,7 @@ struct ModuleSymbols {
     void                         (*shutdown)(TplcCtx*)   = nullptr;
     int32_t                      (*task_run)(TplcTaskCtx*)   = nullptr;
     int32_t                      (*migrate)(TplcMigrateCtx*) = nullptr; /* optional */
+    TplcGetVarsFn                 get_vars = nullptr;   /* optional */
 };
 
 class Module {
@@ -39,6 +41,13 @@ public:
     const TplcProgramDescriptor& descriptor() const { return *desc_; }
     const ModuleSymbols&         symbols()    const { return sym_; }
     bool                         hasMigrate() const { return sym_.migrate != nullptr; }
+    bool                         hasVars()    const { return sym_.get_vars != nullptr; }
+    /* top-level variable table (name -> blob offset/size/type);
+       null for library packages (no PROGRAM) */
+    const TplcVarDesc* vars(uint32_t* count) const {
+        if (!sym_.get_vars) { if (count) *count = 0; return nullptr; }
+        return sym_.get_vars(count);
+    }
     bool                         isOpen()     const { return handle_ != nullptr; }
 
     /* thin forwards */

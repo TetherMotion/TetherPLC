@@ -185,6 +185,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* File-backed XML value store (Tc2_XmlDataSrv). */
         return const_cast<TplcXmlsrvService*>(&xmlsrv_.table());
     }
+    if (len == 8 && memcmp(name, "tplc-sym", 8) == 0) {
+        /* By-name symbol access (Tc2_DataExchange). */
+        return const_cast<TplcSymService*>(&sym_.table());
+    }
     return nullptr;
 }
 

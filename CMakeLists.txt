@@ -64,6 +64,7 @@ add_library(tplc_host STATIC
   runtime/host/src/EventlogService.cpp
   runtime/host/src/DbService.cpp
   runtime/host/src/XmlsrvService.cpp
+  runtime/host/src/SymService.cpp
   runtime/host/src/MbusService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
@@ -1093,6 +1094,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_rfid_io.sh)
   set_tests_properties(tc2_rfid_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_DataExchange (C-stdlib): by-name symbol access over
+  # tplc-sym — read/write, typed writers, delta, watchdog
+  add_test(NAME tc2_dataexchange_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_dataexchange_io.sh)
+  set_tests_properties(tc2_dataexchange_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/

@@ -35,6 +35,7 @@
 #include <tplc/host/S7Service.hpp>
 #include <tplc/host/SmtpService.hpp>
 #include <tplc/host/SerialService.hpp>
+#include <tplc/host/SymService.hpp>
 #include <tplc/host/XmlsrvService.hpp>
 
 #include <cstdint>
@@ -53,6 +54,9 @@ public:
     explicit HostServices(uint32_t caps);
 
     TplcServices& table() { return svc_; }
+    /* by-name symbol access: the loaded program attaches its
+       variable table + live blob here */
+    SymService& symbols() { return sym_; }
     uint32_t      caps()  const { return svc_.caps; }
 
     void onLog(LogFn fn) { log_fn_ = std::move(fn); }
@@ -133,6 +137,7 @@ private:
     EventlogService eventlog_;
     DbService db_;
     XmlsrvService xmlsrv_;
+    SymService sym_;
 };
 
 } /* namespace tplc */

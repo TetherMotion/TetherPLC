@@ -110,6 +110,10 @@ public:
     void   poisonBlob(uint8_t v); /* scrub helper                     */
 
 private:
+    /* publish the package variable table + live blob to the
+       tplc-sym service (create/start/reset) */
+    void attachSymbols();
+
     struct Buf {
         uint8_t* p = nullptr;
         ~Buf() { free(p); }

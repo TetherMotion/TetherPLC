@@ -2129,3 +2129,33 @@ watcher's contract ("epoch = program-set changes seen").
 Suite state after this: the full ctest run is green serially
 (parallel runs collide on fixed service ports — run with -j1 for
 the wired bus tests).
+
+## D-IMPL-90 — by-name symbol access (Tc2_DataExchange)
+
+Packages now export a variable table alongside the descriptor:
+`tplc_get_vars(uint32_t*) -> const TplcVarDesc*` (name[32],
+blob offset, size, TplcIoType code, is_at/region/unit).  It is
+an *optional* export — the descriptor layout is untouched, so the
+ABI stays v1 and library packages simply have no table.
+
+Host side: `Module` resolves the symbol with `dlsym` (optional),
+`Program` publishes table+blob to the new `tplc-sym` service on
+create/start/reset, and `stop()` detaches.  `FB_Sym` ops:
+1 read bytes, 2 write bytes, 3/4/5 write int/real/bool,
+6/7/8 read int/real/bool, 9 find.
+
+Findings worth keeping:
+- `Program::reset()` bypasses `start()`; detaching in `stop()`
+  without re-attaching in `reset()` silently broke by-name
+  access.  Attach is now one helper called from all three.
+- Builtin member offsets are hand-written in tplc-rt: a Str
+  member's layout offset is its *length byte*, chars follow
+  (NAME@42 -> len@42, chars@43).  Bool occupies 2 bytes of
+  layout, which shifts later fields.
+- Rust slice helpers (`copy_from_slice`, indexing) pull the
+  unwind personality into .data and trip the loader with
+  "-210 hidden state symbol DW.ref.rust_eh_personality"; the
+  builtin uses raw unaligned reads/writes instead.
+- `TYPE` is a reserved ST token — the builtin member is `VTYP`.
+
+ctest `tc2_dataexchange_io` green (0x01ff).

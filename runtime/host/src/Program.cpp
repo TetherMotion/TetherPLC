@@ -55,12 +55,15 @@ Result<Program> Program::create(const Module& mod,
     c.svc            = &p.services_->table();
     if (cfg.retain_restored) c.ctx_flags |= TPLC_CTXF_RETAIN_RESTORED;
 
+    p.attachSymbols();
+
     p.tctxs_.resize(d.task_count);
     return Result<Program>::Ok(std::move(p));
 }
 
 Status Program::start() {
     if (started_) return Status::Err(TPLC_E_HOST_STATE, "already started");
+    attachSymbols();
     int32_t rc = mod_->init(&ctx_);
     if (rc != 0)
         return Status::Err(rc, "tplc_init failed");
@@ -69,7 +72,15 @@ Status Program::start() {
     return Status::Ok();
 }
 
+void Program::attachSymbols() {
+    if (!services_) return;
+    uint32_t nvars = 0;
+    const TplcVarDesc* vars = mod_ ? mod_->vars(&nvars) : nullptr;
+    services_->symbols().attach(vars, nvars, blob_.p);
+}
+
 void Program::stop() {
+    if (services_) services_->symbols().detach();
     if (running_) mod_->shutdown(&ctx_);
     running_ = false;
 }
@@ -79,6 +90,7 @@ Status Program::reset(bool warm) {
     ctx_.abort_flag = 0;
     if (warm) ctx_.ctx_flags |=  TPLC_CTXF_RETAIN_RESTORED;
     else      ctx_.ctx_flags &= ~((uint32_t)TPLC_CTXF_RETAIN_RESTORED);
+    attachSymbols();     /* stop() detached; reset skips start() */
     int32_t rc = mod_->init(&ctx_);
     if (rc != 0) return Status::Err(rc, "tplc_init failed (reset)");
     running_ = true;
