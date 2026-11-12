@@ -69,6 +69,9 @@ struct MbusService::Impl {
         int32_t state = 0;
         uint32_t tx = 0, rx = 0;
         int32_t last_error = 0;
+        /* rx accumulation — a burst may split a 68.. frame */
+        uint8_t rxbuf[260];
+        size_t   rxlen = 0;
     };
     Port ports[TPLC_MBUS_HDL_MAX]{};
 };
@@ -200,34 +203,38 @@ int32_t MbusService::receive(void*, uint32_t h, uint32_t* out_kind,
     if (h == 0 || h > TPLC_MBUS_HDL_MAX || impl_->ports[h - 1].fd < 0)
         return TPLC_MBUS_E_HANDLE;
     auto& p = impl_->ports[h - 1];
-    /* drain whatever's buffered nonblocking — an M-Bus response is
-       an E5 ack or a 68 L L 68 ... CS 16 long frame */
-    uint8_t buf[512];
-    ssize_t r = read(p.fd, buf, sizeof(buf));
+    /* accumulate a burst — an M-Bus response is an E5 ack or a
+       68 L L 68 ... CS 16 long frame; a burst may split it */
+    uint8_t tmp[256];
+    ssize_t r = read(p.fd, tmp, sizeof(tmp));
     if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
         return TPLC_MBUS_E_NOMSG;
     if (r <= 0) { p.last_error = errno; return TPLC_MBUS_E_IO; }
-    /* scan the burst for the first frame */
-    for (ssize_t i = 0; i < r; ++i) {
-        uint8_t b = buf[i];
+    if (p.rxlen + size_t(r) > sizeof(p.rxbuf)) p.rxlen = 0;
+    std::memcpy(p.rxbuf + p.rxlen, tmp, size_t(r));
+    p.rxlen += size_t(r);
+    /* scan the accumulation for the first complete frame */
+    for (size_t i = 0; i < p.rxlen; ++i) {
+        uint8_t b = p.rxbuf[i];
         if (b == 0xE5) {
+            /* consume up to and including the E5 */
+            std::memmove(p.rxbuf, p.rxbuf + i + 1, p.rxlen - i - 1);
+            p.rxlen -= i + 1;
             if (out_kind) *out_kind = 0xE5;
             p.rx++;
             return TPLC_MBUS_OK;
         }
-        if (b == 0x68 && i + 4 < r && buf[i + 3] == 0x68) {
+        if (b == 0x68 && i + 4 < p.rxlen && p.rxbuf[i + 3] == 0x68) {
             /* 68 L L 68 C A CI data CS 16 */
-            uint8_t L = buf[i + 1];
-            size_t need = size_t(i) + 4 + size_t(L) + 2;
-            if (need > size_t(r)) {
-                p.last_error = -3;             /* truncated frame */
-                return TPLC_MBUS_E_IO;
-            }
-            /* payload = C A CI + data = L bytes after the second 68 */
-            const uint8_t* body = buf + i + 4;
+            uint8_t L = p.rxbuf[i + 1];
+            size_t need = i + 4 + size_t(L) + 2;
+            if (need > p.rxlen) break;          /* wait for more */
+            const uint8_t* body = p.rxbuf + i + 4;
             if (out_kind) *out_kind = 0x68;
             uint32_t n = L < cap ? L : cap;
             if (payload && n) std::memcpy(payload, body, n);
+            std::memmove(p.rxbuf, p.rxbuf + need, p.rxlen - need);
+            p.rxlen -= need;
             p.rx++;
             return int32_t(n);
         }

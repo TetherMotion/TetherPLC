@@ -45,7 +45,7 @@ ln -sf "$PTY" /tmp/mbus_pty
     for i in $(seq 0 160); do
         t=$((i * 10000000))
         if [ "$i" -eq 160 ]; then
-            echo "step $i time=$t in 0=00 expect 0=3f"
+            echo "step $i time=$t in 0=00 expect 0=3f0000"
         else
             echo "step $i time=$t in 0=00"
         fi

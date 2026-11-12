@@ -10,8 +10,10 @@ VAR
     st : INT;
     waitN : INT;
     mask AT %QD0 : UDINT;
+    diag AT %QD4 : UDINT;
     hdl : UDINT;
 END_VAR
+    diag := 0;
     IF st = 0 THEN
         mask := 0;
         opn.Execute := TRUE;
@@ -30,7 +32,7 @@ END_VAR
             nke.Address := 1;
             st := 2;
         END_IF;
-        IF opn.Error THEN mask := 16#DEAD00 + st; st := 99; END_IF;
+        IF opn.Error THEN diag := 1; mask := 16#DE00 + 1; st := 99; END_IF;
     END_IF;
 
     IF st = 2 THEN
@@ -41,7 +43,7 @@ END_VAR
             rx.PortHdl := hdl;
             st := 3;
         END_IF;
-        IF nke.Error THEN mask := 16#DEAD00 + st; st := 99; END_IF;
+        IF nke.Error THEN diag := 2; mask := 16#DE00 + 2; st := 99; END_IF;
     END_IF;
 
     // poll for the slave's E5 ack
@@ -58,7 +60,7 @@ END_VAR
             req.Address := 1;
             st := 4;
         END_IF;
-        IF rx.Error THEN mask := 16#DEAD00 + st; st := 99; END_IF;
+        IF rx.Error THEN diag := 3; mask := 16#DE00 + 3; st := 99; END_IF;
         IF waitN > 40 THEN
             rx.Execute := FALSE;
             req.Execute := TRUE;
@@ -78,7 +80,7 @@ END_VAR
             waitN := 0;
             st := 5;
         END_IF;
-        IF req.Error THEN mask := 16#DEAD00 + st; st := 99; END_IF;
+        IF req.Error THEN diag := 4; mask := 16#DE00 + 4; st := 99; END_IF;
     END_IF;
 
     // poll for the slave's 68.. data frame
@@ -93,7 +95,7 @@ END_VAR
             cls.PortHdl := hdl;
             st := 6;
         END_IF;
-        IF rx.Error THEN mask := 16#DEAD00 + st; st := 99; END_IF;
+        IF rx.Error THEN diag := 5; mask := 16#DE00 + 5; st := 99; END_IF;
         IF waitN > 40 THEN
             rx.Execute := FALSE;
             cls.Execute := TRUE;
@@ -107,7 +109,7 @@ END_VAR
             mask := mask + 32;        // bit5: closed
             st := 7;
         END_IF;
-        IF cls.Error THEN mask := 16#DEAD00 + st; st := 99; END_IF;
+        IF cls.Error THEN diag := 6; mask := 16#DE00 + 6; st := 99; END_IF;
     END_IF;
 
     opn(); cls(); nke(); req(); rx();
