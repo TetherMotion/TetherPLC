@@ -8603,7 +8603,14 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T1
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_JsonXml_EN.pdf` · **API entries:** 322
-- **Status:** JSON/XML document handling is pure-ST feasible — planned
+- **Status: IMPLEMENTED (flat-JSON core)** — `compat/tc3/tc3_jsonxml.st`:
+  `FB_JsonSaxWriter` (Begin/AddString/AddInt/AddReal/AddBool/
+  AddNull/End/Clear building a flat object in a STRING),
+  `FB_JsonSaxReader` (Load + GetString/GetInt/GetReal/GetBool by
+  key), `FB_JsonWriter`/`FB_JsonReader` aliases.  Documented
+  reductions: flat objects only (no nested DOM/arrays),
+  no escaping, no file persistence, 3-decimal REAL printing.
+  Ctest `tc3_jsonxml_io`.
 - **Integration:** JSON/XML codecs are pure (T0); file persistence needs a filesystem service.
 
 #### Function blocks

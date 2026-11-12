@@ -2019,3 +2019,24 @@ are UDINT ids (no GUID); async text-request and remote-logger
 families are a documented reduction.  `CLASS` is a reserved
 token in this ST — builtin member is `ECLASS`.  ctest
 `tc3_eventlog_io` green (0x7f).
+
+## D-IMPL-84 — tc3_jsonxml (pure-ST flat JSON)
+
+`compat/tc3/tc3_jsonxml.st`: JSON object writer/reader in pure
+ST (no DOM allocator).  Writer builds `{"k":v,...}` in a
+STRING[255]; reader locates `"key"` with FIND, splits at ':' and
+extracts a quoted string or a bare literal.  `F_JsonIntStr` /
+`F_JsonRealStr` / `F_JsonStrInt` / `F_JsonStrReal` provide the
+numeric<->text conversions this compiler lacks (no TO_STRING).
+
+Compiler notes surfaced by the work:
+- `STRING(n)` is rejected — use `STRING[n]`.
+- String `=` comparison panics in codegen (Str lowered as an
+  aggregate); all char tests use `FIND(...)` instead.
+- `CASE` over INT against i32 literals trips LLVM verify
+  (i16 vs i32 ICmp) — keep CASE selectors DINT.
+- A command FB needs a clear scan between commands: the
+  edge detector is `nCmd<>0 AND prev=0`, so two non-zero
+  commands in consecutive scans fire only the first.
+
+ctest `tc3_jsonxml_io` green (0x03ff).

@@ -1057,6 +1057,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc3_eventlog_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc3_JsonXml (C-stdlib): pure-ST flat-JSON writer/reader —
+  # object build, shape checks, member read-back
+  add_test(NAME tc3_jsonxml_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_jsonxml_io.sh)
+  set_tests_properties(tc3_jsonxml_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/
   # Average/Ramp pure-ST blocks — clamp/lag/track/average/slew
   add_test(NAME tc2_filter_io
