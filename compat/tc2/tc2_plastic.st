@@ -11,12 +11,12 @@
 // Phases: 0 idle, 1 fill, 2 pack, 3 hold, 4 complete
 FUNCTION_BLOCK FB_PlasticShot
 VAR_INPUT
+    MoldTarget : LREAL;   // pack pressure setpoint (bar)
     Execute : BOOL;
     StartCycle : BOOL;     // cycle start command
     ScrewPos : LREAL;       // screw position (mm)
     CavityPressure : LREAL; // cavity pressure (bar)
     FillVel : LREAL;        // fill velocity setpoint (mm/s)
-    BarrelPrs : LREAL;   // pack pressure setpoint (bar)
     CoolTime : LREAL;       // hold/cooling dwell (s)
     ShotSize : LREAL;       // target shot (mm)
     VpSwitchPos : LREAL;    // fill->pack switch position (mm)
@@ -26,59 +26,62 @@ END_VAR
 VAR_OUTPUT
     Done : BOOL;
     Error : BOOL;
+    CycleActive : BOOL;            // cycle in progress
+    CycleFinished : BOOL;        // cycle complete
     ErrorID : UDINT;
     Phase : UDINT;          // 0 idle 1 fill 2 pack 3 hold 4 complete
-    VelSetpoint : LREAL;    // velocity output (fill ph)
     PressureSetpoint : LREAL; // pressure output (pack ph)
-    Busy : BOOL;            // cycle in progress
-    ShotDone : BOOL;        // cycle complete
+    VelSetpoint : LREAL;    // velocity output (fill ph)
 END_VAR
 VAR
     ph : UDINT;
+    fin : BOOL;
     tHold : LREAL;
     vel : LREAL;
-    prs : LREAL;
+    pOut : LREAL;
 END_VAR
     Done := FALSE;
     Error := FALSE;
     ErrorID := 0;
     IF Reset THEN
         ph := 0;
+        fin := FALSE;
         tHold := 0.0;
         vel := 0.0;
-        prs := 0.0;
+        pOut := 0.0;
     END_IF;
     IF NOT Execute THEN RETURN; END_IF;
 
     // ph sequencing
     IF ph = 0 THEN
-        vel := 0.0; prs := 0.0;
-        IF StartCycle THEN ph := 1; END_IF;   // -> fill
+        vel := 0.0; pOut := 0.0;
+        IF StartCycle THEN ph := 1; fin := FALSE; END_IF;   // -> fill
     ELSIF ph = 1 THEN
         // fill: velocity-profiled screw to the V/P switch position
         vel := FillVel;
-        prs := 0.0;
+        pOut := 0.0;
         IF ScrewPos >= VpSwitchPos THEN
             ph := 2;                     // -> pack
         END_IF;
     ELSIF ph = 2 THEN
         // pack: hold pressure to pack setpoint
         vel := 0.0;
-        prs := BarrelPrs;
-        IF CavityPressure >= BarrelPrs * 0.9 THEN
+        pOut := MoldTarget;
+        IF CavityPressure >= MoldTarget * 0.9 THEN
             ph := 3;                     // -> hold
             tHold := 0.0;
         END_IF;
     ELSIF ph = 3 THEN
         // hold: cooling dwell
         vel := 0.0;
-        prs := 0.0;
+        pOut := 0.0;
         tHold := tHold + CycleTime;
         IF tHold >= CoolTime THEN
             ph := 4;                     // -> complete
+            fin := TRUE;
         END_IF;
     ELSIF ph = 4 THEN
-        vel := 0.0; prs := 0.0;
+        vel := 0.0; pOut := 0.0;
         IF NOT StartCycle THEN
             ph := 0;                     // -> idle for next shot
         END_IF;
@@ -86,8 +89,8 @@ END_VAR
 
     Phase := ph;
     VelSetpoint := vel;
-    PressureSetpoint := prs;
-    Busy := (ph >= 1) AND (ph <= 3);
-    ShotDone := (ph = 4);
+    PressureSetpoint := pOut;
+    CycleActive := (ph >= 1) AND (ph <= 3);
+    CycleFinished := fin;
     Done := TRUE;
 END_FUNCTION_BLOCK
