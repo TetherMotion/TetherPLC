@@ -1752,3 +1752,20 @@ tranche or a bus-specific service.
 client surfaces (OPC UA, EtherNet/IP, IEC 61850, MQTT/IoT, OCPP,
 AES70) all verified by protocol-level e2e.  The building-bus gap is
 documented honestly rather than stubbed.
+
+## D-IMPL-66 — building buses as opt-in serial services
+
+**Decision.**  The building-bus surfaces (DMX first) are opt-in
+serial services — each owns its UART and opens it only when its
+surface is used, like the IP services own their sockets.  This
+satisfies the "serial port access (opt-in) for all the protocols"
+requirement: the serial port is per-service and per-open, not a
+global always-on resource.
+
+**Consequences.**  `tplc-dmx` emits real DMX512 frames (TIOCSBRK
+break + MAB + start code + 512 ch at 250 kbaud 8N2) — a real
+serial byte stream a PTY fake reads.  The PLC-side 512-slot image
+is a snapshot the scan emits at its own cadence.  RDM and receive
+are honest gaps.  DALI/EIB/LON/MBus/EnOcean follow the same
+opt-in-serial pattern, each a small service + builtin + wrappers
++ PTY-fake e2e.

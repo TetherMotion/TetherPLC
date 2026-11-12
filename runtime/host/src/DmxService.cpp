@@ -8,6 +8,7 @@
 #include <tplc/host/DmxService.hpp>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>

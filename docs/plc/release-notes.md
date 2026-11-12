@@ -593,3 +593,19 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   Connectivity wave 2 closes with six real client surfaces: OPC UA,
   EtherNet/IP, IEC 61850, MQTT/IoT, OCPP, AES70 — all verified by
   protocol-level e2e against real fake peers.
+
+### C7 tranche 8 — DMX512 output over opt-in serial (`tplc-dmx`)
+
+  `tplc-dmx` is a DMX512 output service — the first building-bus
+  surface over an opt-in serial port (it opens the UART only when
+  dmx_open is called, like the IP services own sockets).  Real
+  DMX512 framing: TIOCSBRK break + mark-after-break + start code +
+  512 channel bytes at 250 kbaud 8N2.  `FB_Dmx` is the runtime
+  builtin (open/close/status/set_channel/set_channels/send_frame)
+  and `FB_DmxOpen`/`Close`/`SetChannel`/`SetChannels`/`Send`/`Status`
+  in `compat/tc2/tc2_dmx.st` are the TwinCAT-shaped wrappers
+  (Tc3_DMX/TF6501-ish).  `tc2_dmx_io` verifies open/set/send/
+  status/close at `0x1f` against a PTY fake (`dmx_rx_fake.py`).
+  RDM and receive are gaps; the PLC-side image is a snapshot the
+  scan emits at its own cadence.  DALI/EIB/LON/MBus/EnOcean follow
+  the same opt-in-serial pattern.

@@ -1321,6 +1321,38 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
         }
+        /* FB_Dmx — tplc-dmx service bridge (DMX512 output over an
+        opt-in serial port). Synchronous op dispatch like FB_Eip:
+        set OP + fields and call. OP 1=open (PATH -> HANDLE),
+        2=close, 3=status (-> STATE/FRAMES/LASTERR), 4=set_channel
+        (CHANNEL/VALUE), 5=set_channels (START/COUNT/VALUES),
+        6=send_frame. STATUS carries the service return code,
+        ERRID its positive form.  The serial port is only opened
+        when the surface is used. */
+        "FB_Dmx" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "BAUD", udint());
+            push(&mut off, "CHANNEL", udint());
+            push(&mut off, "VALUE", udint());
+            push(&mut off, "START", udint());
+            push(&mut off, "COUNT", udint());
+            push(&mut off, "VALUES", Type::Str { cap: 255 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "FRAMES", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

@@ -949,6 +949,16 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_aes70_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # DMX512 output surface (C7 building buses): FB_Dmx* wrappers
+  # emit a real DMX512 frame over an opt-in PTY fake
+  # (dmx_rx_fake.py) — open/set/send/status/close
+  add_test(NAME tc2_dmx_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_dmx_io.sh)
+  set_tests_properties(tc2_dmx_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env
