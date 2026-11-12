@@ -500,3 +500,26 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   `eip_adapter_fake.py` (D-IMPL-60). Cyclic class-1 I/O, ForwardOpen,
   other CIP services, and UDP multicast discovery are gaps; IEC 61850,
   MQTT/IoT, OCPP, AES70, building buses are the rest of wave 2.
+
+### C7 tranche 3 — IEC 61850 MMS client (`tplc-iec61850`)
+
+  `tplc-iec61850` is an IEC 61850 MMS client — the PLC is the
+  control-center side over the full OSI stack via **libiec61850**
+  (`IedConnection_*`), opt-in like the other special features:
+  `-DTPLC_ENABLE_IEC61850` (default ON) auto-downloads and builds
+  libiec61850 via CMake FetchContent; absent or off → the service
+  compiles inert and `getService("tplc-iec61850")` returns nullptr.
+  `FB_Iec61850` is the runtime builtin (connect+associate,
+  close+release, status, read, write, GetNameList) and
+  `FB_Iec61850Connect`/`Disconnect`/`Status`/`Read`/`Write`/
+  `GetNameList` in `compat/tc2/tc2_iec61850.st` are the
+  TwinCAT-shaped wrappers.  Objects are addressed by domain
+  (logical device) + item (VariableAccess name) with an `#FC`
+  suffix for the functional constraint; values travel as bounded
+  `STRING[255]`.  Blocking calls are bounded
+  (`setConnectTimeout`/`setRequestTimeout` ≈800 ms) under the
+  scan-stall watchdog.  `tc2_iec61850_io` verifies
+  associate/status/read/write-error/namelist/disconnect at `0x7f`
+  against `iec61850_ied_fake` (a real libiec61850 `IedServer` with a
+  `tetherIEDtetherTestLD`/`LLN0` CDC model).  Reporting/RCB,
+  GOOSE/SMV, control sequences, and the full data model are gaps.

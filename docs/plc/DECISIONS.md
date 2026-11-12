@@ -1664,3 +1664,23 @@ connect/close/status/identity/get/set; `FB_Eip*` wrappers expose the
 TwinCAT shape. Verified at the wire level with `eip_adapter_fake.py`
 (RegisterSession, ListIdentity, attribute write+read roundtrip,
 unregister — `0x7f`).
+
+## D-IMPL-61 — IEC 61850 via libiec61850, auto-downloaded opt-in
+
+**Decision.**  The `tplc-iec61850` MMS client wraps libiec61850's
+`IedConnection_*` API rather than a hand-rolled OSI stack: the full
+TPKT/COTP/Session/Presentation/ACSE/MMS path is too large to own.
+Like OPC UA it's opt-in — `-DTPLC_ENABLE_IEC61850` (default ON)
+auto-downloads and builds libiec61850 via CMake FetchContent (a
+system `libiec61850` is preferred when present); when the library is
+absent or the option is off the service compiles inert and
+`getService("tplc-iec61850")` returns nullptr.
+
+**Consequences.**  The `FB_Iec61850` surface is
+connect/close/status/read/write/GetNameList — the synchronous
+confirmed-request primitives — addressed by domain+item with an `#FC`
+suffix for the functional constraint.  Reporting/RCB, GOOSE/SMV,
+control sequences, and the full data model are honest gaps for a
+later tranche.  Blocking calls carry 800 ms connect/request timeouts
+below the scan-stall watchdog.  The e2e fake is a real libiec61850
+`IedServer`, not a protocol stub.

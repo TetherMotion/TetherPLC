@@ -849,6 +849,22 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_eip_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # IEC 61850 client surface (C7): FB_Iec61850* wrappers drive a real
+  # MMS session against iec61850_ied_fake (a libiec61850 IedServer with
+  # a tetherIEDtetherTestLD/LLN0 model) — associate, status, read,
+  # write-error path, name-list, disconnect.  The test needs the fake
+  # target, which only exists when libiec61850 is on — otherwise the
+  # script's own exit-77 skip handles the missing-binary case.
+  if(TARGET iec61850_ied_fake)
+    add_test(NAME tc2_iec61850_io
+      COMMAND ${CMAKE_COMMAND} -E env
+        "IEC61850_FAKE=$<TARGET_FILE:iec61850_ied_fake>"
+        "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_iec61850_io.sh)
+    set_tests_properties(tc2_iec61850_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  endif()
+
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration
     COMMAND ${CMAKE_COMMAND} -E env

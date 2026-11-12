@@ -274,15 +274,19 @@ int32_t Iec61850Service::getNameList(void*, uint32_t h, const char* domain,
     if (!domain || !*domain || !out || !cap) return TPLC_61850_E_PARAM;
 #ifdef TPLC_HAVE_IEC61850
     IedClientError err;
-    LinkedList names = IedConnection_getDataDirectory(
+    /* getLogicalDeviceDirectory lists a domain's logical nodes —
+       getDataDirectory is for a data-object ref (wrong level). */
+    LinkedList names = IedConnection_getLogicalDeviceDirectory(
         impl_->conns[h - 1].conn, &err, domain);
     if (err != IED_ERROR_OK || !names) {
         impl_->conns[h - 1].last_error = uint32_t(err);
         return TPLC_61850_E_MMS;
     }
     size_t off = 0; int32_t count = 0;
+    /* the returned list can carry a sentinel head with NULL data */
     for (LinkedList e = names; e; e = LinkedList_getNext(e)) {
         const char* n = (const char*)LinkedList_getData(e);
+        if (!n) continue;
         size_t nl = std::strlen(n);
         if (off + nl + 1 < cap) {
             std::memcpy(out + off, n, nl);
