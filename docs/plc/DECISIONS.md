@@ -2159,3 +2159,22 @@ Findings worth keeping:
 - `TYPE` is a reserved ST token — the builtin member is `VTYP`.
 
 ctest `tc2_dataexchange_io` green (0x01ff).
+
+## D-IMPL-91 — tc3_plctest (PLC-side test framework)
+
+`compat/tc3/tc3_plctest.st` implements the TF1140 assertion and
+step semantics in pure ST: `FB_TestCase` counts assertions and
+failures and reports `bSucceeded`; `FB_TestPrepBase` /
+`FB_TestCaseBasePrep` are the prep-phase variants; `FB_TestSuite`
+aggregates case verdicts (nTests/nPassed/nFailed/bAllPassed).
+METHOD calls are edge-triggered command inputs (no METHOD
+support); there is no test client or .tcuitest file — results
+are PLC values a CI script can read from the process image.
+
+Test-authoring note (also hit by three earlier e2es): a command
+FB whose edge detector is `cmd<>0 AND prev=0` needs its own scan
+with the command asserted *and* a following scan with it cleared;
+setting one command and the next in the same scan only fires the
+first.  The case uses strict set/clear pairs.
+
+ctest `tc3_plctest_io` green (0xff).

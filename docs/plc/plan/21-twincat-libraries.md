@@ -14741,7 +14741,14 @@ per-parameter prose.
 
 - **Category:** System · **Tier:** T1
 - **Manual:** `TF1140_Test_Framework_EN.pdf` · **API entries:** 28
-- **Status:** unit-test framework — a TPLC test runner exists in-tree (sim vectors); PLC-side framework on request
+- **Status: IMPLEMENTED (PLC-side framework)** — `compat/tc3/tc3_plctest.st`:
+  `FB_TestCase` (Assert / AssertEqual / AssertAbsEqual /
+  AssertRelEqual / AssertStrictLarger, IncStep / GoToStep /
+  IncStepIf / Cleanup / Reset, assertion+failure counters,
+  bSucceeded), `FB_TestPrepBase`/`FB_TestCaseBasePrep`, and
+  `FB_TestSuite` (case aggregation).  METHOD calls become
+  edge-triggered command inputs; no test client / .tcuitest files
+  (results are PLC values).  Ctest `tc3_plctest_io`.
 - **Integration:** Test framework needs harness hooks into sim + runtime; utilities mostly T0.
 
 #### (top level)
