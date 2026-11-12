@@ -1684,3 +1684,22 @@ control sequences, and the full data model are honest gaps for a
 later tranche.  Blocking calls carry 800 ms connect/request timeouts
 below the scan-stall watchdog.  The e2e fake is a real libiec61850
 `IedServer`, not a protocol stub.
+
+## D-IMPL-62 — MQTT via libpaho-mqtt3c, auto-downloaded opt-in
+
+**Decision.**  The `tplc-mqtt` client wraps Eclipse Paho's
+synchronous `MQTTClient` (libpaho-mqtt3c) rather than a hand-rolled
+broker wire codec.  Like the other connectivity services it's
+opt-in — `-DTPLC_ENABLE_MQTT` (default ON) prefers a system
+libpaho-mqtt3c and falls back to a CMake FetchContent build of
+paho.mqtt.c; absent or off → `getService` nullptr.
+
+**Consequences.**  The `FB_Mqtt` surface is connect/disconnect/
+status/publish/subscribe/unsubscribe/receive/isConnected — the
+bounded confirmed-request primitives.  `receive` is a nonblocking
+poll (`MQTTClient_receive` with a 0 ms wait) so the cyclic scan
+can't stall.  `Retain`/`RETAIN` are ST reserved keywords, so the
+wrapper surfaces them as `RetainOn`/`FLG_RETAIN`.  MQTT5
+properties, wildcard-matching detail, QoS2 two-phase, retained
+messages, and TLS are honest gaps.  The e2e peer is a real
+CONNECT/CONNACK/SUBACK/PUBLISH-echo fake, not a stub.

@@ -4795,3 +4795,230 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
     }
     0
 }
+
+// ---------------------------------------------------------------------------
+// FB_Mqtt — MQTT client over tplc-mqtt (libpaho-mqtt3c).
+// ---------------------------------------------------------------------------
+
+// FB_Mqtt member offsets (see builtin_fb_layout("FB_Mqtt")).
+// Strings are len-prefixed: HOST u8len@8+data@9 cap63, TOPIC
+// u8len@84+data@85 cap127, PAYLOAD u8len@212+data@213 cap255,
+// RXTOPIC u8len@476+data@477 cap127, RXPAYLOAD u8len@604+data@605
+// cap255.
+const MQ_OP: usize = 0;
+const MQ_HANDLE: usize = 4;
+const MQ_HOST_LEN: usize = 8;
+const MQ_HOST: usize = 9;
+const MQ_PORT: usize = 72;
+const MQ_CLEAN: usize = 76;
+const MQ_KEEPALIVE: usize = 80;
+const MQ_TOPIC_LEN: usize = 84;
+const MQ_TOPIC: usize = 85;
+const MQ_PAYLOAD_LEN: usize = 212;
+const MQ_PAYLOAD: usize = 213;
+const MQ_QOS: usize = 468;
+const MQ_FLG_RETAIN: usize = 472;
+const MQ_RXTOPIC_LEN: usize = 476;
+const MQ_RXTOPIC: usize = 477;
+const MQ_RXPAYLOAD_LEN: usize = 604;
+const MQ_RXPAYLOAD: usize = 605;
+const MQ_RXQOS: usize = 860;
+const MQ_RXMSGID: usize = 864;
+const MQ_RXPLEN: usize = 868;
+const MQ_STATE: usize = 872;
+const MQ_LASTMSGID: usize = 876;
+const MQ_LASTERR: usize = 880;
+const MQ_STATUS: usize = 884;
+const MQ_ERRID: usize = 888;
+const MQ_CONNECTED: usize = 892;
+
+// tplc-mqtt service vtable offsets (TplcMqttService):
+// struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
+const MQ_SVC_CONNECT: usize = 16;
+const MQ_SVC_DISCONNECT: usize = 24;
+const MQ_SVC_STATUS: usize = 32;
+const MQ_SVC_PUBLISH: usize = 40;
+const MQ_SVC_SUBSCRIBE: usize = 48;
+const MQ_SVC_UNSUBSCRIBE: usize = 56;
+const MQ_SVC_RECEIVE: usize = 64;
+const MQ_SVC_IS_CONNECTED: usize = 72;
+
+/// service lookup for "tplc-mqtt" (9 chars)
+unsafe fn mqtt_service(ctx: *const u8) -> *const u8 {
+    let svcs = (ctx.add(CTX_SVC) as *const *const u8).read();
+    if svcs.is_null() {
+        return core::ptr::null();
+    }
+    let host = (svcs.add(SVC_HOST) as *const *mut u8).read();
+    let gs = core::mem::transmute::<usize, unsafe extern "C" fn(*mut u8, *const u8, u32) -> *mut u8>(
+        (svcs.add(SVC_GET_SERVICE) as *const usize).read(),
+    );
+    gs(host, c"tplc-mqtt".as_ptr() as *const u8, 9) as *const u8
+}
+
+#[inline]
+unsafe fn mqfn(svc: *const u8, off: usize) -> usize {
+    (svc.add(off) as *const usize).read()
+}
+
+type FMqttConnect = unsafe extern "C" fn(*const u8, *const u8, u32, *const u8, *mut u32) -> i32;
+type FMqttDisconnect = unsafe extern "C" fn(*const u8, u32) -> i32;
+type FMqttStatus = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
+type FMqttPublish = unsafe extern "C" fn(*const u8, u32, *const u8, *const u8, u32, u32, u32) -> i32;
+type FMqttSubscribe = unsafe extern "C" fn(*const u8, u32, *const u8, u32) -> i32;
+type FMqttReceive = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
+type FMqttIsConnected = unsafe extern "C" fn(*const u8, u32) -> i32;
+
+/// `__tplc_rt_FB_Mqtt` — synchronous op dispatch over the tplc-mqtt
+/// MQTT client. OP: 1=connect (HOST/PORT/CLEAN/KEEPALIVE -> HANDLE),
+/// 2=disconnect, 3=status (-> STATE/LASTMSGID/LASTERR), 4=publish
+/// (TOPIC/PAYLOAD/QOS/RETAIN), 5=subscribe (TOPIC/QOS),
+/// 6=unsubscribe (TOPIC), 7=receive (-> RXTOPIC/RXPAYLOAD/RXQOS/
+/// RXMSGID/RXPLEN or NOMSG), 8=isConnected (-> CONNECTED). STATUS
+/// carries the service return code, ERRID its positive form.
+/// # Safety
+/// `this` must point at a valid instance block of the documented
+/// layout; `ctx` at a live `TplcCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
+    let op = ru32(this.add(MQ_OP));
+    wi32(this.add(MQ_STATUS), 0);
+    wu32(this.add(MQ_ERRID), 0);
+    let svc = mqtt_service(ctx);
+    if svc.is_null() {
+        wi32(this.add(MQ_STATUS), -2);
+        wu32(this.add(MQ_ERRID), 99);
+        return 0;
+    }
+    let set_rc = |rc: i32| {
+        wi32(this.add(MQ_STATUS), rc);
+        wu32(this.add(MQ_ERRID), (-rc).max(0) as u32);
+    };
+    match op {
+        1 => {
+            let mut buf = [0u8; 64];
+            uacstr(this, MQ_HOST_LEN, MQ_HOST, 63, buf.as_mut_ptr());
+            // TplcMqttConnectCfg: clean@0 i32, keepalive@4 u32,
+            // version@8 u32, timeout@12 u32, username@16 ptr,
+            // password@24 ptr, client_id@32 ptr
+            let mut cfg = [0u8; 40];
+            let mut wi = |off: usize, v: i32| {
+                let b = v.to_le_bytes();
+                core::ptr::copy_nonoverlapping(b.as_ptr(), cfg.as_mut_ptr().add(off), 4);
+            };
+            wi(0, ru32(this.add(MQ_CLEAN)) as i32);
+            wi(4, ru32(this.add(MQ_KEEPALIVE)) as i32);
+            wi(8, 3);       // MQTT 3.1.1 default
+            wi(12, 5000);   // connect timeout ms
+            // username/password/client_id ptrs left null
+            let f: FMqttConnect = core::mem::transmute(mqfn(svc, MQ_SVC_CONNECT));
+            let mut h: u32 = 0;
+            let rc = f(svc, buf.as_ptr(), ru32(this.add(MQ_PORT)),
+                       cfg.as_ptr(), &mut h);
+            set_rc(rc);
+            if rc == 0 {
+                wu32(this.add(MQ_HANDLE), h);
+            }
+        }
+        2 => {
+            let f: FMqttDisconnect = core::mem::transmute(mqfn(svc, MQ_SVC_DISCONNECT));
+            set_rc(f(svc, ru32(this.add(MQ_HANDLE))));
+        }
+        3 => {
+            // TplcMqttStatus (48B): state@0 conn_flags@4 last_msg_id@8
+            // last_qos@12 last_error@16
+            let mut st = [0u8; 48];
+            let f: FMqttStatus = core::mem::transmute(mqfn(svc, MQ_SVC_STATUS));
+            let rc = f(svc, ru32(this.add(MQ_HANDLE)), st.as_mut_ptr());
+            wi32(this.add(MQ_STATUS), rc);
+            if rc == 0 {
+                let rd = |off: usize| -> i32 {
+                    let mut b = [0u8; 4];
+                    core::ptr::copy_nonoverlapping(st.as_ptr().add(off), b.as_mut_ptr(), 4);
+                    i32::from_le_bytes(b)
+                };
+                wi32(this.add(MQ_STATE), rd(0));
+                wu32(this.add(MQ_LASTMSGID), rd(8) as u32);
+                wi32(this.add(MQ_LASTERR), rd(16));
+            } else {
+                wu32(this.add(MQ_ERRID), (-rc).max(0) as u32);
+            }
+        }
+        4 => {
+            let mut tbuf = [0u8; 128];
+            uacstr(this, MQ_TOPIC_LEN, MQ_TOPIC, 127, tbuf.as_mut_ptr());
+            let n = (*this.add(MQ_PAYLOAD_LEN) as usize).min(255);
+            let f: FMqttPublish = core::mem::transmute(mqfn(svc, MQ_SVC_PUBLISH));
+            let rc = f(svc, ru32(this.add(MQ_HANDLE)),
+                       tbuf.as_ptr(), this.add(MQ_PAYLOAD), n as u32,
+                       ru32(this.add(MQ_QOS)), ru32(this.add(MQ_FLG_RETAIN)));
+            set_rc(rc);
+        }
+        5 => {
+            let mut tbuf = [0u8; 128];
+            uacstr(this, MQ_TOPIC_LEN, MQ_TOPIC, 127, tbuf.as_mut_ptr());
+            let f: FMqttSubscribe = core::mem::transmute(mqfn(svc, MQ_SVC_SUBSCRIBE));
+            let rc = f(svc, ru32(this.add(MQ_HANDLE)),
+                       tbuf.as_ptr(), ru32(this.add(MQ_QOS)));
+            set_rc(rc);
+        }
+        6 => {
+            let mut tbuf = [0u8; 128];
+            uacstr(this, MQ_TOPIC_LEN, MQ_TOPIC, 127, tbuf.as_mut_ptr());
+            let f: FMqttSubscribe = core::mem::transmute(mqfn(svc, MQ_SVC_UNSUBSCRIBE));
+            let rc = f(svc, ru32(this.add(MQ_HANDLE)), tbuf.as_ptr(), 0);
+            set_rc(rc);
+        }
+        7 => {
+            // TplcMqttRx: topic_cap@0 payload_cap@4 topic_len@8
+            // payload_len@12 qos@16 message_id@20 topic@24 ptr
+            // payload@32 ptr
+            let mut rx = [0u8; 40];
+            let mut wu = |off: usize, v: u32| {
+                let b = v.to_le_bytes();
+                core::ptr::copy_nonoverlapping(b.as_ptr(), rx.as_mut_ptr().add(off), 4);
+            };
+            wu(0, 127);
+            wu(4, 255);
+            // topic ptr @24, payload ptr @32 (usize on 64-bit)
+            let tp = this.add(MQ_RXTOPIC) as usize;
+            let pp = this.add(MQ_RXPAYLOAD) as usize;
+            core::ptr::copy_nonoverlapping(
+                (tp as usize).to_le_bytes().as_ptr(),
+                rx.as_mut_ptr().add(24), 8);
+            core::ptr::copy_nonoverlapping(
+                (pp as usize).to_le_bytes().as_ptr(),
+                rx.as_mut_ptr().add(32), 8);
+            let f: FMqttReceive = core::mem::transmute(mqfn(svc, MQ_SVC_RECEIVE));
+            let rc = f(svc, ru32(this.add(MQ_HANDLE)), rx.as_mut_ptr());
+            wi32(this.add(MQ_STATUS), rc);
+            wu32(this.add(MQ_ERRID), (-rc).max(0) as u32);
+            if rc == 0 {
+                let rd = |off: usize| -> u32 {
+                    let mut b = [0u8; 4];
+                    core::ptr::copy_nonoverlapping(rx.as_ptr().add(off), b.as_mut_ptr(), 4);
+                    u32::from_le_bytes(b)
+                };
+                let tl = rd(8).min(127) as usize;
+                *this.add(MQ_RXTOPIC_LEN) = tl as u8;
+                *this.add(MQ_RXTOPIC + tl) = 0;
+                let pl = rd(12).min(255) as usize;
+                *this.add(MQ_RXPAYLOAD_LEN) = pl as u8;
+                wu32(this.add(MQ_RXQOS), rd(16));
+                wu32(this.add(MQ_RXMSGID), rd(20));
+                wu32(this.add(MQ_RXPLEN), rd(12));
+            }
+        }
+        8 => {
+            let f: FMqttIsConnected = core::mem::transmute(mqfn(svc, MQ_SVC_IS_CONNECTED));
+            let rc = f(svc, ru32(this.add(MQ_HANDLE)));
+            wi32(this.add(MQ_STATUS), rc);
+            wu32(this.add(MQ_CONNECTED), if rc == 1 { 1 } else { 0 });
+        }
+        _ => {
+            wi32(this.add(MQ_STATUS), -1);
+            wu32(this.add(MQ_ERRID), 1);
+        }
+    }
+    0
+}

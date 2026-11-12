@@ -14,6 +14,7 @@
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/MotionIoService.hpp>
+#include <tplc/host/MqttService.hpp>
 #include <tplc/host/MotionService.hpp>
 #include <tplc/host/NciIoService.hpp>
 #include <tplc/host/NetService.hpp>
@@ -101,6 +102,8 @@ private:
     EipService    eip_;
     /* IEC 61850 MMS client; inert when built without libiec61850. */
     Iec61850Service iec61850_;
+    /* MQTT client; inert when built without libpaho-mqtt3c. */
+    MqttService   mqtt_;
 };
 
 } /* namespace tplc */

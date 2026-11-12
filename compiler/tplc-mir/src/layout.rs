@@ -1207,6 +1207,46 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
         }
+        /* FB_Mqtt — tplc-mqtt service bridge (MQTT client via
+        libpaho-mqtt3c). Synchronous op dispatch like FB_Eip: set OP +
+        fields and call. OP 1=connect (HOST/PORT/CLEAN/KEEPALIVE ->
+        HANDLE), 2=disconnect, 3=status (-> STATE/LASTMSGID/LASTERR),
+        4=publish (TOPIC/PAYLOAD/QOS/RETAIN), 5=subscribe (TOPIC/QOS),
+        6=unsubscribe (TOPIC), 7=receive (-> RXTOPIC/RXPAYLOAD/RXQOS/
+        RXMSGID/RXPLEN or NOMSG), 8=isConnected (-> CONNECTED).
+        STATUS carries the service return code, ERRID its positive
+        form.  Topics are bounded STRING[127], payloads STRING[255]. */
+        "FB_Mqtt" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "HOST", Type::Str { cap: 63 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "CLEAN", udint());
+            push(&mut off, "KEEPALIVE", udint());
+            push(&mut off, "TOPIC", Type::Str { cap: 127 });
+            push(&mut off, "PAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "QOS", udint());
+            push(&mut off, "FLG_RETAIN", udint());
+            push(&mut off, "RXTOPIC", Type::Str { cap: 127 });
+            push(&mut off, "RXPAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "RXQOS", udint());
+            push(&mut off, "RXMSGID", udint());
+            push(&mut off, "RXPLEN", udint());
+            push(&mut off, "STATE", dint());
+            push(&mut off, "LASTMSGID", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "CONNECTED", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

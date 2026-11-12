@@ -135,6 +135,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcIec61850Service*>(&iec61850_.table());
         return nullptr;
     }
+    if (len == 9 && memcmp(name, "tplc-mqtt", 9) == 0) {
+        /* MQTT client: only when built with libpaho-mqtt3c. */
+        if (mqtt_.active())
+            return const_cast<TplcMqttService*>(&mqtt_.table());
+        return nullptr;
+    }
     return nullptr;
 }
 

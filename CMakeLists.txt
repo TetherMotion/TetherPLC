@@ -53,6 +53,7 @@ add_library(tplc_host STATIC
   runtime/host/src/OpcUaService.cpp
   runtime/host/src/EipService.cpp
   runtime/host/src/Iec61850Service.cpp
+  runtime/host/src/MqttService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -154,6 +155,53 @@ if(TPLC_ENABLE_IEC61850)
     set(TPLC_IEC61850_FAKE_TARGET iec61850_ied_fake)
   else()
     message(STATUS "tplc_host: no libiec61850 — tplc-iec61850 inactive")
+  endif()
+endif()
+
+# MQTT client service (tplc-mqtt, C7): optional — without
+# libpaho-mqtt3c the service compiles inert and getService("tplc-mqtt")
+# returns nullptr.  -DTPLC_ENABLE_MQTT=OFF forces it off.
+option(TPLC_ENABLE_MQTT
+  "Enable the tplc-mqtt MQTT client service (libpaho-mqtt3c)" ON)
+if(TPLC_ENABLE_MQTT)
+  find_library(TPLC_PAHO_LIBRARY NAMES paho-mqtt3c paho-mqtt3cs)
+  find_path(TPLC_PAHO_INCLUDE_DIR NAMES MQTTClient.h)
+  if(NOT TPLC_PAHO_LIBRARY OR NOT TPLC_PAHO_INCLUDE_DIR)
+    # not installed — auto-download and build paho.mqtt.c
+    include(FetchContent)
+    FetchContent_Declare(pahomqttc
+      GIT_REPOSITORY https://github.com/eclipse/paho.mqtt.c.git
+      GIT_TAG        v1.3.14
+      GIT_SHALLOW    TRUE)
+    set(PAHO_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(PAHO_BUILD_STATIC   ON  CACHE BOOL "" FORCE)
+    set(PAHO_BUILD_SAMPLES  OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(pahomqttc)
+    if(TARGET paho-mqtt3c-static OR TARGET paho-mqtt3c)
+      set(TPLC_PAHO_BUILT TRUE)
+      set(TPLC_PAHO_FROM_FETCH TRUE)
+      message(STATUS "tplc_host: MQTT client via fetched paho.mqtt.c")
+    endif()
+  else()
+    set(TPLC_PAHO_BUILT TRUE)
+    message(STATUS "tplc_host: MQTT client via system libpaho-mqtt3c")
+  endif()
+  if(TPLC_PAHO_BUILT)
+    target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_MQTT)
+    if(TARGET paho-mqtt3c-static)
+      target_link_libraries(tplc_host PUBLIC paho-mqtt3c-static)
+    elseif(TARGET paho-mqtt3c)
+      target_link_libraries(tplc_host PUBLIC paho-mqtt3c)
+    else()
+      target_link_libraries(tplc_host PUBLIC ${TPLC_PAHO_LIBRARY})
+    endif()
+    target_include_directories(tplc_host PRIVATE
+      ${pahomqttc_SOURCE_DIR}/src)
+    if(TPLC_PAHO_INCLUDE_DIR)
+      target_include_directories(tplc_host PRIVATE ${TPLC_PAHO_INCLUDE_DIR})
+    endif()
+  else()
+    message(STATUS "tplc_host: no libpaho-mqtt3c — tplc-mqtt inactive")
   endif()
 endif()
 
@@ -864,6 +912,17 @@ if(NOT CMAKE_CROSSCOMPILING)
     set_tests_properties(tc2_iec61850_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
+
+  # MQTT client surface (C7): FB_IotMqtt* wrappers drive a real
+  # MQTT 3.1.1 session against the python fake broker
+  # (mqtt_broker_fake.py — CONNECT/CONNACK/SUBACK/PUBLISH-echo) —
+  # connect/subscribe/publish/echo/disconnect
+  add_test(NAME tc2_mqtt_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mqtt_io.sh)
+  set_tests_properties(tc2_mqtt_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy
   add_test(NAME ref_migration

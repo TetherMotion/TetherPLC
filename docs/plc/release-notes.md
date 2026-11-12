@@ -523,3 +523,23 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   against `iec61850_ied_fake` (a real libiec61850 `IedServer` with a
   `tetherIEDtetherTestLD`/`LLN0` CDC model).  Reporting/RCB,
   GOOSE/SMV, control sequences, and the full data model are gaps.
+
+### C7 tranche 4 — MQTT/IoT client (`tplc-mqtt`)
+
+  `tplc-mqtt` is an MQTT 3.1.1 client — the PLC is the client over
+  the broker wire via **libpaho-mqtt3c** (Eclipse Paho synchronous
+  `MQTTClient`), opt-in like the other special features:
+  `-DTPLC_ENABLE_MQTT` (default ON) prefers a system libpaho-mqtt3c
+  and falls back to a CMake FetchContent build of paho.mqtt.c;
+  absent or off → `getService` nullptr.  `FB_Mqtt` is the runtime
+  builtin (connect/disconnect/status/publish/subscribe/unsubscribe/
+  receive/isConnected) and `FB_IotMqttClient`/`Disconnect`/`Publish`/
+  `Subscribe`/`Unsubscribe`/`Receive` in `compat/tc2/tc2_mqtt.st` are
+  the TwinCAT-shaped wrappers (Tc3_IoT/TF6701).  Topics bounded
+  `STRING[127]`, payloads `STRING[255]`; `Retain`/`RETAIN` are
+  reserved keywords surfaced as `RetainOn`/`FLG_RETAIN`.  Receive is a
+  bounded nonblocking poll (NOMSG when empty) so the scan can't
+  stall.  `tc2_mqtt_io` verifies connect/subscribe/publish/echo/
+  disconnect at `0x1f` against `mqtt_broker_fake.py`.  MQTT5
+  properties, wildcard detail, QoS2, retained messages, and TLS are
+  gaps.

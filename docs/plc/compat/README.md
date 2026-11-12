@@ -385,7 +385,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
 | C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool), an 8-state PLCopen operating state, and coupling/probe blocks (MC_TouchProbe cycle-level latch, MC_GearIn velocity-ratio coupling, MC_GearOut; e2e on both backends); exact hardware-latch touch-probe, `MC_AbortTrigger`, phase-locked gearing/phasing/camming pending |
 | C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus`/`ItpFiFoWrite`/`ItpConfirmHsk`/`ItpWriteRParam`/`ItpReadRParam`/`ItpZeroShift` wrappers (e2e `tc2_nci_gcode_io` mask `0x7fffff`: FIFO queue + run-from-idle + chained blocks, R-param roundtrip, zero-shift, M8 pause→confirm→resume); cyclic-channel offsets pending |
-| C7 | Connectivity wave 2 | `tplc-opcua` **done** (OPC UA client via libopen62541 — opt-in like other special features, auto-detected, absent → `getService` nullptr): `FB_UaClient` builtin + `FB_UA_Connect`/`FB_UA_Disconnect`/`FB_UA_ConnectGetStatus`/`FB_UA_Read`/`FB_UA_Write`/`FB_UA_GetNamespaceIndex` wrappers in `compat/tc2/tc2_opcua.st` (TwinCAT Tc2_OPCUA/Tc3_PlcOpenOpcUa shape); the endpoint is Tether's `tether_io_motion_server --opcua` (open62541 server exposing the motion Registry as `ns=2;s=<name>` nodes); e2e `tc2_opcua_io` — connect/session/read `nc.state`/write+read `nc.scale`/ns-index/disconnect; node-handle registration, subscriptions, methods, history pending. `tplc-eip` **done** (EtherNet/IP explicit-messaging client — RegisterSession/ListIdentity/SendRRData + CIP Get/Set_Attribute_Single, nonblocking poll-bounded IO): `FB_Eip` builtin + `FB_EipConnect`/`Disconnect`/`Status`/`ListIdentity`/`GetAttribute`/`SetAttribute` wrappers in `compat/tc2/tc2_eip.st`; e2e `tc2_eip_io` vs `eip_adapter_fake.py` — register/identity/attr r-w/disconnect `0x7f`; cyclic class-1 I/O, ForwardOpen, CIP services beyond Get/Set pending. `tplc-iec61850` **done** (IEC 61850 MMS client via libiec61850 — opt-in, auto-downloaded + built via FetchContent, absent → `getService` nullptr): `FB_Iec61850` builtin + `FB_Iec61850Connect`/`Disconnect`/`Status`/`Read`/`Write`/`GetNameList` wrappers in `compat/tc2/tc2_iec61850.st` (domain+item addressing, `#FC` suffix selects functional constraint); e2e `tc2_iec61850_io` vs `iec61850_ied_fake` (real libiec61850 IedServer) — associate/status/read/write-error/namelist/disconnect `0x7f`; reporting/RCB, GOOSE/SMV, control sequences pending. MQTT/IoT, OCPP, AES70, building buses pending |
+| C7 | Connectivity wave 2 | `tplc-opcua` **done** (OPC UA client via libopen62541 — opt-in like other special features, auto-detected, absent → `getService` nullptr): `FB_UaClient` builtin + `FB_UA_Connect`/`FB_UA_Disconnect`/`FB_UA_ConnectGetStatus`/`FB_UA_Read`/`FB_UA_Write`/`FB_UA_GetNamespaceIndex` wrappers in `compat/tc2/tc2_opcua.st` (TwinCAT Tc2_OPCUA/Tc3_PlcOpenOpcUa shape); the endpoint is Tether's `tether_io_motion_server --opcua` (open62541 server exposing the motion Registry as `ns=2;s=<name>` nodes); e2e `tc2_opcua_io` — connect/session/read `nc.state`/write+read `nc.scale`/ns-index/disconnect; node-handle registration, subscriptions, methods, history pending. `tplc-eip` **done** (EtherNet/IP explicit-messaging client — RegisterSession/ListIdentity/SendRRData + CIP Get/Set_Attribute_Single, nonblocking poll-bounded IO): `FB_Eip` builtin + `FB_EipConnect`/`Disconnect`/`Status`/`ListIdentity`/`GetAttribute`/`SetAttribute` wrappers in `compat/tc2/tc2_eip.st`; e2e `tc2_eip_io` vs `eip_adapter_fake.py` — register/identity/attr r-w/disconnect `0x7f`; cyclic class-1 I/O, ForwardOpen, CIP services beyond Get/Set pending. `tplc-iec61850` **done** (IEC 61850 MMS client via libiec61850 — opt-in, auto-downloaded + built via FetchContent, absent → `getService` nullptr): `FB_Iec61850` builtin + `FB_Iec61850Connect`/`Disconnect`/`Status`/`Read`/`Write`/`GetNameList` wrappers in `compat/tc2/tc2_iec61850.st` (domain+item addressing, `#FC` suffix selects functional constraint); e2e `tc2_iec61850_io` vs `iec61850_ied_fake` (real libiec61850 IedServer) — associate/status/read/write-error/namelist/disconnect `0x7f`; reporting/RCB, GOOSE/SMV, control sequences pending. `tplc-mqtt` **done** (MQTT 3.1.1 client via libpaho-mqtt3c — opt-in, FetchContent fallback, absent → `getService` nullptr): `FB_Mqtt` builtin + `FB_IotMqttClient`/`Disconnect`/`Publish`/`Subscribe`/`Unsubscribe`/`Receive` wrappers in `compat/tc2/tc2_mqtt.st`; e2e `tc2_mqtt_io` vs `mqtt_broker_fake.py` — connect/subscribe/publish/echo/disconnect `0x1f`; MQTT5 properties, wildcard detail, QoS2, retained, TLS pending. OCPP, AES70, building buses pending |
 
 ### C1 coverage notes
 
@@ -1416,6 +1416,35 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   attribute, name-list, disconnect — `0x7f`.  Reporting/RCB,
   GOOSE/SMV, control sequences (Select/Operate), and the full
   data model are out of scope for this tranche.
+
+### MQTT client (`tplc-mqtt`)
+
+  `tplc-mqtt` is an MQTT 3.1.1 client — the PLC is the client over
+  the broker wire protocol via **libpaho-mqtt3c** (Eclipse Paho
+  synchronous `MQTTClient`). Opt-in like the other special features:
+  `-DTPLC_ENABLE_MQTT` (default ON) prefers a system libpaho-mqtt3c
+  and falls back to a CMake FetchContent build of paho.mqtt.c; when
+  absent or off the service compiles inert and
+  `getService("tplc-mqtt")` returns nullptr.
+
+  `FB_Mqtt` is the runtime builtin (synchronous op dispatch like
+  `FB_Eip`): connect (HOST/PORT/CLEAN/KEEPALIVE → HANDLE),
+  disconnect, status (→ STATE/LASTMSGID/LASTERR), publish
+  (TOPIC/PAYLOAD/QOS/RETAIN), subscribe (TOPIC/QOS), unsubscribe
+  (TOPIC), receive (nonblocking poll → RXTOPIC/RXPAYLOAD/RXQOS/
+  RXMSGID/RXPLEN, or NOMSG), and isConnected.  `FB_IotMqttClient`/
+  `Disconnect`/`Publish`/`Subscribe`/`Unsubscribe`/`Receive` in
+  `compat/tc2/tc2_mqtt.st` are the TwinCAT-shaped wrappers
+  (Tc3_IoT/TF6701).  Topics are bounded `STRING[127]`, payloads
+  `STRING[255]`; `Retain`/`RETAIN` are reserved keywords so the
+  wrapper surfaces them as `RetainOn`/`FLG_RETAIN`.
+
+  e2e `tc2_mqtt_io` runs the surface against
+  `mqtt_broker_fake.py` (a real CONNECT/CONNACK/SUBACK/
+  PUBLISH-echo peer): connect, subscribe, publish, the broker's
+  echo landing in the receive poll, disconnect — `0x1f`.
+  MQTT5 properties, wildcard-matching detail, QoS2 two-phase,
+  retained messages, and TLS are honest gaps for a later tranche.
 
 
 
