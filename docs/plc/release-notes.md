@@ -622,3 +622,16 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   pattern).  `tc2_filter_io` verifies clamp/pt1-settle/pid-drive/
   average/ramp at `0x1f`.  PT2/PT3, dead-time, statistics and the
   full `FB_CTRL_*` catalog are honest gaps for a later tranche.
+
+### C8 tranche 2 — PackML state machine (pure ST)
+
+  `compat/tc2/tc2_packml.st` is the PackML (ISA-TR88) unit/machine
+  state machine — pure-ST, no service or hardware.  `FB_PackML`
+  implements the 17 nominal unit states (Idle..Stopped) driven by
+  the PackML commands (Start/Stop/Reset/Hold/Unhold/Suspend/
+  Unsuspend/Abort/Clear) following the standard transition table;
+  *ing wait-states self-advance when Busy clears.  `tc2_packml_io`
+  verifies Idle->Start->Execute->Hold->Held->Unhold->Execute->
+  Abort->Aborted->Clear->Idle at `0x3f`.  State names/constants are
+  documented in the file header (no CONSTANT support in the
+  dialect); the full PackML tag/interface layer is a gap.

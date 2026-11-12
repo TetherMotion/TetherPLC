@@ -1782,3 +1782,17 @@ integrator.
 **Consequences.**  `FB_Limit`/`PT1`/`Integrator`/`Differentiator`/
 `Average`/`Ramp`/`PID` are the first tranche; PT2/PT3, dead-time,
 statistics and the full `FB_CTRL_*` catalog are honest gaps.
+
+## D-IMPL-68 — PackML as a pure-ST ISA-TR88 state machine
+
+**Decision.**  `FB_PackML` is a pure-ST ISA-TR88 unit-state
+machine — the 17 nominal states and the command-driven transition
+table, no service or hardware.  *ing wait-states self-advance when
+the Busy input clears (modeled as immediate completion); the
+caller holds work state in Busy.
+
+**Consequences.**  The unit-state model is real and transition-
+correct; the PackML tag/interface layer, unit mode vs unit state,
+and the suspend/hold sub-state detail are honest gaps.  No
+CONSTANT support in the dialect — state/command values are
+documented in the file header.
