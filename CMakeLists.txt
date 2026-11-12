@@ -997,6 +997,16 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_genibus_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_BABasic building-automation blocks (C7): pure-ST
+  # scale/threshold/click/ramp/light/dimmer/blind/demand/
+  # scheduler/scenes
+  add_test(NAME tc2_babasic_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_babasic_io.sh)
+  set_tests_properties(tc2_babasic_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/
   # Average/Ramp pure-ST blocks — clamp/lag/track/average/slew
   add_test(NAME tc2_filter_io
