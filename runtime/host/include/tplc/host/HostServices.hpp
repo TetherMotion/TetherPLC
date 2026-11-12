@@ -8,6 +8,7 @@
 #include <tplc/tplc_abi.h>
 #include <tplc/host/AdsService.hpp>
 #include <tplc/host/BacnetService.hpp>
+#include <tplc/host/EipService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
@@ -95,6 +96,8 @@ private:
     NciIoService  nci_io_;
     /* OPC UA client; active() only when built with libopen62541. */
     OpcUaService  opcua_;
+    /* EtherNet/IP explicit-messaging client; always available. */
+    EipService    eip_;
 };
 
 } /* namespace tplc */

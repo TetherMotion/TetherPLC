@@ -1140,6 +1140,41 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
         }
+        /* FB_Eip — tplc-eip service bridge (EtherNet/IP explicit
+        messaging). Synchronous op dispatch like FB_UaClient: set OP +
+        fields and call. OP 1=open+RegisterSession (HOST/PORT →
+        HANDLE), 2=close+unregister, 3=status (→ STATE/SESSION/
+        LASTCIP), 4=ListIdentity (HOST/PORT → DATA summary),
+        5=Get_Attribute_Single (CLS/INST/ATTR → DATA bytes +
+        DATALEN), 6=Set_Attribute_Single (CLS/INST/ATTR + DATA/DATALEN).
+        STATUS carries the service return code, ERRID its positive
+        form. Attribute payloads travel as bounded STRING bytes
+        (TwinCAT uses PVOID buffers — the string is the practical
+        carrier here). */
+        "FB_Eip" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "HOST", Type::Str { cap: 63 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "CLS", udint());
+            push(&mut off, "INST", udint());
+            push(&mut off, "ATTR", udint());
+            push(&mut off, "DATALEN", udint());
+            push(&mut off, "DATA", Type::Str { cap: 255 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "SESSION", udint());
+            push(&mut off, "LASTCIP", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

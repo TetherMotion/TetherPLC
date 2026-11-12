@@ -51,6 +51,7 @@ add_library(tplc_host STATIC
   runtime/host/src/MotionIoService.cpp
   runtime/host/src/NciIoService.cpp
   runtime/host/src/OpcUaService.cpp
+  runtime/host/src/EipService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
