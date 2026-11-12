@@ -1592,6 +1592,32 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "NAME", Type::Str { cap: 63 });
             push(&mut off, "VAL", Type::Str { cap: 255 });
         }
+        /* FB_Iof — I/O device/box enumeration (Tc2_IoFunctions
+        general FBs) over the package variable table.
+        OP 1=box count, 2=box by index (-> NAME/REGION/ADDR/UNIT),
+        3=find by name (-> REGION/ADDR/UNIT/FOUND),
+        4=device count, 5=device name (-> VAL). */
+        "FB_Iof" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "IDX", udint());
+            push(&mut off, "COUNT", udint());
+            push(&mut off, "REGION", udint());
+            push(&mut off, "ADDR", udint());
+            push(&mut off, "UNIT", udint());
+            push(&mut off, "FOUND", Type::Bool);
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "NAME", Type::Str { cap: 63 });
+            push(&mut off, "VAL", Type::Str { cap: 63 });
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,

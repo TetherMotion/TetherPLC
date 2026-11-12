@@ -2713,16 +2713,16 @@ impl<'ctx> Gen<'ctx> {
                     return None;
                 }
                 nb[..bytes.len()].copy_from_slice(bytes);
-                let (is_at, region, tc, unit) = match io_binds
+                let (is_at, region, tc, unit, img) = match io_binds
                     .iter()
                     .find(|b| b.name.split('.').next_back() == Some(name.as_str()))
                 {
-                        Some(b) => {
-                            let (r, t, u) = io_codes(&b.at, ty);
-                            (1u64, r, t, u)
-                        }
-                        None => (0u64, 0u8, io_type_code(ty), 0u8),
-                    };
+                    Some(b) => {
+                        let (r, t, u) = io_codes(&b.at, ty);
+                        (1u64, r, t, u, b.at.byte)
+                    }
+                    None => (0u64, 0u8, io_type_code(ty), 0u8, 0u64),
+                };
                 Some(self.ctx.const_struct(
                     &[
                         lctx.const_string(&nb, false).into(),
@@ -2732,7 +2732,7 @@ impl<'ctx> Gen<'ctx> {
                         lctx.i8_type().const_int(is_at, false).into(),
                         lctx.i8_type().const_int(region as u64, false).into(),
                         lctx.i8_type().const_int(unit as u64, false).into(),
-                        lctx.i32_type().const_zero().into(),
+                        lctx.i32_type().const_int(img, false).into(),
                     ],
                     false,
                 ))

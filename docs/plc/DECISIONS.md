@@ -2178,3 +2178,24 @@ setting one command and the next in the same scan only fires the
 first.  The case uses strict set/clear pairs.
 
 ctest `tc3_plctest_io` green (0xff).
+
+## D-IMPL-92 — tc2_iofunctions (general IOF FBs)
+
+`TplcVarDesc` now carries the image byte address (the former
+`_pad` field became `image_offset`), so the IOF enumeration can
+map name <-> (region, address).  `FB_Iof` ops: 1 box count,
+2 box by index, 3 find by name, 4 device count, 5 device name.
+
+A "box" is an AT-bound variable of the local program — `mask`
+and `diag` count as boxes too (the e2e learned that the hard
+way: 5, not 3).  Device-level operations: one local device with
+netid 127.0.0.1.1.1; `IOF_DeviceReset` returns 16#8001
+(documented unsupported) because resets belong to the I/O plane.
+EtherCAT device profiles (ASi/DPV1/Lightbus/CANopen/RAID/UPS)
+remain documented gaps — they need the fieldbus master.
+
+Reminder: bounds-checked indexing in tplc-rt pulls in the unwind
+personality (`-210 hidden state symbol DW.ref.rust_eh_personality`);
+the builtin reads table bytes through raw `vd8`/`vd32` helpers.
+
+ctest `tc2_iofunctions_io` green (0x7f).

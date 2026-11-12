@@ -1114,6 +1114,16 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc3_plctest_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_IoFunctions general FBs (C-stdlib): box/device enumeration
+  # over the package variable table — name<->addr, device name,
+  # documented reset refusal
+  add_test(NAME tc2_iofunctions_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_iofunctions_io.sh)
+  set_tests_properties(tc2_iofunctions_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc2_Filter measurement/control surface (C8): FB_Limit/PT1/PID/
   # Average/Ramp pure-ST blocks — clamp/lag/track/average/slew
   add_test(NAME tc2_filter_io

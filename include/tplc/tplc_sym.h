@@ -25,7 +25,7 @@ typedef struct TplcVarDesc {
     uint8_t  is_at;       /* 1 = AT-bound (%I/%Q/%M)         */
     uint8_t  region;      /* TplcIoRegion when is_at         */
     uint8_t  unit;        /* bit index for BOOL AT vars      */
-    uint32_t _pad;
+    uint32_t image_offset;/* byte offset in the image region */
 } TplcVarDesc;
 #ifdef __cplusplus
 static_assert(sizeof(TplcVarDesc) == 48, "TplcVarDesc layout");

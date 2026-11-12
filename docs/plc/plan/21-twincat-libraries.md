@@ -2173,7 +2173,17 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T3
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_IoFunctions_EN.pdf` · **API entries:** 81
-- **Status:** low-level I/O driver calls are superseded by the %I/%Q process image + io bindings
+- **Status: IMPLEMENTED (general FBs) / gap (device profiles)** —
+  `compat/tc2/tc2_iofunctions.st`: `IOF_GetBoxCount`,
+  `IOF_GetBoxNameByAddr`, `IOF_GetBoxAddrByName(Ex)`,
+  `IOF_GetDeviceCount`, `IOF_GetDeviceName`,
+  `IOF_GetDeviceNetId/IDByName/IDs/InfoByName` over the package
+  variable table (a "box" is an AT-bound variable; one local
+  device).  `IOF_DeviceReset` reports a documented unsupported
+  error — resets belong to the I/O plane (Tether).  The EtherCAT
+  device-profile families (ASi, Profibus DPV1, Lightbus,
+  CANopen, RAID, UPS) need the fieldbus master and stay gaps.
+  Ctest `tc2_iofunctions_io`.
 - **Integration:** EtherCAT device libraries (KL terminals, ASI, DPV1, IO-Link, SCIT, TcTouch, AX2000): need EtherCAT master integration and device profiles; only small helper FBs are T0.
 
 #### Function blocks › General IO FBs
