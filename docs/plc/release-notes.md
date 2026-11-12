@@ -688,3 +688,13 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   correlation).  `tc2_spa_io` verifies peak/envelope/dft/xcorr at
   `0x1f`.  A true FFT (needs trig builtins) and Bode analysis are
   gaps.
+
+### C8 tranche 8 — CM curve/math (pure ST)
+
+  `compat/tc2/tc2_cm.st` is the Tc2_CM surface — curve/math
+  primitives in pure-ST: `FB_FuncGen` (sawtooth/triangle/square
+  function generator), `FB_LinInterp` (piecewise-linear
+  interpolation over a breakpoint table), and `FB_CamProfile`
+  (linear cam master->slave).  `tc2_cm_io` verifies
+  funcgen/interp/cam at `0x1f`.  Spline interpolation and cam
+  table management are gaps.

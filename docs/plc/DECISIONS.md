@@ -1843,3 +1843,11 @@ because the dialect has no trig builtins.
 
 **Consequences.**  The analysis primitives are real; a true FFT
 and Bode analysis are honest gaps (need trig builtins).
+
+## D-IMPL-74 — CM as pure-ST curve/math
+
+**Decision.**  `tc2_cm.st` is a pure-ST curve/math surface —
+function generator, piecewise-linear interpolation, linear cam.
+
+**Consequences.**  FuncGen/LinInterp/CamProfile verified; spline
+interpolation and cam table management are honest gaps.
