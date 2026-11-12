@@ -1863,3 +1863,39 @@ external scanner or camera.
 A true QR decoder needs an image pipeline and Reed-Solomon, and
 the Beckhoff Tc3_QRC Q-SYS response frames need the TCP service
 of the real library — both are honest gaps, not pure-ST math.
+
+## D-IMPL-76 — tc2_plastic e2e: deep debug findings (open)
+
+Context: `tests/compat/tc2_plastic_case.st` ends at mask 0x17 (expected
+0x3f) despite a fully-verified library.
+
+Established facts (all verified by disassembly of the packaged .so and
+`expectf` blob reads, 2026 session):
+
+- Pou logic is correct (isolated probe drives 0→4 through all phases).
+- Consumer-side `layout.fb_types["FB_PlasticShot"]` dumped: MoldTarget@0,
+  Execute@8, StartCycle@9, ScrewPos@16, CavityPressure@24, FillVel@32,
+  CoolTime@40, ShotSize@48, VpSwitchPos@56, CycleTime@64, Reset@72,
+  Done@73, Error@74, CycleActive@75, CycleFinished@76, ErrorID@80,
+  Phase@84, PressureSetpoint@88, VelSetpoint@96, ph@104, fin@108,
+  tHold@112, vel@120, pOut@128; size=136. Program blob: cavity@0,
+  mask@8, n@12, pSeen@16, screw@24, st@32, shot@40 (total 176).
+- Program vars are **name-sorted within regions** (layout_program), not
+  declaration order — do not hand-compute offsets from source order.
+- Caller .so disasm: every member access at the correct offset
+  (verified instruction by instruction). Pou .so disasm: correct too.
+- `expectf` DBG_READ data contradicts live execution: StartCycle@49
+  reads 1 while the running program provably wrote 0 (st advanced past
+  the clearing state). → the DBG blob is a snapshot/stale buffer, not
+  the live frame. Treat expectf values with caution.
+- In the live program: Phase reaches 3 (+1,+2,+4,+16 land), ScrewPos
+  accumulates, but `pSeen := shot.PressureSetpoint` yields ~128
+  (ScrewPos-like) and `CycleFinished` never reads TRUE even after the
+  `fin` latch fix.
+
+Remaining hypothesis to check next session: two different instance
+pointers — the DBG_READ snapshot buffer vs the live frame — would mean
+expectf offsets need mapping through the snapshot layout, and the real
++8/+32 failure needs a runtime-side trace (printf in the pou .so, or a
+watch on the live frame via TPLC_OP watch/trace ctl ops — see
+runtime/tether-plc-sim/main.cpp --scan path).
