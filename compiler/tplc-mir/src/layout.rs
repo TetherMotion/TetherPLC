@@ -1285,6 +1285,42 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
         }
+        /* FB_Aes70 — tplc-aes70 service bridge (OCA/AES70 audio
+        control over OSCP TCP). Synchronous op dispatch like FB_Eip:
+        set OP + fields and call. OP 1=connect (HOST/PORT -> HANDLE),
+        2=disconnect, 3=status (-> STATE/RXTOT/TXTOT/LASTERR),
+        4=call (TARGET/METHOD/PARAMS -> HANDLE2), 5=keepalive,
+        6=receive (-> HANDLE2/STATUSCODE/RXPAYLOAD or NOMSG).
+        STATUS carries the service return code, ERRID its positive
+        form.  TARGET is the OCA object number, METHOD the
+        defLevel<<8 + methodIndex, PARAMS/RXPAYLOAD bounded
+        STRING[255] raw bytes. */
+        "FB_Aes70" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "HOST", Type::Str { cap: 63 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "TARGET", udint());
+            push(&mut off, "METH", udint());
+            push(&mut off, "PARAMS", Type::Str { cap: 255 });
+            push(&mut off, "HANDLE2", udint());
+            push(&mut off, "STATUSCODE", udint());
+            push(&mut off, "RXPAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "RXTOT", udint());
+            push(&mut off, "TXTOT", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

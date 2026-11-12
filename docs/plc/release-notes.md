@@ -560,3 +560,20 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   verifies WS-upgrade/call/result/disconnect at `0xf` against
   `ocpp_csms_fake.py`.  OCPP 2.x, security profiles, and schema
   validation are gaps.
+
+### C7 tranche 6 — AES70/OCA audio-control client (`tplc-aes70`)
+
+  `tplc-aes70` is an AES70 (Open Control Architecture / OCA) audio-
+  control client — the PLC is the OCA controller over OSCP TCP on
+  the OCA control port (default 65000), always available (OCP1 sync
+  header + OcaMessage PDU codec, hand-rolled like tplc-eip).
+  `FB_Aes70` is the runtime builtin (connect/disconnect/status/
+  call/keepalive/receive) and `FB_Aes70Connect`/`Disconnect`/`Call`/
+  `Keepalive`/`Receive` in `compat/tc2/tc2_aes70.st` are the
+  TwinCAT-shaped wrappers (Tc3_AES70/TF6301-ish).  Parameters and
+  response payloads are raw bytes bounded `STRING[255]`; `METHOD` is
+  a reserved keyword surfaced as `METH`.  Socket IO is poll-bounded.
+  `tc2_aes70_io` verifies connect/keepalive/call/response/disconnect
+  at `0x1f` against `aes70_device_fake.py` (a real OCP1 frame peer).
+  Notification subscriptions, the full OCA class catalog, and
+  property shorthands are gaps.

@@ -7,6 +7,7 @@
 
 #include <tplc/tplc_abi.h>
 #include <tplc/host/AdsService.hpp>
+#include <tplc/host/Aes70Service.hpp>
 #include <tplc/host/BacnetService.hpp>
 #include <tplc/host/EipService.hpp>
 #include <tplc/host/FtpService.hpp>
@@ -107,6 +108,8 @@ private:
     MqttService   mqtt_;
     /* OCPP-J client (WebSocket + JSON-RPC); always available. */
     OcppService   ocpp_;
+    /* AES70/OCA audio-control client; always available. */
+    Aes70Service  aes70_;
 };
 
 } /* namespace tplc */

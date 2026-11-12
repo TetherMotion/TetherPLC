@@ -1720,3 +1720,20 @@ validation is honest out-of-scope.  `ACTION` is a reserved keyword
 surfaced as `ACT`/`ActName`.  Socket IO is poll-bounded under the
 scan-stall watchdog.  The e2e peer is a real WS-upgrade +
 OCPP-J echo fake.
+
+## D-IMPL-64 — AES70/OCA via hand-rolled OSCP+OCP codec, always on
+
+**Decision.**  The `tplc-aes70` audio-control client is OCP1 sync
+header + OcaMessage PDU framing over TCP, hand-rolled like
+`tplc-eip` — the OCA wire protocol is small enough that an
+external library adds dependency without surface value.  Always
+available (no opt-in lib).
+
+**Consequences.**  The `FB_Aes70` surface is connect/disconnect/
+status/call/keepalive/receive — the OSCP session plus method calls
+on OCA objects (targetONo + methodID + raw parameter bytes) and
+response polling.  Raw parameter payloads are bounded `STRING[255]`
+the caller serializes; the full OCA class catalog, notification
+subscriptions, and property shorthands are honest gaps.  `METHOD`
+is a reserved keyword surfaced as `METH`.  Socket IO is
+poll-bounded under the scan-stall watchdog.

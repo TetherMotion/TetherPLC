@@ -145,6 +145,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* OCPP-J client: WebSocket + JSON-RPC, always available. */
         return const_cast<TplcOcppService*>(&ocpp_.table());
     }
+    if (len == 10 && memcmp(name, "tplc-aes70", 10) == 0) {
+        /* AES70/OCA audio-control client, always available. */
+        return const_cast<TplcAes70Service*>(&aes70_.table());
+    }
     return nullptr;
 }
 

@@ -55,6 +55,7 @@ add_library(tplc_host STATIC
   runtime/host/src/Iec61850Service.cpp
   runtime/host/src/MqttService.cpp
   runtime/host/src/OcppService.cpp
+  runtime/host/src/Aes70Service.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -934,6 +935,17 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_ocpp_io.sh)
   set_tests_properties(tc2_ocpp_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # AES70/OCA client surface (C7): FB_Aes70* wrappers drive a real
+  # OSCP+OCP session against the python device fake
+  # (aes70_device_fake.py — OCP1 frames + OcaResponse echo) —
+  # connect/keepalive/call/response/disconnect
+  add_test(NAME tc2_aes70_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_aes70_io.sh)
+  set_tests_properties(tc2_aes70_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # REFERENCE TO: online change must warn and reset, never copy
