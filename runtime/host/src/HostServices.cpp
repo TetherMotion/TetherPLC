@@ -157,6 +157,10 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* M-Bus wired metering master: opt-in serial. */
         return const_cast<TplcMbusService*>(&mbus_.table());
     }
+    if (len == 12 && memcmp(name, "tplc-enocean", 12) == 0) {
+        /* EnOcean ESP3 transceiver: opt-in serial. */
+        return const_cast<TplcEnoceanService*>(&enocean_.table());
+    }
     return nullptr;
 }
 

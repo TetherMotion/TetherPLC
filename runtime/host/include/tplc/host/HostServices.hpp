@@ -15,6 +15,7 @@
 #include <tplc/host/Iec61850Service.hpp>
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
+#include <tplc/host/EnoceanService.hpp>
 #include <tplc/host/MbusService.hpp>
 #include <tplc/host/MotionIoService.hpp>
 #include <tplc/host/MqttService.hpp>
@@ -116,6 +117,8 @@ private:
     DmxService    dmx_;
     /* M-Bus wired metering master (opt-in serial); always on. */
     MbusService   mbus_;
+    /* EnOcean ESP3 transceiver (opt-in serial); always on. */
+    EnoceanService enocean_;
 };
 
 } /* namespace tplc */

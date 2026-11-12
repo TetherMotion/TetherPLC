@@ -1928,3 +1928,26 @@ RETURN bug itself.)
    "message" with the wrong kind and closed early.  NOMSG is now
    checked first.  Result: `tc2_mbus_io` green end-to-end
    (open → SND_NKE → E5 → REQ_UD2 → 68-frame → close).
+
+## D-IMPL-79 — tc2_enocean wired e2e: three service-layer bugs (fixed)
+
+New `tplc-enocean` host service (ESP3, 57600 8N1) + `FB_EnOcean`
+builtin + `compat/tc2/tc2_enocean.st` surface. e2e
+`tc2_enocean_io` green: open → send RADIO → RESPONSE + inbound
+PTM radio → decode → close. Bugs found by the wired test:
+
+1. `EnoceanService` vtable thunks cast `void* s` directly to the
+   service — but `s` is the `TplcEnoceanService*` struct, not the
+   C++ object. Recovered via `svc_.host` (`self()`), same pattern
+   as `MbusService` (was a SIGSEGV in `open`).
+2. `receive` returned `E_NOMSG` on an empty read **before**
+   scanning the accumulation buffer — a single `read()` carrying
+   RESPONSE+RADIO consumed the RESPONSE and left the RADIO
+   buffered forever. Now buffered bytes are scanned on every poll.
+3. `E_NOMSG = 1` collided with a 1-byte payload length (rc = len).
+   Moved to `0x100`, outside the 0..255 payload range; the ST
+   wrapper checks `STATUS = 16#100` for "still waiting".
+
+Open building-bus items: Tc2_DALI/Tc3_DALI need a Manchester-coded
+DALI master (not plain UART — documented hardware gap); KNX/LON
+remain host-interface gaps.

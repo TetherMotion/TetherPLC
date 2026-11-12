@@ -1362,6 +1362,40 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
         RXPAYLOAD or NOMSG). STATUS carries the service return code,
         ERRID its positive form.  The serial port is only opened
         when the surface is used. */
+        /* FB_EnOcean — tplc-enocean service bridge (EnOcean ESP3
+        transceiver over an opt-in serial port at 57600 8N1).
+        OP 1=open (PATH -> HANDLE), 2=close, 3=status, 4=send_radio
+        (ORG/SENDER/DEST/DATA), 5=receive (-> PTYPE/RORG/RSENDER/
+        RXPAYLOAD/RXB0 or NOMSG).  STATUS carries the service return
+        code, ERRID its positive form. */
+        "FB_EnOcean" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "PATH", Type::Str { cap: 127 });
+            push(&mut off, "ORG", udint());
+            push(&mut off, "SENDER", udint());
+            push(&mut off, "DEST", udint());
+            push(&mut off, "DATA", Type::Str { cap: 255 });
+            push(&mut off, "PTYPE", udint());
+            push(&mut off, "RORG", udint());
+            push(&mut off, "RSENDER", udint());
+            push(&mut off, "RXPAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "TXTOT", udint());
+            push(&mut off, "RXTOT", udint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "RXB0", udint());
+        }
         "FB_Mbus" => {
             let udint = || Type::Int {
                 signed: false,
