@@ -421,6 +421,22 @@ live attach over tether_io, and the safety/security envelope.
   `MFunc`/`FifoLen`/`FifoSeq`. `tc2_nci_gcode_io` now verifies the
   full surface at mask `0x7fffff` (D-IMPL-58). Cyclic-channel
   offset tables remain a gap.
+- **OPC UA client (C7 tranche 1, tranche 24)**: `tplc-opcua` is the
+  PLC-side OPC UA client via **libopen62541** (opt-in like the other
+  special features — `-DTPLC_ENABLE_OPCUA`, auto-detected, inert +
+  `getService` nullptr when `libopen62541-dev` is absent). `FB_UaClient`
+  ops 1-6 (connect/disconnect/status/read/write/ns-index) +
+  `FB_UA_Connect`/`FB_UA_Disconnect`/`FB_UA_ConnectGetStatus`/`FB_UA_Read`/
+  `FB_UA_Write`/`FB_UA_GetNamespaceIndex` wrappers in
+  `compat/tc2/tc2_opcua.st` (TwinCAT `Tc3_PlcOpenOpcUa` shape; node ids
+  as text `ns=2;s=name`/`i=85`, numerics widen into `LREAL`, strings
+  into `STRING[255]`). The endpoint for the sim path is Tether's
+  `tether_io_motion_server --opcua` — an open62541 server folding the
+  motion Registry into `ns=2;s=<name>` nodes. `tc2_opcua_io` verifies
+  connect/session/read/write/ns-index/disconnect end-to-end
+  (D-IMPL-59). Browse/node-handle/subscription/method wrappers remain
+  gaps; EtherNet/IP, IEC 61850, MQTT/IoT, OCPP, AES70, building buses
+  are the rest of wave 2.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

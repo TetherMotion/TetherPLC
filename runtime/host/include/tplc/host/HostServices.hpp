@@ -15,6 +15,7 @@
 #include <tplc/host/MotionService.hpp>
 #include <tplc/host/NciIoService.hpp>
 #include <tplc/host/NetService.hpp>
+#include <tplc/host/OpcUaService.hpp>
 #include <tplc/host/PjlinkService.hpp>
 #include <tplc/host/RtmonService.hpp>
 #include <tplc/host/SacnService.hpp>
@@ -92,6 +93,8 @@ private:
     /* IO-backed NC interpreter channel; active() only when the
        TPLC_MOTION_IO endpoint also exposes nc.* params. */
     NciIoService  nci_io_;
+    /* OPC UA client; active() only when built with libopen62541. */
+    OpcUaService  opcua_;
 };
 
 } /* namespace tplc */

@@ -384,7 +384,8 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
 | C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool), an 8-state PLCopen operating state, and coupling/probe blocks (MC_TouchProbe cycle-level latch, MC_GearIn velocity-ratio coupling, MC_GearOut; e2e on both backends); exact hardware-latch touch-probe, `MC_AbortTrigger`, phase-locked gearing/phasing/camming pending |
-| C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus` wrappers (e2e `tc2_nci_gcode_io`); FIFO queue, M-function handshake, R-params/zero-shift, cyclic-channel offsets pending |
+| C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus`/`ItpFiFoWrite`/`ItpConfirmHsk`/`ItpWriteRParam`/`ItpReadRParam`/`ItpZeroShift` wrappers (e2e `tc2_nci_gcode_io` mask `0x7fffff`: FIFO queue + run-from-idle + chained blocks, R-param roundtrip, zero-shift, M8 pause→confirm→resume); cyclic-channel offsets pending |
+| C7 | Connectivity wave 2 | `tplc-opcua` **done** (OPC UA client via libopen62541 — opt-in like other special features, auto-detected, absent → `getService` nullptr): `FB_UaClient` builtin + `FB_UA_Connect`/`FB_UA_Disconnect`/`FB_UA_ConnectGetStatus`/`FB_UA_Read`/`FB_UA_Write`/`FB_UA_GetNamespaceIndex` wrappers in `compat/tc2/tc2_opcua.st` (TwinCAT Tc2_OPCUA/Tc3_PlcOpenOpcUa shape); the endpoint is Tether's `tether_io_motion_server --opcua` (open62541 server exposing the motion Registry as `ns=2;s=<name>` nodes); e2e `tc2_opcua_io` — connect/session/read `nc.state`/write+read `nc.scale`/ns-index/disconnect; node-handle registration, subscriptions, methods, history pending. EtherNet/IP, IEC 61850, MQTT/IoT, OCPP, AES70, building buses pending |
 
 ### C1 coverage notes
 
@@ -1310,6 +1311,41 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   remains the interpreter-free single-block path. The in-process
   backend has no channel (by design). (DECISIONS D-IMPL-56,
   D-IMPL-57, D-IMPL-58).
+
+### C7 coverage notes
+
+- **Model**: the PLC is the OPC UA *client*. `tplc-opcua` wraps
+  libopen62541 — present only when the dev package was linked at
+  build time (auto-detected like the other optional deps, or
+  `-DTPLC_ENABLE_OPCUA=OFF`); without it `getService("tplc-opcua")`
+  returns nullptr and every `FB_UA_*` reports Error + `ErrorID 99`.
+  The endpoint for the simulated path is Tether's
+  `tether_io_motion_server --opcua` listener — an open62541 server
+  folding the whole motion Registry into `ns=2;s=<name>` Variable
+  nodes with DataSource read/write callbacks.
+- **Surface**: `FB_UaClient` is the op-multiplexed builtin
+  (1=connect, 2=disconnect, 3=status, 4=read, 5=write,
+  6=namespace-index); `compat/tc2/tc2_opcua.st` wraps it in the
+  TwinCAT `UA_*` shape — `FB_UA_Connect`, `FB_UA_Disconnect`,
+  `FB_UA_ConnectGetStatus`, `FB_UA_Read`, `FB_UA_Write`,
+  `FB_UA_GetNamespaceIndex`. Node ids are passed as text
+  (`ns=2;s=name`, `i=85`, `ns=1;i=1001`, bare `name` → `ns=2;s=`).
+- **Value model**: numeric kinds widen into `Value : LREAL`
+  (signed/unsigned 64-bit nodes lose precision above 2^53 — an
+  honest LREAL limit); strings land in `StrValue : STRING[255]`;
+  `ValueType` carries the `TPLC_UA_TYPE_*` code
+  (1=BOOL 2=I64 3=U64 4=F64 5=STRING).
+- **Verified**: `tc2_opcua_io` replays `tc2_opcua_case.st` over a
+  real open62541 session — connect, session-open status, read
+  `nc.state`, write+read `nc.scale`, namespace-index lookup,
+  disconnect.
+- **Honest gaps**: no browse surface in the wrappers (the server
+  supports it — open62541 does it natively), no node-handle
+  registration (`UA_NodeGetHandle`/`ReleaseHandle` — node ids are
+  resolved per call instead of once up front), no subscriptions,
+  method calls, or history; the client surface is the read/write/
+  status core TwinCAT apps use most.
+  (DECISIONS D-IMPL-59).
 
 ## Known limitations
 

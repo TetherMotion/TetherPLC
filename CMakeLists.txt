@@ -50,6 +50,7 @@ add_library(tplc_host STATIC
   runtime/host/src/MotionService.cpp
   runtime/host/src/MotionIoService.cpp
   runtime/host/src/NciIoService.cpp
+  runtime/host/src/OpcUaService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -84,6 +85,24 @@ if(TPLC_SECCOMP_LIBSECCOMP)
   message(STATUS "tplc_host: seccomp sandbox via libseccomp")
 else()
   message(STATUS "tplc_host: no libseccomp — sandbox rlimits only")
+endif()
+
+# OPC UA client service (tplc-opcua, C7): optional — without
+# libopen62541 the service compiles inert and getService("tplc-opcua")
+# returns nullptr.  -DTPLC_ENABLE_OPCUA=OFF forces it off.
+option(TPLC_ENABLE_OPCUA
+  "Enable the tplc-opcua OPC UA client service (needs libopen62541-dev)" ON)
+if(TPLC_ENABLE_OPCUA)
+  find_path(TPLC_OPEN62541_INCLUDE_DIR NAMES open62541/client.h)
+  find_library(TPLC_OPEN62541_LIBRARY NAMES open62541)
+  if(TPLC_OPEN62541_INCLUDE_DIR AND TPLC_OPEN62541_LIBRARY)
+    target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_OPCUA)
+    target_include_directories(tplc_host PRIVATE ${TPLC_OPEN62541_INCLUDE_DIR})
+    target_link_libraries(tplc_host PUBLIC ${TPLC_OPEN62541_LIBRARY})
+    message(STATUS "tplc_host: OPC UA client via libopen62541")
+  else()
+    message(STATUS "tplc_host: no libopen62541 — tplc-opcua inactive")
+  endif()
 endif()
 
 # ------------------------------------------------------------------ #
@@ -758,6 +777,15 @@ if(NOT CMAKE_CROSSCOMPILING)
         bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_nci_gcode_io.sh)
     set_tests_properties(tc2_nci_gcode_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
+
+    # the OPC UA client surface (C7): FB_UA_* wrappers drive a real
+    # open62541 session against the server's --opcua endpoint —
+    # connect/status/read/write/ns-index/disconnect
+    add_test(NAME tc2_opcua_io
+      COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_opcua_io.sh)
+    set_tests_properties(tc2_opcua_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
 
   # REFERENCE TO: online change must warn and reset, never copy

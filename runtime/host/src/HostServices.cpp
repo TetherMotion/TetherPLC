@@ -120,6 +120,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcNciService*>(&nci_io_.table());
         return nullptr;
     }
+    if (len == 10 && memcmp(name, "tplc-opcua", 10) == 0) {
+        /* OPC UA client: only when built with libopen62541. */
+        if (opcua_.active())
+            return const_cast<TplcOpcUaService*>(&opcua_.table());
+        return nullptr;
+    }
     return nullptr;
 }
 

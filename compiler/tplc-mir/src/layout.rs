@@ -1110,6 +1110,36 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "FIFOLEN", udint());
             push(&mut off, "FIFOSEQ", udint());
         }
+        /* FB_UaClient — tplc-opcua service bridge (OPC UA client via
+        libopen62541). Synchronous op dispatch like FB_NciChan: set
+        OP + fields and call. OP 1=connect (URL string → HANDLE),
+        2=disconnect, 3=status (→STATE), 4=read (NODE string → VAL/TYPE
+        or SVAL for strings), 5=write (NODE + VAL/TYPE), 6=namespace
+        index lookup (URL string reused as the URI → IDX). STATUS
+        carries the service return code, ERRID its positive form.
+        Numeric values widen into VAL (LREAL); signed/unsigned 64-bit
+        nodes lose precision above 2^53 — an honest LREAL limit. */
+        "FB_UaClient" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "URL", Type::Str { cap: 127 });
+            push(&mut off, "NODE", Type::Str { cap: 255 });
+            push(&mut off, "SVAL", Type::Str { cap: 255 });
+            push(&mut off, "VAL", Type::Real { bits: 64 });
+            push(&mut off, "VARTYPE", udint());
+            push(&mut off, "STATE", dint());
+            push(&mut off, "IDX", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

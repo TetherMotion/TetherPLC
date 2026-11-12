@@ -1616,3 +1616,29 @@ reserved so the 64-byte ABI is unchanged), `FB_NciChan` ops 5-9, and
 chained execution, R-param roundtrip, zero-shift, M8 pause ->
 confirm -> resume). Cyclic-channel offset tables remain an honest
 gap.
+
+## D-IMPL-59 — OPC UA via libopen62541, opt-in like the other special features
+
+TwinCAT's OPC UA surface is a client (`Tc3_PlcOpenOpcUa`/`TF6100`) over
+a real UASC stack. Rather than hand-roll the binary protocol, the
+service uses **libopen62541** — the maintained stack — wired opt-in like
+Tether's other special features (`-DTPLC_ENABLE_OPCUA`, auto-detected,
+silently inert when `libopen62541-dev` is absent; `getService` then
+returns nullptr, honest absence rather than a stub).
+
+Split: Tether hosts the *server* (`tether_io_motion_server --opcua`,
+open62541 folding the motion Registry into `ns=2;s=<name>` nodes), the
+PLC hosts the *client* (`tplc-opcua` = an `OpcUaService` holding up to
+8 `UA_Client` sessions; `FB_UaClient` ops 1-6; `FB_UA_*` wrappers in
+`tc2_opcua.st`). Node ids travel as text (`ns=2;s=name`, `i=85`) parsed
+per call — TwinCAT's `UA_NodeGetHandle` handle-table is collapsed into
+per-call resolution (same semantics, no handle round trip). Numeric
+values widen into `LREAL` (64-bit nodes lose precision above 2^53 —
+documented); strings into `STRING[255]`.
+
+Verified end-to-end with a real open62541 client on both sides:
+the server was validated first (connect/read/write/browse, 79 nodes),
+then `tc2_opcua_io` drives the PLC client through connect → session →
+read `nc.state` → write+read `nc.scale` → ns-index → disconnect.
+Gaps kept honest: no browse/node-handle/subscription/method wrappers
+yet.
