@@ -1910,6 +1910,7 @@ the value into the result member named after the pou first (same
 convention as the function-call site reads it).
 
 Regression coverage: tc3_analytics e2e exercises Enable:=FALSE →
-RETURN → rc=0. Secondary finding: calls to undeclared FB instances
-(`sts()` after a rename missed the call site) produce a runtime
--22 rather than a compile error — worth a frontend diagnostic.
+RETURN → rc=0. (An earlier theory that calls to undeclared FB
+instances compile silently was wrong — sema emits UNKNOWN_NAME
+correctly; the observed -22 run was a stale package and was the
+RETURN bug itself.)
