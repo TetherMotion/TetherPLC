@@ -52,6 +52,7 @@ add_library(tplc_host STATIC
   runtime/host/src/NciIoService.cpp
   runtime/host/src/OpcUaService.cpp
   runtime/host/src/EipService.cpp
+  runtime/host/src/Iec61850Service.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
 target_link_libraries(tplc_host PUBLIC tplc_image dl)
@@ -103,6 +104,56 @@ if(TPLC_ENABLE_OPCUA)
     message(STATUS "tplc_host: OPC UA client via libopen62541")
   else()
     message(STATUS "tplc_host: no libopen62541 — tplc-opcua inactive")
+  endif()
+endif()
+
+# IEC 61850 MMS client service (tplc-iec61850, C7): optional — without
+# libiec61850 the service compiles inert and getService("tplc-iec61850")
+# returns nullptr.  -DTPLC_ENABLE_IEC61850=OFF forces it off.  The
+# library is auto-downloaded and built like the other optional deps.
+option(TPLC_ENABLE_IEC61850
+  "Enable the tplc-iec61850 IEC 61850 MMS client service (libiec61850)" ON)
+if(TPLC_ENABLE_IEC61850)
+  find_library(TPLC_IEC61850_LIBRARY NAMES iec61850)
+  find_path(TPLC_IEC61850_INCLUDE_DIR NAMES iec61850_client.h)
+  if(NOT TPLC_IEC61850_LIBRARY OR NOT TPLC_IEC61850_INCLUDE_DIR)
+    # not installed — auto-download and build it
+    include(FetchContent)
+    FetchContent_Declare(libiec61850
+      GIT_REPOSITORY https://github.com/mz-automation/libiec61850.git
+      GIT_TAG        v1.5.3
+      GIT_SHALLOW    TRUE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(libiec61850)
+    if(TARGET iec61850)
+      set(TPLC_IEC61850_BUILT TRUE)
+      message(STATUS "tplc_host: IEC 61850 client via fetched libiec61850")
+    endif()
+  else()
+    set(TPLC_IEC61850_BUILT TRUE)
+    message(STATUS "tplc_host: IEC 61850 client via system libiec61850")
+  endif()
+  if(TPLC_IEC61850_BUILT)
+    target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_IEC61850)
+    target_link_libraries(tplc_host PUBLIC iec61850)
+    set(TPLC_IEC61850_INCDIRS
+      ${libiec61850_SOURCE_DIR}/src/iec61850/inc
+      ${libiec61850_SOURCE_DIR}/src/mms/inc
+      ${libiec61850_SOURCE_DIR}/src/common/inc
+      ${libiec61850_SOURCE_DIR}/src/logging
+      ${libiec61850_SOURCE_DIR}/hal/inc)
+    target_include_directories(tplc_host PRIVATE ${TPLC_IEC61850_INCDIRS})
+    if(TPLC_IEC61850_INCLUDE_DIR)
+      target_include_directories(tplc_host PRIVATE ${TPLC_IEC61850_INCLUDE_DIR})
+    endif()
+    # the fake IED server for the e2e reuses the same library
+    add_executable(iec61850_ied_fake tests/compat/iec61850_ied_fake.cpp)
+    target_link_libraries(iec61850_ied_fake PRIVATE iec61850)
+    target_include_directories(iec61850_ied_fake PRIVATE ${TPLC_IEC61850_INCDIRS})
+    set(TPLC_IEC61850_FAKE_TARGET iec61850_ied_fake)
+  else()
+    message(STATUS "tplc_host: no libiec61850 — tplc-iec61850 inactive")
   endif()
 endif()
 

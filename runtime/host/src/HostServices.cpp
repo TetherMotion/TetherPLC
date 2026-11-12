@@ -129,6 +129,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
     if (len == 8 && memcmp(name, "tplc-eip", 8) == 0) {
         return const_cast<TplcEipService*>(&eip_.table());
     }
+    if (len == 12 && memcmp(name, "tplc-iec61850", 12) == 0) {
+        /* IEC 61850 MMS client: only when built with libiec61850. */
+        if (iec61850_.active())
+            return const_cast<TplcIec61850Service*>(&iec61850_.table());
+        return nullptr;
+    }
     return nullptr;
 }
 

@@ -1175,6 +1175,38 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
         }
+        /* FB_Iec61850 — tplc-iec61850 service bridge (IEC 61850 MMS
+        client via libiec61850). Synchronous op dispatch like FB_Eip:
+        set OP + fields and call. OP 1=connect+associate (HOST/PORT →
+        HANDLE), 2=close+release, 3=status (→ STATE/INVOKE/LASTERR),
+        4=read (DOMAIN/ITEM → VAL), 5=write (DOMAIN/ITEM + VAL),
+        6=GetNameList (DOMAIN → VAL). STATUS carries the service
+        return code, ERRID its positive form. Data attributes are
+        addressed by domain (LD) + item (VariableAccess name); values
+        travel as bounded STRING[255] (numerics as their ASCII repr,
+        structured as their MmsValue string). */
+        "FB_Iec61850" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "HOST", Type::Str { cap: 63 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "DOMAIN", Type::Str { cap: 63 });
+            push(&mut off, "ITEM", Type::Str { cap: 127 });
+            push(&mut off, "VAL", Type::Str { cap: 255 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "INVOKE", udint());
+            push(&mut off, "LASTERR", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+        }
         _ => return None,
     }
     let align = 8u64;

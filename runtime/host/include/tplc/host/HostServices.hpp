@@ -10,6 +10,7 @@
 #include <tplc/host/BacnetService.hpp>
 #include <tplc/host/EipService.hpp>
 #include <tplc/host/FtpService.hpp>
+#include <tplc/host/Iec61850Service.hpp>
 #include <tplc/host/Iec870Service.hpp>
 #include <tplc/host/ModbusService.hpp>
 #include <tplc/host/MotionIoService.hpp>
@@ -98,6 +99,8 @@ private:
     OpcUaService  opcua_;
     /* EtherNet/IP explicit-messaging client; always available. */
     EipService    eip_;
+    /* IEC 61850 MMS client; inert when built without libiec61850. */
+    Iec61850Service iec61850_;
 };
 
 } /* namespace tplc */

@@ -4622,3 +4622,176 @@ pub unsafe extern "C" fn __tplc_rt_FB_Eip(this: *mut u8, ctx: *mut u8) -> i32 {
     }
     0
 }
+
+// ---------------------------------------------------------------------------
+// FB_Iec61850 — IEC 61850 MMS client over tplc-iec61850 (libiec61850).
+// ---------------------------------------------------------------------------
+
+// FB_Iec61850 member offsets (see builtin_fb_layout("FB_Iec61850")).
+// Strings are len-prefixed: HOST u8len@8+data@9 cap63, DOMAIN
+// u8len@76+data@77 cap63, ITEM u8len@140+data@141 cap127, VAL
+// u8len@268+data@269 cap255.
+const IEC_OP: usize = 0;
+const IEC_HANDLE: usize = 4;
+const IEC_HOST_LEN: usize = 8;
+const IEC_HOST: usize = 9;
+const IEC_PORT: usize = 72;
+const IEC_DOMAIN_LEN: usize = 76;
+const IEC_DOMAIN: usize = 77;
+const IEC_ITEM_LEN: usize = 140;
+const IEC_ITEM: usize = 141;
+const IEC_VAL_LEN: usize = 268;
+const IEC_VAL: usize = 269;
+const IEC_STATE: usize = 524;
+const IEC_INVOKE: usize = 528;
+const IEC_LASTERR: usize = 532;
+const IEC_STATUS: usize = 536;
+const IEC_ERRID: usize = 540;
+
+// tplc-iec61850 service vtable offsets (TplcIec61850Service):
+// struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
+const IEC_SVC_CONNECT: usize = 16;
+const IEC_SVC_CLOSE: usize = 24;
+const IEC_SVC_STATUS: usize = 32;
+const IEC_SVC_READ: usize = 40;
+const IEC_SVC_WRITE: usize = 48;
+const IEC_SVC_GETNAMELIST: usize = 56;
+
+/// service lookup for "tplc-iec61850" (12 chars)
+unsafe fn iec_service(ctx: *const u8) -> *const u8 {
+    let svcs = (ctx.add(CTX_SVC) as *const *const u8).read();
+    if svcs.is_null() {
+        return core::ptr::null();
+    }
+    let host = (svcs.add(SVC_HOST) as *const *mut u8).read();
+    let gs = core::mem::transmute::<usize, unsafe extern "C" fn(*mut u8, *const u8, u32) -> *mut u8>(
+        (svcs.add(SVC_GET_SERVICE) as *const usize).read(),
+    );
+    gs(host, c"tplc-iec61850".as_ptr() as *const u8, 12) as *const u8
+}
+
+#[inline]
+unsafe fn iecfn(svc: *const u8, off: usize) -> usize {
+    (svc.add(off) as *const usize).read()
+}
+
+type FIecConnect = unsafe extern "C" fn(*const u8, *const u8, u32, *mut u32) -> i32;
+type FIecClose = unsafe extern "C" fn(*const u8, u32) -> i32;
+type FIecStatus = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
+type FIecRead = unsafe extern "C" fn(*const u8, u32, *const u8, *const u8, *mut u8, u32) -> i32;
+type FIecWrite = unsafe extern "C" fn(*const u8, u32, *const u8, *const u8, *const u8, u32) -> i32;
+type FIecGetNameList = unsafe extern "C" fn(*const u8, u32, *const u8, *mut u8, u32) -> i32;
+
+/// `__tplc_rt_FB_Iec61850` — synchronous op dispatch over the
+/// tplc-iec61850 MMS client. OP: 1=connect+associate (HOST/PORT ->
+/// HANDLE), 2=close+release, 3=status (-> STATE/INVOKE/LASTERR),
+/// 4=read (DOMAIN/ITEM -> VAL), 5=write (DOMAIN/ITEM + VAL),
+/// 6=GetNameList (DOMAIN -> VAL). STATUS carries the service return
+/// code, ERRID its positive form.
+/// # Safety
+/// `this` must point at a valid instance block of the documented
+/// layout; `ctx` at a live `TplcCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i32 {
+    let op = ru32(this.add(IEC_OP));
+    wi32(this.add(IEC_STATUS), 0);
+    wu32(this.add(IEC_ERRID), 0);
+    let svc = iec_service(ctx);
+    if svc.is_null() {
+        wi32(this.add(IEC_STATUS), -2);
+        wu32(this.add(IEC_ERRID), 99);
+        return 0;
+    }
+    match op {
+        1 => {
+            let mut buf = [0u8; 64];
+            uacstr(this, IEC_HOST_LEN, IEC_HOST, 63, buf.as_mut_ptr());
+            let f: FIecConnect = core::mem::transmute(iecfn(svc, IEC_SVC_CONNECT));
+            let mut h: u32 = 0;
+            let rc = f(svc, buf.as_ptr(), ru32(this.add(IEC_PORT)), &mut h);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc == 0 {
+                wu32(this.add(IEC_HANDLE), h);
+            }
+        }
+        2 => {
+            let f: FIecClose = core::mem::transmute(iecfn(svc, IEC_SVC_CLOSE));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)));
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+        }
+        3 => {
+            // TplcIec61850Status (32 bytes): state@0 invoke_id@4 last_error@8
+            let mut st = [0u8; 32];
+            let f: FIecStatus = core::mem::transmute(iecfn(svc, IEC_SVC_STATUS));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)), st.as_mut_ptr());
+            wi32(this.add(IEC_STATUS), rc);
+            if rc == 0 {
+                let rd = |off: usize| -> i32 {
+                    let mut b = [0u8; 4];
+                    core::ptr::copy_nonoverlapping(st.as_ptr().add(off), b.as_mut_ptr(), 4);
+                    i32::from_le_bytes(b)
+                };
+                wi32(this.add(IEC_STATE), rd(0));
+                wu32(this.add(IEC_INVOKE), rd(4) as u32);
+                wu32(this.add(IEC_LASTERR), rd(8) as u32);
+            } else {
+                wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            }
+        }
+        4 => {
+            let mut dbuf = [0u8; 64];
+            let mut ibuf = [0u8; 128];
+            uacstr(this, IEC_DOMAIN_LEN, IEC_DOMAIN, 63, dbuf.as_mut_ptr());
+            uacstr(this, IEC_ITEM_LEN, IEC_ITEM, 127, ibuf.as_mut_ptr());
+            let mut out = [0u8; 255];
+            let f: FIecRead = core::mem::transmute(iecfn(svc, IEC_SVC_READ));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       dbuf.as_ptr(), ibuf.as_ptr(), out.as_mut_ptr(), 255);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc >= 0 {
+                let n = (rc as usize).min(255);
+                core::ptr::copy_nonoverlapping(out.as_ptr(), this.add(IEC_VAL), n);
+                *this.add(IEC_VAL_LEN) = n as u8;
+                *this.add(IEC_VAL + n) = 0;
+            }
+        }
+        5 => {
+            let mut dbuf = [0u8; 64];
+            let mut ibuf = [0u8; 128];
+            uacstr(this, IEC_DOMAIN_LEN, IEC_DOMAIN, 63, dbuf.as_mut_ptr());
+            uacstr(this, IEC_ITEM_LEN, IEC_ITEM, 127, ibuf.as_mut_ptr());
+            let n = (*this.add(IEC_VAL_LEN) as usize).min(255);
+            let f: FIecWrite = core::mem::transmute(iecfn(svc, IEC_SVC_WRITE));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       dbuf.as_ptr(), ibuf.as_ptr(),
+                       this.add(IEC_VAL), n as u32);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+        }
+        6 => {
+            let mut dbuf = [0u8; 64];
+            uacstr(this, IEC_DOMAIN_LEN, IEC_DOMAIN, 63, dbuf.as_mut_ptr());
+            let mut out = [0u8; 255];
+            let f: FIecGetNameList = core::mem::transmute(iecfn(svc, IEC_SVC_GETNAMELIST));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       dbuf.as_ptr(), out.as_mut_ptr(), 255);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc >= 0 {
+                let mut n = 0usize;
+                while n < 255 && out[n] != 0 { n += 1; }
+                core::ptr::copy_nonoverlapping(out.as_ptr(), this.add(IEC_VAL), n);
+                *this.add(IEC_VAL_LEN) = n as u8;
+                *this.add(IEC_VAL + n) = 0;
+            }
+        }
+        _ => {
+            wi32(this.add(IEC_STATUS), -1);
+            wu32(this.add(IEC_ERRID), 1);
+        }
+    }
+    0
+}
