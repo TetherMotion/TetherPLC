@@ -1769,3 +1769,16 @@ is a snapshot the scan emits at its own cadence.  RDM and receive
 are honest gaps.  DALI/EIB/LON/MBus/EnOcean follow the same
 opt-in-serial pattern, each a small service + builtin + wrappers
 + PTY-fake e2e.
+
+## D-IMPL-67 — C8 measurement/control as pure-ST FBs
+
+**Decision.**  The C8 measurement/control libraries are pure-ST
+compat FBs — no service, no hardware.  Filter blocks take
+`CycleTime` as a VAR_INPUT (TwinCAT's T_PLC_US pattern) rather
+than a runtime cycle-time builtin, keeping them honest and
+portable.  `FB_PID` uses back-calculated anti-reset-windup on the
+integrator.
+
+**Consequences.**  `FB_Limit`/`PT1`/`Integrator`/`Differentiator`/
+`Average`/`Ramp`/`PID` are the first tranche; PT2/PT3, dead-time,
+statistics and the full `FB_CTRL_*` catalog are honest gaps.

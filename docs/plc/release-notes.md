@@ -609,3 +609,16 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   RDM and receive are gaps; the PLC-side image is a snapshot the
   scan emits at its own cadence.  DALI/EIB/LON/MBus/EnOcean follow
   the same opt-in-serial pattern.
+
+### C8 tranche 1 — Tc2_Filter measurement/control (pure ST)
+
+  `compat/tc2/tc2_filter.st` is the Tc2_Filter surface — pure-ST
+  measurement/control blocks, no service or hardware: `FB_Limit`
+  (clamp), `FB_PT1` (first-order lag), `FB_Integrator` (I element),
+  `FB_Differentiator` (D element), `FB_Average` (running average),
+  `FB_Ramp` (rate-limited slew), and `FB_PID` (PID controller with
+  back-calculated anti-reset-windup on I).  Each takes `CycleTime`
+  as a VAR_INPUT (the caller's scan period, TwinCAT's T_PLC_US
+  pattern).  `tc2_filter_io` verifies clamp/pt1-settle/pid-drive/
+  average/ramp at `0x1f`.  PT2/PT3, dead-time, statistics and the
+  full `FB_CTRL_*` catalog are honest gaps for a later tranche.
