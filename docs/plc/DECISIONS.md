@@ -1816,3 +1816,12 @@ the caller (or a simulated plant in the e2e).
 
 **Consequences.**  The loop is real; auto-tuning, multi-zone and
 the full `FB_Temp*` catalog are honest gaps.
+
+## D-IMPL-71 — Weighing as pure-ST load-cell blocks
+
+**Decision.**  `FB_Weigh` is a pure-ST weighing loop — PT1 filter,
+tare, net, stability band and dosing feed outputs.  The cell
+signal lives in the caller.
+
+**Consequences.**  Tare/net/stable/dosing verified; multi-range,
+auto-calibration and belt-weighing are honest gaps.

@@ -657,3 +657,13 @@ no measurable scan pause; watchdog stall→fault ≈ hang-timeout +
   simulated plant (heater -> lag -> sensor) and verifies
   heating/convergence at `0x1f`.  Auto-tuning and multi-zone are
   gaps.
+
+### C8 tranche 5 — Weighing (pure ST)
+
+  `compat/tc2/tc2_weighing.st` is the Tc2_Weighing surface —
+  load-cell weighing in pure-ST: PT1 filter on the raw signal,
+  tare capture (gross -> net), stability detection (weight within
+  a band for N cycles), and dosing setpoint with coarse->fine->
+  done feed outputs.  `tc2_weighing_io` simulates a filling cell
+  and verifies tare/net/dose/stable at `0x1f`.  Multi-range,
+  auto-calibration and belt-weighing are gaps.
