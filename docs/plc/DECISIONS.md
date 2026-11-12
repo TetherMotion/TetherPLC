@@ -1584,3 +1584,35 @@ PATH cap 127); larger programs load by server-side path. `nc.cmd`
 values are `GCode::InterpreterState`-aligned for `nc.state`
 reporting; `nc.errcode` carries channel errors (1 bad cmd, 2 bad
 state, 3 compile, 4 plan build, 5 unsupported segment type).
+
+## D-IMPL-58 — NC FIFO, M-function handshake, and R-params live on the channel
+
+TwinCAT NCI's FIFO model (blocks appended while the channel runs)
+and auxiliary surface (M-function handshake, R-parameters, zero-shift)
+map onto the `nc.*` channel, not into the PLC:
+
+- `nc.fifo` queues one block per write after a trial compile. The
+  channel chains queued entries as continuation plans, each anchored
+  at the last commanded position — a FIFO-only program also runs from
+  Idle. `nc.fifolen`/`nc.fifoseq` report depth and consumption.
+- `nc.mfunc`/`nc.confirm` implement the handshake: the channel scans
+  the executing block's source text, pauses on M-codes outside the
+  program-control set (M0/M1/M2/M30 stay interpreter-owned) and
+  exposes the pending code until `nc.confirm` resumes it.
+- `nc.ridx`/`nc.rval` write numbered registers and `nc.zsx/y/z` a
+  `G92` offset; both are injected as prefix lines at compile, which
+  makes the interpreter genuinely evaluate them (R-params land in
+  `VariableSystem`) while being stripped from visible block/line
+  numbering. In the builder, `PlanningSegment.blockIndex` now maps
+  segments to real source blocks via `mseg.lineNumber` (it was a
+  segment ordinal), fixing `nc.line` under multi-segment blocks.
+
+PLC side: `tplc-nci` gains `nci_fifo`/`nci_confirm`/`nci_rparam`/
+`nci_zshift` (status struct carves `mfunc`/`fifolen`/`fifoseq` out of
+reserved so the 64-byte ABI is unchanged), `FB_NciChan` ops 5-9, and
+`FB_ItpFiFoWrite`/`FB_ItpConfirmHsk`/`FB_ItpWriteRParam`/
+`FB_ItpReadRParam`/`FB_ItpZeroShift` wrappers. Verified end-to-end:
+`tc2_nci_gcode_io` mask `0x7fffff` (FIFO queue, run-from-idle,
+chained execution, R-param roundtrip, zero-shift, M8 pause ->
+confirm -> resume). Cyclic-channel offset tables remain an honest
+gap.

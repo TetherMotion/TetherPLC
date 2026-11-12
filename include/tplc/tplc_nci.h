@@ -62,7 +62,10 @@ typedef struct TplcNciStatus {
     uint32_t total;        /* parsed block count                   */
     int32_t  progress_ms;  /* plan time elapsed, milliseconds      */
     int32_t  duration_ms;  /* total plan duration, milliseconds    */
-    uint32_t reserved[9];
+    uint32_t mfunc;        /* pending M-code, 0 = none             */
+    uint32_t fifolen;      /* queued FIFO blocks                   */
+    uint32_t fifoseq;      /* FIFO entries consumed this run       */
+    uint32_t reserved[6];
 } TplcNciStatus;           /* 64 bytes                             */
 
 typedef struct TplcNciService {
@@ -79,6 +82,20 @@ typedef struct TplcNciService {
     int32_t (*nci_command)(void* svc, uint32_t chan, uint32_t cmd);
     /* snapshot channel state. */
     int32_t (*nci_status)(void* svc, uint32_t chan, TplcNciStatus* out);
+    /* append one G-code block to the channel FIFO queue (nc.fifo). */
+    int32_t (*nci_fifo)(void* svc, uint32_t chan,
+                      const char* text, uint32_t len);
+    /* confirm a pending M-function (nc.confirm); resumes a held
+       channel. */
+    int32_t (*nci_confirm)(void* svc, uint32_t chan);
+    /* read/write one R-parameter register (nc.ridx/nc.rval);
+       write!=0 stores *value, else reads into *value. */
+    int32_t (*nci_rparam)(void* svc, uint32_t chan, uint32_t idx,
+                          int32_t write, double* value);
+    /* read/write the zero-shift (G92) offsets; write!=0 stores the
+       three values, else reads them. Applied on next compile. */
+    int32_t (*nci_zshift)(void* svc, uint32_t chan, int32_t write,
+                          double* xyz);
 } TplcNciService;
 
 #ifdef __cplusplus

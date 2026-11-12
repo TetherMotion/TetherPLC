@@ -401,6 +401,26 @@ live attach over tether_io, and the safety/security envelope.
   finish, duration, stop, reset; plus direct-probe step/pause/
   resume. Remaining gaps: FIFO queue, M-function handshake,
   R-params/zero-shift, cyclic-channel offsets (D-IMPL-57).
+- **NCI FIFO + M-func + R-params (tranche 23)**: the `nc.*` channel
+  grew a FIFO block queue (`nc.fifo` append, trial-compiled, chained
+  continuation plans anchored at the last commanded position, runs
+  FIFO-only from Idle; `nc.fifolen`/`nc.fifoseq` status), an
+  M-function handshake (channel pauses on M-codes outside the
+  program-control set with `nc.mfunc` pending; `nc.confirm` resumes),
+  R-parameters (`nc.ridx`/`nc.rval` injected as `#n = v` prefix
+  lines into `VariableSystem`), and zero-shift (`nc.zsx/y/z` as a
+  `G92` prefix); prefixes are stripped from visible block/line
+  numbering. `PlanningSegment.blockIndex` now maps segments to real
+  source blocks via `mseg.lineNumber`, fixing `nc.line` when one
+  block emits several segments. PLC side: `tplc-nci` gains
+  `nci_fifo`/`nci_confirm`/`nci_rparam`/`nci_zshift` (status struct
+  carves `mfunc`/`fifolen`/`fifoseq` out of `reserved`, 64-byte ABI
+  unchanged), `FB_NciChan` ops 5-9, and `FB_ItpFiFoWrite`/
+  `FB_ItpConfirmHsk`/`FB_ItpWriteRParam`/`FB_ItpReadRParam`/
+  `FB_ItpZeroShift` wrappers; `FB_ItpStatus` exposes
+  `MFunc`/`FifoLen`/`FifoSeq`. `tc2_nci_gcode_io` now verifies the
+  full surface at mask `0x7fffff` (D-IMPL-58). Cyclic-channel
+  offset tables remain a gap.
 - **Runtime**: `tether-plc --image IMG --package PKG --ctl SOCK` —
   cyclic tasks to 4 kHz measured, SHM process image, per-instance
   journal, optional `--authz`, `--hang-timeout-ms`, `--retain`.

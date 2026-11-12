@@ -37,6 +37,8 @@ struct NciIoService::Impl {
     std::unique_ptr<TetherIOClient> client;
     uint64_t prog = 0, progPath = 0, cmd = 0, state = 0, line = 0,
              total = 0, errcode = 0, progress = 0, duration = 0;
+    uint64_t fifo = 0, fifolen = 0, fifoseq = 0, mfunc = 0, confirm = 0;
+    uint64_t ridx = 0, rval = 0, zsx = 0, zsy = 0, zsz = 0;
     uint64_t timeParamId = 0;
 };
 
@@ -69,6 +71,16 @@ NciIoService::NciIoService(ClockFn clock, void* clock_ctx)
         else if (e.name == "nc.errcode")    impl_->errcode = e.id;
         else if (e.name == "nc.progress")   impl_->progress = e.id;
         else if (e.name == "nc.duration")   impl_->duration = e.id;
+        else if (e.name == "nc.fifo")       impl_->fifo = e.id;
+        else if (e.name == "nc.fifolen")    impl_->fifolen = e.id;
+        else if (e.name == "nc.fifoseq")    impl_->fifoseq = e.id;
+        else if (e.name == "nc.mfunc")      impl_->mfunc = e.id;
+        else if (e.name == "nc.confirm")    impl_->confirm = e.id;
+        else if (e.name == "nc.ridx")       impl_->ridx = e.id;
+        else if (e.name == "nc.rval")       impl_->rval = e.id;
+        else if (e.name == "nc.zsx")        impl_->zsx = e.id;
+        else if (e.name == "nc.zsy")        impl_->zsy = e.id;
+        else if (e.name == "nc.zsz")        impl_->zsz = e.id;
     }
     /* The channel is present only when the server exposes nc.* */
     if (!impl_->prog || !impl_->cmd || !impl_->state ||
@@ -91,6 +103,19 @@ NciIoService::NciIoService(ClockFn clock, void* clock_ctx)
     };
     svc_.nci_status = [](void* s, uint32_t ch, TplcNciStatus* o) {
         return self(s)->status(s, ch, o);
+    };
+    svc_.nci_fifo = [](void* s, uint32_t ch, const char* t, uint32_t l) {
+        return self(s)->fifo(s, ch, t, l);
+    };
+    svc_.nci_confirm = [](void* s, uint32_t ch) {
+        return self(s)->confirm(s, ch);
+    };
+    svc_.nci_rparam = [](void* s, uint32_t ch, uint32_t i, int32_t w,
+                         double* v) {
+        return self(s)->rparam(s, ch, i, w, v);
+    };
+    svc_.nci_zshift = [](void* s, uint32_t ch, int32_t w, double* v) {
+        return self(s)->zshift(s, ch, w, v);
     };
     active_ = true;
 }
@@ -144,12 +169,16 @@ int32_t NciIoService::status(void*, uint32_t chan, TplcNciStatus* out) {
     };
     uint8_t st = 0;
     uint32_t line = 0, total = 0, err = 0;
+    uint32_t mfunc = 0, fifolen = 0, fifoseq = 0;
     double prog = 0.0, dur = 0.0;
     if (!rd(impl_->state, &st, 1) || !rd(impl_->line, &line, 4) ||
         !rd(impl_->total, &total, 4) || !rd(impl_->errcode, &err, 4))
         return TPLC_NCI_E_IO;
     rd(impl_->progress, &prog, 8);
     rd(impl_->duration, &dur, 8);
+    rd(impl_->mfunc, &mfunc, 4);
+    rd(impl_->fifolen, &fifolen, 4);
+    rd(impl_->fifoseq, &fifoseq, 4);
     out->state = st;
     out->finished = (st == TPLC_NCI_STATE_FINISHED ||
                      st == TPLC_NCI_STATE_ERROR ||
@@ -157,8 +186,64 @@ int32_t NciIoService::status(void*, uint32_t chan, TplcNciStatus* out) {
     out->errcode = int32_t(err);
     out->line = line;
     out->total = total;
+    out->mfunc = mfunc;
+    out->fifolen = fifolen;
+    out->fifoseq = fifoseq;
     out->progress_ms = int32_t(prog * 1000.0);
     out->duration_ms = int32_t(dur * 1000.0);
+    return TPLC_NCI_OK;
+}
+
+int32_t NciIoService::fifo(void*, uint32_t chan, const char* text,
+                           uint32_t len) {
+    if (!impl_ || !text || chan >= TPLC_NCI_CHAN_MAX)
+        return TPLC_NCI_E_PARAM;
+    syncTime();
+    auto r = impl_->client->setParamVar(impl_->fifo, text, len);
+    return r ? TPLC_NCI_OK : TPLC_NCI_E_IO;
+}
+
+int32_t NciIoService::confirm(void*, uint32_t chan) {
+    if (!impl_ || chan >= TPLC_NCI_CHAN_MAX) return TPLC_NCI_E_PARAM;
+    syncTime();
+    const uint8_t one = 1;
+    auto r = impl_->client->setParam(impl_->confirm, &one, 1);
+    return r ? TPLC_NCI_OK : TPLC_NCI_E_IO;
+}
+
+int32_t NciIoService::rparam(void*, uint32_t chan, uint32_t idx,
+                             int32_t write, double* value) {
+    if (!impl_ || !value || chan >= TPLC_NCI_CHAN_MAX)
+        return TPLC_NCI_E_PARAM;
+    syncTime();
+    if (!impl_->client->setParam(impl_->ridx, &idx, 4))
+        return TPLC_NCI_E_IO;
+    if (write)
+        return impl_->client->setParam(impl_->rval, value, 8)
+            ? TPLC_NCI_OK : TPLC_NCI_E_IO;
+    auto v = impl_->client->getParam(impl_->rval);
+    if (!v || v->size() < 8) return TPLC_NCI_E_IO;
+    std::memcpy(value, v->data(), 8);
+    return TPLC_NCI_OK;
+}
+
+int32_t NciIoService::zshift(void*, uint32_t chan, int32_t write,
+                             double* xyz) {
+    if (!impl_ || !xyz || chan >= TPLC_NCI_CHAN_MAX)
+        return TPLC_NCI_E_PARAM;
+    syncTime();
+    const uint64_t ids[3] = {impl_->zsx, impl_->zsy, impl_->zsz};
+    if (write) {
+        for (int i = 0; i < 3; ++i)
+            if (!impl_->client->setParam(ids[i], &xyz[i], 8))
+                return TPLC_NCI_E_IO;
+        return TPLC_NCI_OK;
+    }
+    for (int i = 0; i < 3; ++i) {
+        auto v = impl_->client->getParam(ids[i]);
+        if (!v || v->size() < 8) return TPLC_NCI_E_IO;
+        std::memcpy(&xyz[i], v->data(), 8);
+    }
     return TPLC_NCI_OK;
 }
 
@@ -183,6 +268,18 @@ int32_t NciIoService::command(void*, uint32_t, uint32_t) {
     return TPLC_NCI_E_STATE;
 }
 int32_t NciIoService::status(void*, uint32_t, TplcNciStatus*) {
+    return TPLC_NCI_E_STATE;
+}
+int32_t NciIoService::fifo(void*, uint32_t, const char*, uint32_t) {
+    return TPLC_NCI_E_STATE;
+}
+int32_t NciIoService::confirm(void*, uint32_t) {
+    return TPLC_NCI_E_STATE;
+}
+int32_t NciIoService::rparam(void*, uint32_t, uint32_t, int32_t, double*) {
+    return TPLC_NCI_E_STATE;
+}
+int32_t NciIoService::zshift(void*, uint32_t, int32_t, double*) {
     return TPLC_NCI_E_STATE;
 }
 void NciIoService::syncTime() {}

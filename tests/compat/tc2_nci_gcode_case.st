@@ -14,6 +14,20 @@ VAR
     stStop : BOOL;
     rsEx   : BOOL;
     waitN  : INT;
+    fwA    : FB_ItpFiFoWrite;
+    fwB    : FB_ItpFiFoWrite;
+    cnf    : FB_ItpConfirmHsk;
+    rpw    : FB_ItpWriteRParam;
+    rpr    : FB_ItpReadRParam;
+    zs     : FB_ItpZeroShift;
+    fwAEx  : BOOL;
+    fwBEx  : BOOL;
+    cnfEx  : BOOL;
+    rpwEx  : BOOL;
+    rprEx  : BOOL;
+    zsEx   : BOOL;
+    rpDone : BOOL;
+    m8Seen : BOOL;
 END_VAR
 
 // The 7-block program lives on the server host (the shell script
@@ -30,10 +44,16 @@ waitN := waitN + 1;
 
 ldtEx   := (st = 1) AND (waitN = 2);
 ldfEx   := (st = 4) AND (waitN = 2);
-stStart := (st = 6) AND (waitN = 2);
+stStart := ((st = 6) OR (st = 14) OR (st = 19)) AND (waitN = 2);
 stStop  := (st = 10) AND (waitN = 2);
-rsEx    := (st = 3) OR (st = 11);
+rsEx    := (st = 3) OR (st = 11) OR (st = 16) OR (st = 21);
 rsEx    := rsEx AND (waitN = 2);
+fwAEx   := (st = 13) AND (waitN = 2);
+fwBEx   := (st = 13) AND (waitN = 3);
+rpwEx   := (st = 18) AND (waitN = 2);
+rprEx   := (st = 18) AND (waitN = 4);
+zsEx    := (st = 18) AND (waitN = 6);
+cnfEx   := (st = 19) AND (sts.MFunc = 8);
 
 sts(ChanId := 0);
 ldt(Execute := ldtEx, ChanId := 0,
@@ -42,6 +62,12 @@ ldf(Execute := ldfEx, ChanId := 0,
     PathName := '/tmp/tplc_nci_case.g');
 ss(Start := stStart, Stop := stStop, ChanId := 0);
 rst(Execute := rsEx, ChanId := 0);
+fwA(Execute := fwAEx, ChanId := 0, Block := 'G1 X2 F600');
+fwB(Execute := fwBEx, ChanId := 0, Block := 'G1 X0 F600');
+cnf(Execute := cnfEx, ChanId := 0);
+rpw(Execute := rpwEx, ChanId := 0, Index := 100, Value := 42.5);
+rpr(Execute := rprEx, ChanId := 0, Index := 100);
+zs(Execute := zsEx, ChanId := 0, OffX := 5.0, OffY := 0.0, OffZ := 0.0);
 
 IF st = 1 THEN
     // inline text upload accepted
@@ -137,6 +163,65 @@ ELSIF st = 12 THEN
     IF sts.Valid AND (sts.State = 0) AND (sts.Total = 0) THEN
         mask := mask + 8192;                 // bit13: idle cleared
         st := 13;
+    END_IF;
+ELSIF st = 13 THEN
+    // two FIFO blocks queued (Done pulses are per-scan; the queue
+    // depth is the real check)
+    IF sts.Valid AND sts.FifoLen = 2 THEN
+        mask := mask + 16384;                // bit14: fifo queued
+        st := 14;
+    END_IF;
+ELSIF st = 14 THEN
+    // run the FIFO-only program from idle (stStart pulses above)
+    IF ss.Done THEN
+        st := 15;
+    END_IF;
+ELSIF st = 15 THEN
+    // both FIFO entries consumed, channel finished
+    IF sts.Valid AND (sts.State = 4) AND (sts.FifoSeq = 2) THEN
+        mask := mask + 32768;                // bit15: fifo chained
+        st := 16;
+    END_IF;
+ELSIF st = 16 THEN
+    IF rst.Done THEN
+        mask := mask + 65536;                // bit16: reset ok
+        st := 17;
+    END_IF;
+ELSIF st = 17 THEN
+    // M-func program: M8 pauses the channel with pending code
+    ldt(Execute := TRUE, ChanId := 0,
+        ProgText := 'G21 G90$NG1 X5 F600$NM8$NG1 X10$NM30$N');
+    IF ldt.Done THEN
+        st := 18;
+    END_IF;
+ELSIF st = 18 THEN
+    // R-param roundtrip + zero-shift write in the same wait window
+    IF rpw.Done THEN mask := mask + 131072; END_IF;   // bit17: rp write
+    IF rpr.Done AND (rpr.Value > 42.0) AND (rpr.Value < 43.0) THEN
+        mask := mask + 262144;                        // bit18: rp read
+        rpDone := TRUE;
+    END_IF;
+    IF zs.Done THEN mask := mask + 524288; END_IF;    // bit19: zshift
+    IF (mask AND 917504) = 917504 THEN
+        st := 19;
+    END_IF;
+ELSIF st = 19 THEN
+    // run the M-func program; it pauses on M8 (stStart pulses above)
+    IF sts.Valid AND (sts.MFunc = 8) AND NOT m8Seen THEN
+        mask := mask + 1048576;                // bit20: M8 pending
+        m8Seen := TRUE;
+    END_IF;
+    IF sts.Valid AND (sts.State = 4) AND
+       (sts.MFunc = 0) THEN
+        mask := mask + 2097152;                // bit21: resumed+done
+        st := 20;
+    END_IF;
+ELSIF st = 20 THEN
+    st := 21;
+ELSIF st = 21 THEN
+    IF rst.Done THEN
+        mask := mask + 4194304;                // bit22: reset ok
+        st := 22;
     END_IF;
 END_IF;
 

@@ -61,7 +61,7 @@ G
     for i in $(seq 0 900); do
         t=$((i * 10000000))
         if [ "$i" -eq 900 ]; then
-            echo "step $i time=$t in 0=00 expect 0=ff3f0000"
+            echo "step $i time=$t in 0=00 expect 0=ffff7f00"
         else
             echo "step $i time=$t in 0=00"
         fi

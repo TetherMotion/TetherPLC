@@ -46,6 +46,10 @@ private:
     int32_t loadFile(void*, uint32_t, const char*, uint32_t);
     int32_t command(void*, uint32_t, uint32_t);
     int32_t status(void*, uint32_t, TplcNciStatus*);
+    int32_t fifo(void*, uint32_t, const char*, uint32_t);
+    int32_t confirm(void*, uint32_t);
+    int32_t rparam(void*, uint32_t, uint32_t, int32_t, double*);
+    int32_t zshift(void*, uint32_t, int32_t, double*);
 
     static NciIoService* self(void* p) {
         return static_cast<NciIoService*>(p);

@@ -1101,6 +1101,14 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "NERR", dint());
             push(&mut off, "PROGRESS", dint());
             push(&mut off, "DURATION", dint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "RVAL", Type::Real { bits: 64 });
+            push(&mut off, "ZSX", Type::Real { bits: 64 });
+            push(&mut off, "ZSY", Type::Real { bits: 64 });
+            push(&mut off, "ZSZ", Type::Real { bits: 64 });
+            push(&mut off, "MFUNC", udint());
+            push(&mut off, "FIFOLEN", udint());
+            push(&mut off, "FIFOSEQ", udint());
         }
         _ => return None,
     }

@@ -457,6 +457,9 @@ VAR_OUTPUT
     IsEStop : BOOL;
     ProgressMs : DINT;
     DurationMs : DINT;
+    MFunc : UDINT;
+    FifoLen : UDINT;
+    FifoSeq : UDINT;
     Error : BOOL;
     ErrorID : UDINT;
 END_VAR
@@ -486,5 +489,205 @@ END_VAR
         IsEStop := (State = 6);
         ProgressMs := ch.PROGRESS;
         DurationMs := ch.DURATION;
+        MFunc := ch.MFUNC;
+        FifoLen := ch.FIFOLEN;
+        FifoSeq := ch.FIFOSEQ;
     END_IF;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpFiFoWrite: append a block to the channel FIFO queue ----
+// Rising edge on Execute writes Block (one G-code block) to nc.fifo;
+// queued entries execute in order after the active plan, anchored at
+// the last commanded position. Mirrors TwinCAT FiFoWrite semantics.
+FUNCTION_BLOCK FB_ItpFiFoWrite
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+    Block : STRING[127];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 5;
+        ch.CHAN := ChanId;
+        ch.PROG := Block;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpConfirmHsk: confirm a pending M-function ----
+// Rising edge confirms the M-code reported in sts.MFunc; the held
+// channel resumes. Mirrors TwinCAT ItpConfirmHsk.
+FUNCTION_BLOCK FB_ItpConfirmHsk
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 6;
+        ch.CHAN := ChanId;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpWriteRParam: write one R-parameter register ----
+// Rising edge stores Value into R-parameter Index on the channel;
+// applied on the next program compile. Mirrors ItpWriteRParams.
+FUNCTION_BLOCK FB_ItpWriteRParam
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+    Index : UDINT;
+    Value : LREAL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 7;
+        ch.CHAN := ChanId;
+        ch.AUX := Index;
+        ch.RVAL := Value;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpReadRParam: read one R-parameter register ----
+// Rising edge reads R-parameter Index into Value. Mirrors
+// ItpReadRParams.
+FUNCTION_BLOCK FB_ItpReadRParam
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+    Index : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    Value : LREAL;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 8;
+        ch.CHAN := ChanId;
+        ch.AUX := Index;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+            Value := ch.RVAL;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_ItpZeroShift: write the channel zero-shift offsets ----
+// Rising edge stores the XYZ offsets; applied as a G92 prefix on the
+// next program compile.
+FUNCTION_BLOCK FB_ItpZeroShift
+VAR_INPUT
+    Execute : BOOL;
+    ChanId : UDINT;
+    OffX : LREAL;
+    OffY : LREAL;
+    OffZ : LREAL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_NciChan;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 9;
+        ch.CHAN := ChanId;
+        ch.ZSX := OffX;
+        ch.ZSY := OffY;
+        ch.ZSZ := OffZ;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
 END_FUNCTION_BLOCK

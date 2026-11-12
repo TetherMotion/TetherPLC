@@ -1269,28 +1269,47 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 - **Status params**: `nc.state` (Idle/Ready/Running/Paused/
   Finished/Error/Stopped), `nc.line` (executing source line),
   `nc.total` (parsed blocks), `nc.errcode`, `nc.progress`/
-  `nc.duration` (plan seconds), `nc.scale`, `nc.feedovr`.
+  `nc.duration` (plan seconds), `nc.scale`, `nc.feedovr`,
+  `nc.fifolen`, `nc.fifoseq`, `nc.mfunc`, `nc.lastx/y/z`.
+- **FIFO**: `nc.fifo` accepts one G-code block per write (trial-
+  compiled; bad entries report the error immediately). Queued
+  blocks chain after the active plan, each re-anchored at the last
+  commanded position (`nc.lastx/y/z`) — a FIFO-only program also
+  runs from Idle. `nc.fifolen`/`nc.fifoseq` report queue depth and
+  entries consumed.
+- **M-functions**: blocks carrying an M-code outside the program-
+  control set (M0/M1/M2/M30 are interpreter-owned) pause the
+  channel with `nc.mfunc` set to the pending code; a write to
+  `nc.confirm` clears it and resumes.
+- **R-params / zero-shift**: `nc.ridx`+`nc.rval` read/write
+  numbered `#`-registers (mapped to the interpreter's
+  `VariableSystem` via injected `#n = v` prefix lines), `nc.zsx/
+  y/z` inject a `G92` prefix. Both apply on the next compile and
+  are stripped from the visible block/line numbering.
 - **PLC side**: `tplc-nci` service (`include/tplc/tplc_nci.h`) is
   served by `NciIoService` only when `TPLC_MOTION_IO` names an
   endpoint exposing `nc.*` — there is intentionally no in-process
   interpreter, so `getService("tplc-nci")` returns null without a
   Tether endpoint. `FB_NciChan` is the op-multiplexed builtin
-  (1=load text, 2=load file, 3=command, 4=status) and
+  (1=load text, 2=load file, 3=command, 4=status, 5=FIFO append,
+  6=confirm, 7/8=R-param write/read, 9=zero-shift) and
   `compat/tc2/tc2_nci.st` wraps it in TwinCAT `Itp*` shape:
   `FB_ItpLoadText`, `FB_ItpLoadProg`, `FB_ItpStartStop`,
-  `FB_ItpReset`, `FB_ItpEStop`, `FB_ItpStatus`.
+  `FB_ItpReset`, `FB_ItpEStop`, `FB_ItpStatus`, `FB_ItpFiFoWrite`,
+  `FB_ItpConfirmHsk`, `FB_ItpWriteRParam`, `FB_ItpReadRParam`,
+  `FB_ItpZeroShift`.
 - **Verified**: `tc2_nci_gcode_io` replays `tc2_nci_gcode_case.st`
-  (mask `0x3fff`) over Tether IO — inline-text upload (2 blocks),
+  (mask `0x7fffff`) over Tether IO — inline-text upload (2 blocks),
   server-side file load (7 blocks), run, mid-program line tracking,
-  finish, duration sanity, permissive stop, reset to IDLE. Step
-  semantics verified by direct probe (one source block per step,
-  then pause).
-- **Honest gaps**: no FIFO block queue (the whole program plans
-  ahead — that IS the look-ahead), no PLC-visible M-function
-  handshake, R-parameters, zero-shift, or cyclic-channel offset
-  tables; `FB_NciLine` remains the interpreter-free single-block
-  path. The in-process backend has no channel (by design).
-  (DECISIONS D-IMPL-56, D-IMPL-57).
+  finish, duration sanity, permissive stop, reset to IDLE, FIFO
+  queue/run-from-idle/chained execution, R-parameter write+read
+  roundtrip, zero-shift write, and the M8 pause → confirm →
+  resume handshake. Step semantics verified by direct probe (one
+  source block per step, then pause).
+- **Honest gaps**: no cyclic-channel offset tables; `FB_NciLine`
+  remains the interpreter-free single-block path. The in-process
+  backend has no channel (by design). (DECISIONS D-IMPL-56,
+  D-IMPL-57, D-IMPL-58).
 
 ## Known limitations
 

@@ -4055,6 +4055,14 @@ const NC_TOTAL: usize = 4252;
 const NC_NERR: usize = 4256;
 const NC_PROGRESS: usize = 4260;
 const NC_DURATION: usize = 4264;
+const NC_AUX: usize = 4268;
+const NC_RVAL: usize = 4272;
+const NC_ZSX: usize = 4280;
+const NC_ZSY: usize = 4288;
+const NC_ZSZ: usize = 4296;
+const NC_MFUNC: usize = 4304;
+const NC_FIFOLEN: usize = 4308;
+const NC_FIFOSEQ: usize = 4312;
 
 // tplc-nci service vtable offsets (TplcNciService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -4062,6 +4070,10 @@ const NC_SVC_LOAD_TEXT: usize = 16;
 const NC_SVC_LOAD_FILE: usize = 24;
 const NC_SVC_COMMAND: usize = 32;
 const NC_SVC_STATUS: usize = 40;
+const NC_SVC_FIFO: usize = 48;
+const NC_SVC_CONFIRM: usize = 56;
+const NC_SVC_RPARAM: usize = 64;
+const NC_SVC_ZSHIFT: usize = 72;
 
 /// service lookup for "tplc-nci" (8 chars)
 unsafe fn nci_service(ctx: *const u8) -> *const u8 {
@@ -4084,11 +4096,17 @@ unsafe fn ncifn(svc: *const u8, off: usize) -> usize {
 type FNciLoadText = unsafe extern "C" fn(*const u8, u32, *const u8, u32) -> i32;
 type FNciCommand = unsafe extern "C" fn(*const u8, u32, u32) -> i32;
 type FNciStatus = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
+type FNciConfirm = unsafe extern "C" fn(*const u8, u32) -> i32;
+type FNciRparam = unsafe extern "C" fn(*const u8, u32, u32, i32, *mut f64) -> i32;
+type FNciZshift = unsafe extern "C" fn(*const u8, u32, i32, *mut f64) -> i32;
 
 /// `__tplc_rt_FB_NciChan` — synchronous op dispatch over the tplc-nci
 /// NC interpreter channel. OP: 1=load program text (PROG), 2=load a
 /// program file on the server host (PATH), 3=command (CMD code),
-/// 4=status (fills STATE/LINE/TOTAL/NERR/PROGRESS/DURATION). STATUS
+/// 4=status (fills STATE/LINE/TOTAL/NERR/PROGRESS/DURATION/MFUNC/
+/// FIFOLEN/FIFOSEQ), 5=FIFO block append (PROG), 6=confirm pending
+/// M-function, 7=R-param write (AUX index, RVAL value), 8=R-param
+/// read (AUX -> RVAL), 9=zero-shift write (ZSX/ZSY/ZSZ). STATUS
 /// carries the service return code, ERRID its positive form.
 /// # Safety
 /// `this` must point at a valid instance block of the documented
@@ -4149,9 +4167,57 @@ pub unsafe extern "C" fn __tplc_rt_FB_NciChan(this: *mut u8, ctx: *mut u8) -> i3
                 wu32(this.add(NC_TOTAL), rd(16) as u32);
                 wi32(this.add(NC_PROGRESS), rd(20));
                 wi32(this.add(NC_DURATION), rd(24));
+                wu32(this.add(NC_MFUNC), rd(28) as u32);
+                wu32(this.add(NC_FIFOLEN), rd(32) as u32);
+                wu32(this.add(NC_FIFOSEQ), rd(36) as u32);
             } else {
                 wu32(this.add(NC_ERRID), (-rc).max(0) as u32);
             }
+        }
+        5 => {
+            let n = (*this.add(NC_PROG_LEN) as usize).min(4095);
+            let f: FNciLoadText = core::mem::transmute(ncifn(svc, NC_SVC_FIFO));
+            let rc = f(
+                svc,
+                ru32(this.add(NC_CHAN)),
+                this.add(NC_PROG),
+                n as u32,
+            );
+            wi32(this.add(NC_STATUS), rc);
+            wu32(this.add(NC_ERRID), (-rc).max(0) as u32);
+        }
+        6 => {
+            let f: FNciConfirm = core::mem::transmute(ncifn(svc, NC_SVC_CONFIRM));
+            let rc = f(svc, ru32(this.add(NC_CHAN)));
+            wi32(this.add(NC_STATUS), rc);
+            wu32(this.add(NC_ERRID), (-rc).max(0) as u32);
+        }
+        7 | 8 => {
+            let mut v: f64 = core::ptr::read_unaligned(this.add(NC_RVAL) as *const f64);
+            let f: FNciRparam = core::mem::transmute(ncifn(svc, NC_SVC_RPARAM));
+            let rc = f(
+                svc,
+                ru32(this.add(NC_CHAN)),
+                ru32(this.add(NC_AUX)),
+                if op == 7 { 1 } else { 0 },
+                &mut v,
+            );
+            wi32(this.add(NC_STATUS), rc);
+            wu32(this.add(NC_ERRID), (-rc).max(0) as u32);
+            if rc == 0 && op == 8 {
+                core::ptr::write_unaligned(this.add(NC_RVAL) as *mut f64, v);
+            }
+        }
+        9 => {
+            let mut xyz = [
+                core::ptr::read_unaligned(this.add(NC_ZSX) as *const f64),
+                core::ptr::read_unaligned(this.add(NC_ZSY) as *const f64),
+                core::ptr::read_unaligned(this.add(NC_ZSZ) as *const f64),
+            ];
+            let f: FNciZshift = core::mem::transmute(ncifn(svc, NC_SVC_ZSHIFT));
+            let rc = f(svc, ru32(this.add(NC_CHAN)), 1, xyz.as_mut_ptr());
+            wi32(this.add(NC_STATUS), rc);
+            wu32(this.add(NC_ERRID), (-rc).max(0) as u32);
         }
         _ => {
             wi32(this.add(NC_STATUS), -1);
