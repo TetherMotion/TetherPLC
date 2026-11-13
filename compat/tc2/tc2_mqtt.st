@@ -1076,3 +1076,117 @@ END_VAR
         END_IF;
     END_IF;
 END_FUNCTION_BLOCK
+
+// ---- MQTT5 property containers (Tc3_IotBase §5.1.2.9) ----
+// TwinCAT passes these FBs by reference into the client methods.
+// This dialect has no REFERENCE TO parameters, so the publish and
+// subscribe FBs take the same fields as direct inputs; these
+// containers give user code a named place to stage property values
+// before copying them onto FB_IotMqtt5Publish/Subscribe inputs.
+
+// FB_IotMqtt5ConnAckProperties: broker properties received in the
+// CONNACK (session expiry, receive maximum, topic alias maximum,
+// reason string, user properties).
+FUNCTION_BLOCK FB_IotMqtt5ConnAckProperties
+VAR
+    SessionExpiryInterval : UDINT;
+    ReceiveMaximum : UDINT;
+    TopicAliasMaximum : UDINT;
+    ReasonString : STRING[127];
+    UserProperties : STRING[255];
+END_VAR
+END_FUNCTION_BLOCK
+
+// FB_IotMqtt5DisconnectProperties: properties received in the
+// broker's DISCONNECT (reason code, reason string, session expiry,
+// user properties).
+FUNCTION_BLOCK FB_IotMqtt5DisconnectProperties
+VAR
+    ReasonCode : UDINT;
+    ReasonString : STRING[127];
+    SessionExpiryInterval : UDINT;
+    UserProperties : STRING[255];
+END_VAR
+END_FUNCTION_BLOCK
+
+// FB_IotMqtt5PublishProperties: properties attached to an outgoing
+// PUBLISH (payload format, message expiry, content type, response
+// topic, correlation data, user properties).
+FUNCTION_BLOCK FB_IotMqtt5PublishProperties
+VAR
+    PayloadFormatIndicator : BOOL;
+    MessageExpiryInterval : UDINT;
+    ContentType : STRING[63];
+    ResponseTopic : STRING[127];
+    CorrelationData : STRING[127];
+    CorrelationDataLen : UDINT;
+    UserProperties : STRING[255];
+END_VAR
+END_FUNCTION_BLOCK
+
+// FB_IotMqtt5SubscribeProperties: properties attached to a
+// SUBSCRIBE (no-local, retain-as-published, retain handling,
+// subscription identifier, user properties).
+FUNCTION_BLOCK FB_IotMqtt5SubscribeProperties
+VAR
+    NoLocal : BOOL;
+    RetainAsPublished : BOOL;
+    RetainHandling : UDINT;
+    SubscriptionIdentifier : UDINT;
+    UserProperties : STRING[255];
+END_VAR
+END_FUNCTION_BLOCK
+
+// FB_IotMqtt5UnsubscribeProperties: properties attached to an
+// UNSUBSCRIBE (user properties only per MQTT5).
+FUNCTION_BLOCK FB_IotMqtt5UnsubscribeProperties
+VAR
+    UserProperties : STRING[255];
+END_VAR
+END_FUNCTION_BLOCK
+
+// FB_IotMqtt5UserProperties: bounded key/value list used to build
+// the "k=v;k=v" encoding consumed by the property inputs above.
+// AddReq appends one pair per call; the encoded list is on
+// Encoded.  8 pairs max.
+FUNCTION_BLOCK FB_IotMqtt5UserProperties
+VAR_INPUT
+    AddReq : BOOL;
+    PropKey : STRING[63];
+    PropValue : STRING[127];
+    ClearReq : BOOL;
+END_VAR
+VAR_OUTPUT
+    Count : UDINT;
+    Encoded : STRING[255];
+END_VAR
+VAR
+    n : UDINT;
+    i : UDINT;
+    keys : ARRAY[0..7] OF STRING[63];
+    vals : ARRAY[0..7] OF STRING[127];
+    addPrev : BOOL;
+    clrPrev : BOOL;
+END_VAR
+    Count := n;
+    Encoded := '';
+    IF AddReq AND NOT addPrev AND n < 8 AND PropKey <> '' THEN
+        keys[n] := PropKey;
+        vals[n] := PropValue;
+        n := n + 1;
+    END_IF;
+    addPrev := AddReq;
+    IF ClearReq AND NOT clrPrev THEN
+        n := 0;
+    END_IF;
+    clrPrev := ClearReq;
+    // rebuild the k=v;k=v encoding
+    IF n > 0 THEN
+        Encoded := CONCAT(keys[0], CONCAT('=', vals[0]));
+        FOR i := 1 TO n - 1 DO
+            Encoded := CONCAT(Encoded, CONCAT(';',
+                CONCAT(keys[i], CONCAT('=', vals[i]))));
+        END_FOR;
+    END_IF;
+    Count := n;
+END_FUNCTION_BLOCK

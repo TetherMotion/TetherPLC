@@ -12,12 +12,13 @@ VAR
     rx  : FB_IotMqttReceive;
     rx5 : FB_IotMqtt5Receive;
     mq  : FB_IotMqtt5MessageQueue;
+    up  : FB_IotMqtt5UserProperties;
     st : INT;
     waitN : INT;
     mask AT %QD0 : UDINT;
     hdl : UDINT;
 END_VAR
-    con(); dis(); sub(); unsub(); pub(); pub5(); rx(); rx5(); mq();
+    con(); dis(); sub(); unsub(); pub(); pub5(); rx(); rx5(); mq(); up();
     IF st = 0 THEN
         mask := 0;
         con.Execute := TRUE;
@@ -83,18 +84,7 @@ END_VAR
             rx.Execute := FALSE;
             IF rx.Topic = 'tplc/v5/one' AND rx.Payload = 'm5' THEN
                 mask := mask + 8;     // bit3: echo received (v5)
-                pub5.Execute := TRUE;
-                pub5.ConnectionHdl := hdl;
-                pub5.Topic := 'tplc/v5/props';
-                pub5.Payload := 'withprops';
-                pub5.QoS := 0;
-                pub5.PayloadFormatUtf8 := TRUE;
-                pub5.MessageExpiryS := 30;
-                pub5.ContentType := 'application/json';
-                pub5.ResponseTopic := 'tplc/v5/reply';
-                pub5.CorrelationData := 'corr-1';
-                pub5.UserProperties := 'k1=v1;k2=v2';
-                st := 55;
+                st := 50;
             END_IF;
         END_IF;
         IF rx.Error THEN mask := 16#DEAD; st := 99; END_IF;
@@ -152,6 +142,45 @@ END_VAR
             st := 6;
         END_IF;
         IF unsub.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    IF st = 50 THEN
+        // stage user properties k1=v1 then k2=v2 via edge pulses;
+        // ELSIF keeps one pulse per scan so up() sees each edge
+        up.AddReq := TRUE;
+        up.PropKey := 'k1';
+        up.PropValue := 'v1';
+        st := 51;
+    ELSIF st = 51 THEN
+        up.AddReq := FALSE;
+        up.PropKey := 'k2';
+        up.PropValue := 'v2';
+        st := 52;
+    ELSIF st = 52 THEN
+        up.AddReq := TRUE;
+        st := 53;
+    ELSIF st = 53 THEN
+        up.AddReq := FALSE;
+        st := 54;
+    END_IF;
+
+    IF st = 54 THEN
+        IF up.Count = 2 AND up.Encoded = 'k1=v1;k2=v2' THEN
+            pub5.Execute := TRUE;
+            pub5.ConnectionHdl := hdl;
+            pub5.Topic := 'tplc/v5/props';
+            pub5.Payload := 'withprops';
+            pub5.QoS := 0;
+            pub5.PayloadFormatUtf8 := TRUE;
+            pub5.MessageExpiryS := 30;
+            pub5.ContentType := 'application/json';
+            pub5.ResponseTopic := 'tplc/v5/reply';
+            pub5.CorrelationData := 'corr-1';
+            pub5.UserProperties := up.Encoded;
+            st := 55;
+        ELSE
+            mask := 16#F000 + up.Count * 16 + LEN(up.Encoded); st := 99;
+        END_IF;
     END_IF;
 
     IF st = 55 THEN
