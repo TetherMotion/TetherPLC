@@ -51,5 +51,35 @@ else
     tail -20 "$WORK/sim.log"
 fi
 
+"$TPLCC" build tests/compat/tc3_jsonxml_xml_case.st \
+    --lib "$WORK/tc3_json.tplc" \
+    -o "$WORK/xml_case.tplc" >/dev/null 2>&1 \
+    && ok "XML consumer build with --lib" \
+    || { bad "XML consumer build with --lib"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+
+{
+    for i in $(seq 0 55); do
+        t=$((i * 10000000))
+        if [ "$i" -eq 55 ]; then
+            echo "step $i time=$t in 0=00 expect 0=ff3f"
+        else
+            echo "step $i time=$t in 0=00"
+        fi
+    done
+} > "$WORK/xml.steps"
+
+IMG=/tplc_tc3xj_$$; CTL="$WORK/dmx.ctl"
+"$BUILD/tether-plc-sim" --image "$IMG" --package "$WORK/xml_case.tplc" \
+    --steps "$WORK/xml.steps" --plc "$BUILD/tether-plc" \
+    --ctl "$CTL" --settle-ms 1500 >"$WORK/simx.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/simx.log"; then
+    ok "sim replay: xml load/root/childbyname/attr/text/nodexml/toxml/build/error"
+else
+    bad "sim replay: xml load/root/childbyname/attr/text/nodexml/toxml/build/error"
+    tail -20 "$WORK/simx.log"
+fi
+
 echo "== $pass pass, $fail fail"
 [ $fail -eq 0 ]

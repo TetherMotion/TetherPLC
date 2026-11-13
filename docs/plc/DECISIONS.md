@@ -2230,3 +2230,36 @@ Test-authoring note: outputs recomputed at the top of a call
 checks need arm → clear → check, three states per command.
 
 ctest `tc3_eventlog_io` green (0x03ffffff, 26 checks).
+
+## D-IMPL-94 — tc3_jsonxml XML DOM half + source-sensitive codegen
+
+`compat/tc3/tc3_jsonxml.st` gained `FB_XmlDomParser`/`FB_XmlDom`: a
+fixed-table DOM in pure ST (48 nodes, depth-16 stack, 4 attrs/node,
+names <=31 chars, values <=127, sOut <=511).  Commands: Load (string
+document), Clear, Root, Child (0-based index), ChildByName,
+ChildCount, NodeName, NodeText, NodeXml, AttrCount, AttrByName,
+ToXml, AppendChild/AppendAttribute/AppendText for building trees.
+The parser is hand-rolled: `<?...?>` PIs and `<!-- -->` comments are
+skipped, `<![CDATA[` content is treated as opaque text, attributes
+accept any quote char after `=`, and malformed input sets
+`bError`/`nErrId=2`.  Namespaces, entity decoding, iterators, and
+SAX events are documented reductions — TwinCAT's heap DOM and
+`IXmlDomNode` iterators have no fixed-table equivalent.
+
+Two ST-portability traps hit while writing it: IEC identifiers are
+case-insensitive, so array names colliding with locals (`AN`/`an`,
+`SK`/`sk`) silently alias — renamed to `XAN`/`XAV`; and `+` between
+string literals is not concat in this frontend (codegen panics on
+`ArrayValue` vs `IntValue`) — nested `CONCAT` required.
+
+Latent compiler issue found: two semantically identical consumer
+sources differing only by a comment produced different packages
+with different sim results — generated code is sensitive to source
+line numbering, and one variant miscompiled the JSON writer state
+machine (all JSON checks failed while XML checks passed).  The XML
+e2e therefore lives in its own consumer (`tc3_jsonxml_xml_case.st`,
+arm/reap pairs per command) instead of extending the 95-state JSON
+case; `tc3_jsonxml_io` runs both.  Worth a dedicated investigation:
+codegen appears to have an unstable region for large consumers.
+
+ctest `tc3_jsonxml_io` green (JSON 0x1ffff + XML 0x3fff).

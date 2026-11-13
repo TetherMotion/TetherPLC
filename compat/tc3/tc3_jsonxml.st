@@ -771,3 +771,531 @@ END_VAR
     bOut := r.bOut; bFound := r.bFound; bDone := r.bDone;
     bError := r.bError; nErrId := r.nErrId;
 END_FUNCTION_BLOCK
+
+// ---- XML half: reduced FB_XmlDomParser ----
+// Beckhoff's FB_XmlDomParser is a heap DOM with iterators, typed
+// Append*/Get* methods and path queries.  This reduced surface keeps
+// the same idea on fixed tables (no allocator):
+//   - cmd 1 Load parses sIn (STRING[1023]) into a node table;
+//     cmd 2 Clear resets it.
+//   - Node ids are UDINT handles; 0 = none.  Node 0 internally is
+//     the document; Root returns its first element child.
+//   - cmd 3 Root, 4 Child(parent,nIdx 0-based), 5 ChildByName,
+//     6 NodeName, 7 NodeText, 8 AttrCount, 9 ChildCount,
+//     10 AttrByName, 11 NodeXml (serialize subtree),
+//     12 ToXml (serialize whole document).
+//   - Build side: 13 AppendChild(parent,name)->hOut,
+//     14 AppendAttribute(node,name,value), 15 AppendText(node,text).
+// Limits: 48 nodes, depth 16, 4 attributes per node, names 31,
+// text 127, attr values 127, output text 511.  No entity decoding
+// (&amp; etc. stored raw), no namespaces, no comments/CDATA/PI
+// content (skipped), whitespace inside tags is ' ' only, mixed
+// content keeps only the concatenated text run.
+FUNCTION F_XmlEscV : STRING[511]
+VAR_INPUT
+    s : STRING[127];
+END_VAR
+VAR
+    i : DINT;
+    c : STRING[1];
+    o : STRING[511];
+END_VAR
+    o := '';
+    FOR i := 1 TO LEN(s) DO
+        c := MID(s, 1, i);
+        IF FIND(c, '&') = 1 THEN
+            o := CONCAT(o, '&amp;');
+        ELSIF FIND(c, '<') = 1 THEN
+            o := CONCAT(o, '&lt;');
+        ELSIF FIND(c, '>') = 1 THEN
+            o := CONCAT(o, '&gt;');
+        ELSIF FIND(c, '"') = 1 THEN
+            o := CONCAT(o, '&quot;');
+        ELSE
+            o := CONCAT(o, c);
+        END_IF;
+    END_FOR;
+    F_XmlEscV := o;
+END_FUNCTION
+
+FUNCTION_BLOCK FB_XmlDomParser
+VAR_INPUT
+    nCmd : UDINT;
+    hNode : UDINT;
+    nIdx : UDINT;
+    sName : STRING[31];
+    sVal : STRING[127];
+    sIn : STRING[1023];
+END_VAR
+VAR_OUTPUT
+    hOut : UDINT;
+    sOut : STRING[511];
+    nOut : UDINT;
+    bDone : BOOL;
+    bError : BOOL;
+    nErrId : UDINT;
+END_VAR
+VAR
+    prev : UDINT;
+    nn : UDINT;
+    NPAR : ARRAY[0..47] OF INT;
+    NFIRST : ARRAY[0..47] OF INT;
+    NLAST : ARRAY[0..47] OF INT;
+    NNEXT : ARRAY[0..47] OF INT;
+    NNAME : ARRAY[0..47] OF STRING[31];
+    NTEXT : ARRAY[0..47] OF STRING[127];
+    NATT : ARRAY[0..47] OF UDINT;
+    XAN : ARRAY[0..191] OF STRING[31];
+    XAV : ARRAY[0..191] OF STRING[127];
+    // parse scratch
+    pos : DINT;
+    lt : DINT;
+    i : DINT;
+    j : DINT;
+    k : DINT;
+    k2 : DINT;
+    idx : UDINT;
+    cur : INT;
+    depth : INT;
+    CSTK : ARRAY[0..15] OF INT;
+    nm : STRING[31];
+    an : STRING[31];
+    av : STRING[127];
+    c : STRING[1];
+    c2 : STRING[1];
+    q : STRING[1];
+    ac : UDINT;
+    selfc : BOOL;
+    ended : BOOL;
+    nmstop : BOOL;
+    bad : BOOL;
+    // serializer scratch
+    sp : INT;
+    XSX : ARRAY[0..63] OF INT;
+    XSK : ARRAY[0..63] OF INT;
+    XSA : ARRAY[0..63] OF INT;
+    sn : INT;
+    sk : INT;
+    sa : INT;
+    a : UDINT;
+    ch : INT;
+    cnt : UDINT;
+END_VAR
+    bDone := FALSE; bError := FALSE; nErrId := 0;
+    hOut := 0; sOut := ''; nOut := 0;
+    IF nCmd <> 0 AND prev = 0 THEN
+        IF nCmd = 2 THEN
+            nn := 1;
+            NPAR[0] := -1; NFIRST[0] := 0; NLAST[0] := 0;
+            NNEXT[0] := 0; NNAME[0] := '#doc'; NTEXT[0] := '';
+            NATT[0] := 0;
+            FOR i := 1 TO 47 DO
+                NPAR[i] := 0; NFIRST[i] := 0; NLAST[i] := 0;
+                NNEXT[i] := 0; NNAME[i] := ''; NTEXT[i] := '';
+                NATT[i] := 0;
+                FOR a := 0 TO 3 DO
+                    XAN[i * 4 + a] := ''; XAV[i * 4 + a] := '';
+                END_FOR;
+            END_FOR;
+            FOR i := 0 TO 191 DO
+                XAN[i] := ''; XAV[i] := '';
+            END_FOR;
+            bDone := TRUE;
+        ELSIF nCmd = 1 THEN
+            // ---- parse sIn ----
+            nn := 1;
+            NPAR[0] := -1; NFIRST[0] := 0; NLAST[0] := 0;
+            NNEXT[0] := 0; NNAME[0] := '#doc'; NTEXT[0] := '';
+            NATT[0] := 0;
+            FOR i := 1 TO 47 DO
+                NPAR[i] := 0; NFIRST[i] := 0; NLAST[i] := 0;
+                NNEXT[i] := 0; NNAME[i] := ''; NTEXT[i] := '';
+                NATT[i] := 0;
+            END_FOR;
+            depth := 0; pos := 1; cur := 0; bad := FALSE;
+            WHILE pos <= LEN(sIn) AND NOT bad DO
+                // find next '<'
+                lt := 0; i := pos;
+                WHILE i <= LEN(sIn) DO
+                    IF FIND(MID(sIn, 1, i), '<') = 1 THEN
+                        lt := i; i := LEN(sIn) + 1;
+                    ELSE
+                        i := i + 1;
+                    END_IF;
+                END_WHILE;
+                IF lt = 0 THEN
+                    IF cur > 0 AND pos <= LEN(sIn) THEN
+                        NTEXT[cur] := CONCAT(NTEXT[cur],
+                            MID(sIn, LEN(sIn) - pos + 1, pos));
+                    END_IF;
+                    pos := LEN(sIn) + 1;
+                ELSE
+                    IF lt > pos AND cur > 0 THEN
+                        NTEXT[cur] := CONCAT(NTEXT[cur],
+                            MID(sIn, lt - pos, pos));
+                    END_IF;
+                    IF lt + 1 > LEN(sIn) THEN
+                        bad := TRUE;
+                    ELSE
+                        c := MID(sIn, 1, lt + 1);
+                        IF FIND(c, '/') = 1 THEN
+                            // close tag: pop the open element
+                            j := lt + 2;
+                            WHILE j <= LEN(sIn)
+                                  AND FIND(MID(sIn, 1, j), '>') <> 1 DO
+                                j := j + 1;
+                            END_WHILE;
+                            IF depth > 0 THEN
+                                cur := NPAR[CSTK[depth]];
+                                depth := depth - 1;
+                            END_IF;
+                            IF j > LEN(sIn) THEN bad := TRUE;
+                            ELSE pos := j + 1; END_IF;
+                        ELSIF FIND(c, '?') = 1 THEN
+                            // processing instruction: skip to '>'
+                            j := lt + 2;
+                            WHILE j <= LEN(sIn)
+                                  AND FIND(MID(sIn, 1, j), '>') <> 1 DO
+                                j := j + 1;
+                            END_WHILE;
+                            IF j > LEN(sIn) THEN bad := TRUE;
+                            ELSE pos := j + 1; END_IF;
+                        ELSIF FIND(c, '!') = 1 THEN
+                            // comment / CDATA / doctype
+                            IF FIND(MID(sIn, lt + 1, 8), '[CDATA[') = 1 THEN
+                                j := lt + 8;
+                                WHILE j + 2 <= LEN(sIn)
+                                      AND NOT (FIND(MID(sIn, 1, j), '-') = 1
+                                               AND FIND(MID(sIn, 1, j + 1), '-') = 1
+                                               AND FIND(MID(sIn, 1, j + 2), ']') = 1) DO
+                                    j := j + 1;
+                                END_WHILE;
+                                IF j + 2 > LEN(sIn) THEN bad := TRUE;
+                                ELSE pos := j + 3; END_IF;
+                            ELSIF FIND(MID(sIn, lt + 1, 3), '!--') = 1 THEN
+                                j := lt + 4;
+                                WHILE j + 2 <= LEN(sIn)
+                                      AND NOT (FIND(MID(sIn, 1, j), '-') = 1
+                                               AND FIND(MID(sIn, 1, j + 1), '-') = 1
+                                               AND FIND(MID(sIn, 1, j + 2), '>') = 1) DO
+                                    j := j + 1;
+                                END_WHILE;
+                                IF j + 2 > LEN(sIn) THEN bad := TRUE;
+                                ELSE pos := j + 3; END_IF;
+                            ELSE
+                                j := lt + 2;
+                                WHILE j <= LEN(sIn)
+                                      AND FIND(MID(sIn, 1, j), '>') <> 1 DO
+                                    j := j + 1;
+                                END_WHILE;
+                                IF j > LEN(sIn) THEN bad := TRUE;
+                                ELSE pos := j + 1; END_IF;
+                            END_IF;
+                        ELSE
+                            // open tag: name then attributes
+                            k := lt + 1; nm := ''; nmstop := FALSE;
+                            WHILE k <= LEN(sIn) AND NOT nmstop DO
+                                c2 := MID(sIn, 1, k);
+                                IF FIND(c2, '=') = 1 OR FIND(c2, '/') = 1
+                                   OR FIND(c2, '>') = 1
+                                   OR FIND(c2, ' ') = 1 THEN
+                                    nmstop := TRUE;
+                                ELSE
+                                    nm := CONCAT(nm, c2); k := k + 1;
+                                END_IF;
+                            END_WHILE;
+                            IF LEN(nm) = 0 OR nn >= 48 THEN
+                                bad := TRUE;
+                            ELSE
+                                idx := nn; nn := nn + 1;
+                                NNAME[idx] := nm; NPAR[idx] := cur;
+                                IF NLAST[cur] = 0 THEN
+                                    NFIRST[cur] := idx;
+                                ELSE
+                                    NNEXT[NLAST[cur]] := idx;
+                                END_IF;
+                                NLAST[cur] := idx; NNEXT[idx] := 0;
+                                NATT[idx] := 0; ac := 0;
+                                selfc := FALSE; ended := FALSE;
+                                WHILE k <= LEN(sIn) AND NOT ended
+                                      AND NOT bad DO
+                                    c2 := MID(sIn, 1, k);
+                                    IF FIND(c2, ' ') = 1 THEN
+                                        k := k + 1;
+                                    ELSIF FIND(c2, '>') = 1 THEN
+                                        ended := TRUE; pos := k + 1;
+                                    ELSIF FIND(c2, '/') = 1 THEN
+                                        k2 := k + 1;
+                                        WHILE k2 <= LEN(sIn)
+                                              AND FIND(MID(sIn, 1, k2), ' ') = 1 DO
+                                            k2 := k2 + 1;
+                                        END_WHILE;
+                                        IF k2 <= LEN(sIn)
+                                           AND FIND(MID(sIn, 1, k2), '>') = 1 THEN
+                                            selfc := TRUE; ended := TRUE;
+                                            pos := k2 + 1;
+                                        ELSE
+                                            bad := TRUE;
+                                        END_IF;
+                                    ELSE
+                                        // attribute name
+                                        an := ''; nmstop := FALSE;
+                                        WHILE k <= LEN(sIn) AND NOT nmstop DO
+                                            c2 := MID(sIn, 1, k);
+                                            IF FIND(c2, '=') = 1
+                                               OR FIND(c2, ' ') = 1
+                                               OR FIND(c2, '/') = 1
+                                               OR FIND(c2, '>') = 1 THEN
+                                                nmstop := TRUE;
+                                            ELSE
+                                                an := CONCAT(an, c2);
+                                                k := k + 1;
+                                            END_IF;
+                                        END_WHILE;
+                                        WHILE k <= LEN(sIn)
+                                              AND FIND(MID(sIn, 1, k), ' ') = 1 DO
+                                            k := k + 1;
+                                        END_WHILE;
+                                        IF k > LEN(sIn)
+                                           OR FIND(MID(sIn, 1, k), '=') <> 1 THEN
+                                            bad := TRUE;
+                                        ELSE
+                                            k := k + 1;
+                                            WHILE k <= LEN(sIn)
+                                                  AND FIND(MID(sIn, 1, k), ' ') = 1 DO
+                                                k := k + 1;
+                                            END_WHILE;
+                                            IF k > LEN(sIn) THEN
+                                                bad := TRUE;
+                                            ELSE
+                                                // whatever char opens the
+                                                // value is the delimiter
+                                                q := MID(sIn, 1, k);
+                                                k := k + 1; av := '';
+                                                WHILE k <= LEN(sIn)
+                                                      AND MID(sIn, 1, k) <> q DO
+                                                    av := CONCAT(av, MID(sIn, 1, k));
+                                                    k := k + 1;
+                                                END_WHILE;
+                                                IF k > LEN(sIn) THEN
+                                                    bad := TRUE;
+                                                ELSE
+                                                    k := k + 1;
+                                                    IF ac < 4 AND LEN(an) > 0 THEN
+                                                        XAN[idx * 4 + ac] := an;
+                                                        XAV[idx * 4 + ac] := av;
+                                                        ac := ac + 1;
+                                                    END_IF;
+                                                END_IF;
+                                            END_IF;
+                                        END_IF;
+                                    END_IF;
+                                END_WHILE;
+                                NATT[idx] := ac;
+                                IF NOT ended THEN bad := TRUE; END_IF;
+                                IF NOT selfc AND NOT bad THEN
+                                    IF depth >= 16 THEN
+                                        bad := TRUE;
+                                    ELSE
+                                        depth := depth + 1;
+                                        CSTK[depth] := idx; cur := idx;
+                                    END_IF;
+                                END_IF;
+                            END_IF;
+                        END_IF;
+                    END_IF;
+                END_IF;
+            END_WHILE;
+            IF bad THEN
+                bError := TRUE; nErrId := 2;
+            ELSE
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 3 THEN
+            hOut := NFIRST[0]; bDone := TRUE;
+        ELSIF nCmd = 4 THEN
+            // Child: nIdx-th element child of hNode (0-based)
+            IF hNode >= nn THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                ch := NFIRST[hNode]; cnt := 0; hOut := 0;
+                WHILE ch <> 0 DO
+                    IF cnt = nIdx THEN
+                        hOut := ch; ch := 0;
+                    ELSE
+                        cnt := cnt + 1; ch := NNEXT[ch];
+                    END_IF;
+                END_WHILE;
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 5 THEN
+            // ChildByName
+            IF hNode >= nn THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                ch := NFIRST[hNode]; hOut := 0;
+                WHILE ch <> 0 AND hOut = 0 DO
+                    IF NNAME[ch] = sName THEN hOut := ch;
+                    ELSE ch := NNEXT[ch]; END_IF;
+                END_WHILE;
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 6 THEN
+            IF hNode < nn THEN sOut := NNAME[hNode]; bDone := TRUE;
+            ELSE bError := TRUE; nErrId := 3; END_IF;
+        ELSIF nCmd = 7 THEN
+            IF hNode < nn THEN sOut := NTEXT[hNode]; bDone := TRUE;
+            ELSE bError := TRUE; nErrId := 3; END_IF;
+        ELSIF nCmd = 8 THEN
+            IF hNode < nn THEN nOut := NATT[hNode]; bDone := TRUE;
+            ELSE bError := TRUE; nErrId := 3; END_IF;
+        ELSIF nCmd = 9 THEN
+            IF hNode < nn THEN
+                ch := NFIRST[hNode]; cnt := 0;
+                WHILE ch <> 0 DO cnt := cnt + 1; ch := NNEXT[ch]; END_WHILE;
+                nOut := cnt; bDone := TRUE;
+            ELSE bError := TRUE; nErrId := 3; END_IF;
+        ELSIF nCmd = 10 THEN
+            // AttrByName
+            sOut := ''; bDone := TRUE;
+            IF hNode < nn THEN
+                IF NATT[hNode] > 0 THEN
+                    FOR a := 0 TO NATT[hNode] - 1 DO
+                        IF XAN[hNode * 4 + a] = sName THEN
+                            sOut := XAV[hNode * 4 + a];
+                        END_IF;
+                    END_FOR;
+                END_IF;
+            ELSE
+                bError := TRUE; nErrId := 3;
+            END_IF;
+        ELSIF nCmd = 11 OR nCmd = 12 THEN
+            // NodeXml / ToXml: iterative subtree serializer
+            sOut := ''; sp := 0;
+            IF nCmd = 12 THEN
+                sp := 1; XSX[1] := 0; XSK[1] := 2; XSA[1] := NFIRST[0];
+            ELSE
+                IF hNode = 0 OR hNode >= nn THEN
+                    bError := TRUE; nErrId := 3;
+                ELSE
+                    sp := 1; XSX[1] := hNode; XSK[1] := 1; XSA[1] := 0;
+                END_IF;
+            END_IF;
+            IF NOT bError THEN
+                WHILE sp > 0 DO
+                    sn := XSX[sp]; sk := XSK[sp]; sa := XSA[sp];
+                    sp := sp - 1;
+                    IF sk = 1 THEN
+                        // open node sn
+                        sOut := CONCAT(sOut, CONCAT('<', NNAME[sn]));
+                        IF NATT[sn] > 0 THEN
+                        FOR a := 0 TO NATT[sn] - 1 DO
+                            sOut := CONCAT(sOut, CONCAT(' ',
+                                CONCAT(XAN[sn * 4 + a],
+                                    CONCAT('="',
+                                        CONCAT(F_XmlEscV(XAV[sn * 4 + a]),
+                                            '"')))));
+                        END_FOR;
+                        END_IF;
+                        IF NFIRST[sn] = 0 THEN
+                            IF NTEXT[sn] = '' THEN
+                                sOut := CONCAT(sOut, '/>');
+                            ELSE
+                                sOut := CONCAT(sOut, CONCAT('>',
+                                    CONCAT(F_XmlEscV(NTEXT[sn]),
+                                        CONCAT('</',
+                                            CONCAT(NNAME[sn], '>')))));
+                            END_IF;
+                        ELSE
+                            sOut := CONCAT(sOut, '>');
+                            sp := sp + 1; XSX[sp] := sn; XSK[sp] := 3;
+                            XSA[sp] := 0;
+                            sp := sp + 1; XSX[sp] := sn; XSK[sp] := 2;
+                            XSA[sp] := NFIRST[sn];
+                        END_IF;
+                    ELSIF sk = 2 THEN
+                        // advance to next sibling sa under parent sn
+                        IF sa <> 0 THEN
+                            sp := sp + 1; XSX[sp] := sn; XSK[sp] := 2;
+                            XSA[sp] := NNEXT[sa];
+                            sp := sp + 1; XSX[sp] := sa; XSK[sp] := 1;
+                            XSA[sp] := 0;
+                        END_IF;
+                    ELSE
+                        // close node sn
+                        sOut := CONCAT(sOut, CONCAT('</',
+                            CONCAT(NNAME[sn], '>')));
+                    END_IF;
+                END_WHILE;
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 13 THEN
+            // AppendChild: new element under hNode named sName
+            IF hNode >= nn OR nn >= 48 THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                idx := nn; nn := nn + 1;
+                NNAME[idx] := sName; NPAR[idx] := hNode;
+                NTEXT[idx] := ''; NATT[idx] := 0;
+                IF NLAST[hNode] = 0 THEN
+                    NFIRST[hNode] := idx;
+                ELSE
+                    NNEXT[NLAST[hNode]] := idx;
+                END_IF;
+                NLAST[hNode] := idx; NNEXT[idx] := 0;
+                hOut := idx; bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 14 THEN
+            // AppendAttribute on hNode
+            IF hNode >= nn THEN
+                bError := TRUE; nErrId := 3;
+            ELSIF NATT[hNode] >= 4 THEN
+                bError := TRUE; nErrId := 4;
+            ELSE
+                a := NATT[hNode];
+                XAN[hNode * 4 + a] := sName;
+                XAV[hNode * 4 + a] := sVal;
+                NATT[hNode] := a + 1; bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 15 THEN
+            // AppendText on hNode
+            IF hNode >= nn THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                NTEXT[hNode] := CONCAT(NTEXT[hNode], sVal);
+                bDone := TRUE;
+            END_IF;
+        ELSE
+            bError := TRUE; nErrId := 1;
+        END_IF;
+    END_IF;
+    prev := nCmd;
+END_FUNCTION_BLOCK
+
+// TwinCAT-shaped alias
+FUNCTION_BLOCK FB_XmlDom
+VAR_INPUT
+    nCmd : UDINT;
+    hNode : UDINT;
+    nIdx : UDINT;
+    sName : STRING[31];
+    sVal : STRING[127];
+    sIn : STRING[1023];
+END_VAR
+VAR_OUTPUT
+    hOut : UDINT;
+    sOut : STRING[511];
+    nOut : UDINT;
+    bDone : BOOL;
+    bError : BOOL;
+    nErrId : UDINT;
+END_VAR
+VAR
+    x : FB_XmlDomParser;
+END_VAR
+    x.nCmd := nCmd; x.hNode := hNode; x.nIdx := nIdx;
+    x.sName := sName; x.sVal := sVal; x.sIn := sIn;
+    x();
+    hOut := x.hOut; sOut := x.sOut; nOut := x.nOut;
+    bDone := x.bDone; bError := x.bError; nErrId := x.nErrId;
+END_FUNCTION_BLOCK
