@@ -787,14 +787,22 @@ void assignSchema(SignalEntry& e) {
     const SchemaNode* n = g_graph.find(keyFor(e.valueType));
     if (!n) return;
     e.schema = SchemaRef{n->key, computeSchemaDigest(*n)};
-    if (auto s = g_catalog.slotFor(e.schema)) e.schemaSlot = *s;
+    if (auto s = g_catalog.slotFor(e.schema)) {
+        e.schemaSlot = *s;
+        /* V6 clients pick schema-aware decoding off this annotation —
+           without it an I64 reads back as a bogus f64              */
+        e.metadata["schema.name"] = n->name;
+    }
 }
 
 void assignSchema(ParamEntry& p) {
     const SchemaNode* n = g_graph.find(keyFor(p.valueType));
     if (!n) return;
     p.schema = SchemaRef{n->key, computeSchemaDigest(*n)};
-    if (auto s = g_catalog.slotFor(p.schema)) p.schemaSlot = *s;
+    if (auto s = g_catalog.slotFor(p.schema)) {
+        p.schemaSlot = *s;
+        p.metadata["schema.name"] = n->name;
+    }
 }
 
 std::vector<SchemaManifestEntry> plcManifest(const SchemaGraph& g) {
@@ -1560,33 +1568,81 @@ bool readFileBytes(const std::string& path, std::vector<uint8_t>& out,
     return ok;
 }
 
+/* TYPC member row: (name strtab off, member type idx, offset, flags)
+   — 16 B each, indexed via the type entry's member_start/count.   */
+struct TypcMember {
+    std::string name;
+    uint32_t type = 0;
+    uint32_t off = 0;
+};
+
+struct TypcType {
+    uint8_t tag = 0;
+    uint32_t size = 0;
+    std::vector<TypcMember> members;   /* STRUCT/FUNCTION_BLOCK only */
+};
+
+constexpr uint8_t kTagStruct = 19;
+constexpr uint8_t kTagEnum = 20;
+constexpr uint8_t kTagFb = 21;
+constexpr uint32_t kNoIdx = 0xFFFFFFFFu;
+
 /* .tplc container: 160B header (uuid ASCII @32, toc_count @16),
    32B TOC entries from offset 160 {type,flags,off,size,ver,aux}.
-   Returns TYPC tag per type index, empty on any mismatch. */
-std::vector<uint8_t> typcTagsFromPkg(const std::vector<uint8_t>& pkg,
-                                     const std::string& uuidDash) {
-    if (pkg.size() < 192 || memcmp(pkg.data(), "TPLCPKG\0", 8) != 0)
-        return {};
-    char puuid[37]{};
-    memcpy(puuid, pkg.data() + 32, 36);
-    if (uuidDash != puuid) return {};
-    uint32_t ntoc = le32(pkg.data() + 16);
-    if (ntoc > 64 || 160ull + (uint64_t)ntoc * 32 > pkg.size()) return {};
-    const uint8_t* toc = pkg.data() + 160;
-    for (uint32_t i = 0; i < ntoc; i++) {
-        const uint8_t* e = toc + (size_t)i * 32;
-        if (le32(e) != 0x0021u) continue;              /* TYPE_CATALOG */
-        uint64_t off = le64(e + 8), sz = le64(e + 16);
-        if (off + sz > pkg.size() || sz < 24) return {};
-        const uint8_t* t = pkg.data() + off;
-        if (memcmp(t, "TYPC", 4) != 0) return {};
-        uint32_t cnt = le32(t + 8);
-        if (24ull + (uint64_t)cnt * 56 > sz) return {};
-        std::vector<uint8_t> tags(cnt);
-        for (uint32_t k = 0; k < cnt; k++) tags[k] = t[24 + (size_t)k * 56];
-        return tags;
+   TYPC layout (tplc-mir desc.rs / migrate.rs decode_typc):
+     hdr 24B: magic, ver, count, member_table_off, strtab_off, rsv
+     entries: count × 56B {tag@0, name@4, elem@8, mstart@12, mcount@16,
+                           lo@20, hi@24, size@28, align@32}
+             ENUM entries carry an inline tail {u32 n + n×(name i32? no:
+             name_off u32 + ordinal i64)} — skipped by sequential walk
+     member rows: 16B {name_off u32, type u32, off u32, flags u32}
+     strtab: NUL-terminated strings                                  */
+std::vector<TypcType> decodeTypc(const std::vector<uint8_t>& sec) {
+    std::vector<TypcType> out;
+    if (sec.size() < 24 || memcmp(sec.data(), "TYPC", 4) != 0) return out;
+    uint32_t count = le32(sec.data() + 8);
+    uint32_t mtab = le32(sec.data() + 12);
+    uint32_t stab = le32(sec.data() + 16);
+    if (24ull + (uint64_t)count * 56 > sec.size() ||
+        mtab >= sec.size() || stab > sec.size())
+        return out;
+    auto str = [&](uint32_t o) -> std::string {
+        if (o >= sec.size() - stab) return {};
+        const char* p = (const char*)sec.data() + stab + o;
+        size_t mx = sec.size() - stab - o;
+        const void* z = memchr(p, 0, mx);
+        return std::string(p, z ? (const char*)z - p : mx);
+    };
+    size_t pos = 24;
+    for (uint32_t i = 0; i < count && pos + 56 <= sec.size(); i++) {
+        const uint8_t* e = sec.data() + pos;
+        TypcType t;
+        t.tag = e[0];
+        uint32_t mstart = le32(e + 12), mcount = le32(e + 16);
+        t.size = le32(e + 28);
+        pos += 56;
+        if (t.tag == kTagEnum && pos + 4 <= sec.size()) {
+            uint32_t nv = le32(sec.data() + pos);
+            uint64_t tail = 4ull + (uint64_t)nv * 12;
+            pos += tail <= sec.size() - pos ? (size_t)tail : 0;
+        }
+        if ((t.tag == kTagStruct || t.tag == kTagFb) &&
+            mstart != kNoIdx && mcount) {
+            for (uint32_t k = 0; k < mcount; k++) {
+                uint64_t ro = (uint64_t)mtab +
+                              ((uint64_t)mstart + k) * 16;
+                if (ro + 16 > sec.size()) break;
+                const uint8_t* r = sec.data() + ro;
+                TypcMember m;
+                m.name = str(le32(r));
+                m.type = le32(r + 4);
+                m.off = le32(r + 8);
+                t.members.push_back(std::move(m));
+            }
+        }
+        out.push_back(std::move(t));
     }
-    return {};
+    return out;
 }
 
 std::string dashedUuid(const uint8_t uuid[16]) {
@@ -1600,16 +1656,36 @@ std::string dashedUuid(const uint8_t uuid[16]) {
     return b;
 }
 
-std::vector<uint8_t> typcTagsForProgram(
+/* TYPC section bytes for the package matching the running program's
+   uuid; empty when no --packages/--pkg source matches. */
+std::vector<uint8_t> typcSectionForProgram(
     const TplcCtlProgStatus& ps, const std::string& packagesDir,
     const std::vector<std::string>& pkgFiles) {
     std::string want = dashedUuid(ps.program_uuid);
-    auto tryPath = [&](const std::string& path) {
-        std::vector<uint8_t> pkg, tags;
-        if (readFileBytes(path, pkg) &&
-            !(tags = typcTagsFromPkg(pkg, want)).empty())
-            return tags;
-        return std::vector<uint8_t>{};
+    auto tryPath = [&](const std::string& path) -> std::vector<uint8_t> {
+        std::vector<uint8_t> pkg;
+        if (!readFileBytes(path, pkg) ||
+            pkg.size() < 192 || memcmp(pkg.data(), "TPLCPKG\0", 8) != 0)
+            return {};
+        char puuid[37]{};
+        memcpy(puuid, pkg.data() + 32, 36);
+        if (want != puuid) return {};
+        uint32_t ntoc = le32(pkg.data() + 16);
+        if (ntoc > 64 || 160ull + (uint64_t)ntoc * 32 > pkg.size())
+            return {};
+        const uint8_t* toc = pkg.data() + 160;
+        for (uint32_t i = 0; i < ntoc; i++) {
+            const uint8_t* e = toc + (size_t)i * 32;
+            if (le32(e) != 0x0021u) continue;          /* TYPE_CATALOG */
+            uint64_t off = le64(e + 8), sz = le64(e + 16);
+            if (off + sz > pkg.size() || sz < 24)
+                return std::vector<uint8_t>{};
+            const uint8_t* t = pkg.data() + off;
+            if (memcmp(t, "TYPC", 4) != 0)
+                return std::vector<uint8_t>{};
+            return std::vector<uint8_t>(t, t + sz);
+        }
+        return {};
     };
     for (const auto& f : pkgFiles) {
         auto t = tryPath(f);
@@ -1634,6 +1710,12 @@ std::vector<uint8_t> typcTagsForProgram(
     return {};
 }
 
+std::vector<TypcType> typcTypesForProgram(
+    const TplcCtlProgStatus& ps, const std::string& packagesDir,
+    const std::vector<std::string>& pkgFiles) {
+    return decodeTypc(typcSectionForProgram(ps, packagesDir, pkgFiles));
+}
+
 void dbgReadBytes(uint64_t off, uint32_t len, void* dst, size_t cap) {
     W w; w.u64(off); w.u32(len);
     std::vector<uint8_t> out;
@@ -1644,100 +1726,133 @@ void dbgReadBytes(uint64_t off, uint32_t len, void* dst, size_t cap) {
     memcpy(dst, out.data(), out.size() < cap ? out.size() : cap);
 }
 
+/* Emit one catalog leaf at an absolute blob offset. flags carries the
+   LAYD field bits (bit0 retain, bit1 const) — retain/const leaves are
+   always read-only signals; scalar leaves are writable params.     */
+void emitPlcLeaf(Registry& registry, const std::string& name,
+                 const std::string& group, uint64_t off, uint64_t size,
+                 uint8_t flags, ValueType vt, const std::string& desc) {
+    bool retain = (flags & 1) != 0;
+    bool isConst = (flags & 2) != 0;
+    uint32_t sb = scalarBytes(vt);
+    bool scalar = sb != 0 && sb == (uint32_t)size;
+    if (scalar && !retain && !isConst) {
+        ParamEntry p;
+        p.id = g_sigId++;
+        p.name = name;
+        p.description = desc;
+        p.group = group;
+        p.valueType = vt;
+        p.readFn = [off, size](void* dst) {
+            dbgReadBytes(off, (uint32_t)size, dst, size);
+        };
+        p.writeFn = [off, size](const void* src) {
+            W w; w.u64(off); w.u32((uint32_t)size); w.bytes(src, size);
+            std::vector<uint8_t> out;
+            tplcio::CtlClient::Error e;
+            g_ctl.call(TPLC_OP_DBG_WRITE,
+                       w.b.data(), (uint32_t)w.b.size(), out, &e);
+        };
+        assignSchema(p);
+        registry.addParam(std::move(p));
+        return;
+    }
+    if (scalar) {
+        SignalEntry s;
+        s.id = g_sigId++;
+        s.name = name;
+        s.description = desc;
+        s.group = group;
+        s.valueType = vt;
+        s.readFn = [off, size](void* dst) {
+            dbgReadBytes(off, (uint32_t)size, dst, size);
+        };
+        assignSchema(s);
+        registry.addSignal(std::move(s));
+        return;
+    }
+    /* non-scalar → Binary signal carrying the raw field bytes,
+       schema-encoded like the whole-blob signal              */
+    SignalEntry b;
+    b.id = g_sigId++;
+    b.name = name;
+    b.description = desc;
+    b.group = group;
+    b.valueType = ValueType::Binary;
+    b.maxValueSize = (uint16_t)(size + 10 > 0xFFFF
+                                    ? 0xFFFF : size + 10);
+    b.varReadFn = [off, size](void* dst, size_t maxLen) -> size_t {
+        uint32_t want = (uint32_t)size;
+        if (maxLen > 10 && want > maxLen - 10) want = (uint32_t)(maxLen - 10);
+        W w; w.u64(off); w.u32(want);
+        std::vector<uint8_t> out;
+        tplcio::CtlClient::Error e;
+        if (!g_ctl.call(TPLC_OP_DBG_READ, w.b.data(),
+                        (uint32_t)w.b.size(), out, &e))
+            return 0;
+        const SchemaNode* n = nodeFor(ValueType::Binary);
+        auto enc = encodeNative(g_graph, *n,
+            nv::bytes(std::span<const uint8_t>(out)));
+        if (!enc || enc->size() > maxLen) return 0;
+        memcpy(dst, enc->data(), enc->size());
+        return enc->size();
+    };
+    assignSchema(b);
+    registry.addSignal(std::move(b));
+}
+
+/* Catalog entry for one field or member leaf. STRUCT/FUNCTION_BLOCK
+   types recurse: the aggregate stays visible as a raw Binary signal
+   and each member publishes plc.<prog>.<name>.<member> (matching the
+   WebUI pinKeys contract for FB instance pins like TON.ET). Depth is
+   capped like tplc-mir migrate.rs leaf expansion.                 */
+void emitPlcNode(Registry& registry, const std::string& name,
+                 const std::string& group, uint64_t off, uint64_t size,
+                 uint32_t tref, uint8_t flags,
+                 const std::vector<TypcType>& types, int depth) {
+    const TypcType* tt = (tref != kNoIdx && tref < types.size())
+                             ? &types[tref] : nullptr;
+    if (tt && (tt->tag == kTagStruct || tt->tag == kTagFb) &&
+        !tt->members.empty() && depth < 8) {
+        emitPlcLeaf(registry, name, group, off, size, flags,
+                    ValueType::Binary,
+                    tt->tag == kTagFb ? "fb instance" : "struct");
+        for (const auto& m : tt->members) {
+            if (m.name.empty() || m.type >= types.size()) continue;
+            uint64_t moff = off + m.off;
+            uint64_t msize = types[m.type].size;
+            if (msize == 0 || msize > (1u << 20) ||
+                moff + msize > (64ull << 20))
+                continue;
+            emitPlcNode(registry, name + "." + m.name, group, moff,
+                        msize, m.type, flags, types, depth + 1);
+        }
+        return;
+    }
+    uint8_t tag = tt ? tt->tag : 0xFF;
+    ValueType vt = tag == 0xFF ? ValueType::Binary : vtOfTag(tag);
+    bool isConst = (flags & 2) != 0;
+    emitPlcLeaf(registry, name, group, off, size, flags, vt,
+                isConst ? "const field" : "var");
+}
+
 void addPlcFieldEntries(Registry& registry, const std::string& prog,
                         const std::vector<PlcField>& fields,
-                        const std::vector<uint8_t>& tags) {
+                        const std::vector<TypcType>& types) {
+    std::string base = "plc." + prog;
+    std::string pfx = prog + ".";
     for (const auto& f : fields) {
         if (f.name.empty() || f.size == 0 || f.size > (1u << 20))
             continue;
-        uint8_t tag = (f.tref != 0xFFFFFFFFu && f.tref < tags.size())
-                          ? tags[f.tref] : 0xFF;
-        ValueType vt = tag == 0xFF ? ValueType::Binary : vtOfTag(tag);
-        uint32_t sb = scalarBytes(vt);
-        bool scalar = sb != 0 && sb == (uint32_t)f.size;
+        /* multi-POU layouts qualify field names (POU.var); the catalog
+           contract is plc.<prog>.<var> — strip the program prefix  */
+        std::string rel = f.name;
+        if (rel.rfind(pfx, 0) == 0) rel.erase(0, pfx.size());
+        if (rel.empty()) continue;
         bool retain = (f.flags & 1) != 0;
-        bool isConst = (f.flags & 2) != 0;
-        std::string base = "plc." + prog;
-        std::string name;
-        bool writable = false;
-        if (retain) {
-            name = base + ".retain." + f.name;
-        } else {
-            name = base + "." + f.name;
-            writable = scalar && !isConst;
-        }
-        std::string desc = isConst ? "const field"
-                         : retain  ? "retain field"
-                         : (f.kind == 1 ? "fb instance" : "var");
-        if (writable) {
-            ParamEntry p;
-            p.id = g_sigId++;
-            p.name = name;
-            p.description = desc;
-            p.group = base;
-            p.valueType = vt;
-            uint64_t off = f.off;
-            uint32_t len = (uint32_t)f.size;
-            p.readFn = [off, len](void* dst) {
-                dbgReadBytes(off, len, dst, len);
-            };
-            p.writeFn = [off, len](const void* src) {
-                W w; w.u64(off); w.u32(len); w.bytes(src, len);
-                std::vector<uint8_t> out;
-                tplcio::CtlClient::Error e;
-                g_ctl.call(TPLC_OP_DBG_WRITE,
-                           w.b.data(), (uint32_t)w.b.size(), out, &e);
-            };
-            assignSchema(p);
-            registry.addParam(std::move(p));
-            continue;
-        }
-        if (scalar) {
-            SignalEntry s;
-            s.id = g_sigId++;
-            s.name = name;
-            s.description = desc;
-            s.group = base;
-            s.valueType = vt;
-            uint64_t off = f.off;
-            uint32_t len = (uint32_t)f.size;
-            s.readFn = [off, len](void* dst) {
-                dbgReadBytes(off, len, dst, len);
-            };
-            assignSchema(s);
-            registry.addSignal(std::move(s));
-            continue;
-        }
-        /* non-scalar → Binary signal carrying the raw field bytes,
-           schema-encoded like the whole-blob signal              */
-        SignalEntry b;
-        b.id = g_sigId++;
-        b.name = name;
-        b.description = desc;
-        b.group = base;
-        b.valueType = ValueType::Binary;
-        b.maxValueSize = (uint16_t)(f.size + 10 > 0xFFFF
-                                        ? 0xFFFF : f.size + 10);
-        uint64_t off = f.off;
-        uint32_t len = (uint32_t)f.size;
-        b.varReadFn = [off, len](void* dst, size_t maxLen) -> size_t {
-            uint32_t want = len;
-            if (maxLen > 10 && want > maxLen - 10) want = (uint32_t)(maxLen - 10);
-            W w; w.u64(off); w.u32(want);
-            std::vector<uint8_t> out;
-            tplcio::CtlClient::Error e;
-            if (!g_ctl.call(TPLC_OP_DBG_READ, w.b.data(),
-                            (uint32_t)w.b.size(), out, &e))
-                return 0;
-            const SchemaNode* n = nodeFor(ValueType::Binary);
-            auto enc = encodeNative(g_graph, *n,
-                nv::bytes(std::span<const uint8_t>(out)));
-            if (!enc || enc->size() > maxLen) return 0;
-            memcpy(dst, enc->data(), enc->size());
-            return enc->size();
-        };
-        assignSchema(b);
-        registry.addSignal(std::move(b));
+        std::string name = base + (retain ? ".retain." : ".") + rel;
+        emitPlcNode(registry, name, base, f.off, f.size, f.tref,
+                    f.flags, types, 0);
     }
 }
 
@@ -1761,10 +1876,23 @@ static void usage(const char* a0) {
  * is only safe with no sessions attached, so the watchdog stops the
  * server first (joins in-flight callbacks), clears, repopulates, and
  * rebinds; clients see a brief disconnect then re-list. */
-static void populateRegistry(Registry& registry, uint64_t epoch,
+/* returns true when the catalog may be incomplete — no program name
+   yet or the field table unreadable — so the caller keeps polling
+   DBG_FIELDS and rebuilds once the layout reappears (deploy
+   stop→prepare→start races the epoch bump)                     */
+static bool populateRegistry(Registry& registry, uint64_t epoch,
                              bool want_blob_sig,
                              const std::string& packagesDir,
                              const std::vector<std::string>& pkgFiles) {
+    /* ids live in the registry's shared idMap_ (params, signals and
+       functions compete for the same id space) and the map is cleared
+       on every rebuild — so the counters restart with each populate.
+       Letting them run process-wide eventually pushes function ids
+       (g_fnId) into the signal range and addParam/addSignal start
+       failing on phantom collisions.                            */
+    g_fnId = 100;
+    g_sigId = 200;
+    bool fieldsMissing = false;
     /* live signals: status scalars every session can stream/poll   */
     registry.addSignal(sig("status.state", "0 stop 1 run 2 fault 3 empty",
         ValueType::U8,
@@ -1873,15 +2001,27 @@ static void populateRegistry(Registry& registry, uint64_t epoch,
     /* dynamic plc.<prog>.<var> entries for the active program      */
     TplcCtlProgStatus ps{};
     std::vector<uint8_t> raw;
-    if (progStatus(ps, raw) && ps.name[0]) {
+    bool haveProg = progStatus(ps, raw) && ps.name[0];
+    if (haveProg) {
         size_t nl = strnlen((const char*)ps.name, TPLC_PROG_NAME_MAX);
         std::string prog((const char*)ps.name, nl);
         auto fields = fetchPlcFields();
+        /* a deploy swaps stop→prepare→start inside one watchdog
+           tick; if the epoch bump landed mid-swap the layout is
+           briefly absent and DBG_FIELDS errors — retry briefly so
+           the rebuilt catalog doesn't lose every plc.* field      */
+        for (int i = 0; fields.empty() && i < 5; i++) {
+            struct timespec ts{0, 200 * 1000 * 1000};
+            nanosleep(&ts, nullptr);
+            fields = fetchPlcFields();
+        }
+        fieldsMissing = fields.empty();
         if (!fields.empty()) {
-            auto tags = typcTagsForProgram(ps, packagesDir, pkgFiles);
-            addPlcFieldEntries(registry, prog, fields, tags);
+            auto types = typcTypesForProgram(ps, packagesDir, pkgFiles);
+            addPlcFieldEntries(registry, prog, fields, types);
         }
     }
+    return !haveProg || fieldsMissing;
 }
 
 int main(int argc, char** argv) {
@@ -1917,8 +2057,14 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> raw0;
     uint64_t last_epoch = 0;
     if (progStatus(ps0, raw0)) last_epoch = ps0.epoch;
-    populateRegistry(registry, last_epoch, want_blob_sig,
-                     packages_dir, pkg_files);
+    /* field_retry_deadline (nowUs): while set, the watchdog polls
+       DBG_FIELDS cheaply and rebuilds once the layout reappears —
+       covers deploy swaps that outlast the in-populate retry      */
+    uint64_t field_retry_deadline =
+        populateRegistry(registry, last_epoch, want_blob_sig,
+                         packages_dir, pkg_files)
+            ? nowUs() + 15000000
+            : 0;
 
     ServerConfig cfg;
     cfg.timestampFn = nowUs;
@@ -1955,23 +2101,43 @@ int main(int argc, char** argv) {
         } else {
             TplcCtlProgStatus ps{};
             std::vector<uint8_t> raw;
-            if (progStatus(ps, raw) && ps.epoch != last_epoch) {
-                last_epoch = ps.epoch;
+            auto rebuild = [&](uint64_t epoch, const char* why) {
                 g_catalog.install(g_graph, plcManifest(g_graph));
                 server->stop();
                 registry.clear();
-                populateRegistry(registry, ps.epoch, want_blob_sig,
-                                 packages_dir, pkg_files);
+                field_retry_deadline =
+                    populateRegistry(registry, epoch, want_blob_sig,
+                                     packages_dir, pkg_files)
+                        ? nowUs() + 15000000
+                        : 0;
+                if (field_retry_deadline)
+                    fprintf(stderr,
+                            "tplc-io: catalog incomplete, "
+                            "retrying fields for 15s\n");
                 server = mkServer();
                 if (server->start()) {
-                    fprintf(stderr,
-                            "tplc-io: mgmt epoch → %llu, "
-                            "catalog rebuilt\n",
-                            (unsigned long long)ps.epoch);
+                    fprintf(stderr, "tplc-io: %s, catalog rebuilt\n",
+                            why);
                 } else {
                     fprintf(stderr,
                             "tplc-io: rebind %s:%u failed\n",
                             bind.c_str(), port);
+                }
+            };
+            if (progStatus(ps, raw) && ps.epoch != last_epoch) {
+                last_epoch = ps.epoch;
+                char why[96];
+                snprintf(why, sizeof why, "mgmt epoch → %llu",
+                         (unsigned long long)ps.epoch);
+                rebuild(ps.epoch, why);
+            } else if (field_retry_deadline) {
+                /* last rebuild caught the program mid-swap; poll the
+                   field table cheaply and rebuild once it is back   */
+                if (nowUs() >= field_retry_deadline) {
+                    field_retry_deadline = 0;
+                } else if (!fetchPlcFields().empty()) {
+                    field_retry_deadline = 0;
+                    rebuild(last_epoch, "program fields restored");
                 }
             }
         }
