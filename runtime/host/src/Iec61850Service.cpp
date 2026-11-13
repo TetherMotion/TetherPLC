@@ -18,6 +18,7 @@
 #endif
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -166,6 +167,11 @@ Iec61850Service::Iec61850Service() {
     svc_.iec61850_ds_write = [](void* s, uint32_t h, const char* r,
                                 const char* v, uint32_t n)
         { return self(s)->dsWrite(s, h, r, v, n); };
+    svc_.iec61850_ds_create = [](void* s, uint32_t h, const char* r,
+                                 const char* e, uint32_t n)
+        { return self(s)->dsCreate(s, h, r, e, n); };
+    svc_.iec61850_ds_delete = [](void* s, uint32_t h, const char* r)
+        { return self(s)->dsDelete(s, h, r); };
 }
 
 Iec61850Service::~Iec61850Service() {
@@ -904,6 +910,63 @@ int32_t Iec61850Service::dsWrite(void*, uint32_t h, const char* dsRef,
         [](void* p) { MmsValue_delete(static_cast<MmsValue*>(p)); });
     ClientDataSet_destroy(tmpl);
     if (!ok) {
+        impl_->conns[h - 1].last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    impl_->conns[h - 1].invoke_id++;
+    return TPLC_61850_OK;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+int32_t Iec61850Service::dsCreate(void*, uint32_t h, const char* dsRef,
+                                  const char* elements, uint32_t len) {
+    if (!elements || !len || len > 4000) return TPLC_61850_E_PARAM;
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX ||
+        !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+#ifdef TPLC_HAVE_IEC61850
+    IedClientError err;
+    LinkedList list = LinkedList_create();
+    size_t pos = 0;
+    while (pos < len) {
+        size_t eol = pos;
+        while (eol < len && elements[eol] != '\n') eol++;
+        size_t n = eol - pos;
+        while (n && elements[pos + n - 1] == '\r') n--;
+        if (n) {
+            char* s = static_cast<char*>(std::malloc(n + 1));
+            std::memcpy(s, elements + pos, n);
+            s[n] = 0;
+            LinkedList_add(list, s);
+        }
+        pos = eol + 1;
+    }
+    IedConnection_createDataSet(impl_->conns[h - 1].conn, &err,
+                                dsRef, list);
+    LinkedList_destroyDeep(list,
+        [](void* p) { std::free(p); });
+    if (err != IED_ERROR_OK) {
+        impl_->conns[h - 1].last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    impl_->conns[h - 1].invoke_id++;
+    return TPLC_61850_OK;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+int32_t Iec61850Service::dsDelete(void*, uint32_t h, const char* dsRef) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX ||
+        !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+#ifdef TPLC_HAVE_IEC61850
+    IedClientError err;
+    bool ok = IedConnection_deleteDataSet(impl_->conns[h - 1].conn,
+                                          &err, dsRef);
+    if (!ok || err != IED_ERROR_OK) {
         impl_->conns[h - 1].last_error = uint32_t(err);
         return TPLC_61850_E_MMS;
     }

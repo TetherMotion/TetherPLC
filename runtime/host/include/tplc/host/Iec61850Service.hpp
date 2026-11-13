@@ -53,6 +53,8 @@ private:
     int32_t dsRead(void*, uint32_t, const char*, char*, uint32_t);
     int32_t dsDirectory(void*, uint32_t, const char*, char*, uint32_t);
     int32_t dsWrite(void*, uint32_t, const char*, const char*, uint32_t);
+    int32_t dsCreate(void*, uint32_t, const char*, const char*, uint32_t);
+    int32_t dsDelete(void*, uint32_t, const char*);
 
     static Iec61850Service* self(void* p) {
         return static_cast<Iec61850Service*>(p);

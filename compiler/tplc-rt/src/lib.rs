@@ -4711,6 +4711,8 @@ const IEC_SVC_CONTROL_POLL: usize = 96;
 const IEC_SVC_DS_READ: usize = 104;
 const IEC_SVC_DS_DIRECTORY: usize = 112;
 const IEC_SVC_DS_WRITE: usize = 120;
+const IEC_SVC_DS_CREATE: usize = 128;
+const IEC_SVC_DS_DELETE: usize = 136;
 
 /// service lookup for "tplc-iec61850" (12 chars)
 unsafe fn iec_service(ctx: *const u8) -> *const u8 {
@@ -4744,6 +4746,7 @@ type FIecControl = unsafe extern "C" fn(*const u8, u32, *const u8, u32,
 type FIecControlPoll = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
 type FIecDsRead = unsafe extern "C" fn(*const u8, u32, *const u8,
                                       *mut u8, u32) -> i32;
+type FIecDsDelete = unsafe extern "C" fn(*const u8, u32, *const u8) -> i32;
 
 /// `__tplc_rt_FB_Iec61850` — synchronous op dispatch over the
 /// tplc-iec61850 MMS client. OP: 1=connect+associate (HOST/PORT ->
@@ -4993,6 +4996,27 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
             let f: FIecDsRead = core::mem::transmute(iecfn(svc, IEC_SVC_DS_WRITE));
             let rc = f(svc, ru32(this.add(IEC_HANDLE)),
                        rbuf.as_ptr(), this.add(IEC_VAL), n as u32);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+        }
+        15 => {
+            // CreateDataSet: DSREF + VAL (newline-separated member
+            // FCDA refs) -> STATUS only
+            let mut rbuf = [0u8; 128];
+            uacstr(this, IEC_DSREF_LEN, IEC_DSREF, 127, rbuf.as_mut_ptr());
+            let n = (*this.add(IEC_VAL_LEN) as usize).min(255);
+            let f: FIecDsRead = core::mem::transmute(iecfn(svc, IEC_SVC_DS_CREATE));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       rbuf.as_ptr(), this.add(IEC_VAL), n as u32);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+        }
+        16 => {
+            // DeleteDataSet: DSREF -> STATUS only
+            let mut rbuf = [0u8; 128];
+            uacstr(this, IEC_DSREF_LEN, IEC_DSREF, 127, rbuf.as_mut_ptr());
+            let f: FIecDsDelete = core::mem::transmute(iecfn(svc, IEC_SVC_DS_DELETE));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)), rbuf.as_ptr());
             wi32(this.add(IEC_STATUS), rc);
             wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
         }

@@ -607,3 +607,76 @@ END_VAR
     END_IF;
     exPrev := Execute;
 END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850DataSetCreate: MMS CreateDataSet ----
+// Elements is a newline-separated list of FCDA object references
+// ("LD/LN.item[FC]" lines) defining the members.  DataSetRef uses the
+// "LD/LN.name" form or "@name" for an association-specific set.
+FUNCTION_BLOCK FB_Iec61850DataSetCreate
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    DataSetRef : STRING[127];
+    Elements : STRING[255];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 15;
+        ch.HANDLE := ConnectionHdl;
+        ch.DSREF := DataSetRef;
+        ch.VAL := Elements;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850DataSetDelete: MMS DeleteDataSet ----
+FUNCTION_BLOCK FB_Iec61850DataSetDelete
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    DataSetRef : STRING[127];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 16;
+        ch.HANDLE := ConnectionHdl;
+        ch.DSREF := DataSetRef;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK

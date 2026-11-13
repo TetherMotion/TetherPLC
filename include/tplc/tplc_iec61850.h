@@ -153,6 +153,18 @@ typedef struct TplcIec61850Service {
     int32_t (*iec61850_ds_write)(void* svc, uint32_t handle,
                                  const char* ds_ref,
                                  const char* values, uint32_t len);
+    /* MMS DefineNamedVariableList (ACSI CreateDataSet): elements is a
+       newline-separated list of FCDA object references
+       ("LD/LN.item[FC]" lines) defining the members.  ds_ref uses the
+       "LD/LN.name" form or "@name" for an association-specific set.
+       Returns TPLC_61850_OK or an error code. */
+    int32_t (*iec61850_ds_create)(void* svc, uint32_t handle,
+                                  const char* ds_ref,
+                                  const char* elements, uint32_t len);
+    /* MMS DeleteNamedVariableList (ACSI DeleteDataSet) on a deletable
+       data set reference. */
+    int32_t (*iec61850_ds_delete)(void* svc, uint32_t handle,
+                                  const char* ds_ref);
 } TplcIec61850Service;
 
 #ifdef __cplusplus
