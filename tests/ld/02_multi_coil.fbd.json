@@ -1,0 +1,50 @@
+{
+ "schema": "fbd.v1",
+ "project": "ld02_multi_coil",
+ "data_types": [],
+ "global_vars": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "LD02_MULTI_COIL",
+   "kind": "program",
+   "en_eno": "relaxed",
+   "interface": [],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "ladder",
+     "label": "rung1",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {"id": 1, "kind": "variable", "type_ref": "", "pos": {"x": 10, "y": 10}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "in", "name": "a_in", "at": "%IX0.0"},
+      {"id": 2, "kind": "variable", "type_ref": "", "pos": {"x": 110, "y": 10}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "in", "name": "b_in", "at": "%IX0.1"},
+      {"id": 3, "kind": "variable", "type_ref": "", "pos": {"x": 210, "y": 10}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "out", "name": "c_out", "at": "%QX0.0"},
+      {"id": 4, "kind": "variable", "type_ref": "", "pos": {"x": 310, "y": 10}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "out", "name": "d_out", "at": "%QX0.1"}
+     ],
+     "wires": []
+    },
+    {
+     "id": "n2",
+     "kind": "ladder",
+     "label": "rung2",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {"id": 5, "kind": "variable", "type_ref": "", "pos": {"x": 10, "y": 80}, "params": {}, "exec_order": 0, "negated": [0], "comment": "", "role": "in", "name": "a_in", "at": "%IX0.0"},
+      {"id": 6, "kind": "variable", "type_ref": "", "pos": {"x": 210, "y": 80}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "out", "name": "e_out", "at": "%QX0.2"}
+     ],
+     "wires": []
+    }
+   ]
+  }
+ ],
+ "tasks": [{"name": "MainTask", "period_ns": 10000000, "programs": ["LD02_MULTI_COIL"], "priority": 0}]
+}

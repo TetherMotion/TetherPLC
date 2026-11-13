@@ -418,10 +418,7 @@ impl<'a> Cx<'a> {
     /// First network pass: fb instance decls, sig resolution, located
     /// variable shadows, probe fields, exec_order collisions.
     fn precollect(&mut self, net: &Network) {
-        if net.kind == NetworkKind::Ladder {
-            self.err(codes::UNSUPPORTED, "ladder networks are schema-reserved", 0);
-            return;
-        }
+        let ladder = net.kind == NetworkKind::Ladder;
         let mut orders: BTreeMap<u32, NodeId> = BTreeMap::new();
         for b in &net.blocks {
             if b.exec_order != 0 {
@@ -434,10 +431,13 @@ impl<'a> Cx<'a> {
                 }
             }
             match b.kind {
-                BlockKind::Fb => self.fb_decl(b),
-                BlockKind::Function => self.fn_sig(b),
+                // LD rungs only declare storage for contacts/coils —
+                // rung topology is positional (lower_ladder), so fb/fn/
+                // device sigs are neither needed nor meaningful.
+                BlockKind::Fb if !ladder => self.fb_decl(b),
+                BlockKind::Function if !ladder => self.fn_sig(b),
                 BlockKind::Variable => self.var_decl(b),
-                BlockKind::Device => self.device_decl(b),
+                BlockKind::Device if !ladder => self.device_decl(b),
                 _ => {}
             }
         }
@@ -741,6 +741,13 @@ impl<'a> Cx<'a> {
 
     fn lower_network(&mut self, net: &Network, stmts: &mut Vec<Stmt>) {
         if net.kind == NetworkKind::Ladder {
+            self.lower_ladder(net, stmts);
+            for r in &net.returns {
+                stmts.push(Stmt {
+                    kind: StmtKind::Return(None),
+                    prov: self.prov(r.id, 0),
+                });
+            }
             return;
         }
         if net.blocks.is_empty() {
@@ -814,6 +821,119 @@ impl<'a> Cx<'a> {
         }
         if effectful == 0 {
             self.warn(codes::ORPHAN, "network produces no effects", 0);
+        }
+    }
+
+    /// Ladder network → rung stmt sequence. Rungs are reconstructed
+    /// positionally: blocks clustered by `pos.y` (one rung per
+    /// horizontal band), ordered left→right by `pos.x`. Contacts
+    /// (variable role `in`, NC when `negated`) AND into the rung
+    /// flow; coils (role `out`) latch the flow — every coil on a rung
+    /// sees the same power, matching parallel-output semantics.
+    /// Non-contact/coil elements are rejected: FB/function pins need
+    /// wire topology, which positional rungs do not carry.
+    fn lower_ladder(&mut self, net: &Network, stmts: &mut Vec<Stmt>) {
+        // wires are ignored: rung reconstruction is positional. Imported
+        // LD with explicit branch wiring may not match — warn so the
+        // author knows series-chain semantics were applied.
+        if !net.wires.is_empty() {
+            self.warn(
+                codes::ORPHAN,
+                "ladder wires ignored — positional series-chain semantics",
+                0,
+            );
+        }
+        // rung bands: sort by y, split where the gap exceeds half the
+        // smallest inter-band spacing (adaptive to editor/import scale)
+        let mut ys: Vec<u32> = net.blocks.iter().map(|b| b.pos.y).collect();
+        ys.sort_unstable();
+        ys.dedup();
+        let min_gap = ys
+            .windows(2)
+            .map(|w| w[1] - w[0])
+            .filter(|&g| g > 0)
+            .min()
+            .unwrap_or(0);
+        let tol = if min_gap > 0 {
+            (min_gap / 2).clamp(4, 64)
+        } else {
+            24
+        };
+        let mut bands: Vec<Vec<&Block>> = Vec::new();
+        let mut sorted: Vec<&Block> = net.blocks.iter().collect();
+        sorted.sort_by_key(|b| (b.pos.y, b.pos.x));
+        for b in sorted {
+            match bands.last_mut() {
+                Some(band) if b.pos.y.abs_diff(band[0].pos.y) <= tol => band.push(b),
+                _ => bands.push(vec![b]),
+            }
+        }
+        for mut band in bands {
+            band.sort_by_key(|b| b.pos.x);
+            let mut flow = Expr {
+                kind: ExprKind::Lit(Lit::Bool(true)),
+                ty: Type::Bool,
+                prov: self.prov(band[0].id, 0),
+            };
+            for b in band {
+                match (b.kind, b.role) {
+                    (BlockKind::Variable, Some(VarRole::In)) => {
+                        // NO/NC contact: flow AND (var [NOT])
+                        let Some(r) = self.var_ref(b) else { continue };
+                        let mut e = Expr {
+                            kind: ExprKind::Ref(r),
+                            ty: Type::Bool,
+                            prov: self.prov(b.id, 0),
+                        };
+                        if !b.negated.is_empty() {
+                            e = Expr {
+                                kind: ExprKind::Un(UnOp::Not, Box::new(e)),
+                                ty: Type::Bool,
+                                prov: self.prov(b.id, 0),
+                            };
+                        }
+                        flow = Expr {
+                            kind: ExprKind::Bin(BinOp::And, Box::new(flow), Box::new(e)),
+                            ty: Type::Bool,
+                            prov: self.prov(b.id, 0),
+                        };
+                    }
+                    (BlockKind::Variable, Some(VarRole::Out)) => {
+                        // coil: latch rung flow (negated → NOT)
+                        let Some(lhs) = self.var_ref(b) else { continue };
+                        let rhs = if b.negated.is_empty() {
+                            flow.clone()
+                        } else {
+                            Expr {
+                                kind: ExprKind::Un(UnOp::Not, Box::new(flow.clone())),
+                                ty: Type::Bool,
+                                prov: self.prov(b.id, 0),
+                            }
+                        };
+                        stmts.push(Stmt {
+                            kind: StmtKind::Assign { lhs, rhs },
+                            prov: self.prov(b.id, 0),
+                        });
+                    }
+                    (BlockKind::Variable, _) => {
+                        self.err(
+                            codes::UNSUPPORTED,
+                            format!("ladder element {} has unsupported role", b.id),
+                            b.id,
+                        );
+                    }
+                    (kind, _) => {
+                        self.err(
+                            codes::UNSUPPORTED,
+                            format!(
+                                "ladder element {kind:?} needs wire topology — \
+                                 only contacts/coils lower positionally"
+                            ),
+                            b.id,
+                        );
+                    }
+                }
+            }
         }
     }
 

@@ -652,6 +652,13 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(fbd_gallery_e2e PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # ladder diagrams: ST/LD pairs must produce identical %Q images —
+  # positional rung lowering (y-band rung, x-order series chain)
+  add_test(NAME ld_diagrams
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/ld/e2e.sh)
+  set_tests_properties(ld_diagrams PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # mixed FBD+ST compilation: one module, bidirectional POU calls,
   # inline st blocks, multi-program packages, merge diagnostics
   add_test(NAME mixed_fbd_st
