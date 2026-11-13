@@ -1227,6 +1227,19 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "OPTFLDS", udint());
             push(&mut off, "TRGOPS", udint());
             push(&mut off, "RCNT", udint());
+            /* control ops (appended): OP 10=control (CTRLREF + CMODE
+               1=select 2=selectWithValue 3=operate 4=cancel + CTLVAL
+               -> VAL echo), 11=control poll (-> CTLINVOKE/CTLSUCCESS/
+               CTLERR/CTLTYPE/CTLNUM/CTLPEND). */
+            push(&mut off, "CTRLREF", Type::Str { cap: 127 });
+            push(&mut off, "CTLVAL", Type::Str { cap: 63 });
+            push(&mut off, "CMODE", udint());
+            push(&mut off, "CTLINVOKE", udint());
+            push(&mut off, "CTLSUCCESS", dint());
+            push(&mut off, "CTLERR", udint());
+            push(&mut off, "CTLTYPE", udint());
+            push(&mut off, "CTLNUM", udint());
+            push(&mut off, "CTLPEND", udint());
         }
         /* FB_Mqtt — tplc-mqtt service bridge (MQTT client via
         libpaho-mqtt3c). Synchronous op dispatch like FB_Eip: set OP +

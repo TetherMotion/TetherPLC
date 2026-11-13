@@ -47,6 +47,9 @@ private:
     int32_t rcbGet(void*, uint32_t, const char*, TplcIec61850Rcb*);
     int32_t rcbSet(void*, uint32_t, const char*, uint32_t);
     int32_t reportPoll(void*, uint32_t, char*, uint32_t);
+    int32_t control(void*, uint32_t, const char*, uint32_t,
+                    const char*, char*, uint32_t);
+    int32_t controlPoll(void*, uint32_t, TplcIec61850Ctl*);
 
     static Iec61850Service* self(void* p) {
         return static_cast<Iec61850Service*>(p);

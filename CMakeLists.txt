@@ -985,6 +985,16 @@ if(NOT CMAKE_CROSSCOMPILING)
         bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_iec61850_brcb_io.sh)
     set_tests_properties(tc2_iec61850_brcb_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+    # Controllable-object tranche: SWI1 BSC (SBO normal + cancel) —
+    # select/operate/cancel with CommandTermination events
+    add_test(NAME tc2_iec61850_ctl_io
+      COMMAND ${CMAKE_COMMAND} -E env
+        "IEC61850_FAKE=$<TARGET_FILE:iec61850_ied_fake>"
+        "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_iec61850_ctl_io.sh)
+    set_tests_properties(tc2_iec61850_ctl_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
 
   # MQTT client surface (C7): FB_IotMqtt* wrappers drive a real

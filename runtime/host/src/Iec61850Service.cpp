@@ -19,6 +19,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <deque>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -40,6 +42,17 @@ struct Conn {
        by report_poll on the PLC thread */
     std::mutex           reportsMtx;
     std::vector<std::string> reports;
+#ifdef TPLC_HAVE_IEC61850
+    /* controllable data objects keyed by object reference; command
+       terminations queue here for control_poll */
+    std::map<std::string, ControlObjectClient> ctls;
+    std::mutex           ctlMtx;
+    struct CtlEvent {
+        uint32_t invoke, ctl_num;
+        int32_t  success, err, type;
+    };
+    std::deque<CtlEvent> ctlEvents;
+#endif
 };
 
 /* build the MMS objectReference "domain/item" or just "item" when
@@ -91,6 +104,8 @@ void mmsToValue(MmsValue* mv, char* s, uint32_t cap, double* v, int* kind) {
         case MMS_INTEGER:
         case MMS_UNSIGNED: *v = double(MmsValue_toInt64(mv));       *kind = 2; return;
         case MMS_FLOAT:    *v = double(MmsValue_toFloat(mv));       *kind = 3; return;
+        case MMS_BIT_STRING:
+            *v = double(MmsValue_getBitStringAsInteger(mv));       *kind = 2; return;
         default:
             *kind = 4;
             if (s && cap) {
@@ -135,12 +150,22 @@ Iec61850Service::Iec61850Service() {
         { return self(s)->rcbSet(s, h, r, f); };
     svc_.iec61850_report_poll = [](void* s, uint32_t h, char* o, uint32_t c)
         { return self(s)->reportPoll(s, h, o, c); };
+    svc_.iec61850_control = [](void* s, uint32_t h, const char* r,
+                               uint32_t a, const char* v, char* o,
+                               uint32_t c)
+        { return self(s)->control(s, h, r, a, v, o, c); };
+    svc_.iec61850_control_poll = [](void* s, uint32_t h,
+                                    TplcIec61850Ctl* o)
+        { return self(s)->controlPoll(s, h, o); };
 }
 
 Iec61850Service::~Iec61850Service() {
 #ifdef TPLC_HAVE_IEC61850
-    for (Conn& c : impl_->conns)
+    for (Conn& c : impl_->conns) {
+        for (auto& kv : c.ctls)
+            if (kv.second) ControlObjectClient_destroy(kv.second);
         if (c.conn) IedConnection_destroy(c.conn);
+    }
 #endif
 }
 
@@ -180,6 +205,9 @@ int32_t Iec61850Service::close(void*, uint32_t h) {
         return TPLC_61850_E_HANDLE;
     Conn& c = impl_->conns[h - 1];
 #ifdef TPLC_HAVE_IEC61850
+    for (auto& kv : c.ctls)
+        if (kv.second) ControlObjectClient_destroy(kv.second);
+    c.ctls.clear();
     IedConnection_close(c.conn);
     IedConnection_destroy(c.conn);
 #endif
@@ -351,6 +379,60 @@ void onIecReport(void* param, ClientReport report) {
     if (c->reports.size() < 64) c->reports.push_back(std::move(line));
 }
 
+/* CommandTermination handler: runs on the libiec61850 receiver
+   thread; queues one event per terminated command. */
+void onIecCtl(uint32_t invokeId, void* param, IedClientError err,
+              ControlActionType type, bool success) {
+    Conn* c = static_cast<Conn*>(param);
+    if (!c) return;
+    Conn::CtlEvent ev{};
+    ev.invoke = invokeId;
+    ev.success = success ? 1 : 0;
+    ev.err = int32_t(err);
+    ev.type = int32_t(type);
+    std::lock_guard<std::mutex> lk(c->ctlMtx);
+    if (err == IED_ERROR_OK && !success && !c->ctls.empty()) {
+        /* pull the server's LastApplError ctlNum from any live
+           control client on this connection (single-ctl conns are
+           the common case). */
+        LastApplError la = ControlObjectClient_getLastApplError(
+            c->ctls.begin()->second);
+        ev.ctl_num = uint32_t(la.ctlNum);
+        ev.err = int32_t(la.error);
+    }
+    if (c->ctlEvents.size() < 32) c->ctlEvents.push_back(ev);
+}
+
+/* ASCII ctlVal text -> MmsValue matching the control object's
+   declared ctlVal type.  Structure ctlVals (APC analogue) are not
+   supported and return nullptr. */
+MmsValue* ctlValFromText(ControlObjectClient ctl, const char* text) {
+    if (!ctl || !text) return nullptr;
+    switch (ControlObjectClient_getCtlValType(ctl)) {
+        case MMS_BOOLEAN:
+            return MmsValue_newBoolean(
+                std::strcmp(text, "true") == 0 || std::strcmp(text, "1") == 0);
+        case MMS_INTEGER:
+            return MmsValue_newInteger(int32_t(std::strtol(text, nullptr, 10)));
+        case MMS_UNSIGNED:
+            return MmsValue_newUnsigned(uint32_t(std::strtoul(text, nullptr, 10)));
+        case MMS_BIT_STRING: {
+            /* coded-enum ctlVals (BSC/DPC/ISC) are 2-bit strings;
+               "true"/nonzero -> value 1. */
+            MmsValue* bs = MmsValue_newBitString(2);
+            const bool on = std::strcmp(text, "true") == 0 ||
+                            std::strcmp(text, "1") == 0 ||
+                            std::strtol(text, nullptr, 10) != 0;
+            MmsValue_setBitStringFromInteger(bs, on ? 1u : 0u);
+            return bs;
+        }
+        case MMS_FLOAT:
+            return MmsValue_newFloat(float(std::strtod(text, nullptr)));
+        default:
+            return nullptr;
+    }
+}
+
 } // namespace
 #endif
 
@@ -480,6 +562,100 @@ int32_t Iec61850Service::reportPoll(void*, uint32_t h, char* out,
     }
     out[off < cap ? off : cap - 1] = 0;
     return int32_t(off);
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+int32_t Iec61850Service::control(void*, uint32_t h, const char* objRef,
+                                 uint32_t action, const char* ctlVal,
+                                 char* out, uint32_t cap) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+    if (!objRef || !*objRef || !out || !cap) return TPLC_61850_E_PARAM;
+    if (action < 1 || action > 4) return TPLC_61850_E_PARAM;
+#ifdef TPLC_HAVE_IEC61850
+    Conn& c = impl_->conns[h - 1];
+    /* objectReference is the full "domain/LN.DO" form the client
+       library expects (same string space as RCB refs minus $FC$). */
+    ControlObjectClient ctl = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(c.ctlMtx);
+        auto it = c.ctls.find(objRef);
+        if (it != c.ctls.end()) ctl = it->second;
+    }
+    if (!ctl) {
+        ctl = ControlObjectClient_create(objRef, c.conn);
+        if (!ctl) {
+            c.last_error = uint32_t(
+                IedConnection_getLastApplError(c.conn).error);
+            return TPLC_61850_E_MMS;
+        }
+        /* ctlVal echo: the text the caller supplied, or the server
+           default for value-less commands. */
+        std::snprintf(out, cap, "%s", ctlVal ? ctlVal : "");
+        std::lock_guard<std::mutex> lk(c.ctlMtx);
+        c.ctls[objRef] = ctl;
+        /* NOTE: the map write happens after ControlObjectClient_create
+           (which is synchronous) — terminations only arrive once a
+           command is issued below. */
+    }
+    bool ok = false;
+    IedClientError err = IED_ERROR_OK;
+    MmsValue* mv = nullptr;
+    if (action == 2 || action == 3) {
+        mv = ctlValFromText(ctl, ctlVal);
+        if (!mv) return TPLC_61850_E_PARAM;
+    }
+    switch (action) {
+        case 1: /* select (SBO normal) */
+            ok = ControlObjectClient_selectAsync(
+                ctl, &err, onIecCtl, &c) != 0;
+            break;
+        case 2: /* select with value (SBO enhanced) */
+            ok = ControlObjectClient_selectWithValueAsync(
+                ctl, &err, mv, onIecCtl, &c) != 0;
+            break;
+        case 3: /* operate */
+            ok = ControlObjectClient_operateAsync(
+                ctl, &err, mv, 0, onIecCtl, &c) != 0;
+            break;
+        case 4: /* cancel */
+            ok = ControlObjectClient_cancelAsync(
+                ctl, &err, onIecCtl, &c) != 0;
+            break;
+    }
+    if (mv) MmsValue_delete(mv);
+    if (!ok || err != IED_ERROR_OK) {
+        c.last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    c.invoke_id++;
+    return TPLC_61850_OK;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+int32_t Iec61850Service::controlPoll(void*, uint32_t h,
+                                     TplcIec61850Ctl* out) {
+    if (!out) return TPLC_61850_E_PARAM;
+    std::memset(out, 0, sizeof(*out));
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+#ifdef TPLC_HAVE_IEC61850
+    Conn& c = impl_->conns[h - 1];
+    std::lock_guard<std::mutex> lk(c.ctlMtx);
+    if (c.ctlEvents.empty()) return TPLC_61850_OK;
+    const Conn::CtlEvent& ev = c.ctlEvents.front();
+    out->invoke_id = ev.invoke;
+    out->success   = ev.success;
+    out->err       = uint32_t(ev.err);
+    out->type      = uint32_t(ev.type);
+    out->ctl_num   = ev.ctl_num;
+    out->pending   = 1;
+    c.ctlEvents.pop_front();
+    return TPLC_61850_OK;
 #else
     return TPLC_61850_E_CONN;
 #endif

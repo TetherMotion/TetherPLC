@@ -4668,6 +4668,21 @@ const IEC_SQNUM: usize = 796;
 const IEC_OPTFLDS: usize = 800;
 const IEC_TRGOPS: usize = 804;
 const IEC_RCNT: usize = 808;
+// Control members (appended): CTRLREF u8len@812+data@813 cap127,
+// CTLVAL u8len@940+data@941 cap63, CMODE@1004, CTLINVOKE@1008,
+// CTLSUCCESS@1012, CTLERR@1016, CTLTYPE@1020, CTLNUM@1024,
+// CTLPEND@1028.
+const IEC_CTRLREF_LEN: usize = 812;
+const IEC_CTRLREF: usize = 813;
+const IEC_CTLVAL_LEN: usize = 940;
+const IEC_CTLVAL: usize = 941;
+const IEC_CMODE: usize = 1004;
+const IEC_CTLINVOKE: usize = 1008;
+const IEC_CTLSUCCESS: usize = 1012;
+const IEC_CTLERR: usize = 1016;
+const IEC_CTLTYPE: usize = 1020;
+const IEC_CTLNUM: usize = 1024;
+const IEC_CTLPEND: usize = 1028;
 
 // tplc-iec61850 service vtable offsets (TplcIec61850Service):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -4680,6 +4695,8 @@ const IEC_SVC_GETNAMELIST: usize = 56;
 const IEC_SVC_RCB_GET: usize = 64;
 const IEC_SVC_RCB_SET: usize = 72;
 const IEC_SVC_REPORT_POLL: usize = 80;
+const IEC_SVC_CONTROL: usize = 88;
+const IEC_SVC_CONTROL_POLL: usize = 96;
 
 /// service lookup for "tplc-iec61850" (12 chars)
 unsafe fn iec_service(ctx: *const u8) -> *const u8 {
@@ -4708,6 +4725,9 @@ type FIecGetNameList = unsafe extern "C" fn(*const u8, u32, *const u8, *mut u8, 
 type FIecRcbGet = unsafe extern "C" fn(*const u8, u32, *const u8, *mut u8) -> i32;
 type FIecRcbSet = unsafe extern "C" fn(*const u8, u32, *const u8, u32) -> i32;
 type FIecReportPoll = unsafe extern "C" fn(*const u8, u32, *mut u8, u32) -> i32;
+type FIecControl = unsafe extern "C" fn(*const u8, u32, *const u8, u32,
+                                       *const u8, *mut u8, u32) -> i32;
+type FIecControlPoll = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
 
 /// `__tplc_rt_FB_Iec61850` — synchronous op dispatch over the
 /// tplc-iec61850 MMS client. OP: 1=connect+associate (HOST/PORT ->
@@ -4875,6 +4895,52 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
                 core::ptr::copy_nonoverlapping(out.as_ptr(), this.add(IEC_VAL), n);
                 *this.add(IEC_VAL_LEN) = n as u8;
                 *this.add(IEC_VAL + n) = 0;
+            }
+        }
+        10 => {
+            // control: CTRLREF + CMODE (1=select 2=selectWithValue
+            // 3=operate 4=cancel) + CTLVAL -> VAL echo
+            let mut cbuf = [0u8; 128];
+            let mut vbuf = [0u8; 64];
+            uacstr(this, IEC_CTRLREF_LEN, IEC_CTRLREF, 127, cbuf.as_mut_ptr());
+            uacstr(this, IEC_CTLVAL_LEN, IEC_CTLVAL, 63, vbuf.as_mut_ptr());
+            let mut out = [0u8; 64];
+            let f: FIecControl = core::mem::transmute(iecfn(svc, IEC_SVC_CONTROL));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       cbuf.as_ptr(), ru32(this.add(IEC_CMODE)),
+                       vbuf.as_ptr(), out.as_mut_ptr(), 64);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc == 0 {
+                let mut n = 0usize;
+                while n < 64 && out[n] != 0 { n += 1; }
+                core::ptr::copy_nonoverlapping(out.as_ptr(), this.add(IEC_VAL), n);
+                *this.add(IEC_VAL_LEN) = n as u8;
+                *this.add(IEC_VAL + n) = 0;
+            }
+        }
+        11 => {
+            // control poll: drain one CommandTermination event ->
+            // CTLINVOKE/CTLSUCCESS/CTLERR/CTLTYPE/CTLNUM/CTLPEND
+            let mut ev = [0u8; 32];
+            let f: FIecControlPoll =
+                core::mem::transmute(iecfn(svc, IEC_SVC_CONTROL_POLL));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)), ev.as_mut_ptr());
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc == 0 {
+                let rd32 = |off: usize| -> u32 {
+                    let mut b = [0u8; 4];
+                    core::ptr::copy_nonoverlapping(ev.as_ptr().add(off),
+                                                 b.as_mut_ptr(), 4);
+                    u32::from_le_bytes(b)
+                };
+                wu32(this.add(IEC_CTLINVOKE), rd32(0));
+                wi32(this.add(IEC_CTLSUCCESS), rd32(4) as i32);
+                wu32(this.add(IEC_CTLERR), rd32(8));
+                wu32(this.add(IEC_CTLTYPE), rd32(12));
+                wu32(this.add(IEC_CTLNUM), rd32(16));
+                wu32(this.add(IEC_CTLPEND), rd32(20));
             }
         }
         _ => {

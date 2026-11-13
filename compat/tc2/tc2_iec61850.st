@@ -374,3 +374,103 @@ END_VAR
     END_IF;
     exPrev := Execute;
 END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850Control: controllable data object command ----
+// ObjectRef is the "domain/LN.DO" reference (e.g.
+// "tetherTestLD/LLN0.SWI1").  Mode: 1=Select, 2=SelectWithValue,
+// 3=Operate, 4=Cancel.  CtlValue is the ASCII control value
+// ("true"/"false", integer or float text) for SelectWithValue and
+// Operate.  Command termination arrives asynchronously — poll it
+// with FB_Iec61850ControlPoll.
+FUNCTION_BLOCK FB_Iec61850Control
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    ObjectRef : STRING[127];
+    Mode : UDINT;
+    CtlValue : STRING[63];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    Value : STRING[63];
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    Value := '';
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 10;
+        ch.HANDLE := ConnectionHdl;
+        ch.CTRLREF := ObjectRef;
+        ch.CMODE := Mode;
+        ch.CTLVAL := CtlValue;
+        ch();
+        IF ch.STATUS >= 0 THEN
+            Done := TRUE;
+            Value := ch.VAL;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850ControlPoll: drain a CommandTermination event ----
+// Pending is TRUE when an event was returned: Success marks
+// CommandTermination+ vs -, Type is 0=select 1=operate 2=cancel,
+// CtlNum echoes the server's control number.
+FUNCTION_BLOCK FB_Iec61850ControlPoll
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    Pending : BOOL;
+    InvokeID : UDINT;
+    Success : BOOL;
+    Err : UDINT;
+    EvType : UDINT;
+    CtlNum : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    Pending := FALSE;
+    InvokeID := 0;
+    Success := FALSE;
+    Err := 0;
+    EvType := 0;
+    CtlNum := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 11;
+        ch.HANDLE := ConnectionHdl;
+        ch();
+        IF ch.STATUS >= 0 THEN
+            Done := TRUE;
+            Pending := ch.CTLPEND > 0;
+            InvokeID := ch.CTLINVOKE;
+            Success := ch.CTLSUCCESS > 0;
+            Err := ch.CTLERR;
+            EvType := ch.CTLTYPE;
+            CtlNum := ch.CTLNUM;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK

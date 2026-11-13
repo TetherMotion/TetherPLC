@@ -21,6 +21,35 @@
 static volatile int stopFlag = 0;
 static void onSig(int) { stopFlag = 1; }
 
+static IedServer g_ied;
+static DataAttribute* g_swi_stval;   /* valWTr.posVal leaf */
+
+/* BSC control handler: accept the command and mirror ctlVal into
+   valWTr.posVal so clients can verify the operate took effect. */
+static ControlHandlerResult
+swiControlHandler(ControlAction action, void* parameter,
+                  MmsValue* value, bool test)
+{
+    (void)parameter;
+    if (test || !value) return CONTROL_RESULT_FAILED;
+    bool on;
+    switch (MmsValue_getType(value)) {
+        case MMS_BOOLEAN: on = MmsValue_getBoolean(value); break;
+        case MMS_BIT_STRING: on = MmsValue_getBitStringAsInteger(value) != 0; break;
+        case MMS_INTEGER:
+        case MMS_UNSIGNED: on = MmsValue_toInt64(value) != 0; break;
+        case MMS_FLOAT: on = MmsValue_toFloat(value) != 0.0f; break;
+        default: return CONTROL_RESULT_FAILED;
+    }
+    printf("SWI1 control: %s\n", on ? "ON" : "OFF");
+    fflush(stdout);
+    IedServer_lockDataModel(g_ied);
+    IedServer_updateInt32AttributeValue(g_ied, g_swi_stval,
+                                        on ? 1 : 0);
+    IedServer_unlockDataModel(g_ied);
+    return CONTROL_RESULT_OK;
+}
+
 int main(int argc, char** argv) {
     int port = argc > 1 ? atoi(argv[1]) : 1102;
 
@@ -84,7 +113,25 @@ int main(int argc, char** argv) {
                               RPT_OPT_TIME_STAMP,
                               50, 200);
 
+    /* SWI1: controllable single point (BSC), SBO normal security with
+       cancel — exercises select/operate/cancel over the CO model. */
+    DataObject* swi1 = CDC_BSC_create("SWI1", (ModelNode*)lln0, 0,
+                                    CDC_CTL_MODEL_SBO_NORMAL |
+                                    CDC_CTL_MODEL_HAS_CANCEL, false);
+    if (swi1) {
+        ModelNode* vwt = ModelNode_getChild((ModelNode*)swi1, "valWTr");
+        ModelNode* pv = vwt ? ModelNode_getChild(vwt, "posVal") : NULL;
+        if (pv) {
+            g_swi_stval = (DataAttribute*)pv;
+            DataAttribute_setValue(g_swi_stval,
+                MmsValue_newInteger(0));
+        }
+    }
+
     IedServer ied = IedServer_create(model);
+    g_ied = ied;
+    if (swi1)
+        IedServer_setControlHandler(ied, swi1, swiControlHandler, NULL);
     IedServer_setLocalIpAddress(ied, "127.0.0.1");
     IedServer_start(ied, port);
 

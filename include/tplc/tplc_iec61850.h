@@ -55,6 +55,18 @@ typedef struct TplcIec61850Rcb {
     uint32_t reserved[5];
 } TplcIec61850Rcb;           /* 152 bytes */
 
+/* Control-object command-termination event (Select/Operate/
+   CommandTermination+/-).  Drained by iec61850_control_poll. */
+typedef struct TplcIec61850Ctl {
+    uint32_t invoke_id;      /* MMS invoke id of the command        */
+    int32_t  success;        /* 1 = CommandTermination+, 0 = -     */
+    int32_t  err;            /* IedClientError / appl error code   */
+    int32_t  type;           /* 0 select, 1 operate, 2 cancel      */
+    uint32_t ctl_num;        /* ctlNum echoed by the server        */
+    uint32_t pending;        /* 1 when an event was returned       */
+    uint32_t reserved[2];
+} TplcIec61850Ctl;           /* 32 bytes */
+
 typedef struct TplcIec61850Service {
     uint32_t struct_size;
     uint32_t abi_version;
@@ -102,7 +114,21 @@ typedef struct TplcIec61850Service {
        Returns byte count or a TPLC_61850_E_* code. */
     int32_t (*iec61850_report_poll)(void* svc, uint32_t handle,
                                     char* out, uint32_t cap);
-    void* reserved[4];
+    /* controllable data object (CDC with CO model): action 1=select,
+       2=selectWithValue, 3=operate, 4=cancel.  ctl_val is the ASCII
+       control value ("true"/"false", integer or float text) used by
+       selectWithValue/operate; NULL otherwise.  out receives the
+       ctlVal echo text.  Returns TPLC_61850_OK when the command was
+       accepted for transmission. */
+    int32_t (*iec61850_control)(void* svc, uint32_t handle,
+                                const char* obj_ref, uint32_t action,
+                                const char* ctl_val, char* out,
+                                uint32_t cap);
+    /* drain one pending CommandTermination event into out; pending=0
+       when the queue is empty. */
+    int32_t (*iec61850_control_poll)(void* svc, uint32_t handle,
+                                     TplcIec61850Ctl* out);
+    void* reserved[2];
 } TplcIec61850Service;
 
 #ifdef __cplusplus
