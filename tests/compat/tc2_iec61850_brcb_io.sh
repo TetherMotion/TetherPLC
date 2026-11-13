@@ -45,7 +45,7 @@ kill -0 "$SRV_PID" 2>/dev/null || { bad "ied fake start"; \
     for i in $(seq 0 400); do
         t=$((i * 10000000))
         if [ "$i" -eq 400 ]; then
-            echo "step $i time=$t in 0=00 expect 0=ff"
+            echo "step $i time=$t in 0=00 expect 0=ff01"
         else
             echo "step $i time=$t in 0=00"
         fi
@@ -60,7 +60,7 @@ rc=$?
 if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log"; then
     ok "sim replay: BRCB get/set/enable/dchg-report/purge/disable"
 else
-    bad "sim replay: buffered RCB get/set/report"
+    bad "sim replay: buffered RCB get/set/report/integrity"
     tail -20 "$WORK/sim.log"
 fi
 

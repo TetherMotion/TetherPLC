@@ -81,21 +81,46 @@ END_VAR
         IF poll.Done THEN
             poll.Execute := FALSE;
             rep := poll.Report;
-            IF poll.ReportBytes > 0 THEN
-                // dchg report: dataset name + changed value only
-                IF FIND(rep, 'measds') > 0 AND FIND(rep, '3.5') > 0 THEN
-                    mask := mask + 16;
-                END_IF;
-                rset.Execute := TRUE;
-                rset.ConnectionHdl := hdl;
-                rset.RcbRef := rcbref;
-                rset.Flags := 0;      // disable (PurgeBuf needs disabled)
-                st := 60;
+            // dchg report: dataset name + changed value only; older
+            // buffered reports may still be queued, keep polling
+            // until the post-write report shows up.
+            IF poll.ReportBytes > 0
+               AND FIND(rep, 'measds') > 0 AND FIND(rep, '3.5') > 0 THEN
+                mask := mask + 16;
+                waitN := 0;
+                st := 64;             // arm integrity-report poll
             ELSIF waitN > 80 THEN
                 mask := 16#DEAD; st := 99;
             ELSE
                 waitN := waitN + 1;
                 st := 5;
+            END_IF;
+        END_IF;
+        IF poll.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    ELSIF st = 64 THEN
+        poll.Execute := TRUE;
+        poll.ConnectionHdl := hdl;
+        st := 63;
+    ELSIF st = 63 THEN
+        // reap the unsolicited integrity report (intgPd=200 ms)
+        IF poll.Done THEN
+            poll.Execute := FALSE;
+            rep := poll.Report;
+            // integrity report: dataset name + every element value
+            IF poll.ReportBytes > 0
+               AND FIND(rep, 'measds') > 0 AND FIND(rep, '42') > 0
+               AND FIND(rep, '3.5') > 0 THEN
+                mask := mask + 256;
+                rset.Execute := TRUE;
+                rset.ConnectionHdl := hdl;
+                rset.RcbRef := rcbref;
+                rset.Flags := 0;      // disable (PurgeBuf needs disabled)
+                st := 60;
+            ELSIF waitN > 120 THEN
+                mask := 16#DEAD; st := 99;
+            ELSE
+                waitN := waitN + 1;
+                st := 64;             // re-arm via arm state
             END_IF;
         END_IF;
         IF poll.Error THEN mask := 16#DEAD; st := 99; END_IF;
