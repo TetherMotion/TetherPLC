@@ -2086,6 +2086,10 @@ int main(int argc, char** argv) {
         uint32_t _p, _g;
         ctl.peerCred(fd, &_p, &lin_deployed_by, &_g);
         mgmt_epoch++;
+        audit(fd, "prog.prepare",
+              std::string((const char*)d.name,
+                          strnlen((const char*)d.name,
+                                  TPLC_PROG_NAME_MAX)));
         emit_transition(PS_EMPTY, PS_STOPPED, 0);
         tplc_image_set_plc_status(&img, TPLC_IMG_PLC_STOPPED);
         TplcCtlProgStateChange sc{PS_EMPTY, PS_STOPPED, 0};
@@ -2122,6 +2126,10 @@ int main(int argc, char** argv) {
             return;
         }
         do_rollback();
+        audit(fd, "prog.rollback",
+              std::string((const char*)d.name,
+                          strnlen((const char*)d.name,
+                                  TPLC_PROG_NAME_MAX)));
         emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_RUNNING, 2);
         fprintf(stderr, "tether-plc: rollback restored prior program\n");
         ctl.replyEmpty(fd, t, req);
@@ -2376,6 +2384,10 @@ int main(int argc, char** argv) {
             ctl.peerCred(fd, &_p, &lin_deployed_by, &_g);
         }
         mgmt_epoch++;
+        audit(fd, "prog.swap",
+              std::string((const char*)d.name,
+                          strnlen((const char*)d.name,
+                                  TPLC_PROG_NAME_MAX)));
         emit_transition((uint8_t)PS_RUNNING, (uint8_t)PS_RUNNING, 0);
         uint8_t rep[8];
         memcpy(rep, &mo.out_status, 4);

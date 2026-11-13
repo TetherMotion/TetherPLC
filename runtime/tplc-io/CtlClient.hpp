@@ -51,6 +51,11 @@ public:
             waited += 20;
         }
         fd_ = fd;
+        /* bound every recv: a lost reply must not wedge the caller
+           (and every session queued behind the ctl mutex) forever —
+           the watchdog reconnects within one poll tick            */
+        timeval tv{2, 0};
+        setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
         return hello(name);
     }
 
