@@ -34120,7 +34120,7 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6225_TC3_EtherCAT_External_Sync_EN.pdf` · **API entries:** 2
-- **Status:** contract landed — Tether `tether_io_motion_server` exposes simulated `ec.dc.connected`/`ec.dc.sync_enabled`(RW)/`ec.dc.time_diff_ns`/`ec.dc.ref_time_ns` IO params (Tether commit b3f52382). Remaining: `tplc-ecsync` host service reading those params via TetherIOClient + `FB_EcExtSyncExtTimes`/`FB_EcExtSyncIsSynchronized` ST surface + e2e. Real-master hookup needs DCManager stats bridged into the same params.
+- **Status:** IMPLEMENTED (sim contract) — `tplc-ecsync` host service reads/writes the `ec.dc.*` params over Tether IO (`TPLC_EC_IO`, falls back to `TPLC_MOTION_IO`); `compat/tc3/tc3_ecsync.st` provides `FB_EcExtSyncExtTimes` (`sNetId` nonempty enables sync -> `bTS1Done`; empty disables) and `FB_EcExtSyncIsSynchronized` (`nSyncWindow` UDINT ns -> `bSynchronized`/`bNotConnected`) over the `FB_EcSync` builtin; `tc3_ecsync_io` e2e green against `tether_io_motion_server --clock sim` plus a no-endpoint not-connected replay. Remaining: real-master hookup needs DCManager/EtherCATDC stats bridged into the same params; the documented 10-cycle diff check is reduced to a per-call window compare; licensed TF6225 surface semantics beyond the two FBs.
 - **Integration:** EtherCAT DC (distributed clocks) sync needs master sync hooks.
 
 #### PLC API › Function blocks

@@ -1248,6 +1248,34 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ERRID", udint());
             push(&mut off, "CONNECTED", udint());
         }
+        /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
+        state over Tether IO ec.dc.* params). Synchronous op dispatch:
+        OP 1=status (-> CONNECTED/SYNCEN/PARAMSOK/LASTERR/DIFFNS/
+        REFNS), 2=set_sync (ENABLE -> STATUS). STATUS carries the
+        service return code, ERRID its positive form. */
+        "FB_EcSync" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "ENABLE", udint());
+            push(&mut off, "CONNECTED", dint());
+            push(&mut off, "SYNCEN", dint());
+            push(&mut off, "PARAMSOK", dint());
+            push(&mut off, "LASTERR", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "DIFFNS", Type::Real { bits: 64 });
+            push(&mut off, "REFNS", Type::Int {
+                signed: false,
+                bits: 64,
+            });
+        }
         /* FB_Ocpp — tplc-ocpp service bridge (OCPP-J client over
         WebSocket + JSON-RPC). Synchronous op dispatch like FB_Eip:
         set OP + fields and call. OP 1=connect (HOST/PORT/PATH/OCPPID

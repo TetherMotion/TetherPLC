@@ -12,6 +12,7 @@
 #include <tplc/host/DbService.hpp>
 #include <tplc/host/DmxService.hpp>
 #include <tplc/host/DynmemService.hpp>
+#include <tplc/host/EcSyncService.hpp>
 #include <tplc/host/EipService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
@@ -119,6 +120,8 @@ private:
     Iec61850Service iec61850_;
     /* MQTT client; inert when built without libpaho-mqtt3c. */
     MqttService   mqtt_;
+    /* EtherCAT DC sync state over Tether IO ec.dc.* params. */
+    EcSyncService ecsync_;
     /* OCPP-J client (WebSocket + JSON-RPC); always available. */
     OcppService   ocpp_;
     /* AES70/OCA audio-control client; always available. */

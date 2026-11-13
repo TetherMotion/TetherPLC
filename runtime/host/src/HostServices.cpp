@@ -185,6 +185,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* File-backed XML value store (Tc2_XmlDataSrv). */
         return const_cast<TplcXmlsrvService*>(&xmlsrv_.table());
     }
+    if (len == 11 && memcmp(name, "tplc-ecsync", 11) == 0) {
+        /* EtherCAT DC sync: only when an ec.dc.* endpoint is live. */
+        if (ecsync_.active())
+            return const_cast<TplcEcsyncService*>(&ecsync_.table());
+        return nullptr;
+    }
     if (len == 8 && memcmp(name, "tplc-sym", 8) == 0) {
         /* By-name symbol access (Tc2_DataExchange). */
         return const_cast<TplcSymService*>(&sym_.table());
