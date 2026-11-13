@@ -772,6 +772,203 @@ END_VAR
     bError := r.bError; nErrId := r.nErrId;
 END_FUNCTION_BLOCK
 
+// newline as a 1-char string (ST literals may span lines)
+FUNCTION F_JsonNL : STRING[1]
+    F_JsonNL := '
+';
+END_FUNCTION
+
+// n spaces as a STRING (indent unit for the pretty writer)
+FUNCTION F_JsonPad : STRING[128]
+VAR_INPUT
+    n : UDINT;
+END_VAR
+VAR
+    i : UDINT;
+    s : STRING[128];
+END_VAR
+    s := '';
+    FOR i := 1 TO n DO
+        s := CONCAT(s, ' ');
+    END_FOR;
+    F_JsonPad := s;
+END_FUNCTION
+
+// ---- FB_JsonSaxPrettyWriter: SAX writer with indentation ----
+// Same command set as FB_JsonSaxWriter plus nCmd=12 SetIndent
+// (nInt = spaces per level, clamped 0..8).  Members and container
+// brackets are emitted on their own lines; ',' trails the previous
+// line.  Documented reductions vs Beckhoff: no SetFormatOptions /
+// compact-array mode, indent capped at 8 spaces/level, and the
+// document still shares the 255-char sDoc cap so pretty output
+// truncates sooner.
+FUNCTION_BLOCK FB_JsonSaxPrettyWriter
+VAR_INPUT
+    nCmd : UDINT;               // writer cmds 1..11 plus
+                                // 12 SetIndent (nInt = spaces/level)
+    sKey : STRING[31];
+    sVal : STRING[127];
+    nInt : DINT;
+    fReal : LREAL;
+    bBool : BOOL;
+END_VAR
+VAR_OUTPUT
+    sDoc : STRING[255];
+    bDone : BOOL;
+    bError : BOOL;
+    nErrId : UDINT;
+END_VAR
+VAR
+    prev : UDINT;
+    depth : UDINT;
+    ind : UDINT;
+    ctype : ARRAY[0..15] OF UDINT;   // 1 = object, 2 = array
+    cfirst : ARRAY[0..15] OF BOOL;
+    pad : STRING[128];
+    nl : STRING[1];
+END_VAR
+    bDone := FALSE; bError := FALSE; nErrId := 0;
+    nl := F_JsonNL();
+    IF nCmd <> 0 AND prev = 0 THEN
+        IF nCmd = 8 THEN
+            sDoc := ''; depth := 0; bDone := TRUE;
+        ELSIF nCmd = 12 THEN
+            IF nInt < 0 THEN ind := 0;
+            ELSIF nInt > 8 THEN ind := 8;
+            ELSE ind := nInt; END_IF;
+            bDone := TRUE;
+        ELSIF nCmd = 1 THEN
+            sDoc := '{'; depth := 1;
+            ctype[1] := 1; cfirst[1] := TRUE; bDone := TRUE;
+        ELSIF nCmd = 9 OR nCmd = 10 THEN
+            IF depth >= 15 THEN
+                bError := TRUE; nErrId := 4;
+            ELSIF depth = 0 THEN
+                IF nCmd = 9 THEN sDoc := '{'; ELSE sDoc := '['; END_IF
+                depth := 1;
+                ctype[1] := nCmd - 8; cfirst[1] := TRUE;
+                bDone := TRUE;
+            ELSE
+                // member line: ',' + NL + pad + "key":
+                IF NOT cfirst[depth] THEN
+                    sDoc := CONCAT(sDoc, ',');
+                END_IF;
+                pad := F_JsonPad(depth * ind);
+                sDoc := CONCAT(sDoc, CONCAT(nl, pad));
+                IF ctype[depth] = 1 THEN
+                    sDoc := CONCAT(sDoc, CONCAT('"',
+                        CONCAT(sKey, '": ')));
+                END_IF;
+                IF nCmd = 9 THEN
+                    sDoc := CONCAT(sDoc, '{');
+                ELSE
+                    sDoc := CONCAT(sDoc, '[');
+                END_IF
+                depth := depth + 1;
+                ctype[depth] := nCmd - 8;
+                cfirst[depth] := TRUE;
+                cfirst[depth - 1] := FALSE;
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 7 THEN
+            IF depth <> 1 THEN
+                bError := TRUE; nErrId := 5;
+            ELSE
+                IF cfirst[1] THEN
+                    // empty root: '{}' or '[]'
+                ELSE
+                    pad := F_JsonPad(0 * ind);
+                    sDoc := CONCAT(sDoc, CONCAT(nl, pad));
+                END_IF;
+                IF ctype[1] = 1 THEN
+                    sDoc := CONCAT(sDoc, '}');
+                ELSE
+                    sDoc := CONCAT(sDoc, ']');
+                END_IF
+                depth := 0; bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 11 THEN
+            IF depth = 0 THEN
+                bError := TRUE; nErrId := 5;
+            ELSE
+                IF NOT cfirst[depth] THEN
+                    pad := F_JsonPad((depth - 1) * ind);
+                    sDoc := CONCAT(sDoc, CONCAT(nl, pad));
+                END_IF;
+                IF ctype[depth] = 1 THEN
+                    sDoc := CONCAT(sDoc, '}');
+                ELSE
+                    sDoc := CONCAT(sDoc, ']');
+                END_IF
+                depth := depth - 1;
+                IF depth > 0 THEN cfirst[depth] := FALSE; END_IF
+                bDone := TRUE;
+            END_IF;
+        ELSE
+            IF depth = 0 THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                IF NOT cfirst[depth] THEN
+                    sDoc := CONCAT(sDoc, ',');
+                END_IF;
+                pad := F_JsonPad(depth * ind);
+                sDoc := CONCAT(sDoc, CONCAT(nl, pad));
+                IF ctype[depth] = 1 THEN
+                    sDoc := CONCAT(sDoc, CONCAT('"',
+                        CONCAT(sKey, '": ')));
+                END_IF;
+                IF nCmd = 2 THEN
+                    sDoc := CONCAT(sDoc, CONCAT('"',
+                        CONCAT(F_JsonEsc(sVal), '"')));
+                ELSIF nCmd = 3 THEN
+                    sDoc := CONCAT(sDoc, F_JsonIntStr(nInt));
+                ELSIF nCmd = 4 THEN
+                    sDoc := CONCAT(sDoc, F_JsonRealStr(fReal));
+                ELSIF nCmd = 5 THEN
+                    IF bBool THEN
+                        sDoc := CONCAT(sDoc, 'true');
+                    ELSE
+                        sDoc := CONCAT(sDoc, 'false');
+                    END_IF;
+                ELSIF nCmd = 6 THEN
+                    sDoc := CONCAT(sDoc, 'null');
+                ELSE
+                    bError := TRUE; nErrId := 1;
+                END_IF;
+                cfirst[depth] := FALSE;
+                bDone := TRUE;
+            END_IF;
+        END_IF;
+    END_IF;
+    prev := nCmd;
+END_FUNCTION_BLOCK
+
+// TwinCAT-shaped alias
+FUNCTION_BLOCK FB_JsonPrettyWriter
+VAR_INPUT
+    nCmd : UDINT;
+    sKey : STRING[31];
+    sVal : STRING[127];
+    nInt : DINT;
+    fReal : LREAL;
+    bBool : BOOL;
+END_VAR
+VAR_OUTPUT
+    sDoc : STRING[255];
+    bDone : BOOL;
+    bError : BOOL;
+    nErrId : UDINT;
+END_VAR
+VAR
+    w : FB_JsonSaxPrettyWriter;
+END_VAR
+    w.nCmd := nCmd; w.sKey := sKey; w.sVal := sVal;
+    w.nInt := nInt; w.fReal := fReal; w.bBool := bBool;
+    w();
+    sDoc := w.sDoc; bDone := w.bDone;
+    bError := w.bError; nErrId := w.nErrId;
+END_FUNCTION_BLOCK
+
 // ---- XML half: reduced FB_XmlDomParser ----
 // Beckhoff's FB_XmlDomParser is a heap DOM with iterators, typed
 // Append*/Get* methods and path queries.  This reduced surface keeps

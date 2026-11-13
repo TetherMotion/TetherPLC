@@ -2263,3 +2263,17 @@ case; `tc3_jsonxml_io` runs both.  Worth a dedicated investigation:
 codegen appears to have an unstable region for large consumers.
 
 ctest `tc3_jsonxml_io` green (JSON 0x1ffff + XML 0x3fff).
+
+## D-IMPL-95 — tc3_jsonxml pretty writer
+
+`FB_JsonSaxPrettyWriter`/`FB_JsonPrettyWriter` mirror the SAX writer
+command set plus `nCmd=12` SetIndent (spaces/level, clamped 0..8).
+Members and container brackets are emitted on their own lines with
+`\n` + `depth*indent` spaces; `,` trails the previous line; empty
+containers stay inline (`{}`).  ST string literals may contain a
+raw newline, so `F_JsonNL` returns it as a 1-char STRING — no CHR
+builtin exists.  Reductions vs Beckhoff: no SetFormatOptions /
+compact-array mode, indent capped at 8, and pretty output shares
+the 255-char sDoc cap so it truncates sooner.
+
+ctest `tc3_jsonxml_io` green (7 checks: JSON + XML + pretty).

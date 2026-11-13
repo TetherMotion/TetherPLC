@@ -81,5 +81,35 @@ else
     tail -20 "$WORK/simx.log"
 fi
 
+"$TPLCC" build tests/compat/tc3_jsonxml_pretty_case.st \
+    --lib "$WORK/tc3_json.tplc" \
+    -o "$WORK/pretty_case.tplc" >/dev/null 2>&1 \
+    && ok "pretty consumer build with --lib" \
+    || { bad "pretty consumer build with --lib"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+
+{
+    for i in $(seq 0 29); do
+        t=$((i * 10000000))
+        if [ "$i" -eq 29 ]; then
+            echo "step $i time=$t in 0=00 expect 0=3f"
+        else
+            echo "step $i time=$t in 0=00"
+        fi
+    done
+} > "$WORK/pretty.steps"
+
+IMG=/tplc_tc3pj_$$; CTL="$WORK/dmp.ctl"
+"$BUILD/tether-plc-sim" --image "$IMG" --package "$WORK/pretty_case.tplc" \
+    --steps "$WORK/pretty.steps" --plc "$BUILD/tether-plc" \
+    --ctl "$CTL" --settle-ms 1500 >"$WORK/simp.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/simp.log"; then
+    ok "sim replay: pretty writer indent/nested/array/close"
+else
+    bad "sim replay: pretty writer indent/nested/array/close"
+    tail -20 "$WORK/simp.log"
+fi
+
 echo "== $pass pass, $fail fail"
 [ $fail -eq 0 ]

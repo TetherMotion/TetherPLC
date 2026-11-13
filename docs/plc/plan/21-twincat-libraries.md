@@ -6919,24 +6919,27 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T1
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_JsonXml_EN.pdf` · **API entries:** 322
-- **Status: IMPLEMENTED (JSON SAX core, nested + reduced XML DOM)** —
+- **Status: IMPLEMENTED (JSON SAX core, nested, pretty writer,
+  reduced XML DOM)** —
   `compat/tc3/tc3_jsonxml.st`: `FB_JsonSaxWriter` (Begin/AddString/
   AddInt/AddReal/AddBool/AddNull/End/Clear plus ObjBegin/ArrBegin/
   EndAny on a 16-level container stack; `"`/`\` escaping),
   `FB_JsonSaxReader` (Load + GetString/GetInt/GetReal/GetBool by
   dotted path — objects via member names, arrays via numeric
   indices; container values return raw JSON text), `FB_JsonWriter`/
-  `FB_JsonReader` aliases, and `FB_XmlDomParser`/`FB_XmlDom` — a
+  `FB_JsonReader` aliases, `FB_JsonSaxPrettyWriter`/`FB_JsonPrettyWriter`
+  (same command set + SetIndent, newline+space indentation; no
+  compact-array mode), and `FB_XmlDomParser`/`FB_XmlDom` — a
   fixed-table DOM (48 nodes, depth 16, 4 attrs/node, names ≤31,
   text/attr ≤127, output ≤511): Load-from-string, Clear, Root,
   Child (0-based), ChildByName, ChildCount, NodeName, NodeText,
   NodeXml, AttrCount, AttrByName, ToXml, AppendChild,
   AppendAttribute, AppendText; `bError`/`nErrId` on malformed
-  input.  Documented reductions: no JSON DOM/SAX-prettywriter/
+  input.  Documented reductions: no JSON DOM/DynDom/
   ReadWriteDataType, no XML iterators/namespaces/entities/
   CDATA/comments, no file persistence, 3-decimal REAL printing,
   255/1023-char documents, `.`-separated path keys.
-  Ctest `tc3_jsonxml_io` (JSON + XML consumers).
+  Ctest `tc3_jsonxml_io` (JSON + XML + pretty consumers).
 - **Integration:** JSON/XML codecs are pure (T0); file persistence needs a filesystem service.
 
 #### Function blocks
