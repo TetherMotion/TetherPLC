@@ -1017,6 +1017,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_mqtt_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # FB_IotMqttMessageQueue: pump -> FIFO dequeue -> reset over the
+  # same python fake broker
+  add_test(NAME tc2_mqtt_queue_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mqtt_queue_io.sh)
+  set_tests_properties(tc2_mqtt_queue_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # PfwLib_Processing TcTvA alarm queue (TF8540): FB_TcTvAMsgQueue
   # append/reactivate/query/deactivate/gc/clear-signal/clear-pending/
   # update-time/unknown-cmd over the sim

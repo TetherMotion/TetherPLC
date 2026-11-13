@@ -364,3 +364,107 @@ END_VAR
     // filter done: match only if topic is also exhausted
     F_MqttTopicMatch := match AND LEN(t) = 0;
 END_FUNCTION
+
+// ---- FB_IotMqttMessage: one queued MQTT message ----
+// TwinCAT exposes GetTopic/GetPayload/CompareTopic methods; this
+// dialect surfaces the same data as members.
+FUNCTION_BLOCK FB_IotMqttMessage
+VAR
+    TOPIC : STRING[127];
+    PAYLOAD : STRING[255];
+    PAYLOADLEN : UDINT;
+    QOS : UDINT;
+    MSGID : UDINT;
+    RETAINED : BOOL;
+END_VAR
+END_FUNCTION_BLOCK
+
+// ---- FB_IotMqttMessageQueue: bounded FIFO of inbound messages ----
+// TwinCAT's queue collects messages in the background and Dequeue
+// transfers the oldest into an FB_IotMqttMessage.  This dialect has
+// no REFERENCE TO inputs, so the popped message appears on the Msg*
+// outputs instead.  Pump is level-triggered: each scan it drains up
+// to 8 pending messages (bounded, watchdog-safe) into a 16-entry
+// ring; DequeueReq/ResetReq are edge-triggered.
+FUNCTION_BLOCK FB_IotMqttMessageQueue
+VAR_INPUT
+    Pump : BOOL;
+    ConnectionHdl : UDINT;
+    DequeueReq : BOOL;
+    ResetReq : BOOL;
+END_VAR
+VAR_OUTPUT
+    HasMessage : BOOL;
+    Topic : STRING[127];
+    Payload : STRING[255];
+    PayloadLen : UDINT;
+    QoS : UDINT;
+    MessageId : UDINT;
+    Retained : BOOL;
+    Queued : UDINT;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    head : UDINT;
+    count : UDINT;
+    qTopic : ARRAY[0..15] OF STRING[127];
+    qPayload : ARRAY[0..15] OF STRING[255];
+    qPayLen : ARRAY[0..15] OF UDINT;
+    qQos : ARRAY[0..15] OF UDINT;
+    qId : ARRAY[0..15] OF UDINT;
+    qRet : ARRAY[0..15] OF BOOL;
+    rx : FB_IotMqttReceive;
+    slot : UDINT;
+    dqPrev : BOOL;
+    rsPrev : BOOL;
+END_VAR
+    HasMessage := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Pump AND count < 16 THEN
+        // one nonblocking receive per scan keeps the pump bounded
+        rx.Execute := TRUE;
+        rx.ConnectionHdl := ConnectionHdl;
+        rx();
+        rx.Execute := FALSE;
+        IF rx.Message THEN
+            slot := head + count;
+            IF slot >= 16 THEN slot := slot - 16; END_IF;
+            qTopic[slot] := rx.Topic;
+            qPayload[slot] := rx.Payload;
+            qPayLen[slot] := rx.PayloadLen;
+            qQos[slot] := rx.QoS;
+            qId[slot] := rx.MessageId;
+            qRet[slot] := rx.Retained;
+            count := count + 1;
+        END_IF;
+        IF rx.Error THEN
+            Error := TRUE;
+            ErrorID := rx.ErrorID;
+        END_IF;
+    END_IF;
+    Queued := count;
+    // dequeue: pop the oldest message into the Msg* outputs
+    IF DequeueReq AND NOT dqPrev AND count > 0 THEN
+        Topic := qTopic[head];
+        Payload := qPayload[head];
+        PayloadLen := qPayLen[head];
+        QoS := qQos[head];
+        MessageId := qId[head];
+        Retained := qRet[head];
+        HasMessage := TRUE;
+        head := head + 1;
+        IF head >= 16 THEN head := 0; END_IF;
+        count := count - 1;
+        Queued := count;
+    END_IF;
+    dqPrev := DequeueReq;
+    // reset: drop every queued message
+    IF ResetReq AND NOT rsPrev THEN
+        head := 0;
+        count := 0;
+        Queued := 0;
+    END_IF;
+    rsPrev := ResetReq;
+END_FUNCTION_BLOCK
