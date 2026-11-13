@@ -79,6 +79,17 @@ typedef struct TplcMqtt5PubProps {
     const char*    user_properties;   /* "k=v;k=v" list/NULL */
 } TplcMqtt5PubProps;
 
+/* ---- MQTT5 subscribe properties ----
+ * retain_handling: 0 = send retained on subscribe (default),
+ * 1 = only for new subscriptions, 2 = never. */
+typedef struct TplcMqtt5SubProps {
+    uint32_t no_local;             /* 1 = don't receive own publishes */
+    uint32_t retain_as_published;  /* 1 = keep original retain flag */
+    uint32_t retain_handling;      /* 0|1|2 per above */
+    uint32_t subscription_id;      /* 0 = absent */
+    const char* user_properties;   /* "k=v;k=v" list/NULL */
+} TplcMqtt5SubProps;
+
 /* ---- received-message struct ---- */
 typedef struct TplcMqttRx {
     /* in: buffer capacity; out: actual sizes */
@@ -145,7 +156,12 @@ typedef struct TplcMqttService {
                              uint32_t qos, uint32_t retain,
                              const TplcMqtt5PubProps* props);
 
-    void* reserved[5];
+    /* MQTT5 subscribe with properties (v5 connections only). */
+    int32_t (*mqtt_subscribe5)(void*, uint32_t h, const char* filter,
+                               uint32_t qos,
+                               const TplcMqtt5SubProps* props);
+
+    void* reserved[4];
 } TplcMqttService;
 
 /* status / error codes */

@@ -54,6 +54,8 @@ private:
                      const uint8_t* payload, uint32_t len,
                      uint32_t qos, uint32_t retain,
                      const TplcMqtt5PubProps* props);
+    int32_t subscribe5(void*, uint32_t h, const char* filter,
+                       uint32_t qos, const TplcMqtt5SubProps* props);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

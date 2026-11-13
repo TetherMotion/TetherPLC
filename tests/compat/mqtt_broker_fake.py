@@ -183,9 +183,50 @@ def handle(conn):
                 else:
                     send(conn, 0x20, b'\x00\x00')
             elif ptype == 8:    # SUBSCRIBE -> SUBACK + retained delivery
-                # body: packet id + repeated (topic len, topic, qos)
-                # v5 inserts a properties field after the packet id
-                pos = skip_props(body, 2) if v5 else 2
+                # body: packet id + [v5 props] + repeated
+                # (topic len, topic, opts, [v5 props])
+                sprows = []
+                if v5:
+                    # v5 inserts a properties field after the packet id
+                    pos = skip_props(body, 2)
+                    # capture the props block for logging
+                    q = 2; plen = 0; mult = 1
+                    while q < len(body):
+                        b = body[q]; q += 1
+                        plen += (b & 0x7F) * mult
+                        if not (b & 0x80):
+                            break
+                        mult *= 128
+                    pe = q + plen
+                    pp = q
+                    while pp < pe:
+                        pid = body[pp]; pp += 1
+                        if pid == 0x0B:   # subscription identifier (varint)
+                            sid = 0; mv = 1
+                            while pp < pe:
+                                b = body[pp]; pp += 1
+                                sid += (b & 0x7F) * mv
+                                if not (b & 0x80):
+                                    break
+                                mv *= 128
+                            sprows.append(f'sid={sid}')
+                        elif pid == 0x26:  # user property
+                            kl = struct.unpack('>H', body[pp:pp+2])[0]; pp += 2
+                            k = body[pp:pp+kl].decode(); pp += kl
+                            vl = struct.unpack('>H', body[pp:pp+2])[0]; pp += 2
+                            v = body[pp:pp+vl].decode(); pp += vl
+                            sprows.append(f'up={k}={v}')
+                        elif pid in (0x01, 0x11, 0x13, 0x21, 0x22, 0x23,
+                                     0x24, 0x25, 0x27, 0x28, 0x29, 0x2A):
+                            pp += 1
+                        elif pid in (0x02, 0x03, 0x08, 0x09, 0x12, 0x15,
+                                     0x16, 0x17, 0x18, 0x19, 0x1A, 0x1C,
+                                     0x1F, 0x20, 0x2B):
+                            break
+                        else:
+                            break
+                else:
+                    pos = 2
                 granted = []
                 new_topics = []
                 while pos + 2 <= len(body):
@@ -193,13 +234,27 @@ def handle(conn):
                     pos += 2
                     topic = body[pos:pos+tl].decode()
                     pos += tl
-                    req = body[pos] if pos < len(body) else 0
-                    pos += 1
+                    if v5:
+                        opts = body[pos]; pos += 1
+                        req = opts & 0x03
+                        if opts & 0x04:   # no local
+                            sprows.append('nolocal=1')
+                        if opts & 0x08:   # retain as published
+                            sprows.append('rap=1')
+                        rh = (opts >> 4) & 0x03
+                        if rh:
+                            sprows.append(f'rh={rh}')
+                        pos = skip_props(body, pos)  # per-topic props
+                    else:
+                        req = body[pos] if pos < len(body) else 0
+                        pos += 1
                     gq = min(req, 2)
                     granted.append(gq)
                     new_topics.append(topic)
                     with LOCK:
                         SUBS.setdefault(conn, {})[topic] = gq
+                if sprows:
+                    print('SUBPROPS', ' '.join(sprows), flush=True)
                 if v5:
                     # SUBACK v5: packet id + props + reason codes
                     send(conn, 0x90,

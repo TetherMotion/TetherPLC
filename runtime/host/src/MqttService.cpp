@@ -274,6 +274,9 @@ MqttService::MqttService() {
                             uint32_t q, uint32_t r,
                             const TplcMqtt5PubProps* pr)
         { return self(s)->publish5(s, h, t, p, n, q, r, pr); };
+    svc_.mqtt_subscribe5 = [](void* s, uint32_t h, const char* f,
+                              uint32_t q, const TplcMqtt5SubProps* pr)
+        { return self(s)->subscribe5(s, h, f, q, pr); };
 }
 
 MqttService::~MqttService() {
@@ -581,6 +584,61 @@ int32_t MqttService::subscribe(void*, uint32_t h, const char* filter,
     } else {
         rc = MQTTClient_subscribe(c.conn, filter, int(qos));
     }
+    if (rc != MQTTCLIENT_SUCCESS) {
+        c.last_error = rc;
+        return TPLC_MQTT_E_PROTO;
+    }
+    return TPLC_MQTT_OK;
+#else
+    return TPLC_MQTT_E_CONN;
+#endif
+}
+
+int32_t MqttService::subscribe5(void*, uint32_t h, const char* filter,
+                                uint32_t qos, const TplcMqtt5SubProps* sp) {
+    if (h == 0 || h > TPLC_MQTT_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_MQTT_E_HANDLE;
+    if (!filter || !*filter) return TPLC_MQTT_E_PARAM;
+#ifdef TPLC_HAVE_MQTT
+    Conn& c = impl_->conns[h - 1];
+    if (c.version != 5) return TPLC_MQTT_E_PARAM;
+    MQTTSubscribe_options opts = MQTTSubscribe_options_initializer;
+    if (sp) {
+        opts.noLocal = sp->no_local ? 1 : 0;
+        opts.retainAsPublished = sp->retain_as_published ? 1 : 0;
+        opts.retainHandling = (unsigned char)sp->retain_handling;
+    }
+    MQTTProperties p = MQTTProperties_initializer;
+    MQTTProperty prop;
+    memset(&prop, 0, sizeof(prop));
+    if (sp && sp->subscription_id) {
+        prop.identifier = MQTTPROPERTY_CODE_SUBSCRIPTION_IDENTIFIER;
+        prop.value.integer4 = sp->subscription_id;
+        MQTTProperties_add(&p, &prop);
+    }
+    if (sp && sp->user_properties && sp->user_properties[0]) {
+        char buf[512];
+        std::strncpy(buf, sp->user_properties, sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = 0;
+        for (char* pair = std::strtok(buf, ";"); pair;
+             pair = std::strtok(nullptr, ";")) {
+            char* eq = std::strchr(pair, '=');
+            if (!eq) continue;
+            *eq = 0;
+            prop.identifier = MQTTPROPERTY_CODE_USER_PROPERTY;
+            prop.value.data.len = int(std::strlen(pair));
+            prop.value.data.data = pair;
+            prop.value.value.len = int(std::strlen(eq + 1));
+            prop.value.value.data = eq + 1;
+            MQTTProperties_add(&p, &prop);
+        }
+    }
+    MQTTResponse r = MQTTClient_subscribe5(c.conn, filter, int(qos),
+                                           &opts, &p);
+    MQTTProperties_free(&p);
+    int rc = (r.reasonCode == MQTTREASONCODE_SUCCESS)
+                 ? MQTTCLIENT_SUCCESS : MQTTCLIENT_FAILURE;
+    MQTTResponse_free(r);
     if (rc != MQTTCLIENT_SUCCESS) {
         c.last_error = rc;
         return TPLC_MQTT_E_PROTO;

@@ -58,7 +58,10 @@ rc=$?
 if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log" \
     && grep -q "PUBPROPS tplc/v5/props" "$SRV_LOG" \
     && grep -q "application/json" "$SRV_LOG" \
-    && grep -q "k1=v1" "$SRV_LOG"; then
+    && grep -q "k1=v1" "$SRV_LOG" \
+    && grep -q "SUBPROPS" "$SRV_LOG" \
+    && grep -q "sid=7" "$SRV_LOG" \
+    && grep -q "sk=sv" "$SRV_LOG"; then
     ok "sim replay: MQTT5 connect/props/sub/pub+props/echo/unsub/disconnect"
 else
     bad "sim replay: MQTT5 connect/props/sub/pub+props/echo/unsub/disconnect"

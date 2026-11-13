@@ -5113,6 +5113,14 @@ const MQ_M5PUBCORR: usize = 1989;
 const MQ_M5PUBCORRDLEN: usize = 2116;
 const MQ_M5PUBUPROPS_LEN: usize = 2120;
 const MQ_M5PUBUPROPS: usize = 2121;
+// MQTT5 subscribe-prop members (appended): M5SUBNOLOCAL@2376,
+// M5SUBRAP@2380, M5SUBRH@2384, M5SUBSID@2388, M5SUBUPROPS Str[255]@2392.
+const MQ_M5SUBNOLOCAL: usize = 2376;
+const MQ_M5SUBRAP: usize = 2380;
+const MQ_M5SUBRH: usize = 2384;
+const MQ_M5SUBSID: usize = 2388;
+const MQ_M5SUBUPROPS_LEN: usize = 2392;
+const MQ_M5SUBUPROPS: usize = 2393;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5127,6 +5135,7 @@ const MQ_SVC_IS_CONNECTED: usize = 72;
 const MQ_SVC_ABORT: usize = 80;
 const MQ_SVC_BACKOFF: usize = 88;
 const MQ_SVC_PUBLISH5: usize = 96;
+const MQ_SVC_SUBSCRIBE5: usize = 104;
 
 /// service lookup for "tplc-mqtt" (9 chars)
 unsafe fn mqtt_service(ctx: *const u8) -> *const u8 {
@@ -5426,6 +5435,37 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             set_rc(f(svc, ru32(this.add(MQ_HANDLE)),
                      tbuf.as_ptr(), this.add(MQ_PAYLOAD), n as u32,
                      ru32(this.add(MQ_QOS)), ru32(this.add(MQ_FLG_RETAIN)),
+                     pr.as_ptr()));
+        }
+        12 => {
+            // MQTT5 subscribe with properties -> TplcMqtt5SubProps
+            // (24B): nolocal@0 rap@4 rh@8 sid@12 uprops@16
+            let mut tbuf = [0u8; 128];
+            uacstr(this, MQ_TOPIC_LEN, MQ_TOPIC, 127, tbuf.as_mut_ptr());
+            let mut pr = [0u8; 24];
+            let pp = pr.as_mut_ptr();
+            let pw = |off: usize, v: i32| {
+                let b = v.to_le_bytes();
+                core::ptr::copy_nonoverlapping(b.as_ptr(), pp.add(off), 4);
+            };
+            let mut ubuf = [0u8; 256];
+            pw(0, ru32(this.add(MQ_M5SUBNOLOCAL)) as i32);
+            pw(4, ru32(this.add(MQ_M5SUBRAP)) as i32);
+            pw(8, ru32(this.add(MQ_M5SUBRH)) as i32);
+            pw(12, ru32(this.add(MQ_M5SUBSID)) as i32);
+            if *this.add(MQ_M5SUBUPROPS_LEN) > 0 {
+                uacstr(this, MQ_M5SUBUPROPS_LEN, MQ_M5SUBUPROPS, 255,
+                       ubuf.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (ubuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    pp.add(16), 8);
+            }
+            type FMqttSubscribe5 = unsafe extern "C" fn(
+                *const u8, u32, *const u8, u32, *const u8) -> i32;
+            let f: FMqttSubscribe5 =
+                core::mem::transmute(mqfn(svc, MQ_SVC_SUBSCRIBE5));
+            set_rc(f(svc, ru32(this.add(MQ_HANDLE)),
+                     tbuf.as_ptr(), ru32(this.add(MQ_QOS)),
                      pr.as_ptr()));
         }
         _ => {

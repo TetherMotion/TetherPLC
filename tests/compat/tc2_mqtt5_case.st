@@ -5,7 +5,7 @@ PROGRAM tc2_mqtt5_case
 VAR
     con : FB_IotMqtt5Client;
     dis : FB_IotMqttDisconnect;
-    sub : FB_IotMqttSubscribe;
+    sub : FB_IotMqtt5Subscribe;
     unsub : FB_IotMqttUnsubscribe;
     pub : FB_IotMqttPublish;
     pub5 : FB_IotMqtt5Publish;
@@ -40,6 +40,11 @@ END_VAR
             sub.ConnectionHdl := hdl;
             sub.TopicFilter := 'tplc/v5/#';
             sub.QoS := 0;
+            sub.NoLocal := FALSE;
+            sub.RetainAsPublished := FALSE;
+            sub.RetainHandling := 0;
+            sub.SubscriptionId := 7;
+            sub.UserProperties := 'sk=sv';
             st := 2;
         END_IF;
         IF con.Error THEN mask := 16#DEAD; st := 99; END_IF;

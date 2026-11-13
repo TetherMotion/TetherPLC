@@ -700,3 +700,53 @@ END_VAR
     END_IF;
     exPrev := Execute;
 END_FUNCTION_BLOCK
+
+// ---- FB_IotMqtt5Subscribe: MQTT5 SUBSCRIBE with properties ----
+// v5 connections only.  NoLocal suppresses echoes of own
+// publishes; RetainHandling: 0=always send retained, 1=new
+// subscriptions only, 2=never.  SubscriptionId tags delivered
+// messages; UserProperties is a "k1=v1;k2=v2" list.
+FUNCTION_BLOCK FB_IotMqtt5Subscribe
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    TopicFilter : STRING[127];
+    QoS : UDINT;
+    NoLocal : BOOL;
+    RetainAsPublished : BOOL;
+    RetainHandling : UDINT;
+    SubscriptionId : UDINT;
+    UserProperties : STRING[255];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Mqtt;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 12;
+        ch.HANDLE := ConnectionHdl;
+        ch.TOPIC := TopicFilter;
+        ch.QOS := QoS;
+        IF NoLocal THEN ch.M5SUBNOLOCAL := 1; ELSE ch.M5SUBNOLOCAL := 0; END_IF;
+        IF RetainAsPublished THEN ch.M5SUBRAP := 1; ELSE ch.M5SUBRAP := 0; END_IF;
+        ch.M5SUBRH := RetainHandling;
+        ch.M5SUBSID := SubscriptionId;
+        ch.M5SUBUPROPS := UserProperties;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
