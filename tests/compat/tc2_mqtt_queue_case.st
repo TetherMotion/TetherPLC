@@ -13,6 +13,8 @@ VAR
     pub2 : FB_IotMqttPublish;
     pub3 : FB_IotMqttPublish;
     pub4 : FB_IotMqttPublish;
+    sub2 : FB_IotMqttSubscribe;
+    pub5 : FB_IotMqttPublish;
     q : FB_IotMqttMessageQueue;
     st : INT;
     waitN : INT;
@@ -189,20 +191,79 @@ END_VAR
         END_IF;
     END_IF;
 
+    // QoS2 stage: subscribe at granted qos2, publish qos2, the
+    // PUBREC/PUBREL/PUBCOMP handshake runs inside Paho + the fake
+    // broker; the dequeued message must report QoS=2
     IF st = 12 THEN
-        dis.Execute := TRUE;
-        dis.ConnectionHdl := hdl;
-        st := 13;
+        sub2.Execute := TRUE;
+        sub2.ConnectionHdl := hdl;
+        sub2.TopicFilter := 'tplc/q2/#';
+        sub2.QoS := 2;
+        st := 14;
     END_IF;
 
-    IF st = 13 THEN
+    IF st = 14 THEN
+        IF sub2.Done THEN
+            sub2.Execute := FALSE;
+            pub5.Execute := TRUE;
+            pub5.ConnectionHdl := hdl;
+            pub5.Topic := 'tplc/q2/five';
+            pub5.Payload := 'm5';
+            pub5.QoS := 2;
+            waitN := 0;
+            st := 15;
+        END_IF;
+        IF sub2.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    IF st = 15 THEN
+        IF pub5.Done THEN
+            pub5.Execute := FALSE;
+            waitN := 0;
+            st := 16;
+        END_IF;
+        IF pub5.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    IF st = 16 THEN
+        waitN := waitN + 1;
+        IF q.Queued >= 1 THEN
+            dqPend := 0;
+            st := 17;
+        ELSIF waitN > 300 THEN
+            mask := 16#DEAD; st := 99;
+        END_IF;
+    END_IF;
+
+    IF st = 17 THEN
+        IF dqPend = 0 THEN
+            q.DequeueReq := TRUE;
+            dqPend := 1;
+        ELSE
+            q.DequeueReq := FALSE;
+            IF q.HasMessage AND q.Topic = 'tplc/q2/five'
+               AND q.Payload = 'm5' AND q.QoS = 2 THEN
+                mask := mask + 512;       // bit9: qos2 delivery
+            END_IF;
+            dqPend := 0;
+            st := 18;
+        END_IF;
+    END_IF;
+
+    IF st = 18 THEN
+        dis.Execute := TRUE;
+        dis.ConnectionHdl := hdl;
+        st := 19;
+    END_IF;
+
+    IF st = 19 THEN
         IF dis.Done THEN
             dis.Execute := FALSE;
-            mask := mask + 256;            // bit8: disconnected
+            mask := mask + 1024;           // bit10: disconnected
             st := 99;
         END_IF;
         IF dis.Error THEN mask := 16#DEAD; st := 99; END_IF;
     END_IF;
 
-    con(); dis(); sub(); pub1(); pub2(); pub3(); pub4(); q();
+    con(); dis(); sub(); pub1(); pub2(); pub3(); pub4(); sub2(); pub5(); q();
 END_PROGRAM

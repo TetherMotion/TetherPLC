@@ -45,7 +45,7 @@ sed "s/11883/$PORT/g" tests/compat/tc2_mqtt_queue_case.st > "$WORK/q_case.st"
     for i in $(seq 0 800); do
         t=$((i * 10000000))
         if [ "$i" -eq 790 ]; then
-            echo "step $i time=$t in 0=00 expect 0=ff01"
+            echo "step $i time=$t in 0=00 expect 0=ff06"
         else
             echo "step $i time=$t in 0=00"
         fi

@@ -8,9 +8,10 @@ publishes a connection's will when it closes WITHOUT a DISCONNECT
 Not a real broker — just enough for the client e2e."""
 import socket, struct, sys, threading
 
-SUBS = {}       # conn -> set of topic filters (all connections)
+SUBS = {}       # conn -> {topic filter: granted qos} (all connections)
 RETAINED = {}   # topic -> payload
 LOCK = threading.Lock()
+MSGID = [1]     # broker->client packet ids for qos>0 publishes
 
 def read_varint(s):
     mult, val = 1, 0
@@ -50,16 +51,22 @@ def topic_match(flt, topic):
         return True
     return False
 
-def publish_to(topic, payload):
-    """broadcast a qos0 PUBLISH to every matching subscriber"""
-    pkt = struct.pack('>H', len(topic)) + topic.encode() + payload
+def publish_to(topic, payload, qos=0):
+    """broadcast a PUBLISH to every matching subscriber at
+    min(pub qos, granted qos); qos>0 carries a packet id"""
     with LOCK:
         targets = list(SUBS.items())
+        mid = MSGID[0]; MSGID[0] += 1
     for conn, fs in targets:
-        for f in fs:
+        for f, gq in fs.items():
             if topic_match(f, topic):
+                eff = min(qos, gq)
+                body = struct.pack('>H', len(topic)) + topic.encode()
+                if eff:
+                    body += struct.pack('>H', mid)
+                body += payload
                 try:
-                    send(conn, 0x30, pkt)
+                    send(conn, 0x30 | (eff << 1), body)
                 except Exception:
                     pass
                 break
@@ -99,36 +106,59 @@ def handle(conn):
                 will = parse_will(body)
                 send(conn, 0x20, b'\x00\x00')
             elif ptype == 8:    # SUBSCRIBE -> SUBACK + retained delivery
-                mid = struct.unpack('>H', body[:2])[0]
-                tl = struct.unpack('>H', body[2:4])[0]
-                topic = body[4:4+tl].decode()
-                with LOCK:
-                    SUBS.setdefault(conn, set()).add(topic)
-                send(conn, 0x90, body[:2] + b'\x00')  # granted qos0
+                # body: packet id + repeated (topic len, topic, qos)
+                pos = 2
+                granted = []
+                new_topics = []
+                while pos + 2 <= len(body):
+                    tl = struct.unpack('>H', body[pos:pos+2])[0]
+                    pos += 2
+                    topic = body[pos:pos+tl].decode()
+                    pos += tl
+                    req = body[pos] if pos < len(body) else 0
+                    pos += 1
+                    gq = min(req, 2)
+                    granted.append(gq)
+                    new_topics.append(topic)
+                    with LOCK:
+                        SUBS.setdefault(conn, {})[topic] = gq
+                send(conn, 0x90, body[:2] + bytes(granted))
                 for rt, rp in RETAINED.items():
-                    if topic_match(topic, rt):
+                    if any(topic_match(t, rt) for t in new_topics):
                         send(conn, 0x31,  # PUBLISH qos0 retain=1
                              struct.pack('>H', len(rt)) + rt.encode() + rp)
-            elif ptype == 3:    # PUBLISH -> PUBACK (qos1) + broadcast
+            elif ptype == 3:    # PUBLISH -> qos ack + broadcast
                 tl = struct.unpack('>H', body[:2])[0]
                 topic = body[2:2+tl].decode()
                 rest = body[2+tl:]
                 flags = hdr & 0x0F
+                qos = (flags >> 1) & 3
                 mid = None
                 payload = rest
-                if (flags >> 1) & 3:  # qos>0
+                if qos:
                     mid = struct.unpack('>H', rest[:2])[0]
                     payload = rest[2:]
-                if mid is not None:
-                    send(conn, 0x40, struct.pack('>H', mid))
+                if qos == 1:
+                    send(conn, 0x40, struct.pack('>H', mid))   # PUBACK
+                elif qos == 2:
+                    send(conn, 0x50, struct.pack('>H', mid))   # PUBREC
                 if flags & 1:  # retain flag: store for later subscribers
                     with LOCK:
                         RETAINED[topic] = payload
-                publish_to(topic, payload)
+                publish_to(topic, payload, qos)
+            elif ptype == 6:    # PUBREL (outbound qos2) -> PUBCOMP
+                send(conn, 0x70, body[:2])
+            elif ptype == 5:    # PUBREC (inbound qos2) -> PUBREL
+                send(conn, 0x62, body[:2])
             elif ptype == 10:   # UNSUBSCRIBE -> UNSUBACK
-                tl = struct.unpack('>H', body[2:4])[0]
-                with LOCK:
-                    SUBS.get(conn, set()).discard(body[4:4+tl].decode())
+                pos = 2
+                while pos + 2 <= len(body):
+                    tl = struct.unpack('>H', body[pos:pos+2])[0]
+                    pos += 2
+                    with LOCK:
+                        SUBS.get(conn, {}).pop(body[pos:pos+tl].decode(),
+                                               None)
+                    pos += tl
                 send(conn, 0xB0, body[:2])
             elif ptype == 12:   # PINGREQ -> PINGRESP
                 send(conn, 0xD0, b'')
@@ -146,7 +176,7 @@ def handle(conn):
         if will['retain']:
             with LOCK:
                 RETAINED[wt] = will['payload']
-        publish_to(wt, will['payload'])
+        publish_to(wt, will['payload'], will['qos'])
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 11883
