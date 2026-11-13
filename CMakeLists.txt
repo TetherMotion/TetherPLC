@@ -202,8 +202,15 @@ if(TPLC_ENABLE_MQTT)
     set(PAHO_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     set(PAHO_BUILD_STATIC   ON  CACHE BOOL "" FORCE)
     set(PAHO_BUILD_SAMPLES  OFF CACHE BOOL "" FORCE)
+    set(PAHO_WITH_SSL       ON  CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(pahomqttc)
-    if(TARGET paho-mqtt3c-static OR TARGET paho-mqtt3c)
+    # prefer the SSL-enabled static lib (paho-mqtt3cs-static) when
+    # PAHO_WITH_SSL built it; fall back to the plain variants
+    if(TARGET paho-mqtt3cs-static)
+      set(TPLC_PAHO_BUILT TRUE)
+      set(TPLC_PAHO_FROM_FETCH TRUE)
+      message(STATUS "tplc_host: MQTT client via fetched paho.mqtt.c (TLS)")
+    elseif(TARGET paho-mqtt3c-static OR TARGET paho-mqtt3c)
       set(TPLC_PAHO_BUILT TRUE)
       set(TPLC_PAHO_FROM_FETCH TRUE)
       message(STATUS "tplc_host: MQTT client via fetched paho.mqtt.c")
@@ -214,7 +221,9 @@ if(TPLC_ENABLE_MQTT)
   endif()
   if(TPLC_PAHO_BUILT)
     target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_MQTT)
-    if(TARGET paho-mqtt3c-static)
+    if(TARGET paho-mqtt3cs-static)
+      target_link_libraries(tplc_host PUBLIC paho-mqtt3cs-static)
+    elseif(TARGET paho-mqtt3c-static)
       target_link_libraries(tplc_host PUBLIC paho-mqtt3c-static)
     elseif(TARGET paho-mqtt3c)
       target_link_libraries(tplc_host PUBLIC paho-mqtt3c)
@@ -1024,6 +1033,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mqtt_queue_io.sh)
   set_tests_properties(tc2_mqtt_queue_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # MQTT over TLS: fake broker --tls mode + self-signed cert;
+  # conn1 skips verification, conn2 verifies via TlsCaFile
+  add_test(NAME tc2_mqtt_tls_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mqtt_tls_io.sh)
+  set_tests_properties(tc2_mqtt_tls_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # PfwLib_Processing TcTvA alarm queue (TF8540): FB_TcTvAMsgQueue

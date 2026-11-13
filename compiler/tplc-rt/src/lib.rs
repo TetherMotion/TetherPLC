@@ -5073,6 +5073,17 @@ const MQ_WILLPAYLOAD_LEN: usize = 1028;
 const MQ_WILLPAYLOAD: usize = 1029;
 const MQ_WILLQOS: usize = 1284;
 const MQ_WILLRETAIN: usize = 1288;
+// TLS members (appended): USETLS@1292, TLSINSECURE@1296,
+// TLSCAFILE u8len@1300+data@1301 cap127, TLSCERTFILE u8len@1428+
+// data@1429 cap127, TLSKEYFILE u8len@1556+data@1557 cap127.
+const MQ_USETLS: usize = 1292;
+const MQ_TLSINSECURE: usize = 1296;
+const MQ_TLSCA_LEN: usize = 1300;
+const MQ_TLSCA: usize = 1301;
+const MQ_TLSCERT_LEN: usize = 1428;
+const MQ_TLSCERT: usize = 1429;
+const MQ_TLSKEY_LEN: usize = 1556;
+const MQ_TLSKEY: usize = 1557;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5141,12 +5152,14 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
         1 => {
             let mut buf = [0u8; 64];
             uacstr(this, MQ_HOST_LEN, MQ_HOST, 63, buf.as_mut_ptr());
-            // TplcMqttConnectCfg (72B): clean@0 i32, keepalive@4 u32,
+            // TplcMqttConnectCfg (104B): clean@0 i32, keepalive@4 u32,
             // version@8 u32, timeout@12 u32, username@16 ptr,
             // password@24 ptr, client_id@32 ptr, will_topic@40 ptr,
             // will_payload@48 ptr, will_payload_len@56 u32,
-            // will_qos@60 u32, will_retain@64 u32
-            let mut cfg = [0u8; 72];
+            // will_qos@60 u32, will_retain@64 u32, use_tls@68 u32,
+            // tls_insecure@72 u32, tls_ca@80 ptr, tls_cert@88 ptr,
+            // tls_key@96 ptr
+            let mut cfg = [0u8; 104];
             let cfgp = cfg.as_mut_ptr();
             let wi = |off: usize, v: i32| {
                 let b = v.to_le_bytes();
@@ -5173,6 +5186,34 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
                 wi(56, plen as i32);
                 wi(60, ru32(this.add(MQ_WILLQOS)) as i32);
                 wi(64, ru32(this.add(MQ_WILLRETAIN)) as i32);
+            }
+            // TLS: file paths copied into stack buffers that stay
+            // alive through the synchronous connect call.
+            wi(68, ru32(this.add(MQ_USETLS)) as i32);
+            wi(72, ru32(this.add(MQ_TLSINSECURE)) as i32);
+            let mut cabuf = [0u8; 128];
+            let mut certbuf = [0u8; 128];
+            let mut keybuf = [0u8; 128];
+            if *this.add(MQ_TLSCA_LEN) > 0 {
+                uacstr(this, MQ_TLSCA_LEN, MQ_TLSCA, 127,
+                       cabuf.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (cabuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(80), 8);
+            }
+            if *this.add(MQ_TLSCERT_LEN) > 0 {
+                uacstr(this, MQ_TLSCERT_LEN, MQ_TLSCERT, 127,
+                       certbuf.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (certbuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(88), 8);
+            }
+            if *this.add(MQ_TLSKEY_LEN) > 0 {
+                uacstr(this, MQ_TLSKEY_LEN, MQ_TLSKEY, 127,
+                       keybuf.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (keybuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(96), 8);
             }
             let f: FMqttConnect = core::mem::transmute(mqfn(svc, MQ_SVC_CONNECT));
             let mut h: u32 = 0;

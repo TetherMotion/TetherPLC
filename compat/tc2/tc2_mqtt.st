@@ -8,11 +8,14 @@
 // for a pending publish each scan (Retained reports the broker's
 // retain flag on delivery); Disconnect releases.  F_MqttTopicMatch
 // implements the MQTT 3.1.1 '+'/'#' filter semantics client-side.
-// MQTT5 properties, TLS, and QoS2 two-phase handshake detail are
-// out of scope for this tranche.  Last-will is supported: set
+// MQTT5 properties and QoS2 two-phase handshake detail are out of
+// scope for this tranche.  Last-will is supported: set
 // WillTopic/WillPayload on FB_IotMqttClient and the broker publishes
 // the will when the link drops ungracefully — FB_IotMqttAbort drops
 // the TCP connection without DISCONNECT to trigger exactly that.
+// TLS is supported via UseTls + TlsCaFile/TlsCertFile/TlsKeyFile
+// (PEM paths); TlsInsecure skips server certificate verification
+// for self-signed test brokers.
 //
 // Topics are bounded STRING[127], payloads STRING[255].  STATUS
 // carries the service return code, ErrorID its positive form;
@@ -30,6 +33,11 @@ VAR_INPUT
     WillPayload : STRING[255];
     WillQoS : UDINT;
     WillRetain : BOOL;
+    UseTls : BOOL;
+    TlsInsecure : BOOL;
+    TlsCaFile : STRING[127];
+    TlsCertFile : STRING[127];
+    TlsKeyFile : STRING[127];
 END_VAR
 VAR_OUTPUT
     Done : BOOL;
@@ -55,6 +63,11 @@ END_VAR
         ch.WILLPAYLOAD := WillPayload;
         ch.WILLQOS := WillQoS;
         IF WillRetain THEN ch.WILLRETAIN := 1; ELSE ch.WILLRETAIN := 0; END_IF;
+        IF UseTls THEN ch.USETLS := 1; ELSE ch.USETLS := 0; END_IF;
+        IF TlsInsecure THEN ch.TLSINSECURE := 1; ELSE ch.TLSINSECURE := 0; END_IF;
+        ch.TLSCAFILE := TlsCaFile;
+        ch.TLSCERTFILE := TlsCertFile;
+        ch.TLSKEYFILE := TlsKeyFile;
         ch();
         IF ch.STATUS = 0 THEN
             Done := TRUE;

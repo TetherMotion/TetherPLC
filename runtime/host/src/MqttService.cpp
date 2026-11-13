@@ -123,8 +123,10 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
         if (!impl_->conns[i].conn) {
             MQTTClient c;
             char uri[128];
-            std::snprintf(uri, sizeof(uri), "tcp://%s:%u",
-                          host, port ? port : 1883);
+            std::snprintf(uri, sizeof(uri), "%s://%s:%u",
+                          (cfg && cfg->use_tls) ? "ssl" : "tcp",
+                          host, port ? port : (cfg && cfg->use_tls
+                                               ? 8883u : 1883u));
             std::set<int> fds_before = socket_fds();
             int rc = MQTTClient_create(&c, uri,
                         cfg && cfg->client_id ? cfg->client_id : "tplc-client",
@@ -145,6 +147,15 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
                 will.qos = int(cfg->will_qos);
                 will.retained = cfg->will_retain ? 1 : 0;
                 opts.will = &will;
+            }
+            MQTTClient_SSLOptions sslo;
+            if (cfg && cfg->use_tls) {
+                sslo = MQTTClient_SSLOptions_initializer;
+                sslo.trustStore = cfg->tls_ca_file;
+                sslo.keyStore = cfg->tls_cert_file;
+                sslo.privateKey = cfg->tls_key_file;
+                sslo.enableServerCertAuth = cfg->tls_insecure ? 0 : 1;
+                opts.ssl = &sslo;
             }
             rc = MQTTClient_connect(c, &opts);
             if (rc != MQTTCLIENT_SUCCESS) {

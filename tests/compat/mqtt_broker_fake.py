@@ -6,7 +6,7 @@ subscriber across connections, stores retained publishes, and
 publishes a connection's will when it closes WITHOUT a DISCONNECT
 (ungraceful drop).  UNSUBSCRIBE->UNSUBACK, PINGREQ->PINGRESP.
 Not a real broker — just enough for the client e2e."""
-import socket, struct, sys, threading
+import socket, ssl, struct, sys, threading
 
 SUBS = {}       # conn -> {topic filter: granted qos} (all connections)
 RETAINED = {}   # topic -> payload
@@ -183,7 +183,14 @@ def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('127.0.0.1', port)); s.listen(4)
-    print(f'mqtt_broker_fake on {port}', flush=True)
+    # optional TLS: --tls <cert.pem> <key.pem> wraps the listener
+    if len(sys.argv) > 4 and sys.argv[2] == '--tls':
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(sys.argv[3], sys.argv[4])
+        s = ctx.wrap_socket(s, server_side=True)
+        print(f'mqtt_broker_fake TLS on {port}', flush=True)
+    else:
+        print(f'mqtt_broker_fake on {port}', flush=True)
     while True:
         c, _ = s.accept()
         threading.Thread(target=handle, args=(c,), daemon=True).start()

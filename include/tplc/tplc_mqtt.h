@@ -45,6 +45,14 @@ typedef struct TplcMqttConnectCfg {
     uint32_t will_payload_len;
     uint32_t will_qos;
     uint32_t will_retain;
+    /* TLS (MQTT over ssl://): use_tls selects the TLS transport;
+       tls_insecure skips certificate verification (test/self-signed);
+       the *_file fields are PEM paths (NULL = unset). */
+    uint32_t use_tls;
+    uint32_t tls_insecure;
+    const char* tls_ca_file;
+    const char* tls_cert_file;
+    const char* tls_key_file;
 } TplcMqttConnectCfg;
 
 /* ---- received-message struct ---- */

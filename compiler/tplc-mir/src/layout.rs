@@ -1300,6 +1300,14 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "WILLPAYLOAD", Type::Str { cap: 255 });
             push(&mut off, "WILLQOS", udint());
             push(&mut off, "WILLRETAIN", udint());
+            /* TLS (appended): OP1 reads USETLS/TLSINSECURE/
+               TLSCAFILE/TLSCERTFILE/TLSKEYFILE into the connect
+               cfg's ssl fields. */
+            push(&mut off, "USETLS", udint());
+            push(&mut off, "TLSINSECURE", udint());
+            push(&mut off, "TLSCAFILE", Type::Str { cap: 127 });
+            push(&mut off, "TLSCERTFILE", Type::Str { cap: 127 });
+            push(&mut off, "TLSKEYFILE", Type::Str { cap: 127 });
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:
