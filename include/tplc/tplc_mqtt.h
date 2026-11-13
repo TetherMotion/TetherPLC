@@ -49,7 +49,8 @@ typedef struct TplcMqttRx {
     uint32_t payload_len;   /* out */
     uint32_t qos;           /* out */
     uint32_t message_id;    /* out */
-    /* out buffers follow the struct */
+    uint32_t retained;      /* out: 1 = broker-stored retained msg */
+    /* out buffers follow the struct (32/40, 8-byte aligned) */
     char*    topic;
     uint8_t* payload;
 } TplcMqttRx;

@@ -36,8 +36,17 @@ def send(s, hdr, body):
         if not rl: break
     s.sendall(bytes([hdr]) + enc + body)
 
+def topic_match(flt, topic):
+    """minimal filter match: exact, '#'-suffix prefix, or '#' alone"""
+    if flt == topic or flt == '#':
+        return True
+    if flt.endswith('/#') and topic.startswith(flt[:-1]):
+        return True
+    return False
+
 def handle(conn):
     subs = set()
+    retained = {}
     try:
         while True:
             hdr, body = read_packet(conn)
@@ -45,18 +54,20 @@ def handle(conn):
             ptype = hdr >> 4
             if ptype == 1:      # CONNECT -> CONNACK (session 0, rc 0)
                 send(conn, 0x20, b'\x00\x00')
-            elif ptype == 8:    # SUBSCRIBE -> SUBACK
+            elif ptype == 8:    # SUBSCRIBE -> SUBACK + retained delivery
                 mid = struct.unpack('>H', body[:2])[0]
-                # topic filter at [2 + 2-byte len ..]
                 tl = struct.unpack('>H', body[2:4])[0]
                 topic = body[4:4+tl].decode()
                 subs.add(topic)
                 send(conn, 0x90, body[:2] + b'\x00')  # granted qos0
+                for rt, rp in retained.items():
+                    if topic_match(topic, rt):
+                        send(conn, 0x31,  # PUBLISH qos0 retain=1
+                             struct.pack('>H', len(rt)) + rt.encode() + rp)
             elif ptype == 3:    # PUBLISH -> PUBACK (qos1) + echo to subs
                 tl = struct.unpack('>H', body[:2])[0]
                 topic = body[2:2+tl].decode()
                 rest = body[2+tl:]
-                # qos1 has a msgid; qos0 doesn't
                 flags = hdr & 0x0F
                 mid = None
                 payload = rest
@@ -65,10 +76,18 @@ def handle(conn):
                     payload = rest[2:]
                 if mid is not None:
                     send(conn, 0x40, struct.pack('>H', mid))
-                # echo back a qos0 PUBLISH on each subscribed topic
+                if flags & 1:  # retain flag: store for later subscribers
+                    retained[topic] = payload
+                # echo back a qos0 non-retained PUBLISH on each
+                # subscribed filter that matches the topic
                 for t in subs:
-                    send(conn, 0x30, struct.pack('>H', len(t)) + t.encode() + payload)
+                    if topic_match(t, topic):
+                        send(conn, 0x30,
+                             struct.pack('>H', len(topic)) + topic.encode()
+                             + payload)
             elif ptype == 10:   # UNSUBSCRIBE -> UNSUBACK
+                tl = struct.unpack('>H', body[2:4])[0]
+                subs.discard(body[4:4+tl].decode())
                 send(conn, 0xB0, body[:2])
             elif ptype == 12:   # PINGREQ -> PINGRESP
                 send(conn, 0xD0, b'')

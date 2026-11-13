@@ -225,6 +225,7 @@ int32_t MqttService::receive(void*, uint32_t h, TplcMqttRx* rx) {
     rx->payload_len = uint32_t(msg->payloadlen);
     rx->qos = uint32_t(msg->qos);
     rx->message_id = uint32_t(msg->msgid);
+    rx->retained = uint32_t(msg->retained);
     uint32_t tn = rx->topic_len < rx->topic_cap ? rx->topic_len : rx->topic_cap;
     std::memcpy(rx->topic, topic, tn);
     uint32_t pn = rx->payload_len < rx->payload_cap ? rx->payload_len

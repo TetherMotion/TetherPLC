@@ -4804,7 +4804,7 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
 // Strings are len-prefixed: HOST u8len@8+data@9 cap63, TOPIC
 // u8len@84+data@85 cap127, PAYLOAD u8len@212+data@213 cap255,
 // RXTOPIC u8len@476+data@477 cap127, RXPAYLOAD u8len@604+data@605
-// cap255.
+// cap255, RXRETAIN@872, STATE@876.
 const MQ_OP: usize = 0;
 const MQ_HANDLE: usize = 4;
 const MQ_HOST_LEN: usize = 8;
@@ -4825,12 +4825,13 @@ const MQ_RXPAYLOAD: usize = 605;
 const MQ_RXQOS: usize = 860;
 const MQ_RXMSGID: usize = 864;
 const MQ_RXPLEN: usize = 868;
-const MQ_STATE: usize = 872;
-const MQ_LASTMSGID: usize = 876;
-const MQ_LASTERR: usize = 880;
-const MQ_STATUS: usize = 884;
-const MQ_ERRID: usize = 888;
-const MQ_CONNECTED: usize = 892;
+const MQ_RXRETAIN: usize = 872;
+const MQ_STATE: usize = 876;
+const MQ_LASTMSGID: usize = 880;
+const MQ_LASTERR: usize = 884;
+const MQ_STATUS: usize = 888;
+const MQ_ERRID: usize = 892;
+const MQ_CONNECTED: usize = 896;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -4970,25 +4971,24 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             set_rc(rc);
         }
         7 => {
-            // TplcMqttRx: topic_cap@0 payload_cap@4 topic_len@8
-            // payload_len@12 qos@16 message_id@20 topic@24 ptr
-            // payload@32 ptr
-            let mut rx = [0u8; 40];
+            // TplcMqttRx: caps@0/4, lens@8/12, qos@16, message_id@20,
+            // retained@24, topic ptr@32, payload ptr@40
+            let mut rx = [0u8; 48];
             let mut wu = |off: usize, v: u32| {
                 let b = v.to_le_bytes();
                 core::ptr::copy_nonoverlapping(b.as_ptr(), rx.as_mut_ptr().add(off), 4);
             };
             wu(0, 127);
             wu(4, 255);
-            // topic ptr @24, payload ptr @32 (usize on 64-bit)
+            // topic ptr @32, payload ptr @40 (usize on 64-bit)
             let tp = this.add(MQ_RXTOPIC) as usize;
             let pp = this.add(MQ_RXPAYLOAD) as usize;
             core::ptr::copy_nonoverlapping(
                 (tp as usize).to_le_bytes().as_ptr(),
-                rx.as_mut_ptr().add(24), 8);
+                rx.as_mut_ptr().add(32), 8);
             core::ptr::copy_nonoverlapping(
                 (pp as usize).to_le_bytes().as_ptr(),
-                rx.as_mut_ptr().add(32), 8);
+                rx.as_mut_ptr().add(40), 8);
             let f: FMqttReceive = core::mem::transmute(mqfn(svc, MQ_SVC_RECEIVE));
             let rc = f(svc, ru32(this.add(MQ_HANDLE)), rx.as_mut_ptr());
             wi32(this.add(MQ_STATUS), rc);
@@ -5006,6 +5006,7 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
                 *this.add(MQ_RXPAYLOAD_LEN) = pl as u8;
                 wu32(this.add(MQ_RXQOS), rd(16));
                 wu32(this.add(MQ_RXMSGID), rd(20));
+                wu32(this.add(MQ_RXRETAIN), rd(24));
                 wu32(this.add(MQ_RXPLEN), rd(12));
             }
         }

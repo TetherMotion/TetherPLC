@@ -1240,6 +1240,7 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "RXQOS", udint());
             push(&mut off, "RXMSGID", udint());
             push(&mut off, "RXPLEN", udint());
+            push(&mut off, "RXRETAIN", udint());
             push(&mut off, "STATE", dint());
             push(&mut off, "LASTMSGID", udint());
             push(&mut off, "LASTERR", dint());
