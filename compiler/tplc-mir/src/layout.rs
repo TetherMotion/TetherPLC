@@ -1246,6 +1246,11 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "PURGEBUF", dint());
             push(&mut off, "RESVTMS", udint());
             push(&mut off, "ENTRYID", udint());
+            /* data-set ops (appended): OP 12=ReadDataSet (DSREF ->
+               VAL "FCDA=value" lines, DSCOUNT elements), OP
+               13=GetDataSetDirectory (DSREF -> VAL FCDA list). */
+            push(&mut off, "DSREF", Type::Str { cap: 127 });
+            push(&mut off, "DSCOUNT", udint());
         }
         /* FB_Mqtt — tplc-mqtt service bridge (MQTT client via
         libpaho-mqtt3c). Synchronous op dispatch like FB_Eip: set OP +

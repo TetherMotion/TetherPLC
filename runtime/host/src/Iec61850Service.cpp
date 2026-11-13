@@ -157,6 +157,12 @@ Iec61850Service::Iec61850Service() {
     svc_.iec61850_control_poll = [](void* s, uint32_t h,
                                     TplcIec61850Ctl* o)
         { return self(s)->controlPoll(s, h, o); };
+    svc_.iec61850_ds_read = [](void* s, uint32_t h, const char* r,
+                               char* o, uint32_t c)
+        { return self(s)->dsRead(s, h, r, o, c); };
+    svc_.iec61850_ds_directory = [](void* s, uint32_t h, const char* r,
+                                    char* o, uint32_t c)
+        { return self(s)->dsDirectory(s, h, r, o, c); };
 }
 
 Iec61850Service::~Iec61850Service() {
@@ -672,6 +678,106 @@ int32_t Iec61850Service::controlPoll(void*, uint32_t h,
     out->pending   = 1;
     c.ctlEvents.pop_front();
     return TPLC_61850_OK;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+namespace {
+
+#ifdef TPLC_HAVE_IEC61850
+/* snapshot a GetDataSetDirectory result into strings (order matches
+   the data set member order used by ReadDataSetValues). */
+std::vector<std::string> dsDirNames(IedConnection conn,
+                                    const char* dsRef) {
+    std::vector<std::string> names;
+    IedClientError err;
+    LinkedList dir = IedConnection_getDataSetDirectory(
+        conn, &err, dsRef, nullptr);
+    if (err != IED_ERROR_OK || !dir) return names;
+    for (LinkedList e = dir; e; e = LinkedList_getNext(e)) {
+        const char* n = (const char*)LinkedList_getData(e);
+        if (n) names.emplace_back(n);
+    }
+    LinkedList_destroy(dir);
+    return names;
+}
+#endif
+
+} // namespace
+
+int32_t Iec61850Service::dsRead(void*, uint32_t h, const char* dsRef,
+                                char* out, uint32_t cap) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+    if (!dsRef || !*dsRef || !out || !cap) return TPLC_61850_E_PARAM;
+#ifdef TPLC_HAVE_IEC61850
+    IedClientError err;
+    ClientDataSet ds = IedConnection_readDataSetValues(
+        impl_->conns[h - 1].conn, &err, dsRef, nullptr);
+    if (err != IED_ERROR_OK || !ds) {
+        impl_->conns[h - 1].last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    std::vector<std::string> names =
+        dsDirNames(impl_->conns[h - 1].conn, dsRef);
+    size_t off = 0; int32_t count = 0;
+    MmsValue* vals = ClientDataSet_getValues(ds);
+    if (vals && MmsValue_getType(vals) == MMS_ARRAY) {
+        const int n = MmsValue_getArraySize(vals);
+        for (int i = 0; i < n; ++i) {
+            char name[160];
+            if (i < int(names.size()))
+                std::snprintf(name, sizeof(name), "%s", names[i].c_str());
+            else
+                std::snprintf(name, sizeof(name), "elem%d", i);
+            MmsValue* e = MmsValue_getElement(vals, i);
+            char vb[96]; vb[0] = 0;
+            if (e) MmsValue_printToBuffer(e, vb, sizeof(vb));
+            /* "name=value\n" — skip when it would overflow cap */
+            size_t need = std::strlen(name) + 1 +
+                          (vb[0] ? std::strlen(vb) : 1) + 1;
+            if (off + need >= cap) break;
+            off += std::snprintf(out + off, cap - off, "%s=%s\n",
+                                 name, vb[0] ? vb : "?");
+            count++;
+        }
+    }
+    out[off < cap ? off : cap - 1] = 0;
+    ClientDataSet_destroy(ds);
+    impl_->conns[h - 1].invoke_id++;
+    return count;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+int32_t Iec61850Service::dsDirectory(void*, uint32_t h,
+                                     const char* dsRef,
+                                     char* out, uint32_t cap) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+    if (!dsRef || !*dsRef || !out || !cap) return TPLC_61850_E_PARAM;
+#ifdef TPLC_HAVE_IEC61850
+    std::vector<std::string> names =
+        dsDirNames(impl_->conns[h - 1].conn, dsRef);
+    if (names.empty()) {
+        impl_->conns[h - 1].last_error = 1;
+        return TPLC_61850_E_MMS;
+    }
+    size_t off = 0; int32_t count = 0;
+    for (const std::string& n : names) {
+        size_t nl = n.size();
+        if (off + nl + 1 < cap) {
+            std::memcpy(out + off, n.data(), nl);
+            off += nl;
+            out[off++] = '\n';
+        }
+        count++;
+    }
+    out[off < cap ? off : cap - 1] = 0;
+    impl_->conns[h - 1].invoke_id++;
+    return count;
 #else
     return TPLC_61850_E_CONN;
 #endif

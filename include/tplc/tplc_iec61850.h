@@ -132,7 +132,19 @@ typedef struct TplcIec61850Service {
        when the queue is empty. */
     int32_t (*iec61850_control_poll)(void* svc, uint32_t handle,
                                      TplcIec61850Ctl* out);
-    void* reserved[2];
+    /* MMS ReadDataSet on a data set reference ("LD/LN.dsName" or
+       "@dsName" for VMD scope): fills out with newline-separated
+       "FCDA=value" lines (cap).  Returns element count or a
+       TPLC_61850_E_* code. */
+    int32_t (*iec61850_ds_read)(void* svc, uint32_t handle,
+                                const char* ds_ref,
+                                char* out, uint32_t cap);
+    /* MMS GetDataSetDirectory: newline-separated FCDA object
+       references of the data set members (cap).  Returns count or a
+       TPLC_61850_E_* code. */
+    int32_t (*iec61850_ds_directory)(void* svc, uint32_t handle,
+                                     const char* ds_ref,
+                                     char* out, uint32_t cap);
 } TplcIec61850Service;
 
 #ifdef __cplusplus

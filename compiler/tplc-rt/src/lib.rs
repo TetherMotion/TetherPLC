@@ -4689,6 +4689,11 @@ const IEC_GI: usize = 1032;
 const IEC_PURGEBUF: usize = 1036;
 const IEC_RESVTMS: usize = 1040;
 const IEC_ENTRYID: usize = 1044;
+// Data-set members (appended): DSREF u8len@1048+data@1049 cap127,
+// DSCOUNT@1176.
+const IEC_DSREF_LEN: usize = 1048;
+const IEC_DSREF: usize = 1049;
+const IEC_DSCOUNT: usize = 1176;
 
 // tplc-iec61850 service vtable offsets (TplcIec61850Service):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -4703,6 +4708,8 @@ const IEC_SVC_RCB_SET: usize = 72;
 const IEC_SVC_REPORT_POLL: usize = 80;
 const IEC_SVC_CONTROL: usize = 88;
 const IEC_SVC_CONTROL_POLL: usize = 96;
+const IEC_SVC_DS_READ: usize = 104;
+const IEC_SVC_DS_DIRECTORY: usize = 112;
 
 /// service lookup for "tplc-iec61850" (12 chars)
 unsafe fn iec_service(ctx: *const u8) -> *const u8 {
@@ -4734,6 +4741,8 @@ type FIecReportPoll = unsafe extern "C" fn(*const u8, u32, *mut u8, u32) -> i32;
 type FIecControl = unsafe extern "C" fn(*const u8, u32, *const u8, u32,
                                        *const u8, *mut u8, u32) -> i32;
 type FIecControlPoll = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
+type FIecDsRead = unsafe extern "C" fn(*const u8, u32, *const u8,
+                                      *mut u8, u32) -> i32;
 
 /// `__tplc_rt_FB_Iec61850` — synchronous op dispatch over the
 /// tplc-iec61850 MMS client. OP: 1=connect+associate (HOST/PORT ->
@@ -4951,6 +4960,27 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
                 wu32(this.add(IEC_CTLTYPE), rd32(12));
                 wu32(this.add(IEC_CTLNUM), rd32(16));
                 wu32(this.add(IEC_CTLPEND), rd32(20));
+            }
+        }
+        12 | 13 => {
+            // data set: DSREF -> VAL text, DSCOUNT elements.
+            // 12=ReadDataSet ("FCDA=value" lines), 13=directory.
+            let mut rbuf = [0u8; 128];
+            uacstr(this, IEC_DSREF_LEN, IEC_DSREF, 127, rbuf.as_mut_ptr());
+            let mut out = [0u8; 255];
+            let off = if op == 12 { IEC_SVC_DS_READ } else { IEC_SVC_DS_DIRECTORY };
+            let f: FIecDsRead = core::mem::transmute(iecfn(svc, off));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       rbuf.as_ptr(), out.as_mut_ptr(), 255);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc >= 0 {
+                wu32(this.add(IEC_DSCOUNT), rc as u32);
+                let mut n = 0usize;
+                while n < 255 && out[n] != 0 { n += 1; }
+                core::ptr::copy_nonoverlapping(out.as_ptr(), this.add(IEC_VAL), n);
+                *this.add(IEC_VAL_LEN) = n as u8;
+                *this.add(IEC_VAL + n) = 0;
             }
         }
         _ => {

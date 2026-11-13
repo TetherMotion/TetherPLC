@@ -482,3 +482,89 @@ END_VAR
     END_IF;
     exPrev := Execute;
 END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850DataSetRead: MMS ReadDataSet ----
+// DataSetRef is the MMS object reference of the data set, e.g.
+// 'tetherIEDtetherTestLD/LLN0.measds' ('@name' for VMD scope).
+// Values holds newline-separated "FCDA=value" lines; ElementCount
+// is the number of data set members returned.
+FUNCTION_BLOCK FB_Iec61850DataSetRead
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    DataSetRef : STRING[127];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    Values : STRING[255];
+    ElementCount : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    Values := '';
+    ElementCount := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 12;
+        ch.HANDLE := ConnectionHdl;
+        ch.DSREF := DataSetRef;
+        ch();
+        IF ch.STATUS >= 0 THEN
+            Done := TRUE;
+            Values := ch.VAL;
+            ElementCount := ch.DSCOUNT;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850DataSetDirectory: MMS GetDataSetDirectory ----
+// Names holds the newline-separated FCDA object references of the
+// data set members (same order as ReadDataSet values).
+FUNCTION_BLOCK FB_Iec61850DataSetDirectory
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    DataSetRef : STRING[127];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    Names : STRING[255];
+    ElementCount : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    Names := '';
+    ElementCount := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 13;
+        ch.HANDLE := ConnectionHdl;
+        ch.DSREF := DataSetRef;
+        ch();
+        IF ch.STATUS >= 0 THEN
+            Done := TRUE;
+            Names := ch.VAL;
+            ElementCount := ch.DSCOUNT;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
