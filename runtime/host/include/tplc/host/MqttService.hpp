@@ -48,6 +48,8 @@ private:
     int32_t receive(void*, uint32_t h, TplcMqttRx* rx);
     int32_t isConnected(void*, uint32_t h);
     int32_t abort(void*, uint32_t h);
+    int32_t backoff(void*, uint32_t h, uint32_t min_ms,
+                    uint32_t max_ms, uint32_t enable);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

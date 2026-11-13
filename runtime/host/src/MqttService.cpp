@@ -16,11 +16,13 @@
 #include <MQTTClient.h>
 #endif
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef TPLC_HAVE_MQTT
@@ -55,6 +57,28 @@ std::set<int> socket_fds() {
 }
 #endif
 
+/* owned copy of everything needed to re-issue MQTTClient_connect
+   from the backoff watchdog (the ABI cfg's pointers reference PLC
+   stack memory that is gone by the time a reconnect is needed). */
+struct ConnectSpec {
+    std::string host;
+    uint32_t    port = 0;
+    int32_t     clean_session = 1;
+    uint32_t    keepalive_s = 60;
+    std::string username;
+    std::string password;
+    std::string client_id;
+    std::string will_topic;
+    std::vector<uint8_t> will_payload;
+    uint32_t    will_qos = 0;
+    uint32_t    will_retain = 0;
+    uint32_t    use_tls = 0;
+    uint32_t    tls_insecure = 0;
+    std::string tls_ca_file;
+    std::string tls_cert_file;
+    std::string tls_key_file;
+};
+
 struct Conn {
 #ifdef TPLC_HAVE_MQTT
     MQTTClient conn = nullptr;
@@ -63,6 +87,12 @@ struct Conn {
     int32_t  last_error = 0;
     int      fd = -1;
     std::chrono::steady_clock::time_point last_rx{};
+    ConnectSpec spec;
+    bool     bo_en = false;
+    uint32_t bo_min = 1000;
+    uint32_t bo_max = 30000;
+    std::atomic<bool> wd_stop{true};
+    std::thread wd;
 #else
     void*    conn = nullptr;
     int32_t  state = 0;
@@ -72,6 +102,82 @@ struct Conn {
 };
 
 } // namespace
+
+#ifdef TPLC_HAVE_MQTT
+namespace {
+
+/* re-issue MQTTClient_connect from a stored ConnectSpec (used by
+   the backoff watchdog; mirrors the option setup in connect()). */
+int spec_connect(MQTTClient c, const ConnectSpec& s) {
+    MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
+    opts.keepAliveInterval = int(s.keepalive_s ? s.keepalive_s : 60);
+    opts.cleansession = s.clean_session;
+    opts.connectTimeout = 5;
+    if (!s.username.empty()) opts.username = s.username.c_str();
+    if (!s.password.empty()) opts.password = s.password.c_str();
+    MQTTClient_willOptions will;
+    MQTTClient_SSLOptions sslo;
+    if (!s.will_topic.empty()) {
+        will = MQTTClient_willOptions_initializer;
+        will.topicName = s.will_topic.c_str();
+        will.payload.len = int(s.will_payload.size());
+        will.payload.data = s.will_payload.empty()
+            ? nullptr : const_cast<uint8_t*>(s.will_payload.data());
+        will.qos = int(s.will_qos);
+        will.retained = s.will_retain ? 1 : 0;
+        opts.will = &will;
+    }
+    if (s.use_tls) {
+        sslo = MQTTClient_SSLOptions_initializer;
+        sslo.trustStore = s.tls_ca_file.empty() ? nullptr
+                                              : s.tls_ca_file.c_str();
+        sslo.keyStore = s.tls_cert_file.empty() ? nullptr
+                                              : s.tls_cert_file.c_str();
+        sslo.privateKey = s.tls_key_file.empty() ? nullptr
+                                               : s.tls_key_file.c_str();
+        sslo.enableServerCertAuth = s.tls_insecure ? 0 : 1;
+        opts.ssl = &sslo;
+    }
+    return MQTTClient_connect(c, &opts);
+}
+
+/* exponential-backoff watchdog: while the connection is down,
+   wait a doubling delay (min..max) between reconnect attempts;
+   a successful connect resets the delay.  Paho serializes its own
+   calls internally, so this may run concurrently with PLC ops. */
+void backoff_loop(Conn* c) {
+    uint32_t delay = c->bo_min;
+    while (!c->wd_stop.load() && c->conn) {
+        if (MQTTClient_isConnected(c->conn)) {
+            delay = c->bo_min;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
+        if (!c->bo_en) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
+        for (uint32_t t = 0; t < delay && !c->wd_stop.load(); t += 50)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (c->wd_stop.load() || !c->conn) break;
+        if (spec_connect(c->conn, c->spec) == MQTTCLIENT_SUCCESS) {
+            delay = c->bo_min;
+            c->last_rx = std::chrono::steady_clock::now();
+        } else {
+            delay = delay > c->bo_max / 2 ? c->bo_max
+                                          : delay * 2;
+            if (delay > c->bo_max) delay = c->bo_max;
+        }
+    }
+}
+
+void stop_watchdog(Conn& c) {
+    c.wd_stop.store(true);
+    if (c.wd.joinable()) c.wd.join();
+}
+
+} // namespace
+#endif
 
 struct MqttService::Impl {
     Conn conns[TPLC_MQTT_HDL_MAX]{};
@@ -104,15 +210,20 @@ MqttService::MqttService() {
         { return self(s)->isConnected(s, h); };
     svc_.mqtt_abort = [](void* s, uint32_t h)
         { return self(s)->abort(s, h); };
+    svc_.mqtt_backoff = [](void* s, uint32_t h, uint32_t mn,
+                           uint32_t mx, uint32_t e)
+        { return self(s)->backoff(s, h, mn, mx, e); };
 }
 
 MqttService::~MqttService() {
 #ifdef TPLC_HAVE_MQTT
-    for (Conn& c : impl_->conns)
+    for (Conn& c : impl_->conns) {
+        stop_watchdog(c);
         if (c.conn) {
             MQTTClient_disconnect(c.conn, 500);
             MQTTClient_destroy(&c.conn);
         }
+    }
 #endif
 }
 
@@ -168,6 +279,29 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
             cn.conn = c; cn.state = 2;
             cn.last_msg_id = 0; cn.last_error = 0;
             cn.last_rx = std::chrono::steady_clock::now();
+            /* owned copy for the backoff watchdog */
+            cn.spec.host = host;
+            cn.spec.port = port;
+            if (cfg) {
+                cn.spec.clean_session = cfg->clean_session;
+                cn.spec.keepalive_s = cfg->keepalive_s;
+                if (cfg->username) cn.spec.username = cfg->username;
+                if (cfg->password) cn.spec.password = cfg->password;
+                if (cfg->client_id) cn.spec.client_id = cfg->client_id;
+                if (cfg->will_topic) cn.spec.will_topic = cfg->will_topic;
+                if (cfg->will_payload && cfg->will_payload_len)
+                    cn.spec.will_payload.assign(cfg->will_payload,
+                        cfg->will_payload + cfg->will_payload_len);
+                cn.spec.will_qos = cfg->will_qos;
+                cn.spec.will_retain = cfg->will_retain;
+                cn.spec.use_tls = cfg->use_tls;
+                cn.spec.tls_insecure = cfg->tls_insecure;
+                if (cfg->tls_ca_file) cn.spec.tls_ca_file = cfg->tls_ca_file;
+                if (cfg->tls_cert_file)
+                    cn.spec.tls_cert_file = cfg->tls_cert_file;
+                if (cfg->tls_key_file)
+                    cn.spec.tls_key_file = cfg->tls_key_file;
+            }
             for (int fd : socket_fds())
                 if (!fds_before.count(fd)) { cn.fd = fd; break; }
             *out_handle = i + 1;
@@ -186,10 +320,11 @@ int32_t MqttService::disconnect(void*, uint32_t h) {
         return TPLC_MQTT_E_HANDLE;
     Conn& c = impl_->conns[h - 1];
 #ifdef TPLC_HAVE_MQTT
+    stop_watchdog(c);
     MQTTClient_disconnect(c.conn, 500);
     MQTTClient_destroy(&c.conn);
 #endif
-    c.conn = nullptr; c.state = 0; c.fd = -1;
+    c.conn = nullptr; c.state = 0; c.fd = -1; c.bo_en = false;
     return TPLC_MQTT_OK;
 }
 
@@ -201,7 +336,14 @@ int32_t MqttService::status(void*, uint32_t h, TplcMqttStatus* out) {
         return TPLC_MQTT_OK;
     }
     const Conn& c = impl_->conns[h - 1];
+#ifdef TPLC_HAVE_MQTT
+    /* live connection state — c.state stays 2 after connect, so
+       report what Paho currently sees (updated by socket IO in
+       receive/publish/etc). */
+    out->state = MQTTClient_isConnected(c.conn) ? 2 : 0;
+#else
     out->state = c.state;
+#endif
     out->last_msg_id = c.last_msg_id;
     out->last_error = c.last_error;
     auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -328,10 +470,36 @@ int32_t MqttService::abort(void*, uint32_t h) {
     if (c.fd > 0) shutdown(c.fd, SHUT_RDWR);
     for (int i = 0; i < 50 && MQTTClient_isConnected(c.conn); ++i)
         usleep(10000);
+    stop_watchdog(c);
     MQTTClient_destroy(&c.conn);
 #endif
-    c.conn = nullptr; c.state = 0; c.fd = -1;
+    c.conn = nullptr; c.state = 0; c.fd = -1; c.bo_en = false;
     return TPLC_MQTT_OK;
+}
+
+int32_t MqttService::backoff(void*, uint32_t h, uint32_t min_ms,
+                             uint32_t max_ms, uint32_t enable) {
+    if (h == 0 || h > TPLC_MQTT_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_MQTT_E_HANDLE;
+#ifdef TPLC_HAVE_MQTT
+    Conn& c = impl_->conns[h - 1];
+    if (!enable) {
+        c.bo_en = false;
+        return TPLC_MQTT_OK;
+    }
+    c.bo_min = min_ms ? min_ms : 1000;
+    c.bo_max = max_ms ? max_ms : c.bo_min;
+    if (c.bo_max < c.bo_min) c.bo_max = c.bo_min;
+    c.bo_en = true;
+    if (!c.wd.joinable()) {
+        c.wd_stop.store(false);
+        c.wd = std::thread(backoff_loop, &c);
+    }
+    return TPLC_MQTT_OK;
+#else
+    (void)min_ms; (void)max_ms;
+    return TPLC_MQTT_E_CONN;
+#endif
 }
 
 } // namespace tplc

@@ -5086,6 +5086,11 @@ const MQ_TLSKEY_LEN: usize = 1556;
 const MQ_TLSKEY: usize = 1557;
 // LASTMSGSINCE (appended): udint@1684.
 const MQ_LASTMSGSINCE: usize = 1684;
+// Backoff members (appended): BACKOFFMIN@1688, BACKOFFMAX@1692,
+// BACKOFFEN@1696.
+const MQ_BACKOFFMIN: usize = 1688;
+const MQ_BACKOFFMAX: usize = 1692;
+const MQ_BACKOFFEN: usize = 1696;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5098,6 +5103,7 @@ const MQ_SVC_UNSUBSCRIBE: usize = 56;
 const MQ_SVC_RECEIVE: usize = 64;
 const MQ_SVC_IS_CONNECTED: usize = 72;
 const MQ_SVC_ABORT: usize = 80;
+const MQ_SVC_BACKOFF: usize = 88;
 
 /// service lookup for "tplc-mqtt" (9 chars)
 unsafe fn mqtt_service(ctx: *const u8) -> *const u8 {
@@ -5326,6 +5332,17 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             // abort: drop TCP without DISCONNECT -> broker fires will
             let f: FMqttDisconnect = core::mem::transmute(mqfn(svc, MQ_SVC_ABORT));
             set_rc(f(svc, ru32(this.add(MQ_HANDLE))));
+        }
+        10 => {
+            // exponential backoff: BACKOFFMIN/MAX/EN -> watchdog
+            type FMqttBackoff = unsafe extern "C" fn(
+                *const u8, u32, u32, u32, u32) -> i32;
+            let f: FMqttBackoff =
+                core::mem::transmute(mqfn(svc, MQ_SVC_BACKOFF));
+            set_rc(f(svc, ru32(this.add(MQ_HANDLE)),
+                     ru32(this.add(MQ_BACKOFFMIN)),
+                     ru32(this.add(MQ_BACKOFFMAX)),
+                     ru32(this.add(MQ_BACKOFFEN))));
         }
         _ => {
             wi32(this.add(MQ_STATUS), -1);

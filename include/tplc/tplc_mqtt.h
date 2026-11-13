@@ -110,7 +110,14 @@ typedef struct TplcMqttService {
        the registered last-will. */
     int32_t (*mqtt_abort)(void*, uint32_t h);
 
-    void* reserved[7];
+    /* exponential backoff: enable/disable auto-reconnect for a
+       connection.  min_ms/max_ms bound the doubling delay between
+       attempts; a successful connect resets the delay to min_ms.
+       enable=0 stops the watchdog (the connection is left as-is). */
+    int32_t (*mqtt_backoff)(void*, uint32_t h, uint32_t min_ms,
+                            uint32_t max_ms, uint32_t enable);
+
+    void* reserved[6];
 } TplcMqttService;
 
 /* status / error codes */

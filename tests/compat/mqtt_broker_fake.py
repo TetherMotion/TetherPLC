@@ -6,12 +6,16 @@ subscriber across connections, stores retained publishes, and
 publishes a connection's will when it closes WITHOUT a DISCONNECT
 (ungraceful drop).  UNSUBSCRIBE->UNSUBACK, PINGREQ->PINGRESP.
 Not a real broker — just enough for the client e2e."""
-import socket, ssl, struct, sys, threading
+import socket, ssl, struct, sys, threading, time
 
 SUBS = {}       # conn -> {topic filter: granted qos} (all connections)
 RETAINED = {}   # topic -> payload
 LOCK = threading.Lock()
 MSGID = [1]     # broker->client packet ids for qos>0 publishes
+CONNS = set()   # live client sockets
+SRV = [None]    # listener socket
+TLSCTX = [None] # ssl context when --tls
+BOUNCE = [None] # {'topic','delay'} one-shot self-bounce
 
 def read_varint(s):
     mult, val = 1, 0
@@ -146,6 +150,13 @@ def handle(conn):
                     with LOCK:
                         RETAINED[topic] = payload
                 publish_to(topic, payload, qos)
+                # one-shot self-bounce: after broadcasting the trigger
+                # topic, drop every client + the listener, then rebind
+                # after `delay` seconds (deterministic reconnect e2e)
+                if BOUNCE[0] and topic == BOUNCE[0]['topic']:
+                    b = BOUNCE[0]; BOUNCE[0] = None
+                    threading.Thread(target=bounce, args=(b,),
+                                     daemon=True).start()
             elif ptype == 6:    # PUBREL (outbound qos2) -> PUBCOMP
                 send(conn, 0x70, body[:2])
             elif ptype == 5:    # PUBREC (inbound qos2) -> PUBREL
@@ -169,7 +180,11 @@ def handle(conn):
         pass
     with LOCK:
         SUBS.pop(conn, None)
-    conn.close()
+        CONNS.discard(conn)
+    try:
+        conn.close()
+    except Exception:
+        pass
     # ungraceful drop: broker publishes the registered will
     if will is not None and not clean:
         wt = will['topic']
@@ -177,6 +192,34 @@ def handle(conn):
             with LOCK:
                 RETAINED[wt] = will['payload']
         publish_to(wt, will['payload'], will['qos'])
+
+def accept_loop(s):
+    while True:
+        try:
+            c, _ = s.accept()
+        except Exception:
+            return
+        with LOCK:
+            CONNS.add(c)
+        threading.Thread(target=handle, args=(c,), daemon=True).start()
+
+def bounce(b):
+    """drop every client conn so they see an ungraceful close; the
+    listener stays up so reconnecting clients find a live broker.
+    (Closing the listener does not wake a thread blocked in
+    accept(), so it is left alone.)"""
+    with LOCK:
+        conns = list(CONNS)
+    for c in conns:
+        try:
+            c.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            c.close()
+        except Exception:
+            pass
+    print('mqtt_broker_fake bounced', flush=True)
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 11883
@@ -187,13 +230,19 @@ def main():
     if len(sys.argv) > 4 and sys.argv[2] == '--tls':
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(sys.argv[3], sys.argv[4])
+        TLSCTX[0] = ctx
         s = ctx.wrap_socket(s, server_side=True)
         print(f'mqtt_broker_fake TLS on {port}', flush=True)
     else:
         print(f'mqtt_broker_fake on {port}', flush=True)
-    while True:
-        c, _ = s.accept()
-        threading.Thread(target=handle, args=(c,), daemon=True).start()
+    # optional self-bounce: --bounce <topic> <delay_s>
+    if '--bounce' in sys.argv:
+        i = sys.argv.index('--bounce')
+        BOUNCE[0] = {'topic': sys.argv[i + 1],
+                     'delay': float(sys.argv[i + 2]),
+                     'port': port}
+    SRV[0] = s
+    accept_loop(s)
 
 if __name__ == '__main__':
     main()

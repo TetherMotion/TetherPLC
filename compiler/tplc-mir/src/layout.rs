@@ -1311,6 +1311,11 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             /* broker-message age (appended): OP3 copies
                TplcMqttStatus.last_msg_age_ms here. */
             push(&mut off, "LASTMSGSINCE", udint());
+            /* backoff (appended): OP10 reads BACKOFFMIN/MAX/EN ->
+               mqtt_backoff vtable op. */
+            push(&mut off, "BACKOFFMIN", udint());
+            push(&mut off, "BACKOFFMAX", udint());
+            push(&mut off, "BACKOFFEN", udint());
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:

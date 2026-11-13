@@ -378,6 +378,50 @@ END_VAR
     F_MqttTopicMatch := match AND LEN(t) = 0;
 END_FUNCTION
 
+// ---- FB_IotMqttBackoff: Activate/DeactivateExponentialBackoff ----
+// TwinCAT's ActivateExponentialBackoff(min,max) makes the client
+// auto-reconnect with a doubling delay bounded by max; Deactivate
+// stops it.  Enable=TRUE on the Execute edge activates with
+// MinMs/MaxMs; Enable=FALSE deactivates.  Reconnects re-issue the
+// original CONNECT (host/port/TLS/will); subscriptions are NOT
+// restored — resubscribe after the connection returns.
+FUNCTION_BLOCK FB_IotMqttBackoff
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    MinMs : UDINT;
+    MaxMs : UDINT;
+    Enable : BOOL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Mqtt;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 10;
+        ch.HANDLE := ConnectionHdl;
+        ch.BACKOFFMIN := MinMs;
+        ch.BACKOFFMAX := MaxMs;
+        IF Enable THEN ch.BACKOFFEN := 1; ELSE ch.BACKOFFEN := 0; END_IF;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
+
 // ---- FB_IotMqttStatus: session status + broker-message age ----
 // Level-triggered: while Execute is TRUE it polls the connection
 // status each scan.  TimeSinceLastBrokerMsgMs is the
