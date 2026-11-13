@@ -73,6 +73,14 @@ int main(int argc, char** argv) {
                               RPT_OPT_DATA_SET |
                               RPT_OPT_TIME_STAMP,
                               0, 0);
+    /* buffered twin: same dataset, BR reference, 50 ms bufTm. */
+    ReportControlBlock_create("bufrcb", lln0, "rptBuf", true,
+                              "measds", 1,
+                              TRG_OPT_DATA_CHANGED | TRG_OPT_GI,
+                              RPT_OPT_SEQ_NUM | RPT_OPT_REASON_FOR_INCLUSION |
+                              RPT_OPT_DATA_SET |
+                              RPT_OPT_TIME_STAMP,
+                              50, 0);
 
     IedServer ied = IedServer_create(model);
     IedServer_setLocalIpAddress(ied, "127.0.0.1");

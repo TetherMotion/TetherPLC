@@ -295,8 +295,11 @@ END_VAR
 END_FUNCTION_BLOCK
 
 // ---- FB_Iec61850RCBSet: MMS SetRCBValues (URCB-safe subset) ----
-// Flags: bit0 RptEna, bit1 Resv, bit2 GI.  Enabling installs the
-// report handler on the connection.
+// Flags: bit0 RptEna, bit1 Resv, bit2 GI, bit3 PurgeBuf (buffered
+// RCBs only).  Once the RCB is enabled the service narrows the write
+// to the attributes servers accept in that state (RptEna disable,
+// GI, PurgeBuf); a redundant enable is a no-op.  Enabling installs
+// the report handler on the connection.
 FUNCTION_BLOCK FB_Iec61850RCBSet
 VAR_INPUT
     Execute : BOOL;

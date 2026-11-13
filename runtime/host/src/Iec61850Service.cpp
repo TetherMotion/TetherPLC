@@ -402,34 +402,41 @@ int32_t Iec61850Service::rcbSet(void*, uint32_t h, const char* rcbRef,
     const bool ena = (flags & 1) != 0;
     const bool resv = (flags & 2) != 0;
     const bool gi = (flags & 4) != 0;
+    const bool purge = (flags & 8) != 0;
     ClientReportControlBlock_setRptEna(rcb, ena);
     ClientReportControlBlock_setResv(rcb, resv);
     ClientReportControlBlock_setGI(rcb, gi);
-    uint32_t mask = RCB_ELEMENT_RPT_ENA | RCB_ELEMENT_RESV |
-                    RCB_ELEMENT_SQ_NUM;
+    if (purge) ClientReportControlBlock_setPurgeBuf(rcb, true);
+    /* mask selection depends on the server-side RptEna state and on
+       buffered vs unbuffered: $Resv is URCB-only ($ResvTms is the
+       BRCB reservation attribute), and enabled RCBs accept only
+       RptEna(disable)/GI/PurgeBuf writes. */
+    const bool buffered = ClientReportControlBlock_isBuffered(rcb);
+    if (buffered && resv)
+        ClientReportControlBlock_setResvTms(rcb, 60);
+    uint32_t mask = RCB_ELEMENT_RPT_ENA | RCB_ELEMENT_SQ_NUM |
+                    (buffered ? (resv ? uint32_t(RCB_ELEMENT_RESV_TMS) : 0)
+                              : uint32_t(RCB_ELEMENT_RESV));
     if (gi) mask |= RCB_ELEMENT_GI;
-    /* install/refresh the report handler BEFORE enabling so an
-       immediate report cannot hit the connection unhandled.  When
-       the RCB is already enabled, drop RptEna from the mask: servers
-       reject a redundant RptEna=true write with
-       TEMPORARILY_UNAVAILABLE even though sibling attributes apply. */
+    if (purge) mask |= RCB_ELEMENT_PURGE_BUF;
     bool skipWrite = false;
-    if (ena) {
-        TplcIec61850Rcb snap{};
-        if (rcbGet(nullptr, h, rcbRef, &snap) == TPLC_61850_OK &&
-            snap.rpt_id[0]) {
-            IedConnection_installReportHandler(
-                c.conn, rcbRef, snap.rpt_id, onIecReport, &c);
-            if (snap.rpt_ena) {
-                /* enabled RCBs accept only RptEna/GI writes: a GI
-                   trigger goes out GI-only, a redundant enable is a
-                   no-op. */
-                if (gi) {
-                    mask = uint32_t(RCB_ELEMENT_GI);
-                } else {
-                    skipWrite = true;
-                }
-            }
+    TplcIec61850Rcb snap{};
+    const bool haveSnap =
+        rcbGet(nullptr, h, rcbRef, &snap) == TPLC_61850_OK &&
+        snap.rpt_id[0];
+    if (haveSnap) {
+        IedConnection_installReportHandler(
+            c.conn, rcbRef, snap.rpt_id, onIecReport, &c);
+        if (snap.rpt_ena) {
+            mask = 0;
+            if (!ena) mask |= uint32_t(RCB_ELEMENT_RPT_ENA);
+            if (gi) mask |= uint32_t(RCB_ELEMENT_GI);
+            if (purge) mask |= uint32_t(RCB_ELEMENT_PURGE_BUF);
+            if (ena && mask == 0) skipWrite = true;
+        } else if (!ena) {
+            /* already disabled: a redundant RptEna=false is skipped
+               so PurgeBuf-style calls stay clean. */
+            mask &= ~uint32_t(RCB_ELEMENT_RPT_ENA);
         }
     }
     if (skipWrite) {
