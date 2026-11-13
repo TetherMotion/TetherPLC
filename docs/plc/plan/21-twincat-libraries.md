@@ -24663,7 +24663,7 @@ per-parameter prose.
 
 - **Category:** Industry · **Tier:** T0
 - **Manual:** `TF8540_Plastic_Processing_Framework_EN.pdf` · **API entries:** 26
-- **Status:** hydraulic axis control builds on `compat/tc2/tc2_mc2.st` axis model; hyd-specific FBs on request
+- **Status:** TcTvA alarm-visualization family delivered as `compat/tc2/tc2_pfwlib.st` (`FB_TcTvAMsgQueue`, 32-slot fixed table standing in for the POINTER TO `ST_TcTvA_Alarm_Itf` array) — ctest tc2_pfwlib_io. Remaining: temp-controller/force-control/process FBs (`FB_TempCtrl*`, `FB_FcMainBody`, `FB_PowerMeasurement`, `FB_TempParamSave/Load`, `FB_xL3403`, `FB_TempCtrlAdaptFm33xx`, `FB_TermCoe*/TermReg*`, `FB_ClockTimer*`) — machine-specific control algorithms, on request.
 - **Integration:** Plastic-processing application library: process-control logic over image IO; machine specifics via fieldbus.
 
 #### PLC temperature controller › Function blocks
