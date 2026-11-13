@@ -56,6 +56,13 @@ typedef struct TplcMqttConnectCfg {
     const char* tls_ca_file;
     const char* tls_cert_file;
     const char* tls_key_file;
+    /* MQTT5 connect properties (only used when version == 5;
+       0 = property absent, broker default applies). */
+    uint32_t session_expiry_s;  /* Session Expiry Interval */
+    uint32_t receive_max;       /* Receive Maximum */
+    uint32_t topic_alias_max;   /* Topic Alias Maximum */
+    uint32_t req_resp_info;     /* Request Response Information */
+    uint32_t req_prob_info;     /* Request Problem Information */
 } TplcMqttConnectCfg;
 
 /* ---- received-message struct ---- */

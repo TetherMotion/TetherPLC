@@ -77,6 +77,12 @@ struct ConnectSpec {
     std::string tls_ca_file;
     std::string tls_cert_file;
     std::string tls_key_file;
+    uint32_t    version = 3;
+    uint32_t    session_expiry_s = 0;
+    uint32_t    receive_max = 0;
+    uint32_t    topic_alias_max = 0;
+    uint32_t    req_resp_info = 0;
+    uint32_t    req_prob_info = 0;
 };
 
 struct Conn {
@@ -86,6 +92,7 @@ struct Conn {
     uint32_t last_msg_id = 0;
     int32_t  last_error = 0;
     int      fd = -1;
+    int      version = 3;
     std::chrono::steady_clock::time_point last_rx{};
     ConnectSpec spec;
     bool     bo_en = false;
@@ -105,6 +112,40 @@ struct Conn {
 
 #ifdef TPLC_HAVE_MQTT
 namespace {
+
+/* build MQTT5 connect properties from a spec (session expiry,
+   receive maximum, topic alias maximum, request response/problem
+   information); empty properties are omitted so the broker applies
+   its defaults. */
+static void fill_connect_props(const ConnectSpec& s, MQTTProperties& p) {
+    MQTTProperty prop;
+    memset(&prop, 0, sizeof(prop));
+    if (s.session_expiry_s) {
+        prop.identifier = MQTTPROPERTY_CODE_SESSION_EXPIRY_INTERVAL;
+        prop.value.integer4 = s.session_expiry_s;
+        MQTTProperties_add(&p, &prop);
+    }
+    if (s.receive_max) {
+        prop.identifier = MQTTPROPERTY_CODE_RECEIVE_MAXIMUM;
+        prop.value.integer2 = (unsigned short)s.receive_max;
+        MQTTProperties_add(&p, &prop);
+    }
+    if (s.topic_alias_max) {
+        prop.identifier = MQTTPROPERTY_CODE_TOPIC_ALIAS_MAXIMUM;
+        prop.value.integer2 = (unsigned short)s.topic_alias_max;
+        MQTTProperties_add(&p, &prop);
+    }
+    if (s.req_resp_info) {
+        prop.identifier = MQTTPROPERTY_CODE_REQUEST_RESPONSE_INFORMATION;
+        prop.value.byte = 1;
+        MQTTProperties_add(&p, &prop);
+    }
+    if (s.req_prob_info) {
+        prop.identifier = MQTTPROPERTY_CODE_REQUEST_PROBLEM_INFORMATION;
+        prop.value.byte = 1;
+        MQTTProperties_add(&p, &prop);
+    }
+}
 
 /* re-issue MQTTClient_connect from a stored ConnectSpec (used by
    the backoff watchdog; mirrors the option setup in connect()). */
@@ -137,6 +178,21 @@ int spec_connect(MQTTClient c, const ConnectSpec& s) {
                                                : s.tls_key_file.c_str();
         sslo.enableServerCertAuth = s.tls_insecure ? 0 : 1;
         opts.ssl = &sslo;
+    }
+    if (s.version == 5) {
+        opts.MQTTVersion = MQTTVERSION_5;
+        /* v5 rejects cleansession != 0; clean start lives in
+           cleanstart instead */
+        opts.cleansession = 0;
+        opts.cleanstart = s.clean_session;
+        MQTTProperties props = MQTTProperties_initializer;
+        fill_connect_props(s, props);
+        MQTTResponse r = MQTTClient_connect5(c, &opts, &props, nullptr);
+        MQTTProperties_free(&props);
+        int rc = (r.reasonCode == MQTTREASONCODE_SUCCESS)
+                     ? MQTTCLIENT_SUCCESS : MQTTCLIENT_FAILURE;
+        MQTTResponse_free(r);
+        return rc;
     }
     return MQTTClient_connect(c, &opts);
 }
@@ -241,9 +297,22 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
                           host, port ? port : (cfg && cfg->use_tls
                                                ? 8883u : 1883u));
             std::set<int> fds_before = socket_fds();
-            int rc = MQTTClient_create(&c, uri,
-                        cfg && cfg->client_id ? cfg->client_id : "tplc-client",
+            const bool v5 = cfg && cfg->version == 5;
+            int rc;
+            if (v5) {
+                MQTTClient_createOptions copts =
+                    MQTTClient_createOptions_initializer;
+                copts.MQTTVersion = MQTTVERSION_5;
+                rc = MQTTClient_createWithOptions(&c, uri,
+                        cfg && cfg->client_id ? cfg->client_id
+                                              : "tplc-client",
+                        MQTTCLIENT_PERSISTENCE_NONE, nullptr, &copts);
+            } else {
+                rc = MQTTClient_create(&c, uri,
+                        cfg && cfg->client_id ? cfg->client_id
+                                              : "tplc-client",
                         MQTTCLIENT_PERSISTENCE_NONE, nullptr);
+            }
             if (rc != MQTTCLIENT_SUCCESS) return TPLC_MQTT_E_CONN;
             MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
             opts.keepAliveInterval = int(cfg && cfg->keepalive_s
@@ -270,13 +339,34 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
                 sslo.enableServerCertAuth = cfg->tls_insecure ? 0 : 1;
                 opts.ssl = &sslo;
             }
-            rc = MQTTClient_connect(c, &opts);
+            if (v5) {
+                opts.MQTTVersion = MQTTVERSION_5;
+                opts.cleansession = 0;
+                opts.cleanstart = cfg ? cfg->clean_session : 1;
+                ConnectSpec tmp;
+                tmp.session_expiry_s = cfg->session_expiry_s;
+                tmp.receive_max = cfg->receive_max;
+                tmp.topic_alias_max = cfg->topic_alias_max;
+                tmp.req_resp_info = cfg->req_resp_info;
+                tmp.req_prob_info = cfg->req_prob_info;
+                MQTTProperties props = MQTTProperties_initializer;
+                fill_connect_props(tmp, props);
+                MQTTResponse r = MQTTClient_connect5(c, &opts,
+                                                     &props, nullptr);
+                MQTTProperties_free(&props);
+                rc = (r.reasonCode == MQTTREASONCODE_SUCCESS)
+                         ? MQTTCLIENT_SUCCESS : MQTTCLIENT_FAILURE;
+                MQTTResponse_free(r);
+            } else {
+                rc = MQTTClient_connect(c, &opts);
+            }
             if (rc != MQTTCLIENT_SUCCESS) {
                 MQTTClient_destroy(&c);
                 return TPLC_MQTT_E_CONN;
             }
             Conn& cn = impl_->conns[i];
             cn.conn = c; cn.state = 2;
+            cn.version = v5 ? 5 : 3;
             cn.last_msg_id = 0; cn.last_error = 0;
             cn.last_rx = std::chrono::steady_clock::now();
             /* owned copy for the backoff watchdog */
@@ -299,6 +389,12 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
                 if (cfg->tls_ca_file) cn.spec.tls_ca_file = cfg->tls_ca_file;
                 if (cfg->tls_cert_file)
                     cn.spec.tls_cert_file = cfg->tls_cert_file;
+                cn.spec.version = cfg->version;
+                cn.spec.session_expiry_s = cfg->session_expiry_s;
+                cn.spec.receive_max = cfg->receive_max;
+                cn.spec.topic_alias_max = cfg->topic_alias_max;
+                cn.spec.req_resp_info = cfg->req_resp_info;
+                cn.spec.req_prob_info = cfg->req_prob_info;
                 if (cfg->tls_key_file)
                     cn.spec.tls_key_file = cfg->tls_key_file;
             }
@@ -361,9 +457,18 @@ int32_t MqttService::publish(void*, uint32_t h, const char* topic,
     if (!topic || !*topic || (!payload && len)) return TPLC_MQTT_E_PARAM;
 #ifdef TPLC_HAVE_MQTT
     Conn& c = impl_->conns[h - 1];
-    int mid;
-    int rc = MQTTClient_publish(c.conn, topic, int(len),
+    int mid = 0;
+    int rc;
+    if (c.version == 5) {
+        MQTTResponse r = MQTTClient_publish5(c.conn, topic, int(len),
+                          payload, int(qos), int(retain), nullptr, &mid);
+        rc = (r.reasonCode == MQTTREASONCODE_SUCCESS)
+                 ? MQTTCLIENT_SUCCESS : MQTTCLIENT_FAILURE;
+        MQTTResponse_free(r);
+    } else {
+        rc = MQTTClient_publish(c.conn, topic, int(len),
                  payload, int(qos), int(retain), &mid);
+    }
     if (rc != MQTTCLIENT_SUCCESS) {
         c.last_error = rc;
         return TPLC_MQTT_E_PROTO;
@@ -382,7 +487,17 @@ int32_t MqttService::subscribe(void*, uint32_t h, const char* filter,
     if (!filter || !*filter) return TPLC_MQTT_E_PARAM;
 #ifdef TPLC_HAVE_MQTT
     Conn& c = impl_->conns[h - 1];
-    int rc = MQTTClient_subscribe(c.conn, filter, int(qos));
+    int rc;
+    if (c.version == 5) {
+        MQTTSubscribe_options opts = MQTTSubscribe_options_initializer;
+        MQTTResponse r = MQTTClient_subscribe5(c.conn, filter, int(qos),
+                                               &opts, nullptr);
+        rc = (r.reasonCode == MQTTREASONCODE_SUCCESS)
+                 ? MQTTCLIENT_SUCCESS : MQTTCLIENT_FAILURE;
+        MQTTResponse_free(r);
+    } else {
+        rc = MQTTClient_subscribe(c.conn, filter, int(qos));
+    }
     if (rc != MQTTCLIENT_SUCCESS) {
         c.last_error = rc;
         return TPLC_MQTT_E_PROTO;
@@ -398,9 +513,18 @@ int32_t MqttService::unsubscribe(void*, uint32_t h, const char* filter) {
         return TPLC_MQTT_E_HANDLE;
     if (!filter || !*filter) return TPLC_MQTT_E_PARAM;
 #ifdef TPLC_HAVE_MQTT
-    int rc = MQTTClient_unsubscribe(impl_->conns[h - 1].conn, filter);
+    Conn& c = impl_->conns[h - 1];
+    int rc;
+    if (c.version == 5) {
+        MQTTResponse r = MQTTClient_unsubscribe5(c.conn, filter, nullptr);
+        rc = (r.reasonCode == MQTTREASONCODE_SUCCESS)
+                 ? MQTTCLIENT_SUCCESS : MQTTCLIENT_FAILURE;
+        MQTTResponse_free(r);
+    } else {
+        rc = MQTTClient_unsubscribe(c.conn, filter);
+    }
     if (rc != MQTTCLIENT_SUCCESS) {
-        impl_->conns[h - 1].last_error = rc;
+        c.last_error = rc;
         return TPLC_MQTT_E_PROTO;
     }
     return TPLC_MQTT_OK;

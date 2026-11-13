@@ -55,19 +55,24 @@ def topic_match(flt, topic):
         return True
     return False
 
+VERSIONS = {}    # conn -> protocol level (4 = 3.1.1, 5 = 5.0)
+
 def publish_to(topic, payload, qos=0):
     """broadcast a PUBLISH to every matching subscriber at
-    min(pub qos, granted qos); qos>0 carries a packet id"""
+    min(pub qos, granted qos); qos>0 carries a packet id.
+    v5 subscribers get an (empty) properties field."""
     with LOCK:
-        targets = list(SUBS.items())
+        targets = [(c, fs, VERSIONS.get(c, 4)) for c, fs in SUBS.items()]
         mid = MSGID[0]; MSGID[0] += 1
-    for conn, fs in targets:
+    for conn, fs, ver in targets:
         for f, gq in fs.items():
             if topic_match(f, topic):
                 eff = min(qos, gq)
                 body = struct.pack('>H', len(topic)) + topic.encode()
                 if eff:
                     body += struct.pack('>H', mid)
+                if ver == 5:
+                    body += b'\x00'        # empty properties
                 body += payload
                 try:
                     send(conn, 0x30 | (eff << 1), body)
@@ -75,17 +80,35 @@ def publish_to(topic, payload, qos=0):
                     pass
                 break
 
+def skip_props(body, pos):
+    """MQTT5: properties = varint length + bytes; return pos after"""
+    plen, p = 0, pos
+    mult = 1
+    while p < len(body):
+        b = body[p]; p += 1
+        plen += (b & 0x7F) * mult
+        if not (b & 0x80):
+            break
+        mult *= 128
+    return p + plen
+
 def parse_will(body):
-    """extract last-will from a CONNECT body (MQTT 3.1.1)"""
+    """extract last-will + protocol version from a CONNECT body
+    (MQTT 3.1.1 and 5.0)"""
     try:
         plen = struct.unpack('>H', body[0:2])[0]
         pos = 2 + plen                     # protocol name
+        level = body[pos]
         flags = body[pos + 1]              # connect flags
         pos += 4                           # level+flags+keepalive
+        if level == 5:
+            pos = skip_props(body, pos)    # connect properties
         cid_len = struct.unpack('>H', body[pos:pos+2])[0]
         pos += 2 + cid_len                 # client id
         if not (flags & 0x04):
-            return None
+            return {'will': None, 'version': level}
+        if level == 5:
+            pos = skip_props(body, pos)    # will properties
         wt_len = struct.unpack('>H', body[pos:pos+2])[0]
         pos += 2
         will_topic = body[pos:pos+wt_len].decode()
@@ -93,25 +116,36 @@ def parse_will(body):
         wm_len = struct.unpack('>H', body[pos:pos+2])[0]
         pos += 2
         will_msg = body[pos:pos+wm_len]
-        return {'topic': will_topic, 'payload': will_msg,
-                'qos': (flags >> 3) & 3, 'retain': (flags >> 5) & 1}
+        return {'will': {'topic': will_topic, 'payload': will_msg,
+                         'qos': (flags >> 3) & 3,
+                         'retain': (flags >> 5) & 1},
+                'version': level}
     except Exception:
-        return None
+        return {'will': None, 'version': 4}
 
 def handle(conn):
     will = None
     clean = False
+    v5 = False
     try:
         while True:
             hdr, body = read_packet(conn)
             if hdr is None: break
             ptype = hdr >> 4
             if ptype == 1:      # CONNECT -> CONNACK (session 0, rc 0)
-                will = parse_will(body)
-                send(conn, 0x20, b'\x00\x00')
+                parsed = parse_will(body)
+                will = parsed['will']
+                v5 = parsed['version'] == 5
+                VERSIONS[conn] = parsed['version']
+                if v5:
+                    # CONNACK v5: ack flags + reason + properties
+                    send(conn, 0x20, b'\x00\x00\x00')
+                else:
+                    send(conn, 0x20, b'\x00\x00')
             elif ptype == 8:    # SUBSCRIBE -> SUBACK + retained delivery
                 # body: packet id + repeated (topic len, topic, qos)
-                pos = 2
+                # v5 inserts a properties field after the packet id
+                pos = skip_props(body, 2) if v5 else 2
                 granted = []
                 new_topics = []
                 while pos + 2 <= len(body):
@@ -126,11 +160,19 @@ def handle(conn):
                     new_topics.append(topic)
                     with LOCK:
                         SUBS.setdefault(conn, {})[topic] = gq
-                send(conn, 0x90, body[:2] + bytes(granted))
+                if v5:
+                    # SUBACK v5: packet id + props + reason codes
+                    send(conn, 0x90,
+                         body[:2] + b'\x00' + bytes(granted))
+                else:
+                    send(conn, 0x90, body[:2] + bytes(granted))
                 for rt, rp in RETAINED.items():
                     if any(topic_match(t, rt) for t in new_topics):
+                        rbody = struct.pack('>H', len(rt)) + rt.encode()
+                        if v5:
+                            rbody += b'\x00'    # empty properties
                         send(conn, 0x31,  # PUBLISH qos0 retain=1
-                             struct.pack('>H', len(rt)) + rt.encode() + rp)
+                             rbody + rp)
             elif ptype == 3:    # PUBLISH -> qos ack + broadcast
                 tl = struct.unpack('>H', body[:2])[0]
                 topic = body[2:2+tl].decode()
@@ -138,14 +180,26 @@ def handle(conn):
                 flags = hdr & 0x0F
                 qos = (flags >> 1) & 3
                 mid = None
-                payload = rest
                 if qos:
                     mid = struct.unpack('>H', rest[:2])[0]
-                    payload = rest[2:]
+                    rest = rest[2:]
+                if v5:
+                    # v5 inserts a properties field before the payload
+                    pos = 2 + tl + (2 if qos else 0)
+                    pos = skip_props(body, pos)
+                    payload = body[pos:]
+                else:
+                    payload = rest
                 if qos == 1:
-                    send(conn, 0x40, struct.pack('>H', mid))   # PUBACK
+                    if v5:
+                        send(conn, 0x40, struct.pack('>H', mid) + b'\x00\x00')
+                    else:
+                        send(conn, 0x40, struct.pack('>H', mid))   # PUBACK
                 elif qos == 2:
-                    send(conn, 0x50, struct.pack('>H', mid))   # PUBREC
+                    if v5:
+                        send(conn, 0x50, struct.pack('>H', mid) + b'\x00\x00')
+                    else:
+                        send(conn, 0x50, struct.pack('>H', mid))   # PUBREC
                 if flags & 1:  # retain flag: store for later subscribers
                     with LOCK:
                         RETAINED[topic] = payload
@@ -162,7 +216,8 @@ def handle(conn):
             elif ptype == 5:    # PUBREC (inbound qos2) -> PUBREL
                 send(conn, 0x62, body[:2])
             elif ptype == 10:   # UNSUBSCRIBE -> UNSUBACK
-                pos = 2
+                pos = skip_props(body, 2) if v5 else 2
+                ntopics = 0
                 while pos + 2 <= len(body):
                     tl = struct.unpack('>H', body[pos:pos+2])[0]
                     pos += 2
@@ -170,7 +225,13 @@ def handle(conn):
                         SUBS.get(conn, {}).pop(body[pos:pos+tl].decode(),
                                                None)
                     pos += tl
-                send(conn, 0xB0, body[:2])
+                    ntopics += 1
+                if v5:
+                    # UNSUBACK v5: packet id + props + reason codes
+                    send(conn, 0xB0,
+                         body[:2] + b'\x00' + b'\x00' * ntopics)
+                else:
+                    send(conn, 0xB0, body[:2])
             elif ptype == 12:   # PINGREQ -> PINGRESP
                 send(conn, 0xD0, b'')
             elif ptype == 14:   # DISCONNECT (graceful: no will)
@@ -181,6 +242,7 @@ def handle(conn):
     with LOCK:
         SUBS.pop(conn, None)
         CONNS.discard(conn)
+        VERSIONS.pop(conn, None)
     try:
         conn.close()
     except Exception:

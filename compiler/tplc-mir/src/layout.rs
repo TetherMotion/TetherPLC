@@ -1316,6 +1316,14 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "BACKOFFMIN", udint());
             push(&mut off, "BACKOFFMAX", udint());
             push(&mut off, "BACKOFFEN", udint());
+            /* MQTT5 (appended): OP1 reads MQTTVER (3|5) + the five
+               connect-property udints into the cfg tail. */
+            push(&mut off, "MQTTVER", udint());
+            push(&mut off, "M5SESSIONEXP", udint());
+            push(&mut off, "M5RECVMAX", udint());
+            push(&mut off, "M5TOPICALIAS", udint());
+            push(&mut off, "M5REQRESP", udint());
+            push(&mut off, "M5REQPROB", udint());
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:

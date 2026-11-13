@@ -5091,6 +5091,14 @@ const MQ_LASTMSGSINCE: usize = 1684;
 const MQ_BACKOFFMIN: usize = 1688;
 const MQ_BACKOFFMAX: usize = 1692;
 const MQ_BACKOFFEN: usize = 1696;
+// MQTT5 members (appended): MQTTVER@1700, M5SESSIONEXP@1704,
+// M5RECVMAX@1708, M5TOPICALIAS@1712, M5REQRESP@1716, M5REQPROB@1720.
+const MQ_MQTTVER: usize = 1700;
+const MQ_M5SESSIONEXP: usize = 1704;
+const MQ_M5RECVMAX: usize = 1708;
+const MQ_M5TOPICALIAS: usize = 1712;
+const MQ_M5REQRESP: usize = 1716;
+const MQ_M5REQPROB: usize = 1720;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5167,7 +5175,7 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             // will_qos@60 u32, will_retain@64 u32, use_tls@68 u32,
             // tls_insecure@72 u32, tls_ca@80 ptr, tls_cert@88 ptr,
             // tls_key@96 ptr
-            let mut cfg = [0u8; 104];
+            let mut cfg = [0u8; 128];
             let cfgp = cfg.as_mut_ptr();
             let wi = |off: usize, v: i32| {
                 let b = v.to_le_bytes();
@@ -5175,7 +5183,8 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             };
             wi(0, ru32(this.add(MQ_CLEAN)) as i32);
             wi(4, ru32(this.add(MQ_KEEPALIVE)) as i32);
-            wi(8, 3);       // MQTT 3.1.1 default
+            let mver = ru32(this.add(MQ_MQTTVER));
+            wi(8, if mver == 5 { 5 } else { 3 });
             wi(12, 5000);   // connect timeout ms
             // username/password/client_id ptrs left null
             let mut wbuf = [0u8; 128];
@@ -5223,6 +5232,12 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
                     (keybuf.as_ptr() as usize).to_le_bytes().as_ptr(),
                     cfgp.add(96), 8);
             }
+            // MQTT5 connect properties (cfg offsets 104..120)
+            wi(104, ru32(this.add(MQ_M5SESSIONEXP)) as i32);
+            wi(108, ru32(this.add(MQ_M5RECVMAX)) as i32);
+            wi(112, ru32(this.add(MQ_M5TOPICALIAS)) as i32);
+            wi(116, ru32(this.add(MQ_M5REQRESP)) as i32);
+            wi(120, ru32(this.add(MQ_M5REQPROB)) as i32);
             let f: FMqttConnect = core::mem::transmute(mqfn(svc, MQ_SVC_CONNECT));
             let mut h: u32 = 0;
             let rc = f(svc, buf.as_ptr(), ru32(this.add(MQ_PORT)),

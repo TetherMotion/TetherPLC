@@ -1053,6 +1053,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_mqtt_backoff_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
+  # MQTT 5.0 client e2e: FB_IotMqtt5Client connect properties +
+  # v5 SUBACK/PUBLISH/UNSUBACK framing against the fake broker
+  add_test(NAME tc2_mqtt5_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mqtt5_io.sh)
+  set_tests_properties(tc2_mqtt5_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # PfwLib_Processing TcTvA alarm queue (TF8540): FB_TcTvAMsgQueue
   # append/reactivate/query/deactivate/gc/clear-signal/clear-pending/
   # update-time/unknown-cmd over the sim

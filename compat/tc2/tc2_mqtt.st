@@ -569,3 +569,78 @@ END_VAR
     END_IF;
     rsPrev := ResetReq;
 END_FUNCTION_BLOCK
+
+// ---- FB_IotMqtt5Client: MQTT 5.0 CONNECT/CONNACK ----
+// Same surface as FB_IotMqttClient plus the MQTT5 connect
+// properties.  Publish/subscribe/unsubscribe reuse the existing
+// FBs; the service picks the MQTT5 packet forms automatically for
+// a v5 connection.
+FUNCTION_BLOCK FB_IotMqtt5Client
+VAR_INPUT
+    Execute : BOOL;
+    HostName : STRING[63];
+    Port : UDINT;
+    CleanSession : BOOL;
+    KeepAlive : UDINT;
+    WillTopic : STRING[127];
+    WillPayload : STRING[255];
+    WillQoS : UDINT;
+    WillRetain : BOOL;
+    UseTls : BOOL;
+    TlsInsecure : BOOL;
+    TlsCaFile : STRING[127];
+    TlsCertFile : STRING[127];
+    TlsKeyFile : STRING[127];
+    SessionExpiryS : UDINT;
+    ReceiveMaximum : UDINT;
+    TopicAliasMaximum : UDINT;
+    RequestResponseInformation : BOOL;
+    RequestProblemInformation : BOOL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    ConnectionHdl : UDINT;
+END_VAR
+VAR
+    ch : FB_Mqtt;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 1;
+        ch.HOST := HostName;
+        ch.PORT := Port;
+        IF CleanSession THEN ch.CLEAN := 1; ELSE ch.CLEAN := 0; END_IF;
+        ch.KEEPALIVE := KeepAlive;
+        ch.WILLTOPIC := WillTopic;
+        ch.WILLPAYLOAD := WillPayload;
+        ch.WILLQOS := WillQoS;
+        IF WillRetain THEN ch.WILLRETAIN := 1; ELSE ch.WILLRETAIN := 0; END_IF;
+        IF UseTls THEN ch.USETLS := 1; ELSE ch.USETLS := 0; END_IF;
+        IF TlsInsecure THEN ch.TLSINSECURE := 1; ELSE ch.TLSINSECURE := 0; END_IF;
+        ch.TLSCAFILE := TlsCaFile;
+        ch.TLSCERTFILE := TlsCertFile;
+        ch.TLSKEYFILE := TlsKeyFile;
+        ch.MQTTVER := 5;
+        ch.M5SESSIONEXP := SessionExpiryS;
+        ch.M5RECVMAX := ReceiveMaximum;
+        ch.M5TOPICALIAS := TopicAliasMaximum;
+        IF RequestResponseInformation THEN ch.M5REQRESP := 1; ELSE ch.M5REQRESP := 0; END_IF;
+        IF RequestProblemInformation THEN ch.M5REQPROB := 1; ELSE ch.M5REQPROB := 0; END_IF;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+            ConnectionHdl := ch.HANDLE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+    Busy := FALSE;
+END_FUNCTION_BLOCK
