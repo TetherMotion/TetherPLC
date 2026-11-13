@@ -79,9 +79,11 @@ multi-select + optional `selWire`, `pending` (wire being dragged),
   fetches `GET /libsrc` and stores the source in `stSources`, so the
   project stays self-contained.
 - **Device blocks (`kind: 'device'`)** — fieldbus terminals such as
-  Beckhoff EK modules. The palette's Devices group opens a wizard
-  (terminal name, DI/DO/AI/AO, channel count, type, base byte) that
-  generates channel pins; the properties panel's channel table edits
+  Beckhoff EK modules. The palette's Devices group offers templates
+  (EK1108 8×DI, EK1123 8×DO, EK1122 2×AI+2×AO, EK1110 4×DI+4×DO) plus a
+  wizard (terminal name, DI/DO/AI/AO, channel count, type, base byte)
+  that generates channel pins; mixed templates emit both channel
+  groups into one block. The properties panel's channel table edits
   every pin's name / direction (`var_output` = device→logic,
   `var_input` = logic→device, `var_in_out` = both) / type / `AT`
   process-image address. Each channel compiles to a located variable —
