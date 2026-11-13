@@ -63,13 +63,25 @@ the active program and registers one catalog entry per field:
 
 - scalar non-const vars → writable `ParamEntry` (read/write via
   `DBG_READ`/`DBG_WRITE` at the field's blob offset)
-- retain vars → read-only signal `plc.<prog>.retain.<var>`
+- retain vars → `plc.<prog>.retain.<var>`, always read-only
+  (scalars as typed signals, aggregates as Binary)
 - const and non-scalar/aggregate fields → read-only Binary signals
 
-Field types come from the deployed package's TYPC tags: the provider
-scans `--packages DIR/*.tplc` and repeatable `--pkg FILE` arguments
-for the package matching the active program UUID. Unknown or
-non-scalar types degrade to Binary.
+Field types come from the deployed package's TYPC **type table**: the
+provider scans `--packages DIR/*.tplc` and repeatable `--pkg FILE`
+arguments for the package matching the active program UUID, decodes
+every type record, and maps type tags to `ValueType`s. STRUCT and
+FUNCTION_BLOCK fields recurse (depth-capped at 8): the aggregate
+stays visible as a raw Binary signal and each member publishes a
+dotted entry — `plc.<prog>.<inst>.<member>` — so FBD instance pins
+like `TON.ET`/`FB_AtcPid.out` resolve to live values. Member offsets
+are absolute (`field.offset + member.offset`); retain/const flags
+propagate to leaves. Unknown or non-scalar types degrade to Binary.
+
+A deploy's stop→prepare→start can race the epoch bump and leave
+`DBG_FIELDS` briefly empty; the provider retries the field fetch for
+~1 s inside the rebuild and, if the table is still absent, arms a
+15 s watchdog retry that rebuilds once the layout reappears.
 
 ## Schema model
 

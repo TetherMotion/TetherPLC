@@ -110,11 +110,15 @@ multi-select + optional `selWire`, `pending` (wire being dragged),
   and every pin exposes `<title>name : TYPE</title>`.
 - **Live sync** — when the ctl connection is bound, every block pin
   shows its polled value. Variable blocks read `plc.<pou>.<var>`;
-  FB/function pins read `plc.<pou>.<instance>.<member>` — the runtime's
-  SMAP export includes FB instance members, so no extra plumbing is
-  needed. Operator outputs are scan temporaries (not exported) and stay
-  blank. The IDE binds **all** `plc.*` params/signals, so member keys are
-  polled alongside program vars.
+  FB/function pins read `plc.<pou>.<instance>.<member>`. `DBG_FIELDS`
+  only exports top-level program fields, so `tplc-io` decodes the
+  package TYPC table and recursively expands STRUCT/FUNCTION_BLOCK
+  members into those dotted catalog entries (see
+  `tether-io-attach.md`); the browser reaches them through the
+  proxy's `/tether-io` WebSocket→SLIP bridge. Operator outputs are
+  scan temporaries (not exported) and stay blank. The IDE binds
+  **all** `plc.*` params/signals, so member keys are polled alongside
+  program vars.
 - **Editing** — port-snap wire drop (out→in, one source may fan out),
   shift-click pin negation, group drag (one undo step), marquee select,
   clipboard with `nextNodeId` remap (no id collisions), align,
@@ -249,19 +253,27 @@ not run it. Both deploy paths (`build & deploy`, `deploy .tplc…`) then
 chain `PROG_STOP` (prepare rejects while RUNNING) → `PROG_PREPARE
 <uuid>` → `PROG_START`, so a successful deploy leaves the new program
 running. State-preserving online change stays on the shadow path
-(deploy → `SHADOW_LOAD` → compare → `SHADOW_PROMOTE`).
+(deploy → `SHADOW_LOAD` → compare → `SHADOW_PROMOTE`). The program
+card shows the proto-v2+ status fields: program-set `epoch`, package
+`version`, `deployed_at` timestamp, last fault rc/cycle, active force
+count, retain dirty bytes, and swap/quarantine state.
 
 ### Live-runtime E2E
 
 `TetherWebUI/e2e/live-stack.sh` boots a real `tether-plc` (shm image +
-pre-deployed `LiveDemo` package + ctl socket) behind `tplc-ctl-proxy`
-on `:8090` (`--socket` = the runtime ctl.sock, so `/health`, `/ctl` and
-`/events` all reach it). `e2e/plc-live.spec.ts` then drives the real
-scan loop from the browser: cycle counters advance, `stop`/`start`
-freeze/resume them, task suspend/step/resume hit the scheduler, and
-`build & deploy` ships a project package that ends up RUNNING. The
-stack spawns automatically when `tether-plc`, `tplc-image` and `tplcc`
-are built; the spec skips otherwise.
+pre-deployed `LiveDemo` package + ctl socket) plus `tplc-io` (dynamic
+`plc.*` catalog over TCP) behind `tplc-ctl-proxy` on `:8090`
+(`--socket` = the runtime ctl.sock for `/health`, `/ctl`, `/events`;
+`--tplc-io` bridges `/tether-io` WebSocket→SLIP so the browser's
+`DataHub` reaches live values). `e2e/plc-live.spec.ts` then drives the
+real scan loop from the browser: cycle counters advance, `stop`/`start`
+freeze/resume them, task suspend/step/resume hit the scheduler,
+`build & deploy` ships a project package that ends up RUNNING, the
+debug plane resolves/reads/forces live memory, `plc.*` values stream
+into the watch pane across catalog rebuilds, and a deployed TON's
+member pins (`plc.<prog>.i1.ET`/`Q`) show live values on the FBD
+canvas. The stack spawns automatically when `tether-plc`, `tplc-image`,
+`tplc-io` and `tplcc` are built; the spec skips otherwise.
 
 ## 9. What is deliberately not here
 
