@@ -463,10 +463,35 @@ pub fn emit(
         });
     }
 
-    // sort non-root entries by (region, offset) per §6.5
-    let (head, tail) = entries.split_at_mut(1);
-    tail.sort_by_key(|e| (e.region, e.offset));
-    let _ = head;
+    // sort non-root entries by (region, offset) per §6.5. Indices
+    // captured during construction (parent/child/sibling links and
+    // off_to_sym) are pre-sort positions, so permute explicitly and
+    // remap every stored link afterwards.
+    let mut perm: Vec<usize> = (1..entries.len()).collect();
+    perm.sort_by_key(|&i| (entries[i].region, entries[i].offset));
+    let mut remap = vec![NONE; entries.len()];
+    remap[0] = 0;
+    let mut slots: Vec<Option<SymEntry>> =
+        std::mem::take(&mut entries).into_iter().map(Some).collect();
+    entries.push(slots[0].take().unwrap());
+    for (new_i, &old_i) in perm.iter().enumerate() {
+        remap[old_i] = (new_i + 1) as u32;
+        entries.push(slots[old_i].take().unwrap());
+    }
+    for e in entries.iter_mut() {
+        if e.parent != NONE {
+            e.parent = remap[e.parent as usize];
+        }
+        if e.first_child != NONE {
+            e.first_child = remap[e.first_child as usize];
+        }
+        if e.next_sibling != NONE {
+            e.next_sibling = remap[e.next_sibling as usize];
+        }
+    }
+    for s in off_to_sym.values_mut() {
+        *s = remap[*s as usize];
+    }
 
     // provenance table bytes
     let mut prov_bytes = Vec::new();
