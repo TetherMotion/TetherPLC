@@ -34120,7 +34120,7 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6225_TC3_EtherCAT_External_Sync_EN.pdf` · **API entries:** 2
-- **Status:** EtherCAT ext-sync is Tether io-domain — documented
+- **Status:** contract landed — Tether `tether_io_motion_server` exposes simulated `ec.dc.connected`/`ec.dc.sync_enabled`(RW)/`ec.dc.time_diff_ns`/`ec.dc.ref_time_ns` IO params (Tether commit b3f52382). Remaining: `tplc-ecsync` host service reading those params via TetherIOClient + `FB_EcExtSyncExtTimes`/`FB_EcExtSyncIsSynchronized` ST surface + e2e. Real-master hookup needs DCManager stats bridged into the same params.
 - **Integration:** EtherCAT DC (distributed clocks) sync needs master sync hooks.
 
 #### PLC API › Function blocks
