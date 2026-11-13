@@ -901,6 +901,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_nci PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc3_NC_Camming e2e: two simulated axes, 3-point cam table
+  # (master -> 2x slave), coupling while the master runs a velocity
+  # move, periodic wrap, table clear, WritePt edge; in-process
+  add_test(NAME tc3_nccam
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_nccam.sh)
+  set_tests_properties(tc3_nccam PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # tplc-motion over the Tether IO protocol e2e: the same
   # FB_MotionAxis case replayed against tether_io_motion_server
   # (SimulatedCiA402Drive, --clock sim) with TPLC_MOTION_IO set;
@@ -942,6 +950,14 @@ if(NOT CMAKE_CROSSCOMPILING)
       COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
         bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_nci_io.sh)
     set_tests_properties(tc2_nci_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+    # the Tc3_NC_Camming surface (cam-table coupling driving the
+    # remote DS402 drive fleet over Tether IO)
+    add_test(NAME tc3_nccam_io
+      COMMAND ${CMAKE_COMMAND} -E env "TETHER_DIR=${TETHER_DIR}"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_nccam_io.sh)
+    set_tests_properties(tc3_nccam_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
     # the Tc2_NCI G-code channel over Tether IO: FB_Itp* wrappers

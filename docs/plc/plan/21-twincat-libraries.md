@@ -13977,8 +13977,7 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5050_TC3_NC_Camming_EN.pdf` · **API entries:** 18
-- **Status:** core MC blocks in `compat/tc2/tc2_mc2.st`; cam-table coupling not yet covered
-- **Integration:** Electronic camming: needs cam-table engine on top of the axis backend.
+- **Status: PARTIAL** — `compat/tc3/tc3_nccam.st` `FB_McCamCoupling`: single cam table (flattened `MC_CAM_REF` as `MasterPosT`/`SlavePosT` LREAL arrays, up to 64 points, `WritePt`/`ClearTable`), `Execute` coupling that interpolates master position and streams the scaled slave target over `FB_MotionAxis` (works on both the in-process and Tether IO backends; e2e `tc3_nccam`/`tc3_nccam_io`, mask `0x3f`). Not covered: multi-plate `MC_CamAdd`/`Exchange`/`Remove`, `MC_CamTableSelect`/`MC_CamInfo`, online-change modes, motion-function read/write beyond the point edge, slave-dynamics/characteristics reads.
 
 #### Cam plates
 
