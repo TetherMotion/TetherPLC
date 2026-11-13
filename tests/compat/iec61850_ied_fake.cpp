@@ -23,6 +23,7 @@ static void onSig(int) { stopFlag = 1; }
 
 static IedServer g_ied;
 static DataAttribute* g_swi_stval;   /* valWTr.posVal leaf */
+static DataAttribute* g_apc_mag;     /* APC1.mxVal.f leaf */
 
 /* BSC control handler: accept the command and mirror ctlVal into
    valWTr.posVal so clients can verify the operate took effect. */
@@ -47,6 +48,47 @@ swiControlHandler(ControlAction action, void* parameter,
     IedServer_updateInt32AttributeValue(g_ied, g_swi_stval,
                                         on ? 1 : 0);
     IedServer_unlockDataModel(g_ied);
+    return CONTROL_RESULT_OK;
+}
+
+/* APC control handler: the ctlVal arrives as the AnalogueValue
+   structure; the client's simplified path sends a 1-element
+   structure whose element 0 is the magnitude. */
+static ControlHandlerResult
+apcControlHandler(ControlAction action, void* parameter,
+                  MmsValue* value, bool test)
+{
+    (void)parameter;
+    if (test || !value) return CONTROL_RESULT_FAILED;
+    MmsValue* v = value;
+    /* unwrap up to two structure levels: the simplified client
+       path sends structure{scalar}; a full AnalogueValue ctlVal
+       nests setMag{mag{f,i},q} deeper. */
+    for (int depth = 0; depth < 3; ++depth) {
+        if (MmsValue_getType(v) != MMS_STRUCTURE ||
+            MmsValue_getArraySize(v) == 0)
+            break;
+        MmsValue* e = MmsValue_getElement(v, 0);
+        if (!e) break;
+        if (MmsValue_getType(e) == MMS_STRUCTURE) { v = e; continue; }
+        v = e;
+        break;
+    }
+    if (!v) return CONTROL_RESULT_FAILED;
+    float f;
+    switch (MmsValue_getType(v)) {
+        case MMS_FLOAT: f = MmsValue_toFloat(v); break;
+        case MMS_INTEGER:
+        case MMS_UNSIGNED: f = float(MmsValue_toInt64(v)); break;
+        default: return CONTROL_RESULT_FAILED;
+    }
+    printf("APC1 control: %f\n", double(f));
+    fflush(stdout);
+    if (g_apc_mag) {
+        IedServer_lockDataModel(g_ied);
+        IedServer_updateFloatAttributeValue(g_ied, g_apc_mag, f);
+        IedServer_unlockDataModel(g_ied);
+    }
     return CONTROL_RESULT_OK;
 }
 
@@ -141,10 +183,27 @@ int main(int argc, char** argv) {
         }
     }
 
+    /* APC1: controllable analogue process value (APC), SBO normal
+       with cancel — exercises structured ctlVal over the CO
+       model via the client's scalar-simplified path. */
+    DataObject* apc1 = CDC_APC_create("APC1", (ModelNode*)lln0, 0,
+                                    CDC_CTL_MODEL_SBO_NORMAL |
+                                    CDC_CTL_MODEL_HAS_CANCEL,
+                                    false);
+    if (apc1) {
+        ModelNode* sm = ModelNode_getChild((ModelNode*)apc1, "mxVal.f");
+        if (sm) {
+            g_apc_mag = (DataAttribute*)sm;
+            DataAttribute_setValue(g_apc_mag, MmsValue_newFloat(0.0f));
+        }
+    }
+
     IedServer ied = IedServer_create(model);
     g_ied = ied;
     if (swi1)
         IedServer_setControlHandler(ied, swi1, swiControlHandler, NULL);
+    if (apc1)
+        IedServer_setControlHandler(ied, apc1, apcControlHandler, NULL);
     IedServer_setLocalIpAddress(ied, "127.0.0.1");
     IedServer_start(ied, port);
 

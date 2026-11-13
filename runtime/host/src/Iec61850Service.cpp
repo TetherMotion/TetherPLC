@@ -419,8 +419,11 @@ void onIecCtl(uint32_t invokeId, void* param, IedClientError err,
 }
 
 /* ASCII ctlVal text -> MmsValue matching the control object's
-   declared ctlVal type.  Structure ctlVals (APC analogue) are not
-   supported and return nullptr. */
+   declared ctlVal type.  Structured ctlVals (APC analogue)
+   accept a scalar instead: libiec61850 wraps a non-structure
+   ctlVal into the AnalogueValue setpoint structure itself, so
+   a plain number selects the magnitude.  Genuinely structured
+   ctlVals (user-defined member lists) are not supported. */
 MmsValue* ctlValFromText(ControlObjectClient ctl, const char* text) {
     if (!ctl || !text) return nullptr;
     switch (ControlObjectClient_getCtlValType(ctl)) {
@@ -443,6 +446,20 @@ MmsValue* ctlValFromText(ControlObjectClient ctl, const char* text) {
         }
         case MMS_FLOAT:
             return MmsValue_newFloat(float(std::strtod(text, nullptr)));
+        case MMS_STRUCTURE: {
+            /* APC simplified path: scalar -> AnalogueValue
+               setpoint structure (see prepareOperParameters in
+               libiec61850).  Floats cover the setMag.f member;
+               integers/bools degrade to the same wrap. */
+            char* end = nullptr;
+            double d = std::strtod(text, &end);
+            if (end && *end == '\0' && end != text)
+                return MmsValue_newFloat(float(d));
+            long v = std::strtol(text, &end, 10);
+            if (end && *end == '\0' && end != text)
+                return MmsValue_newInteger(int32_t(v));
+            return nullptr;
+        }
         default:
             return nullptr;
     }

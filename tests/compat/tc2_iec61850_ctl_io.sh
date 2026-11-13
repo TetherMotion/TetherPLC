@@ -41,7 +41,7 @@ sed "s/11020/$PORT/g" tests/compat/tc2_iec61850_ctl_case.st > "$WORK/ctl_case.st
     for i in $(seq 0 500); do
         t=$((i*10000000))
         if [ $i -eq 500 ]; then
-            echo "step $i time=$t in 0=00 expect 0=ff1f"
+            echo "step $i time=$t in 0=00 expect 0=ffff"
         else
             echo "step $i time=$t in 0=00"
         fi

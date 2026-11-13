@@ -1473,9 +1473,13 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   `tetherIEDtetherTestLD`/`LLN0` CDC model — Health.stVal ST,
   Meas.instMag.f MX, SetPt.setMag.f SP, Name.val): associate,
   status, read, the write path's error reporting on a read-only
-  attribute, name-list, disconnect — `0x7f`.  Reporting/RCB,
-  GOOSE/SMV, control sequences (Select/Operate), and the full
-  data model are out of scope for this tranche.
+  attribute, name-list, disconnect — `0x7f`.  RCB/reporting,
+  data-set, and SBO control tranches are covered by the
+  `tc2_iec61850_{rcb,brcb,ctl,ds}_io` ctests; APC controls accept
+  scalar ctlVal text which libiec61850 wraps into the
+  AnalogueValue setpoint structure (user-defined structured
+  ctlVal member lists unsupported).  GOOSE/SMV needs
+  CAP_NET_RAW and remains out of scope.
 
 ### MQTT client (`tplc-mqtt`)
 

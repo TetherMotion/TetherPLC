@@ -221,6 +221,85 @@ END_VAR
             // cancel leaves stVal at the operated value (true)
             IF FIND(sval, '1') > 0 THEN
                 mask := mask + 2048;
+                // APC1: select -> operate(3.5) -> mxVal.f reads
+                // back 3.5 through the structured ctlVal path
+                cref := 'tetherIEDtetherTestLD/LLN0.APC1';
+                ctl.Execute := TRUE;
+                ctl.ConnectionHdl := hdl;
+                ctl.ObjectRef := cref;
+                ctl.Mode := 1;          // select
+                ctl.CtlValue := '';
+                st := 40;
+            ELSE
+                mask := 16#DEAD; st := 99;
+            END_IF;
+        END_IF;
+        IF rd.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    ELSIF st = 40 THEN
+        IF ctl.Done THEN
+            ctl.Execute := FALSE;
+            mask := mask + 4096;
+            waitN := 0;
+            st := 41;
+        END_IF;
+        IF ctl.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    ELSIF st = 41 THEN
+        cpol.Execute := TRUE;
+        cpol.ConnectionHdl := hdl;
+        st := 42;
+    ELSIF st = 42 THEN
+        IF cpol.Done THEN
+            cpol.Execute := FALSE;
+            IF cpol.Pending AND cpol.Success AND cpol.EvType = 0 THEN
+                ctl.Execute := TRUE;
+                ctl.ConnectionHdl := hdl;
+                ctl.ObjectRef := cref;
+                ctl.Mode := 3;          // operate
+                ctl.CtlValue := '3.5';
+                st := 43;
+            ELSIF waitN > 100 THEN
+                mask := 16#DEAD; st := 99;
+            ELSE
+                waitN := waitN + 1;
+                st := 41;
+            END_IF;
+        END_IF;
+        IF cpol.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    ELSIF st = 43 THEN
+        IF ctl.Done THEN
+            ctl.Execute := FALSE;
+            mask := mask + 8192;
+            waitN := 0;
+            st := 44;
+        END_IF;
+        IF ctl.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    ELSIF st = 44 THEN
+        cpol.Execute := TRUE;
+        cpol.ConnectionHdl := hdl;
+        st := 45;
+    ELSIF st = 45 THEN
+        IF cpol.Done THEN
+            cpol.Execute := FALSE;
+            IF cpol.Pending AND cpol.Success AND cpol.EvType = 1 THEN
+                rd.Execute := TRUE;
+                rd.ConnectionHdl := hdl;
+                rd.Domain := 'tetherIEDtetherTestLD';
+                rd.Item := 'LLN0.APC1.mxVal.f#MX';
+                st := 46;
+            ELSIF waitN > 100 THEN
+                mask := 16#DEAD; st := 99;
+            ELSE
+                waitN := waitN + 1;
+                st := 44;
+            END_IF;
+        END_IF;
+        IF cpol.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    ELSIF st = 46 THEN
+        IF rd.Done THEN
+            rd.Execute := FALSE;
+            sval := rd.Value;
+            IF sval = '3.5' THEN
+                mask := mask + 16384;
                 dis.Execute := TRUE;
                 dis.ConnectionHdl := hdl;
                 st := 7;
@@ -232,7 +311,7 @@ END_VAR
     ELSIF st = 7 THEN
         IF dis.Done THEN
             dis.Execute := FALSE;
-            mask := mask + 4096;
+            mask := mask + 32768;
             st := 99;
         END_IF;
         IF dis.Error THEN mask := 16#DEAD; END_IF;
