@@ -16718,7 +16718,7 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5060_TCNC_FIFOAXES_EN.pdf` · **API entries:** 8
-- **Status:** FIFO axes covered by `compat/tc2/tc2_nci.st` channel/fifo surface — ctest tc2_nci_io
+- **Status:** PENDING — FiFoAxes numeric LREAL streaming needs a stateful FIFO channel object in the runtime (service + builtin + Tether IO params); the existing `nc.fifo`/`FB_ItpFiFoWrite` surface is the G-code block queue, a different feature
 - **Integration:** FIFO axes (synchronous data streams): NC kernel + deterministic buffers.
 
 #### PLC Library
