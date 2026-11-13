@@ -122,7 +122,9 @@ multi-select + optional `selWire`, `pending` (wire being dragged),
 - **Editing** — port-snap wire drop (out→in, one source may fan out),
   shift-click pin negation, group drag (one undo step), marquee select,
   clipboard with `nextNodeId` remap (no id collisions), align,
-  multi-delete, `Ctrl-A`.
+  multi-delete, `Ctrl-A`, `P` on a selected wire (or the ⌁ toolbar
+  button) toggles its live probe — the lowerer emits a `__probe_<id>`
+  field whose value renders beside the wire.
 - **Validation (client-side mirror of `fbd-lower/resolve.rs`)** —
   unconnected required inputs, double-driven pins, missing blocks,
   algebraic cycles (FB feedback is legal, matching the lowerer). Runs
