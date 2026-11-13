@@ -439,13 +439,8 @@ static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build
         if (read_file(dir + "/err.log", elog) && !elog.empty())
             msg = std::string((const char*)elog.data(), elog.size());
         resp = "{\"compile\":{\"ok\":false,\"errors\":1,\"diags\":[{"
-               "\"code\":\"TPLC_E_DRIVER\",\"severity\":\"error\",\"message\":";
-        resp += "\"";
-        for (char c : msg) {
-            if (c == '"' || c == '\\') resp += '\\';
-            if (c == '\n') resp += "\\n"; else if (c != '\r') resp += c;
-        }
-        resp += "\"}],},\"exit\":-1";
+               "\"code\":\"TPLC_E_DRIVER\",\"severity\":\"error\",\"message\":\"" +
+               json_escape(msg) + "\"}]},\"exit\":-1";
     }
     if (build) {
         std::vector<uint8_t> pkg;

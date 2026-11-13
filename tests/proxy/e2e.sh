@@ -130,5 +130,27 @@ if curl -s -m 30 "http://127.0.0.1:$PORT/libsrc?lib=tempctrl&file=atc_tempctrl.s
 then ok "proxy /libsrc: serves source, rejects traversal+injection"
 else bad "proxy /libsrc"; head -c 200 "$W/lib.st" 2>/dev/null; fi
 
+# driver-failure path must still emit valid JSON (a malformed envelope
+# here surfaced as "check failed: Expected double-quoted property name"
+# in the IDE — json.load is the regression guard)
+kill "$PROXY_PID" 2>/dev/null; wait "$PROXY_PID" 2>/dev/null
+"$W/proxy" --port "$PORT" --tplcc "$W/no-such-tplcc" >"$W/proxy3.log" 2>&1 &
+PROXY_PID=$!
+for _ in $(seq 50); do
+    curl -s -m 1 -o /dev/null "http://127.0.0.1:$PORT/blocks" && break
+    sleep 0.1
+done
+if curl -s -m 30 -X POST --data-binary @"$W/bad.bin" \
+        "http://127.0.0.1:$PORT/compile" -o "$W/drv.json" \
+   && python3 - "$W/drv.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["compile"]["ok"] is False, d
+assert d["compile"]["diags"][0]["code"] == "TPLC_E_DRIVER", d
+assert d["exit"] == -1, d
+PY
+then ok "proxy /compile: valid JSON on driver failure"
+else bad "proxy /compile driver-failure JSON"; cat "$W/drv.json" 2>/dev/null | head -c 300; fi
+
 echo "== $pass pass, $fail fail"
 [ "$fail" -eq 0 ]
