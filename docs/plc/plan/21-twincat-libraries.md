@@ -3555,10 +3555,16 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T1
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_EventLogger_EN.pdf` · **API entries:** 146
-- **Status: IMPLEMENTED (core surface)** — `compat/tc3/tc3_eventlog.st`
-  over the `tplc-eventlog` bounded journal (128 entries,
-  raise/clear/confirm lifecycle).  `FB_TcEvent`/`FB_TcMessage`/
-  `FB_TcAlarm`/`FB_TcEventQuery`; METHOD calls become
+- **Status: IMPLEMENTED (core + aggregate surface)** —
+  `compat/tc3/tc3_eventlog.st` over the `tplc-eventlog` bounded
+  journal (128 entries, raise/clear/confirm lifecycle).
+  `FB_TcEvent`/`FB_TcMessage`/`FB_TcAlarm`/`FB_TcEventQuery` plus the
+  aggregate `FB_TcEventLogger` (filtered clear/confirm alarms,
+  clear-all/confirm-all, IsAlarmRaised, GetAlarm, CSV export over
+  dense journal ids), `FB_TcEventBase` (entry/class compares,
+  synchronous class-name/text requests), `FB_TcArguments`
+  (typed arg accumulation), `FB_TcSourceInfo`, reduced
+  `FB_TcCauseRemedy`/`FB_TcDetail`.  METHOD calls become
   edge-triggered `nCmd` inputs, event classes are UDINT ids,
   async text-request/remote-logger families documented as
   reduced.  Ctest `tc3_eventlog_io`.

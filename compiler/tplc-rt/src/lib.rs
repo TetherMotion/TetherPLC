@@ -6279,8 +6279,8 @@ const EV_STATUS: usize = 60;
 const EV_ERRID: usize = 64;
 const EV_TEXT_LEN: usize = 68;
 const EV_TEXT: usize = 69;
-const EV_TXTO_LEN: usize = 149;
-const EV_TXTO: usize = 150;
+const EV_TXTO_LEN: usize = 150;
+const EV_TXTO: usize = 151;
 
 // TplcEventlogService vtable: size@0 abi@4 host@8
 const EV_SVC_RAISE: usize = 16;

@@ -2199,3 +2199,34 @@ personality (`-210 hidden state symbol DW.ref.rust_eh_personality`);
 the builtin reads table bytes through raw `vd8`/`vd32` helpers.
 
 ctest `tc2_iofunctions_io` green (0x7f).
+
+## D-IMPL-93 — tc3_eventlog aggregate surface + Str stride fix
+
+`compat/tc3/tc3_eventlog.st` grew the aggregate layer over the same
+bounded journal: `FB_TcEventLogger` enumerates the dense id space
+1..128 via `ev_query` — filtered ClearAlarms/ConfirmAlarms,
+filter-free ClearAllAlarms/ConfirmAllAlarms, IsAlarmRaised,
+GetAlarm, and a CSV `ExportLoggedEvents`; `FB_TcEventBase`
+(entry/class compares + synchronous class-name/text requests),
+`FB_TcArguments` (8-slot typed arg list), `FB_TcSourceInfo`
+(ExtendName/ResetToDefault/Clear), reduced `FB_TcCauseRemedy` /
+`FB_TcDetail`.  Remote loggers, `.tmx` resource lookup, ADS
+notification transport, and async request objects stay documented
+gaps.
+
+Real bug the wired test caught: `Type::Str{cap}` occupies
+`align2(1+cap)` bytes in `builtin_fb_layout`, so `STRING[80]`
+reserves 82 — `FB_EventLog`'s hardcoded `TXTO` offsets (149/150)
+were one byte short and the query path wrote the length into
+TEXT's pad byte, shifting every returned text by one.  PJL,
+GENIbus, MPBus consts were already stride-aware; EventLog was the
+only hand-offset table with an even-cap Str followed by another
+member.  `ConfirmAlarms` semantics fixed too: it confirms alarms
+in state raised *or* cleared (state<>3), while `ClearAlarms` still
+requires state=raised.
+
+Test-authoring note: outputs recomputed at the top of a call
+(`nCount := cnt`) lag one scan behind the edge that changed `cnt` —
+checks need arm → clear → check, three states per command.
+
+ctest `tc3_eventlog_io` green (0x03ffffff, 26 checks).
