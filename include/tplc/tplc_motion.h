@@ -52,6 +52,7 @@ extern "C" {
 #define TPLC_MOTION_OBJ_VEL_TARGET     0x60FFu  /* i32  RW */
 #define TPLC_MOTION_OBJ_TORQUE_ACTUAL  0x6077u  /* i16  RO */
 #define TPLC_MOTION_OBJ_HOME_OFFSET    0x607Cu  /* i32  RW (sim ext) */
+#define TPLC_MOTION_OBJ_PROBE_ABORT    0x2001u  /* i32  RW (sim ext) */
 
 /* CiA402 operating-mode values (0x6060). */
 #define TPLC_MOTION_MODE_NONE   0

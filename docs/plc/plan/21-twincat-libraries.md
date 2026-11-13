@@ -13615,7 +13615,20 @@ per-parameter prose.
 
 - **Category:** Motion/Drive · **Tier:** T3
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_DriveMotionControl_EN.pdf` · **API entries:** 14
-- **Status:** single-axis MC core in `compat/tc2/tc2_mc2.st`; Tc3 drive-motion variants on request
+- **Status: IMPLEMENTED** — the 14 entries are the single-axis MC set
+  already provided by `compat/tc2/tc2_mc2.st` (the dialect has no
+  library namespaces, so the Tc3 library shares the Tc2_MC2 FB
+  implementations rather than duplicating them): MC_Power, MC_Reset,
+  MC_SetPosition, MC_Home, MC_Jog, MC_Halt, MC_MoveAbsolute,
+  MC_MoveModulo, MC_MoveRelative, MC_MoveVelocity, MC_Stop,
+  MC_TouchProbe, MC_AbortTrigger, AXIS_REF (UDINT handle).
+  `MC_AbortTrigger` cancels an armed probe through manufacturer
+  object `0x2001` (probe abort request) on both motion backends —
+  in-process `MotionService` axis state, over Tether IO the
+  `mc.<slave>.2001` param backed by `SimulatedCiA402Drive`.
+  e2e `tc2_mc2_probe`/`tc2_mc2_probe_io` (mask `0x3ff`). Remaining
+  gaps are the shared MC-model ones (int32 user units, no hardware
+  latch, per-axis not per-trigger abort), not Tc3-specific APIs.
 - **Integration:** Drive motion control: axis backend + drive profiles.
 
 #### Organization blocks › Axis functions

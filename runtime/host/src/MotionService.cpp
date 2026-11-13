@@ -400,6 +400,9 @@ int32_t MotionService::objRead(void*, uint32_t axis, uint32_t index,
     case TPLC_MOTION_OBJ_HOME_OFFSET:
         *out = a->home_offset;
         break;
+    case TPLC_MOTION_OBJ_PROBE_ABORT:
+        *out = a->probe_abort;
+        break;
     default:
         return TPLC_MOTION_E_STATE;
     }
@@ -454,6 +457,9 @@ int32_t MotionService::objWrite(void*, uint32_t axis, uint32_t index,
         break;
     case TPLC_MOTION_OBJ_HOME_OFFSET:
         a->home_offset = value;
+        break;
+    case TPLC_MOTION_OBJ_PROBE_ABORT:
+        a->probe_abort = value;
         break;
     default:
         /* controlword/statusword/mode-display/actuals are not

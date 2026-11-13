@@ -999,9 +999,9 @@ END_FUNCTION_BLOCK
 // ratio by reading VelocityActualValue each scan and driving the
 // slave's TargetVelocity in PV mode — velocity-ratio coupling, not
 // an exact position-phase lock (that needs cyclic setpoint
-// coupling / a coupling object; documented gap). MC_AbortTrigger's
-// cross-FB probe cancel needs shared per-axis probe state and is a
-// documented gap; MC_TouchProbe self-aborts on a re-Execute.
+// coupling / a coupling object; documented gap). MC_AbortTrigger
+// cancels an armed probe through the per-axis probe-abort object
+// 0x2001 (see below); MC_TouchProbe self-aborts on a re-Execute.
 // ================================================================== //
 
 // ---- MC_TouchProbe: position capture on a trigger edge ----
@@ -1010,6 +1010,10 @@ END_FUNCTION_BLOCK
 // recorded into RecordedPosition (optionally only when inside
 // [FirstPosition,LastPosition] when WindowOnly is TRUE). Done
 // reports a captured value. Re-executing while armed re-arms.
+// The arm edge also clears the axis probe-abort object (0x2001) so
+// an abort issued before the arm cannot kill the new cycle; while
+// armed each scan polls 0x2001 and a nonzero value consumes the
+// request (writes 0 back), disarms and pulses CommandAborted.
 FUNCTION_BLOCK MC_TouchProbe
 VAR_INPUT
     Execute : BOOL;
@@ -1041,24 +1045,83 @@ END_VAR
     Done := FALSE; CommandAborted := FALSE; Error := FALSE; ErrorID := 0;
     IF exEdge THEN
         armed := TRUE;               // (re)arm the probe
+        ax.OP := 5; ax.INDEX := 16#2001; ax.VALUE := 0; ax();
     END_IF;
     IF armed THEN
-        ax.OP := 4; ax.INDEX := 16#6064; ax();   // pos actual
-        IF TriggerInput AND NOT trigPrev THEN
-            inWin := TRUE;
-            IF WindowOnly THEN
-                inWin := (ax.VALUE >= FirstPosition)
-                         AND (ax.VALUE <= LastPosition);
-            END_IF;
-            IF inWin THEN
-                RecordedPosition := ax.VALUE;
-                Done := TRUE;
-                armed := FALSE;
+        ax.OP := 4; ax.INDEX := 16#2001; ax();   // abort request?
+        IF ax.VALUE <> 0 THEN
+            ax.OP := 5; ax.INDEX := 16#2001; ax.VALUE := 0; ax();
+            armed := FALSE;
+            CommandAborted := TRUE;
+        ELSE
+            ax.OP := 4; ax.INDEX := 16#6064; ax();   // pos actual
+            IF TriggerInput AND NOT trigPrev THEN
+                inWin := TRUE;
+                IF WindowOnly THEN
+                    inWin := (ax.VALUE >= FirstPosition)
+                             AND (ax.VALUE <= LastPosition);
+                END_IF;
+                IF inWin THEN
+                    RecordedPosition := ax.VALUE;
+                    Done := TRUE;
+                    armed := FALSE;
+                END_IF;
             END_IF;
         END_IF;
     END_IF;
     trigPrev := TriggerInput;
     Busy := armed;
+END_FUNCTION_BLOCK
+
+// ---- MC_AbortTrigger: cancel an armed touch-probe cycle ----
+// Execute edge writes 1 to the axis probe-abort object (0x2001,
+// manufacturer-specific sim extension shared with MC_TouchProbe).
+// Done reports once the request has been consumed, i.e. the flag
+// reads 0 again (an armed MC_TouchProbe cleared it after
+// disarming). Busy stays TRUE while the request is pending; issue
+// aborts only while a probe cycle is active, matching TwinCAT
+// usage. TriggerInput is accepted for signature fidelity; the
+// single-probe-per-axis model aborts the axis's armed probe
+// regardless of which trigger reference is passed.
+FUNCTION_BLOCK MC_AbortTrigger
+VAR_INPUT
+    Execute : BOOL;
+    TriggerInput : BOOL;
+    Axis : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    CommandAborted : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ax : FB_MotionAxis;
+    exPrev : BOOL;
+    exEdge : BOOL;
+    pending : BOOL;
+END_VAR
+    ax.AXIS := Axis;
+    ax.OP := 3; ax();
+    exEdge := Execute AND NOT exPrev; exPrev := Execute;
+    Done := FALSE; Busy := pending; CommandAborted := FALSE;
+    Error := FALSE; ErrorID := 0;
+    IF exEdge AND NOT pending THEN
+        ax.OP := 5; ax.INDEX := 16#2001; ax.VALUE := 1; ax();
+        IF ax.STATUS = 0 THEN
+            pending := TRUE;
+        ELSE
+            Error := TRUE; ErrorID := ax.ERRID;
+        END_IF;
+    END_IF;
+    IF pending THEN
+        ax.OP := 4; ax.INDEX := 16#2001; ax();
+        IF ax.STATUS = 0 AND ax.VALUE = 0 THEN
+            Done := TRUE; pending := FALSE;
+        END_IF;
+    END_IF;
+    Busy := pending;
 END_FUNCTION_BLOCK
 
 // ---- MC_GearIn: velocity-ratio master/slave coupling ----

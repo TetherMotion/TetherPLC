@@ -47,6 +47,7 @@ private:
         int32_t target_torque = 0;
         uint32_t follow_window = 0;
         int32_t home_offset = 0;
+        int32_t probe_abort = 0;
         /* simulated dynamics (double for deterministic profile
            math; reported to the object dictionary as int32) */
         double pos = 0.0;
