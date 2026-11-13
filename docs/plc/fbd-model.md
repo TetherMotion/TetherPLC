@@ -17,7 +17,9 @@ Status: as-built for `compiler/fbd-model`.
 - `FbdProject { schema, project, pous, tasks, data_types, global_vars }`.
   `Pou { id, name, kind, interface, networks, en_eno }`. `Network`
   carries `blocks | wires | assocs | comments | labels | jumps | returns`,
-  `kind` reserved `fbd|ladder` (ladder = iter-2 hook, §11).
+  `kind` is `fbd|ladder`; ladder networks lower positionally —
+  y-bands are rungs, x-order is the series chain, contacts (NO/NC)
+  AND into the flow and coils latch it (see `lower_ladder`).
 - `Block` covers `fb | function | operator | variable | jump_target |
   st | device`; variable blocks carry `role/name/at`, `st` blocks carry
   `pins` + `params.CODE`, and `device` blocks carry `pins` channel
