@@ -53,6 +53,7 @@ add_library(tplc_host STATIC
   runtime/host/src/NciIoService.cpp
   runtime/host/src/EcSyncService.cpp
   runtime/host/src/EcDiagService.cpp
+  runtime/host/src/SoeService.cpp
   runtime/host/src/OpcUaService.cpp
   runtime/host/src/EipService.cpp
   runtime/host/src/Iec61850Service.cpp
@@ -367,6 +368,7 @@ if(TARGET tplc_tether_io)
                               runtime/host/src/NciIoService.cpp
                               runtime/host/src/EcSyncService.cpp
                               runtime/host/src/EcDiagService.cpp
+                              runtime/host/src/SoeService.cpp
     PROPERTIES COMPILE_OPTIONS "-std=c++23")
   target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_TETHER_IO)
   target_link_libraries(tplc_host PUBLIC tplc_tether_io)
@@ -1126,6 +1128,17 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_ecdiag_io.sh)
   set_tests_properties(tc3_ecdiag_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 90 RESOURCE_LOCK plc_scan)
+
+  # Tc2_Drive: SoE wrappers over tplc-soe (Tether IO ec.soe.* params)
+  # plus SimplePlcMotion CoE/SoE enable+velocity on a simulated
+  # CiA402 axis; read/diag/password/cmd-ctrl/exec/error/reset/AX5000
+  # against tether_io_motion_server
+  add_test(NAME tc2_drive_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_drive_io.sh)
+  set_tests_properties(tc2_drive_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 90 RESOURCE_LOCK plc_scan)
 
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real

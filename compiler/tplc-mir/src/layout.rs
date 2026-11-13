@@ -1512,6 +1512,51 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
                 hi: 15,
             });
         }
+        /* FB_Soe — tplc-soe service bridge (EtherCAT SoE mailbox over
+        Tether IO ec.soe.* params). Synchronous op dispatch: OP 1=
+        read_state (SLAVE -> STATUSW/CMDSTATE/PASSWD/DIAG fields/temps/
+        AX5000 fields/DIAGMSG), OP 2=write_password, 3=write_cmd_ctrl,
+        4=exec_command, 5=reset, 6=write_ax_ctrl, 7=write_ax_park
+        (SLAVE + VALUE -> STATUS). STATUS carries the service return
+        code, ERRID its positive form. */
+        "FB_Soe" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let lreal = || Type::Real { bits: 64 };
+            push(&mut off, "OP", udint());
+            push(&mut off, "SLAVE", udint());
+            push(&mut off, "VALUE", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "STATUSW", udint());
+            push(&mut off, "CMDSTATE", udint());
+            push(&mut off, "PASSWD", udint());
+            push(&mut off, "DIAGNUM", udint());
+            push(&mut off, "CLASSX", udint());
+            push(&mut off, "DIAGCOUNT", udint());
+            push(&mut off, "DIAGLIST", Type::Array {
+                elem: Box::new(udint()),
+                lo: 0,
+                hi: 7,
+            });
+            push(&mut off, "AMPTEMP", lreal());
+            push(&mut off, "MTEMPT", lreal());
+            push(&mut off, "DCVOLT", lreal());
+            push(&mut off, "DCCURR", lreal());
+            push(&mut off, "AXMAINS", lreal());
+            push(&mut off, "AXCTRL", udint());
+            push(&mut off, "AXPARK", udint());
+            push(&mut off, "AXFWREV", udint());
+            push(&mut off, "AXFWBUILD", udint());
+            push(&mut off, "CMDCTRL", udint());
+            push(&mut off, "DIAGMSG", Type::Str { cap: 63 });
+        }
         /* FB_Ocpp — tplc-ocpp service bridge (OCPP-J client over
         WebSocket + JSON-RPC). Synchronous op dispatch like FB_Eip:
         set OP + fields and call. OP 1=connect (HOST/PORT/PATH/OCPPID

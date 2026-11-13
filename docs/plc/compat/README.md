@@ -1450,6 +1450,23 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   `tc3_ecdiag_io` covers read/field decode/ack/per-slave counts.
   `FB_CoE_DiagHistory_ReadAxis` needs Tc2_MC2 `AXIS_REF` objects and
   is not provided.
+- **`tplc-soe`** (`compat/tc2/tc2_drive.st`): `FB_Soe` builtin
+  (OP 1=read state, OP 2..7=mailbox writes) + the TwinCAT-shaped
+  `FB_SoE*`/`FB_SoEAX5000*`/`FB_CoEDrive*`/`FB_SoEDrive*` wrappers
+  over the `ec.soe.*` params — `ec.soe.slave` selects the drive,
+  `ec.soe.state` is the 128-byte LE snapshot (S-0-0135 status word,
+  command state, password, diagnosis number/list/class-X, amplifier
+  and motor temperatures, DC bus voltage/current, AX5000 mains/
+  ctrl/park/firmware fields, S-0-0095 message), `ec.soe.cmd` is the
+  16-byte mailbox (op@0, u32 payload@4: password, command control,
+  command exec with bit15 forcing a simulated error, reset, AX5000
+  ctrl/park).  The sim drives command state (idle/running 100 ms/
+  done/error) on `mc.time`; a real SoE master bridges the same
+  params.  e2e `tc2_drive_io` (mask `0x3fff`, 14 checks) covers
+  state/diag/password/command/reset/AX5000 plus the
+  SimplePlcMotion enable/velocity blocks on a DS402 axis.  Not
+  covered: `ST_DriveRef` naming, the `F_ConvWordToST*` STRUCT
+  conversions, real mailbox timing/profiles, firmware flashing.
 
 ### EtherNet/IP client (`tplc-eip`)
 

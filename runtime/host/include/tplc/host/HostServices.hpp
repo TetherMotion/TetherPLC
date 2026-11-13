@@ -36,6 +36,7 @@
 #include <tplc/host/SacnService.hpp>
 #include <tplc/host/S7Service.hpp>
 #include <tplc/host/S5Service.hpp>
+#include <tplc/host/SoeService.hpp>
 #include <tplc/host/SmtpService.hpp>
 #include <tplc/host/SerialService.hpp>
 #include <tplc/host/SymService.hpp>
@@ -127,6 +128,8 @@ private:
     EcSyncService ecsync_;
     /* EtherCAT CoE diag history over Tether IO ec.coediag.* params. */
     EcDiagService ecdiag_;
+    /* EtherCAT SoE mailbox over Tether IO ec.soe.* params. */
+    SoeService   soe_;
     /* OCPP-J client (WebSocket + JSON-RPC); always available. */
     OcppService   ocpp_;
     /* AES70/OCA audio-control client; always available. */

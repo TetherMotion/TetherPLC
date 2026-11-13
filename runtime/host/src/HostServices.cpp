@@ -27,7 +27,8 @@ HostServices::HostServices(uint32_t caps)
       s5_(&host_steady_ns, this),
       ftp_(&host_steady_ns, this), smtp_(&host_steady_ns, this),
       iec870_(&host_steady_ns, this), motion_(&host_steady_ns, this),
-      motion_io_(&host_steady_ns, this), nci_io_(&host_steady_ns, this) {
+      motion_io_(&host_steady_ns, this), nci_io_(&host_steady_ns, this),
+      soe_(&host_steady_ns, this) {
     svc_.struct_size  = sizeof(TplcServices);
     svc_.caps         = caps | TPLC_EXT_MOVABLE_BETWEEN;
     svc_.host         = this;
@@ -198,6 +199,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* EtherCAT CoE diag history: only when ec.coediag.* live. */
         if (ecdiag_.active())
             return const_cast<TplcEcDiagService*>(&ecdiag_.table());
+        return nullptr;
+    }
+    if (len == 8 && memcmp(name, "tplc-soe", 8) == 0) {
+        /* EtherCAT SoE mailbox: only when ec.soe.* live. */
+        if (soe_.active())
+            return const_cast<TplcSoeService*>(&soe_.table());
         return nullptr;
     }
     if (len == 8 && memcmp(name, "tplc-sym", 8) == 0) {
