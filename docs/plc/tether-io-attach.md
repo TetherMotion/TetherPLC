@@ -4,11 +4,11 @@
 > plan chapter; this document is authoritative (see
 > `architecture.md` §7).
 
-> Status: implemented (doc 16 §7 iteration-2, partial). A standalone
-> `tplc-io` process bridges a live `tether-plc` `ctl.sock` into a
-> `tether_io` server over TCP. WebSocket/browser transport is not
-> included (Tether's WS transport is client-side); a browser gateway
-> remains future work.
+> Status: implemented. A standalone `tplc-io` process bridges a live
+> `tether-plc` `ctl.sock` into a `tether_io` server over TCP, and
+> `tplc-ctl-proxy --tplc-io host:port` exposes a `/tether-io`
+> WebSocket endpoint that byte-pipes browser sessions to the provider
+> (see "Browser gateway" below).
 
 ## Architecture
 
@@ -57,6 +57,20 @@ provider never masks control-plane failures.
 `maxValueSize` advertised). Signals read through `PROG_STATUS` /
 `DBG_READ` on demand; there is no server-side cache today.
 
+**Dynamic program fields** (`plc.<prog>.<var>`): on startup and on
+every management-epoch change the provider queries `DBG_FIELDS` for
+the active program and registers one catalog entry per field:
+
+- scalar non-const vars → writable `ParamEntry` (read/write via
+  `DBG_READ`/`DBG_WRITE` at the field's blob offset)
+- retain vars → read-only signal `plc.<prog>.retain.<var>`
+- const and non-scalar/aggregate fields → read-only Binary signals
+
+Field types come from the deployed package's TYPC tags: the provider
+scans `--packages DIR/*.tplc` and repeatable `--pkg FILE` arguments
+for the package matching the active program UUID. Unknown or
+non-scalar types degrade to Binary.
+
 ## Schema model
 
 One scalar `SchemaNode` per used `ValueType` is installed in a
@@ -76,6 +90,26 @@ Tether's committed `SchemaValue` encode/decode API.
   `decodeSchemaValue` with a raw-LE fallback for flat clients
 - the `blob` signal's `varReadFn` emits `varint len + bytes` —
   the session validates the value against the schema wire format
+
+## Browser gateway
+
+`tplc-ctl-proxy --tplc-io host:port` serves `GET /tether-io` as a
+WebSocket endpoint. After the RFC 6455 upgrade it forks a bridge
+child that translates between the browser's message-oriented
+WebSocket framing and the provider's SLIP-framed TCP stream:
+
+- each complete WS binary message (reassembled across fragments) is
+  SLIP-encoded into one TCP packet — `END=0xC0`, `ESC=0xDB` escapes
+- each SLIP packet decoded from TCP becomes exactly one WS binary
+  message, so coalesced/split TCP reads never corrupt message
+  boundaries (the client protocol is `Framing::None`: one WS
+  message = one protocol message)
+- ping→pong, close echo, upstream failure → close 1011
+
+The browser then speaks the normal V6 schema negotiation + catalog +
+function protocol unchanged — `DataHub` in TetherWebUI obtains live
+`plc.*` values through it. Query strings on the upgrade URL (e.g.
+`?role=operator`) are tolerated.
 
 ## Security boundary
 
@@ -99,15 +133,14 @@ invocations. `maxClients = 8` caps concurrent sessions.
 
 ## Limits
 
-- No per-entry catalog removal — program swaps keep the same
-  function/signal surface; stale symbols fail at `dbg.resolve`
-  time (`ctl 410`).
 - `mgmt_epoch` is bridged onto the tether_io catalog: the provider
   polls `PROG_STATUS` and, on change, re-installs the schema
-  catalog (epoch bump → V6 stale-epoch rejection) and registers an
-  `epoch.<N>` marker signal (registry revision bump →
-  `CatalogChanged` push). The marker signals accumulate one entry
-  per program-set change — bounded by deploy frequency.
+  catalog (epoch bump → V6 stale-epoch rejection), rebuilds the
+  registry (dynamic `plc.*` fields track the new program), and
+  rebinds the listener. Connected clients see a brief disconnect,
+  then renegotiate against the new catalog; an `epoch.<N>` marker
+  signal is also registered per program-set change — bounded by
+  deploy frequency.
 - `dbg.state_diff` returns the committed-swap migration rules as
   JSON; it errors `ctl 416 no committed swap` until a swap lands.
 

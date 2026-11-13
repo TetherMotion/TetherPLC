@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <dirent.h>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -789,6 +790,13 @@ void assignSchema(SignalEntry& e) {
     if (auto s = g_catalog.slotFor(e.schema)) e.schemaSlot = *s;
 }
 
+void assignSchema(ParamEntry& p) {
+    const SchemaNode* n = g_graph.find(keyFor(p.valueType));
+    if (!n) return;
+    p.schema = SchemaRef{n->key, computeSchemaDigest(*n)};
+    if (auto s = g_catalog.slotFor(p.schema)) p.schemaSlot = *s;
+}
+
 std::vector<SchemaManifestEntry> plcManifest(const SchemaGraph& g) {
     std::vector<SchemaManifestEntry> m;
     m.reserve(g.nodes.size());
@@ -1443,41 +1451,320 @@ ReadFn scalarRd(F proj) {
     };
 }
 
+/* ---- dynamic plc.* field catalog ----------------------------------
+ * DBG_FIELDS enumerates the active program's blob fields; each is
+ * published under the bridge CatalogExporter naming contract so the
+ * WebUI live-value keys resolve:
+ *   retain fields → signal plc.<prog>.retain.<name>   (read-only)
+ *   const fields  → signal plc.<prog>.<name>          (read-only)
+ *   scalar vars   → param  plc.<prog>.<name>          (read+write)
+ *   everything else → signal plc.<prog>.<name>        (Binary raw)
+ * Image-channel symbols (SMAP kind 10 / located %I/%Q/%M vars) are
+ * not LAYD fields, so the plc.image.*.ch.* contract stays unserved —
+ * a later image-region reader can add it without disturbing these.
+ *
+ * Scalar typing needs the package TYPC (field type_ref → tag →
+ * ValueType). The runtime does not serve TYPC over ctl, so tplc-io
+ * reads the deployed .tplc itself: --packages DIR is scanned for a
+ * package whose header uuid matches the running program, --pkg FILE
+ * covers boot-time --package loads outside that dir. Without a
+ * matching package every field degrades to a Binary signal.        */
+
+struct PlcField {
+    std::string name;
+    uint8_t kind = 0, flags = 0, region = 0, access = 0;
+    uint32_t tref = 0;
+    uint64_t off = 0, size = 0;
+};
+
+std::vector<PlcField> fetchPlcFields() {
+    std::vector<PlcField> out;
+    std::vector<uint8_t> resp;
+    tplcio::CtlClient::Error err;
+    if (!g_ctl.call(TPLC_OP_DBG_FIELDS, resp, &err) || resp.size() < 4)
+        return out;
+    const uint8_t* p = resp.data();
+    size_t n = resp.size(), at = 0;
+    auto r32 = [&]() { uint32_t v; memcpy(&v, p + at, 4); at += 4; return v; };
+    auto r64 = [&]() { uint64_t v; memcpy(&v, p + at, 8); at += 8; return v; };
+    uint32_t nf = r32();
+    for (uint32_t i = 0; i < nf && at + 25 <= n; i++) {
+        PlcField f;
+        f.off = r64(); f.size = r64(); f.tref = r32();
+        f.kind = p[at]; f.flags = p[at + 1]; f.region = p[at + 2];
+        f.access = p[at + 3]; at += 4;
+        uint8_t nl = p[at++];
+        if (at + nl > n) break;
+        f.name.assign((const char*)p + at, nl);
+        at += nl;
+        out.push_back(std::move(f));
+    }
+    return out;
+}
+
+static uint32_t le32(const uint8_t* p) {
+    uint32_t v; memcpy(&v, p, 4); return v;
+}
+static uint64_t le64(const uint8_t* p) {
+    uint64_t v; memcpy(&v, p, 8); return v;
+}
+
+/* TYPC tag → tether_io ValueType (mirrors bridge CatalogExporter) */
+ValueType vtOfTag(uint8_t t) {
+    switch (t) {
+        case 0:  return ValueType::Bool;
+        case 1:  return ValueType::I8;
+        case 2:  return ValueType::I16;
+        case 3:  return ValueType::I32;
+        case 4:  return ValueType::I64;
+        case 5:  return ValueType::U8;
+        case 6:  return ValueType::U16;
+        case 7:  return ValueType::U32;
+        case 8:  return ValueType::U64;
+        case 9:  return ValueType::F32;
+        case 10: return ValueType::F64;
+        case 11: return ValueType::I64;   /* TIME → i64 ns */
+        case 15: return ValueType::String;
+        case 18: return ValueType::Array;
+        case 19: return ValueType::Struct;
+        case 20: return ValueType::Enum;
+        case 21: return ValueType::Struct; /* FB instance */
+        default: return ValueType::Binary;
+    }
+}
+
+uint32_t scalarBytes(ValueType t) {
+    switch (t) {
+        case ValueType::Bool: case ValueType::U8: case ValueType::I8:
+            return 1;
+        case ValueType::U16: case ValueType::I16: return 2;
+        case ValueType::U32: case ValueType::I32: case ValueType::F32:
+            return 4;
+        case ValueType::U64: case ValueType::I64: case ValueType::F64:
+            return 8;
+        default: return 0;
+    }
+}
+
+bool readFileBytes(const std::string& path, std::vector<uint8_t>& out,
+                   size_t cap = 64u << 20) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz < 0 || (uint64_t)sz > cap) { fclose(f); return false; }
+    out.resize((size_t)sz);
+    bool ok = sz == 0 || fread(out.data(), 1, (size_t)sz, f) == (size_t)sz;
+    fclose(f);
+    return ok;
+}
+
+/* .tplc container: 160B header (uuid ASCII @32, toc_count @16),
+   32B TOC entries from offset 160 {type,flags,off,size,ver,aux}.
+   Returns TYPC tag per type index, empty on any mismatch. */
+std::vector<uint8_t> typcTagsFromPkg(const std::vector<uint8_t>& pkg,
+                                     const std::string& uuidDash) {
+    if (pkg.size() < 192 || memcmp(pkg.data(), "TPLCPKG\0", 8) != 0)
+        return {};
+    char puuid[37]{};
+    memcpy(puuid, pkg.data() + 32, 36);
+    if (uuidDash != puuid) return {};
+    uint32_t ntoc = le32(pkg.data() + 16);
+    if (ntoc > 64 || 160ull + (uint64_t)ntoc * 32 > pkg.size()) return {};
+    const uint8_t* toc = pkg.data() + 160;
+    for (uint32_t i = 0; i < ntoc; i++) {
+        const uint8_t* e = toc + (size_t)i * 32;
+        if (le32(e) != 0x0021u) continue;              /* TYPE_CATALOG */
+        uint64_t off = le64(e + 8), sz = le64(e + 16);
+        if (off + sz > pkg.size() || sz < 24) return {};
+        const uint8_t* t = pkg.data() + off;
+        if (memcmp(t, "TYPC", 4) != 0) return {};
+        uint32_t cnt = le32(t + 8);
+        if (24ull + (uint64_t)cnt * 56 > sz) return {};
+        std::vector<uint8_t> tags(cnt);
+        for (uint32_t k = 0; k < cnt; k++) tags[k] = t[24 + (size_t)k * 56];
+        return tags;
+    }
+    return {};
+}
+
+std::string dashedUuid(const uint8_t uuid[16]) {
+    char b[37];
+    snprintf(b, sizeof b,
+             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-"
+             "%02x%02x%02x%02x%02x%02x",
+             uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5],
+             uuid[6], uuid[7], uuid[8], uuid[9], uuid[10], uuid[11],
+             uuid[12], uuid[13], uuid[14], uuid[15]);
+    return b;
+}
+
+std::vector<uint8_t> typcTagsForProgram(
+    const TplcCtlProgStatus& ps, const std::string& packagesDir,
+    const std::vector<std::string>& pkgFiles) {
+    std::string want = dashedUuid(ps.program_uuid);
+    auto tryPath = [&](const std::string& path) {
+        std::vector<uint8_t> pkg, tags;
+        if (readFileBytes(path, pkg) &&
+            !(tags = typcTagsFromPkg(pkg, want)).empty())
+            return tags;
+        return std::vector<uint8_t>{};
+    };
+    for (const auto& f : pkgFiles) {
+        auto t = tryPath(f);
+        if (!t.empty()) return t;
+    }
+    if (!packagesDir.empty()) {
+        DIR* d = opendir(packagesDir.c_str());
+        if (d) {
+            struct dirent* de;
+            uint32_t seen = 0;
+            while ((de = readdir(d)) && seen++ < 512) {
+                std::string n = de->d_name;
+                if (n.size() < 5 ||
+                    n.compare(n.size() - 5, 5, ".tplc") != 0)
+                    continue;
+                auto t = tryPath(packagesDir + "/" + n);
+                if (!t.empty()) { closedir(d); return t; }
+            }
+            closedir(d);
+        }
+    }
+    return {};
+}
+
+void dbgReadBytes(uint64_t off, uint32_t len, void* dst, size_t cap) {
+    W w; w.u64(off); w.u32(len);
+    std::vector<uint8_t> out;
+    tplcio::CtlClient::Error e;
+    if (!g_ctl.call(TPLC_OP_DBG_READ, w.b.data(),
+                    (uint32_t)w.b.size(), out, &e))
+        return;
+    memcpy(dst, out.data(), out.size() < cap ? out.size() : cap);
+}
+
+void addPlcFieldEntries(Registry& registry, const std::string& prog,
+                        const std::vector<PlcField>& fields,
+                        const std::vector<uint8_t>& tags) {
+    for (const auto& f : fields) {
+        if (f.name.empty() || f.size == 0 || f.size > (1u << 20))
+            continue;
+        uint8_t tag = (f.tref != 0xFFFFFFFFu && f.tref < tags.size())
+                          ? tags[f.tref] : 0xFF;
+        ValueType vt = tag == 0xFF ? ValueType::Binary : vtOfTag(tag);
+        uint32_t sb = scalarBytes(vt);
+        bool scalar = sb != 0 && sb == (uint32_t)f.size;
+        bool retain = (f.flags & 1) != 0;
+        bool isConst = (f.flags & 2) != 0;
+        std::string base = "plc." + prog;
+        std::string name;
+        bool writable = false;
+        if (retain) {
+            name = base + ".retain." + f.name;
+        } else {
+            name = base + "." + f.name;
+            writable = scalar && !isConst;
+        }
+        std::string desc = isConst ? "const field"
+                         : retain  ? "retain field"
+                         : (f.kind == 1 ? "fb instance" : "var");
+        if (writable) {
+            ParamEntry p;
+            p.id = g_sigId++;
+            p.name = name;
+            p.description = desc;
+            p.group = base;
+            p.valueType = vt;
+            uint64_t off = f.off;
+            uint32_t len = (uint32_t)f.size;
+            p.readFn = [off, len](void* dst) {
+                dbgReadBytes(off, len, dst, len);
+            };
+            p.writeFn = [off, len](const void* src) {
+                W w; w.u64(off); w.u32(len); w.bytes(src, len);
+                std::vector<uint8_t> out;
+                tplcio::CtlClient::Error e;
+                g_ctl.call(TPLC_OP_DBG_WRITE,
+                           w.b.data(), (uint32_t)w.b.size(), out, &e);
+            };
+            assignSchema(p);
+            registry.addParam(std::move(p));
+            continue;
+        }
+        if (scalar) {
+            SignalEntry s;
+            s.id = g_sigId++;
+            s.name = name;
+            s.description = desc;
+            s.group = base;
+            s.valueType = vt;
+            uint64_t off = f.off;
+            uint32_t len = (uint32_t)f.size;
+            s.readFn = [off, len](void* dst) {
+                dbgReadBytes(off, len, dst, len);
+            };
+            assignSchema(s);
+            registry.addSignal(std::move(s));
+            continue;
+        }
+        /* non-scalar → Binary signal carrying the raw field bytes,
+           schema-encoded like the whole-blob signal              */
+        SignalEntry b;
+        b.id = g_sigId++;
+        b.name = name;
+        b.description = desc;
+        b.group = base;
+        b.valueType = ValueType::Binary;
+        b.maxValueSize = (uint16_t)(f.size + 10 > 0xFFFF
+                                        ? 0xFFFF : f.size + 10);
+        uint64_t off = f.off;
+        uint32_t len = (uint32_t)f.size;
+        b.varReadFn = [off, len](void* dst, size_t maxLen) -> size_t {
+            uint32_t want = len;
+            if (maxLen > 10 && want > maxLen - 10) want = (uint32_t)(maxLen - 10);
+            W w; w.u64(off); w.u32(want);
+            std::vector<uint8_t> out;
+            tplcio::CtlClient::Error e;
+            if (!g_ctl.call(TPLC_OP_DBG_READ, w.b.data(),
+                            (uint32_t)w.b.size(), out, &e))
+                return 0;
+            const SchemaNode* n = nodeFor(ValueType::Binary);
+            auto enc = encodeNative(g_graph, *n,
+                nv::bytes(std::span<const uint8_t>(out)));
+            if (!enc || enc->size() > maxLen) return 0;
+            memcpy(dst, enc->data(), enc->size());
+            return enc->size();
+        };
+        assignSchema(b);
+        registry.addSignal(std::move(b));
+    }
+}
+
 } /* namespace */
 
 static void usage(const char* a0) {
     fprintf(stderr,
         "usage: %s --ctl SOCK [--port 43770] [--bind 127.0.0.1]\n"
+        "       [--packages DIR] [--pkg FILE]...\n"
         "       [--no-blob-signal]  (drop the whole-blob Binary\n"
-        "         signal from the catalog)\n", a0);
+        "         signal from the catalog)\n"
+        "  --packages DIR  scan DIR/*.tplc for the running program's\n"
+        "                  package (TYPC types for plc.* field entries)\n"
+        "  --pkg FILE      extra .tplc to try (boot --package loads)\n", a0);
 }
 
-int main(int argc, char** argv) {
-    std::string ctl_path, bind = "127.0.0.1";
-    uint16_t port = 43770;
-    bool want_blob_sig = true;
-    for (int i = 1; i < argc; i++) {
-        std::string a = argv[i];
-        if (a == "--ctl")       ctl_path = argv[++i];
-        else if (a == "--port") port = (uint16_t)atoi(argv[++i]);
-        else if (a == "--bind") bind = argv[++i];
-        else if (a == "--no-blob-signal") want_blob_sig = false;
-        else { usage(argv[0]); return 2; }
-    }
-    if (ctl_path.empty()) { usage(argv[0]); return 2; }
-
-    signal(SIGINT, onSig);
-    signal(SIGTERM, onSig);
-
-    if (!g_ctl.connectSock(ctl_path, 10000)) {
-        fprintf(stderr, "tplc-io: ctl connect %s failed\n",
-                ctl_path.c_str());
-        return 1;
-    }
-
-    buildSchema();
-    Registry registry;
-
+/* Populate the whole registry: status signals, epoch marker, blob
+ * signal, the ctl function surface, and the dynamic plc.* field
+ * entries for the active program. Called before the server starts
+ * and again after each program-set epoch change — registry mutation
+ * is only safe with no sessions attached, so the watchdog stops the
+ * server first (joins in-flight callbacks), clears, repopulates, and
+ * rebinds; clients see a brief disconnect then re-list. */
+static void populateRegistry(Registry& registry, uint64_t epoch,
+                             bool want_blob_sig,
+                             const std::string& packagesDir,
+                             const std::vector<std::string>& pkgFiles) {
     /* live signals: status scalars every session can stream/poll   */
     registry.addSignal(sig("status.state", "0 stop 1 run 2 fault 3 empty",
         ValueType::U8,
@@ -1524,6 +1811,22 @@ int main(int argc, char** argv) {
         scalarRd<uint64_t>([](TplcCtlProgStatus& ps, bool ok) {
             return ok ? ps.shadow_diff_count : 0; })));
 
+    if (epoch) {
+        SignalEntry m;
+        m.id = g_sigId++;
+        m.name = "epoch." + std::to_string(epoch);
+        m.description =
+            "program-set generation marker (epoch bump)";
+        m.group = "plc";
+        m.valueType = ValueType::U64;
+        m.readFn = [ep = epoch](void* dst) {
+            uint64_t v = ep;
+            memcpy(dst, &v, 8);
+        };
+        assignSchema(m);
+        registry.addSignal(std::move(m));
+    }
+
     /* the whole program blob as one streamable Binary signal —
        clients slice offsets locally via plc.dbg.fields            */
     if (want_blob_sig) {
@@ -1567,13 +1870,66 @@ int main(int argc, char** argv) {
     for (auto& f : buildFunctions())
         registry.addFunction(std::move(f));
 
-    auto tsrv = std::make_unique<TcpTransportServer>(port, bind);
+    /* dynamic plc.<prog>.<var> entries for the active program      */
+    TplcCtlProgStatus ps{};
+    std::vector<uint8_t> raw;
+    if (progStatus(ps, raw) && ps.name[0]) {
+        size_t nl = strnlen((const char*)ps.name, TPLC_PROG_NAME_MAX);
+        std::string prog((const char*)ps.name, nl);
+        auto fields = fetchPlcFields();
+        if (!fields.empty()) {
+            auto tags = typcTagsForProgram(ps, packagesDir, pkgFiles);
+            addPlcFieldEntries(registry, prog, fields, tags);
+        }
+    }
+}
+
+int main(int argc, char** argv) {
+    std::string ctl_path, bind = "127.0.0.1", packages_dir;
+    std::vector<std::string> pkg_files;
+    uint16_t port = 43770;
+    bool want_blob_sig = true;
+    for (int i = 1; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--ctl")       ctl_path = argv[++i];
+        else if (a == "--port") port = (uint16_t)atoi(argv[++i]);
+        else if (a == "--bind") bind = argv[++i];
+        else if (a == "--packages") packages_dir = argv[++i];
+        else if (a == "--pkg")   pkg_files.push_back(argv[++i]);
+        else if (a == "--no-blob-signal") want_blob_sig = false;
+        else { usage(argv[0]); return 2; }
+    }
+    if (ctl_path.empty()) { usage(argv[0]); return 2; }
+
+    signal(SIGINT, onSig);
+    signal(SIGTERM, onSig);
+
+    if (!g_ctl.connectSock(ctl_path, 10000)) {
+        fprintf(stderr, "tplc-io: ctl connect %s failed\n",
+                ctl_path.c_str());
+        return 1;
+    }
+
+    buildSchema();
+    Registry registry;
+
+    TplcCtlProgStatus ps0{};
+    std::vector<uint8_t> raw0;
+    uint64_t last_epoch = 0;
+    if (progStatus(ps0, raw0)) last_epoch = ps0.epoch;
+    populateRegistry(registry, last_epoch, want_blob_sig,
+                     packages_dir, pkg_files);
+
     ServerConfig cfg;
     cfg.timestampFn = nowUs;
     cfg.maxClients = 8;
     cfg.schemaCatalog = &g_catalog;
-    Server server(registry, std::move(tsrv), cfg);
-    if (!server.start()) {
+    auto mkServer = [&]() {
+        auto tsrv = std::make_unique<TcpTransportServer>(port, bind);
+        return std::make_unique<Server>(registry, std::move(tsrv), cfg);
+    };
+    auto server = mkServer();
+    if (!server->start()) {
         fprintf(stderr, "tplc-io: listen %s:%u failed\n",
                 bind.c_str(), port);
         return 1;
@@ -1584,18 +1940,12 @@ int main(int argc, char** argv) {
             bind.c_str(), port, ctl_path.c_str(),
             (unsigned)(g_fnId - 100), (unsigned)(g_sigId - 200));
 
-    /* management-epoch → catalog-epoch bridge (doc 16 §5): when the
-       runtime's program-set epoch changes, re-install the schema
-       catalog (epoch bump → stale client epochs are rejected) and
-       add an `epoch.<N>` marker signal (registry revision bump →
-       CatalogChanged push so clients re-list)                      */
-    uint64_t last_epoch = 0;
-    {
-        TplcCtlProgStatus ps0{};
-        std::vector<uint8_t> raw;
-        if (progStatus(ps0, raw)) last_epoch = ps0.epoch;
-    }
-
+    /* management-epoch → catalog rebuild: when the runtime's
+       program-set epoch changes, re-install the schema catalog
+       (epoch bump → stale client epochs are rejected), rebuild the
+       registry (dynamic plc.* fields track the new program), and
+       rebind the listener so no session ever observes a half-built
+       catalog. Clients see a brief disconnect, then CatalogChanged. */
     while (!g_stop) {
         /* ctl link watchdog: reconnect keeps the surface live
            across runtime restarts                                   */
@@ -1608,27 +1958,26 @@ int main(int argc, char** argv) {
             if (progStatus(ps, raw) && ps.epoch != last_epoch) {
                 last_epoch = ps.epoch;
                 g_catalog.install(g_graph, plcManifest(g_graph));
-                SignalEntry m;
-                m.id = g_sigId++;
-                m.name = "epoch." + std::to_string(ps.epoch);
-                m.description =
-                    "program-set generation marker (epoch bump)";
-                m.group = "plc";
-                m.valueType = ValueType::U64;
-                m.readFn = [ep = ps.epoch](void* dst) {
-                    uint64_t v = ep;
-                    memcpy(dst, &v, 8);
-                };
-                assignSchema(m);
-                registry.addSignal(std::move(m));
-                fprintf(stderr,
-                        "tplc-io: mgmt epoch → %llu, catalog bumped\n",
-                        (unsigned long long)ps.epoch);
+                server->stop();
+                registry.clear();
+                populateRegistry(registry, ps.epoch, want_blob_sig,
+                                 packages_dir, pkg_files);
+                server = mkServer();
+                if (server->start()) {
+                    fprintf(stderr,
+                            "tplc-io: mgmt epoch → %llu, "
+                            "catalog rebuilt\n",
+                            (unsigned long long)ps.epoch);
+                } else {
+                    fprintf(stderr,
+                            "tplc-io: rebind %s:%u failed\n",
+                            bind.c_str(), port);
+                }
             }
         }
         struct timespec ts{0, 500 * 1000 * 1000};
         nanosleep(&ts, nullptr);
     }
-    server.stop();
+    server->stop();
     return 0;
 }

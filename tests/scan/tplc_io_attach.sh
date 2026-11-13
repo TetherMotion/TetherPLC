@@ -78,6 +78,16 @@ grep -q "tether_io on" "$WORK/io.log" \
 cat "$WORK/probe1.log"
 EP1=$(sed -n 's/info schema_epoch=\([0-9]*\)/\1/p' "$WORK/probe1.log")
 
+# probe1's shadow.promote bumps the mgmt epoch; wait for the provider
+# to observe and rebuild before the next program-set change, otherwise
+# the 500 ms watchdog coalesces two bumps into one rebuild
+for i in $(seq 1 50); do
+    grep -q 'catalog rebuilt' "$WORK/io.log" && break
+    sleep 0.1
+done
+grep -q 'catalog rebuilt' "$WORK/io.log" \
+    || { echo "FAIL promote rebuild: $(cat "$WORK/io.log")"; exit 1; }
+
 # epoch bridge: a program-set change must bump the schema epoch and
 # add an epoch.N marker — verified through a second probe session
 cat > "$WORK/b.st" <<'EOF'
@@ -97,7 +107,16 @@ EOF
 "$BUILD/tplc-ctl" "$CTL" prepare "$WORK/b_long_name.tplc" \
     >/dev/null 2>&1 || { echo "FAIL prepare"; exit 1; }
 "$BUILD/tplc-ctl" "$CTL" start >/dev/null 2>&1
-sleep 1
+# the provider rebuilds its catalog on each mgmt-epoch change
+# (promote + prepare = two rebuilds); wait for both so probe2 does
+# not race the rebind
+for i in $(seq 1 50); do
+    [ "$(grep -c 'catalog rebuilt' "$WORK/io.log")" -ge 2 ] && break
+    sleep 0.1
+done
+[ "$(grep -c 'catalog rebuilt' "$WORK/io.log")" -ge 2 ] \
+    || { echo "FAIL second catalog rebuild: $(cat "$WORK/io.log")"; exit 1; }
+sleep 0.3
 "$BUILD/tplc-io-probe" "$PORT" > "$WORK/probe2.log" 2>&1 \
     || { echo "FAIL probe2: $(cat "$WORK/probe2.log")"; exit 1; }
 # schema epoch = count of program-set changes seen by the watcher.
@@ -106,7 +125,7 @@ sleep 1
 want=$(( ${EP1:-1} + 2 ))
 grep -q "info schema_epoch=$want" "$WORK/probe2.log" \
     || { echo "FAIL epoch bump ($EP1->$want): $(head -3 "$WORK/probe2.log")"; exit 1; }
-grep -q "catalog bumped" "$WORK/io.log" \
-    || { echo "FAIL catalog bump log"; exit 1; }
+grep -q "catalog rebuilt" "$WORK/io.log" \
+    || { echo "FAIL catalog rebuild log"; exit 1; }
 
 echo "tplc_io_attach: all checks passed"

@@ -14,6 +14,9 @@
  *                       Each connection forks a child holding its own UDS
  *                       session with SET_NOTIFY(all categories).
  *   GET /health         "ok" when the ctl socket connects, else 503
+ *   GET /tether-io      WebSocket upgrade → byte-pipe to the tplc-io
+ *                       provider (--tplc-io host:port), giving
+ *                       browsers the live tether_io catalog/values
  *   OPTIONS             CORS preflight (Access-Control-Allow-Origin: *)
  *
  * Limitations: requests are serialized. /compile shells out to tplcc per
@@ -33,6 +36,7 @@
 #include <string>
 #include <vector>
 #include <netdb.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -44,6 +48,7 @@
 static const char* g_sock = "/tmp/tplc-image.ctl";
 static std::string g_tplcc = "tplcc";
 static std::string g_tplccd = "/tmp/tplccd.sock";
+static std::string g_tplc_io;              /* host:port of tplc-io, or "" */
 static std::vector<std::string> g_libdirs;
 static std::string g_blocks_cache;
 static bool g_blocks_dirty = true;
@@ -517,6 +522,303 @@ static void handle_events(int cfd) {
     _exit(0);
 }
 
+/* ---- GET /tether-io: WebSocket → tplc-io TCP bridge ---------------
+ * Browsers cannot open raw TCP, so this endpoint completes the
+ * WebSocket handshake and then byte-pipes the connection to the
+ * tplc-io provider (--tplc-io host:port). WS frames carry SLIP-
+ * framed tether_io bytes; frame boundaries are irrelevant to the
+ * stream, so every data opcode's payload is forwarded verbatim and
+ * inbound TCP bytes are re-framed as binary messages.              */
+
+/* SHA-1 (FIPS 180-1) — only needed for the handshake accept key. */
+static void sha1(const uint8_t* data, size_t len, uint8_t out[20]) {
+    uint32_t h[5] = {0x67452301, 0xEFCDAB89, 0x98BADCFE,
+                     0x10325476, 0xC3D2E1F0};
+    uint64_t bits = (uint64_t)len * 8;
+    std::vector<uint8_t> m(data, data + len);
+    m.push_back(0x80);
+    while (m.size() % 64 != 56) m.push_back(0);
+    for (int i = 7; i >= 0; i--) m.push_back((uint8_t)(bits >> (8 * i)));
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[80];
+        for (int i = 0; i < 16; i++)
+            w[i] = (uint32_t)m[off + 4 * i] << 24 |
+                   (uint32_t)m[off + 4 * i + 1] << 16 |
+                   (uint32_t)m[off + 4 * i + 2] << 8 |
+                   (uint32_t)m[off + 4 * i + 3];
+        for (int i = 16; i < 80; i++) {
+            uint32_t x = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
+            w[i] = (x << 1) | (x >> 31);
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; i++) {
+            uint32_t f, k;
+            if (i < 20)      { f = (b & c) | (~b & d);        k = 0x5A827999; }
+            else if (i < 40) { f = b ^ c ^ d;                k = 0x6ED9EBA1; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC; }
+            else             { f = b ^ c ^ d;                k = 0xCA62C1D6; }
+            uint32_t t = ((a << 5) | (a >> 27)) + f + e + k + w[i];
+            e = d; d = c; c = (b << 30) | (b >> 2); b = a; a = t;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+    }
+    for (int i = 0; i < 5; i++) {
+        out[4 * i]     = (uint8_t)(h[i] >> 24);
+        out[4 * i + 1] = (uint8_t)(h[i] >> 16);
+        out[4 * i + 2] = (uint8_t)(h[i] >> 8);
+        out[4 * i + 3] = (uint8_t)h[i];
+    }
+}
+
+static bool send_all(int fd, const uint8_t* p, size_t n) {
+    while (n) {
+        ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
+        if (w <= 0) return false;
+        p += w; n -= (size_t)w;
+    }
+    return true;
+}
+
+/* read exactly one WS frame; returns false on EOF/protocol error.
+   `fin` reports the FIN bit; fragmented messages are delivered
+   payload-by-payload and the caller reassembles.                 */
+static bool ws_read_frame(int fd, std::vector<uint8_t>& payload,
+                          uint8_t& op, bool& fin) {
+    uint8_t h[2];
+    if (!read_full(fd, h, 2)) return false;
+    fin = (h[0] & 0x80) != 0;
+    op = h[0] & 0x0F;
+    bool masked = (h[1] & 0x80) != 0;
+    uint64_t len = h[1] & 0x7F;
+    if (len == 126) {
+        uint8_t b[2];
+        if (!read_full(fd, b, 2)) return false;
+        len = ((uint64_t)b[0] << 8) | b[1];
+    } else if (len == 127) {
+        uint8_t b[8];
+        if (!read_full(fd, b, 8)) return false;
+        len = 0;
+        for (int i = 0; i < 8; i++) len = (len << 8) | b[i];
+    }
+    if (len > (64ull << 20)) return false;
+    uint8_t mask[4] = {};
+    if (masked && !read_full(fd, mask, 4)) return false;
+    payload.resize((size_t)len);
+    if (len && !read_full(fd, payload.data(), (size_t)len)) return false;
+    if (masked)
+        for (size_t i = 0; i < len; i++) payload[i] ^= mask[i & 3];
+    return true;
+}
+
+static bool ws_send_frame(int fd, uint8_t op, const uint8_t* p,
+                          size_t n) {
+    uint8_t h[10];
+    size_t hl = 2;
+    h[0] = (uint8_t)(0x80 | op);
+    if (n < 126) {
+        h[1] = (uint8_t)n;
+    } else if (n <= 0xFFFF) {
+        h[1] = 126;
+        h[2] = (uint8_t)(n >> 8);
+        h[3] = (uint8_t)n;
+        hl = 4;
+    } else {
+        h[1] = 127;
+        for (int i = 0; i < 8; i++)
+            h[2 + i] = (uint8_t)(n >> (56 - 8 * i));
+        hl = 10;
+    }
+    return send_all(fd, h, hl) && (!n || send_all(fd, p, n));
+}
+
+static int tcp_connect(const char* hostport) {
+    std::string hp = hostport;
+    size_t colon = hp.rfind(':');
+    if (colon == std::string::npos) return -1;
+    std::string host = hp.substr(0, colon);
+    int port = atoi(hp.c_str() + colon + 1);
+    if (port <= 0 || port > 65535) return -1;
+    addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    std::string ps = std::to_string(port);
+    if (getaddrinfo(host.c_str(), ps.c_str(), &hints, &res) != 0 || !res)
+        return -1;
+    int fd = -1;
+    for (addrinfo* ai = res; ai; ai = ai->ai_next) {
+        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) continue;
+        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
+        close(fd); fd = -1;
+    }
+    freeaddrinfo(res);
+    return fd;
+}
+
+/* SLIP framing (matches Tether's SlipFramedTransport): one protocol
+   message per packet, END=0xC0 terminator, ESC=0xDB escapes
+   ESCEND=0xDC / ESCESC=0xDD. The WebSocket side is message-oriented
+   (one WS binary message = one protocol message) while tplc-io's TCP
+   side is a SLIP byte stream — the bridge translates boundaries both
+   ways so coalesced/split TCP reads never corrupt framing.        */
+static constexpr uint8_t kSlipEnd = 0xC0, kSlipEsc = 0xDB;
+static constexpr uint8_t kSlipEscEnd = 0xDC, kSlipEscEsc = 0xDD;
+static constexpr size_t kSlipMaxMsg = 1u << 20;
+
+static std::vector<uint8_t> slip_encode(const uint8_t* p, size_t n) {
+    std::vector<uint8_t> out;
+    out.reserve(n + n / 8 + 2);
+    for (size_t i = 0; i < n; i++) {
+        if (p[i] == kSlipEnd) { out.push_back(kSlipEsc); out.push_back(kSlipEscEnd); }
+        else if (p[i] == kSlipEsc) { out.push_back(kSlipEsc); out.push_back(kSlipEscEsc); }
+        else out.push_back(p[i]);
+    }
+    out.push_back(kSlipEnd);
+    return out;
+}
+
+struct SlipDecoder {
+    std::vector<uint8_t> msg;
+    bool inEsc = false, discard = false;
+    /* feed bytes; invokes emit() with each complete decoded message */
+    template <typename F>
+    bool feed(const uint8_t* p, size_t n, F&& emit) {
+        for (size_t i = 0; i < n; i++) {
+            uint8_t b = p[i];
+            if (discard) {
+                if (b == kSlipEnd) { discard = false; msg.clear(); inEsc = false; }
+                continue;
+            }
+            if (inEsc) {
+                inEsc = false;
+                if (b == kSlipEscEnd) msg.push_back(kSlipEnd);
+                else if (b == kSlipEscEsc) msg.push_back(kSlipEsc);
+                else { msg.clear(); discard = true; }
+                continue;
+            }
+            if (b == kSlipEnd) {
+                if (!msg.empty() && msg.size() <= kSlipMaxMsg) emit(msg);
+                msg.clear();
+            } else if (b == kSlipEsc) {
+                inEsc = true;
+            } else {
+                msg.push_back(b);
+                if (msg.size() > kSlipMaxMsg) { msg.clear(); discard = true; }
+            }
+        }
+        return true;
+    }
+};
+
+static void handle_tetherio(int cfd, const std::string& head) {
+    /* child owns the upgraded socket; parent continues accepting */
+    pid_t pid = fork();
+    if (pid != 0) { close(cfd); return; }
+
+    /* Sec-WebSocket-Key → accept digest */
+    std::string key;
+    size_t kp = head.find("Sec-WebSocket-Key:");
+    if (kp == std::string::npos) kp = head.find("sec-websocket-key:");
+    if (kp != std::string::npos) {
+        size_t e = head.find("\r", kp);
+        size_t vs = kp + 18, ve = e == std::string::npos ? head.size() : e;
+        while (vs < ve && (head[vs] == ' ' || head[vs] == '\t')) vs++;
+        while (ve > vs && (head[ve - 1] == ' ' || head[ve - 1] == '\t')) ve--;
+        key = head.substr(vs, ve - vs);
+    }
+    if (key.empty()) { close(cfd); _exit(0); }
+    std::string magic = key +
+        "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    uint8_t dig[20];
+    sha1((const uint8_t*)magic.data(), magic.size(), dig);
+    std::string accept = b64_encode(dig, sizeof dig);
+    std::string resp =
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
+    if (!send_all(cfd, (const uint8_t*)resp.data(), resp.size())) {
+        close(cfd); _exit(0);
+    }
+
+    int tfd = tcp_connect(g_tplc_io.c_str());
+    if (tfd < 0) {
+        uint8_t pl[] = {0x03, 0xE8};   /* close 1011: upstream down */
+        ws_send_frame(cfd, 0x8, pl, sizeof pl);
+        close(cfd); _exit(0);
+    }
+
+    pollfd pf[2] = {{cfd, POLLIN, 0}, {tfd, POLLIN, 0}};
+    std::vector<uint8_t> payload, wsMsg;
+    SlipDecoder slip;
+    const bool dbg = getenv("TPLC_PROXY_WS_DEBUG") != nullptr;
+    for (;;) {
+        int pr = poll(pf, 2, -1);
+        if (pr <= 0) break;
+        if (pf[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+            uint8_t op = 0;
+            bool fin = false;
+            if (!ws_read_frame(cfd, payload, op, fin)) break;
+            if (dbg && (op == 0x1 || op == 0x2 || op == 0x0))
+                fprintf(stderr, "[tether-io] ws→tcp op=%u fin=%d %zuB head=%02x%02x%02x%02x\n",
+                        op, (int)fin, payload.size(),
+                        payload.size() > 0 ? payload[0] : 0,
+                        payload.size() > 1 ? payload[1] : 0,
+                        payload.size() > 2 ? payload[2] : 0,
+                        payload.size() > 3 ? payload[3] : 0);
+            if (op == 0x8) {                     /* close → echo + out */
+                ws_send_frame(cfd, 0x8, payload.data(), payload.size());
+                break;
+            }
+            if (op == 0x9) {                     /* ping → pong */
+                ws_send_frame(cfd, 0xA, payload.data(), payload.size());
+                continue;
+            }
+            if (op == 0xA) continue;             /* pong: ignore */
+            /* data frame (0x1/0x2) or continuation (0x0): reassemble
+               the WS message, then SLIP-encode it as one TCP packet */
+            if (op == 0x0 || op == 0x1 || op == 0x2) {
+                if (op != 0x0) wsMsg.clear();
+                wsMsg.insert(wsMsg.end(), payload.begin(), payload.end());
+                if (!fin) continue;
+                std::vector<uint8_t> pkt = slip_encode(wsMsg.data(), wsMsg.size());
+                wsMsg.clear();
+                if (!send_all(tfd, pkt.data(), pkt.size())) break;
+            }
+            continue;
+        }
+        if (pf[1].revents & (POLLIN | POLLHUP | POLLERR)) {
+            uint8_t buf[16384];
+            ssize_t r = recv(tfd, buf, sizeof buf, 0);
+            if (r <= 0) break;
+            bool wsOk = true;
+            slip.feed(buf, (size_t)r, [&](const std::vector<uint8_t>& m) {
+                if (dbg) {
+                    fprintf(stderr, "[tether-io] tcp→ws %zuB head=%02x%02x%02x%02x",
+                            m.size(), m[0], m.size() > 1 ? m[1] : 0,
+                            m.size() > 2 ? m[2] : 0, m.size() > 3 ? m[3] : 0);
+                    if (const char* df = getenv("TPLC_PROXY_WS_DUMP")) {
+                        FILE* f = fopen(df, "ab");
+                        if (f) {
+                            uint32_t n = (uint32_t)m.size();
+                            fwrite(&n, 4, 1, f);
+                            fwrite(m.data(), 1, m.size(), f);
+                            fclose(f);
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
+                if (!ws_send_frame(cfd, 0x2, m.data(), m.size())) wsOk = false;
+            });
+            if (!wsOk) break;
+        }
+        if ((pf[0].revents | pf[1].revents) & POLLNVAL) break;
+    }
+    close(tfd);
+    close(cfd);
+    _exit(0);
+}
+
 static void serve(int cfd) {
     timeval tv{10, 0};
     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
@@ -533,11 +835,15 @@ static void serve(int cfd) {
     if (hdr_end == std::string::npos) { close(cfd); return; }
 
     std::string head((const char*)buf.data(), hdr_end);
-    std::string method, path;
+    std::string method, path, query;
     {
         char m[16] = {0}, p[1024] = {0};
         sscanf(head.c_str(), "%15s %1023s", m, p);
-        method = m; path = p;
+        method = m;
+        std::string raw = p;
+        size_t q = raw.find('?');
+        path = q == std::string::npos ? raw : raw.substr(0, q);
+        query = q == std::string::npos ? "" : raw.substr(q + 1);
     }
     size_t clen = 0;
     if (auto p = head.find("Content-Length:"); p != std::string::npos)
@@ -561,14 +867,24 @@ static void serve(int cfd) {
         if (u >= 0) { close(u); http_reply(cfd, 200, "OK", (const uint8_t*)"ok", 2, "text/plain"); }
         else http_reply(cfd, 503, "Service Unavailable", (const uint8_t*)"down", 4, "text/plain");
     } else if (method == "POST" && path.rfind("/compile", 0) == 0) {
-        handle_compile(cfd, body, path.find("build") != std::string::npos);
+        handle_compile(cfd, body,
+                       query.find("build") != std::string::npos);
     } else if (method == "GET" && path.rfind("/blocks", 0) == 0) {
-        handle_blocks(cfd, path.find("refresh") != std::string::npos);
+        handle_blocks(cfd, query.find("refresh") != std::string::npos);
     } else if (method == "GET" && path.rfind("/libsrc", 0) == 0) {
-        size_t q = path.find('?');
-        handle_libsrc(cfd, q == std::string::npos ? "" : path.substr(q + 1));
+        handle_libsrc(cfd, query);
     } else if (method == "GET" && path == "/events") {
         handle_events(cfd);             /* parent closes; child owns */
+        return;
+    } else if (method == "GET" && path == "/tether-io") {
+        if (g_tplc_io.empty() ||
+            head.find("Upgrade:") == std::string::npos) {
+            const char* m = "tether-io bridge not configured";
+            http_reply(cfd, 404, "Not Found",
+                       (const uint8_t*)m, strlen(m), "text/plain");
+        } else {
+            handle_tetherio(cfd, head); /* parent closes; child owns */
+        }
         return;
     } else if (method == "POST" && path == "/ctl") {
         std::vector<uint8_t> rep;
@@ -596,9 +912,10 @@ int main(int argc, char** argv) {
         else if (a == "--bind") bind_addr = next();
         else if (a == "--tplcc") g_tplcc = next();
         else if (a == "--tplccd") g_tplccd = next();
+        else if (a == "--tplc-io") g_tplc_io = next();
         else if (a == "--libdir") g_libdirs.push_back(next());
         else {
-            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr] [--tplcc path] [--tplccd uds|off] [--libdir dir]...\n", argv[0]);
+            fprintf(stderr, "usage: %s [--socket uds] [--port N] [--bind addr] [--tplcc path] [--tplccd uds|off] [--tplc-io host:port] [--libdir dir]...\n", argv[0]);
             return 2;
         }
     }
