@@ -57,10 +57,11 @@ def topic_match(flt, topic):
 
 VERSIONS = {}    # conn -> protocol level (4 = 3.1.1, 5 = 5.0)
 
-def publish_to(topic, payload, qos=0):
+def publish_to(topic, payload, qos=0, props_raw=b'\x00'):
     """broadcast a PUBLISH to every matching subscriber at
     min(pub qos, granted qos); qos>0 carries a packet id.
-    v5 subscribers get an (empty) properties field."""
+    v5 subscribers get the publisher's property block
+    (props_raw, default empty)."""
     with LOCK:
         targets = [(c, fs, VERSIONS.get(c, 4)) for c, fs in SUBS.items()]
         mid = MSGID[0]; MSGID[0] += 1
@@ -72,7 +73,7 @@ def publish_to(topic, payload, qos=0):
                 if eff:
                     body += struct.pack('>H', mid)
                 if ver == 5:
-                    body += b'\x00'        # empty properties
+                    body += props_raw
                 body += payload
                 try:
                     send(conn, 0x30 | (eff << 1), body)
@@ -278,10 +279,13 @@ def handle(conn):
                 if qos:
                     mid = struct.unpack('>H', rest[:2])[0]
                     rest = rest[2:]
+                props_raw = b'\x00'
                 if v5:
                     # v5 inserts a properties field before the payload
                     pos = 2 + tl + (2 if qos else 0)
+                    pstart = pos
                     pprops, pos = parse_publish_props(body, pos)
+                    props_raw = body[pstart:pos]
                     if pprops:
                         print('PUBPROPS', topic, pprops, flush=True)
                     payload = body[pos:]
@@ -300,7 +304,7 @@ def handle(conn):
                 if flags & 1:  # retain flag: store for later subscribers
                     with LOCK:
                         RETAINED[topic] = payload
-                publish_to(topic, payload, qos)
+                publish_to(topic, payload, qos, props_raw)
                 # one-shot self-bounce: after broadcasting the trigger
                 # topic, drop every client + the listener, then rebind
                 # after `delay` seconds (deterministic reconnect e2e)

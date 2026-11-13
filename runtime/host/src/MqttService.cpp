@@ -277,6 +277,8 @@ MqttService::MqttService() {
     svc_.mqtt_subscribe5 = [](void* s, uint32_t h, const char* f,
                               uint32_t q, const TplcMqtt5SubProps* pr)
         { return self(s)->subscribe5(s, h, f, q, pr); };
+    svc_.mqtt_receive5 = [](void* s, uint32_t h, TplcMqttRx5* rx)
+        { return self(s)->receive5(s, h, rx); };
 }
 
 MqttService::~MqttService() {
@@ -703,6 +705,114 @@ int32_t MqttService::receive(void*, uint32_t h, TplcMqttRx* rx) {
     uint32_t pn = rx->payload_len < rx->payload_cap ? rx->payload_len
                                                   : rx->payload_cap;
     std::memcpy(rx->payload, msg->payload, pn);
+    MQTTClient_freeMessage(&msg);
+    MQTTClient_free(topic);
+    return TPLC_MQTT_OK;
+#else
+    return TPLC_MQTT_E_CONN;
+#endif
+}
+
+int32_t MqttService::receive5(void*, uint32_t h, TplcMqttRx5* rx) {
+    if (h == 0 || h > TPLC_MQTT_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_MQTT_E_HANDLE;
+    if (!rx || !rx->base.topic || !rx->base.payload)
+        return TPLC_MQTT_E_PARAM;
+#ifdef TPLC_HAVE_MQTT
+    Conn& c = impl_->conns[h - 1];
+    if (c.version != 5) return TPLC_MQTT_E_PARAM;
+    TplcMqttRx* b = &rx->base;
+    char* topic = nullptr; int tlen = 0;
+    MQTTClient_message* msg = nullptr;
+    int rc = MQTTClient_receive(c.conn, &topic, &tlen, &msg, 0);
+    if (rc != MQTTCLIENT_SUCCESS && rc != MQTTCLIENT_TOPICNAME_TRUNCATED) {
+        c.last_error = rc;
+        return TPLC_MQTT_E_PROTO;
+    }
+    if (!msg) {
+        if (topic) MQTTClient_free(topic);
+        return TPLC_MQTT_E_NOMSG;
+    }
+    c.last_rx = std::chrono::steady_clock::now();
+    b->topic_len = uint32_t(tlen < 0 ? int(std::strlen(topic)) : tlen);
+    b->payload_len = uint32_t(msg->payloadlen);
+    b->qos = uint32_t(msg->qos);
+    b->message_id = uint32_t(msg->msgid);
+    b->retained = uint32_t(msg->retained);
+    uint32_t tn = b->topic_len < b->topic_cap ? b->topic_len
+                                              : b->topic_cap;
+    std::memcpy(b->topic, topic, tn);
+    uint32_t pn = b->payload_len < b->payload_cap ? b->payload_len
+                                                : b->payload_cap;
+    std::memcpy(b->payload, msg->payload, pn);
+    /* zero the property outputs, then fill from msg->properties */
+    rx->payload_format = 0;
+    rx->message_expiry_s = 0;
+    rx->subscription_id = 0;
+    rx->content_type[0] = 0;
+    rx->response_topic[0] = 0;
+    rx->user_properties[0] = 0;
+    rx->correlation_len = 0;
+    MQTTProperties* p = &msg->properties;
+    if (p->count > 0) {
+        MQTTProperty* pr;
+        if ((pr = MQTTProperties_getProperty(
+                 p, MQTTPROPERTY_CODE_PAYLOAD_FORMAT_INDICATOR)))
+            rx->payload_format = pr->value.byte;
+        if ((pr = MQTTProperties_getProperty(
+                 p, MQTTPROPERTY_CODE_MESSAGE_EXPIRY_INTERVAL)))
+            rx->message_expiry_s = pr->value.integer4;
+        if ((pr = MQTTProperties_getProperty(
+                 p, MQTTPROPERTY_CODE_SUBSCRIPTION_IDENTIFIER)))
+            rx->subscription_id = pr->value.integer4;
+        auto copy_str = [](char* dst, size_t cap,
+                           const MQTTLenString& s) {
+            size_t n = s.len > 0 ? size_t(s.len) : 0;
+            if (n >= cap) n = cap - 1;
+            if (n) std::memcpy(dst, s.data, n);
+            dst[n] = 0;
+        };
+        if ((pr = MQTTProperties_getProperty(
+                 p, MQTTPROPERTY_CODE_CONTENT_TYPE)))
+            copy_str(rx->content_type, sizeof(rx->content_type),
+                     pr->value.data);
+        if ((pr = MQTTProperties_getProperty(
+                 p, MQTTPROPERTY_CODE_RESPONSE_TOPIC)))
+            copy_str(rx->response_topic, sizeof(rx->response_topic),
+                     pr->value.data);
+        if ((pr = MQTTProperties_getProperty(
+                 p, MQTTPROPERTY_CODE_CORRELATION_DATA))) {
+            size_t n = pr->value.data.len > 0
+                           ? size_t(pr->value.data.len) : 0;
+            if (n > sizeof(rx->correlation_data))
+                n = sizeof(rx->correlation_data);
+            if (n) std::memcpy(rx->correlation_data,
+                               pr->value.data.data, n);
+            rx->correlation_len = uint32_t(n);
+        }
+        int nup = MQTTProperties_propertyCount(
+            p, MQTTPROPERTY_CODE_USER_PROPERTY);
+        size_t ulen = 0;
+        for (int i = 0; i < nup && ulen + 1 < sizeof(rx->user_properties);
+             ++i) {
+            MQTTProperty* up = MQTTProperties_getPropertyAt(
+                p, MQTTPROPERTY_CODE_USER_PROPERTY, i);
+            if (!up) break;
+            int wn = std::snprintf(rx->user_properties + ulen,
+                                   sizeof(rx->user_properties) - ulen,
+                                   "%.*s=%.*s;",
+                                   up->value.data.len,
+                                   up->value.data.data,
+                                   up->value.value.len,
+                                   up->value.value.data);
+            if (wn < 0 ||
+                size_t(wn) >= sizeof(rx->user_properties) - ulen)
+                break;
+            ulen += size_t(wn);
+        }
+        if (ulen && rx->user_properties[ulen - 1] == ';')
+            rx->user_properties[ulen - 1] = 0;
+    }
     MQTTClient_freeMessage(&msg);
     MQTTClient_free(topic);
     return TPLC_MQTT_OK;

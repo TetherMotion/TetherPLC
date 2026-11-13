@@ -10,12 +10,13 @@ VAR
     pub : FB_IotMqttPublish;
     pub5 : FB_IotMqtt5Publish;
     rx  : FB_IotMqttReceive;
+    rx5 : FB_IotMqtt5Receive;
     st : INT;
     waitN : INT;
     mask AT %QD0 : UDINT;
     hdl : UDINT;
 END_VAR
-    con(); dis(); sub(); unsub(); pub(); pub5(); rx();
+    con(); dis(); sub(); unsub(); pub(); pub5(); rx(); rx5();
     IF st = 0 THEN
         mask := 0;
         con.Execute := TRUE;
@@ -124,11 +125,18 @@ END_VAR
     IF st = 56 THEN
         // pump the echo so the broker forwards the message; the
         // props themselves are verified broker-side via the log
-        rx.Execute := TRUE;
-        rx.ConnectionHdl := hdl;
-        IF rx.Done AND rx.Message THEN
-            rx.Execute := FALSE;
-            IF rx.Topic = 'tplc/v5/props' THEN
+        rx5.Execute := TRUE;
+        rx5.ConnectionHdl := hdl;
+        IF rx5.Done AND rx5.Message THEN
+            rx5.Execute := FALSE;
+            IF rx5.Topic = 'tplc/v5/props'
+               AND rx5.PayloadFormatUtf8
+               AND rx5.MessageExpiryS = 30
+               AND rx5.ContentType = 'application/json'
+               AND rx5.ResponseTopic = 'tplc/v5/reply'
+               AND rx5.CorrelationData = 'corr-1'
+               AND rx5.CorrelationLen = 6
+               AND rx5.UserProperties = 'k1=v1;k2=v2' THEN
                 mask := mask + 128; // bit7: props publish echoed
                 unsub.Execute := TRUE;
                 unsub.ConnectionHdl := hdl;

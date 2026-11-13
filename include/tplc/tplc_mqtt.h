@@ -105,6 +105,22 @@ typedef struct TplcMqttRx {
     uint8_t* payload;
 } TplcMqttRx;
 
+/* MQTT5 received message: base fields plus the PUBLISH property
+ * block.  Strings are fixed-size NUL-terminated buffers inside the
+ * struct; correlation_data is binary with an explicit length. */
+typedef struct TplcMqttRx5 {
+    TplcMqttRx base;               /* 48 bytes */
+    uint32_t payload_format;       /* 0/1 */
+    uint32_t message_expiry_s;
+    uint32_t subscription_id;      /* 0 = absent */
+    uint32_t reserved0;
+    char     content_type[64];
+    char     response_topic[128];
+    char     user_properties[256]; /* "k=v;k=v" list */
+    uint32_t correlation_len;
+    uint8_t  correlation_data[128];
+} TplcMqttRx5;
+
 /* ---- service vtable ----
  * Returned by getService("tplc-mqtt").  All entries take the service
  * `this` as first arg. */
@@ -161,7 +177,11 @@ typedef struct TplcMqttService {
                                uint32_t qos,
                                const TplcMqtt5SubProps* props);
 
-    void* reserved[4];
+    /* MQTT5 receive: same poll as mqtt_receive plus PUBLISH
+     * properties (v5 connections only; v3 returns E_PARAM). */
+    int32_t (*mqtt_receive5)(void*, uint32_t h, TplcMqttRx5* rx);
+
+    void* reserved[3];
 } TplcMqttService;
 
 /* status / error codes */

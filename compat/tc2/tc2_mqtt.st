@@ -750,3 +750,76 @@ END_VAR
     END_IF;
     exPrev := Execute;
 END_FUNCTION_BLOCK
+
+// ---- FB_IotMqtt5Receive: MQTT5 PUBLISH receive with properties ----
+// v5 connections only.  Same poll semantics as FB_IotMqttReceive
+// plus the PUBLISH property outputs: PayloadFormatUtf8,
+// MessageExpiryS, SubscriptionId, ContentType, ResponseTopic,
+// CorrelationData (STRING, binary-safe via LEN), UserProperties
+// ("k=v;k=v" list).
+FUNCTION_BLOCK FB_IotMqtt5Receive
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Message : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    Topic : STRING[127];
+    Payload : STRING[255];
+    PayloadLen : UDINT;
+    QoS : UDINT;
+    MessageId : UDINT;
+    Retained : BOOL;
+    PayloadFormatUtf8 : BOOL;
+    MessageExpiryS : UDINT;
+    SubscriptionId : UDINT;
+    ContentType : STRING[63];
+    ResponseTopic : STRING[127];
+    CorrelationData : STRING[127];
+    CorrelationLen : UDINT;
+    UserProperties : STRING[255];
+END_VAR
+VAR
+    ch : FB_Mqtt;
+END_VAR
+    Done := FALSE;
+    Message := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    Retained := FALSE;
+    PayloadFormatUtf8 := FALSE;
+    MessageExpiryS := 0;
+    SubscriptionId := 0;
+    CorrelationLen := 0;
+    IF Execute THEN
+        ch.OP := 13;
+        ch.HANDLE := ConnectionHdl;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+            Message := TRUE;
+            Topic := ch.RXTOPIC;
+            Payload := ch.RXPAYLOAD;
+            PayloadLen := ch.RXPLEN;
+            QoS := ch.RXQOS;
+            MessageId := ch.RXMSGID;
+            Retained := ch.RXRETAIN <> 0;
+            PayloadFormatUtf8 := ch.M5RXFMT <> 0;
+            MessageExpiryS := ch.M5RXEXPIRY;
+            SubscriptionId := ch.M5RXSUBID;
+            ContentType := ch.M5RXCTYPE;
+            ResponseTopic := ch.M5RXRTOPIC;
+            CorrelationData := ch.M5RXCORR;
+            CorrelationLen := ch.M5RXCORR_LEN;
+            UserProperties := ch.M5RXUPROPS;
+        ELSIF ch.STATUS = 1 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+END_FUNCTION_BLOCK

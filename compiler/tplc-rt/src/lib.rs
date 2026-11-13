@@ -5121,6 +5121,22 @@ const MQ_M5SUBRH: usize = 2384;
 const MQ_M5SUBSID: usize = 2388;
 const MQ_M5SUBUPROPS_LEN: usize = 2392;
 const MQ_M5SUBUPROPS: usize = 2393;
+// MQTT5 receive-prop members (appended): M5RXFMT@2648,
+// M5RXEXPIRY@2652, M5RXSUBID@2656, M5RXCTYPE Str[63]@2660,
+// M5RXRTOPIC Str[127]@2724, M5RXUPROPS Str[255]@2852,
+// M5RXCORR_LEN@3108, M5RXCORR Str[127]@3112.
+const MQ_M5RXFMT: usize = 2648;
+const MQ_M5RXEXPIRY: usize = 2652;
+const MQ_M5RXSUBID: usize = 2656;
+const MQ_M5RXCTYPE_LEN: usize = 2660;
+const MQ_M5RXCTYPE: usize = 2661;
+const MQ_M5RXRTOPIC_LEN: usize = 2724;
+const MQ_M5RXRTOPIC: usize = 2725;
+const MQ_M5RXUPROPS_LEN: usize = 2852;
+const MQ_M5RXUPROPS: usize = 2853;
+const MQ_M5RXCORRDLEN: usize = 3108;
+const MQ_M5RXCORR_LEN: usize = 3112;
+const MQ_M5RXCORR: usize = 3113;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5136,6 +5152,7 @@ const MQ_SVC_ABORT: usize = 80;
 const MQ_SVC_BACKOFF: usize = 88;
 const MQ_SVC_PUBLISH5: usize = 96;
 const MQ_SVC_SUBSCRIBE5: usize = 104;
+const MQ_SVC_RECEIVE5: usize = 112;
 
 /// service lookup for "tplc-mqtt" (9 chars)
 unsafe fn mqtt_service(ctx: *const u8) -> *const u8 {
@@ -5161,6 +5178,7 @@ type FMqttStatus = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
 type FMqttPublish = unsafe extern "C" fn(*const u8, u32, *const u8, *const u8, u32, u32, u32) -> i32;
 type FMqttSubscribe = unsafe extern "C" fn(*const u8, u32, *const u8, u32) -> i32;
 type FMqttReceive = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
+type FMqttReceive5 = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
 type FMqttIsConnected = unsafe extern "C" fn(*const u8, u32) -> i32;
 
 /// `__tplc_rt_FB_Mqtt` — synchronous op dispatch over the tplc-mqtt
@@ -5467,6 +5485,72 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             set_rc(f(svc, ru32(this.add(MQ_HANDLE)),
                      tbuf.as_ptr(), ru32(this.add(MQ_QOS)),
                      pr.as_ptr()));
+        }
+        13 => {
+            // MQTT5 receive with properties -> TplcMqttRx5 (648B):
+            // base TplcMqttRx @0..47, then fmt@48 expiry@52 subid@56
+            // ctype@64[64] rtopic@128[128] uprops@256[256]
+            // corr_len@512 corr@516[128]
+            let mut rx = [0u8; 648];
+            let mut wu = |off: usize, v: u32| {
+                let b = v.to_le_bytes();
+                core::ptr::copy_nonoverlapping(b.as_ptr(), rx.as_mut_ptr().add(off), 4);
+            };
+            wu(0, 127);
+            wu(4, 255);
+            let tp = this.add(MQ_RXTOPIC) as usize;
+            let pp = this.add(MQ_RXPAYLOAD) as usize;
+            core::ptr::copy_nonoverlapping(
+                (tp as usize).to_le_bytes().as_ptr(),
+                rx.as_mut_ptr().add(32), 8);
+            core::ptr::copy_nonoverlapping(
+                (pp as usize).to_le_bytes().as_ptr(),
+                rx.as_mut_ptr().add(40), 8);
+            let f: FMqttReceive5 = core::mem::transmute(
+                mqfn(svc, MQ_SVC_RECEIVE5));
+            let rc = f(svc, ru32(this.add(MQ_HANDLE)), rx.as_mut_ptr());
+            wi32(this.add(MQ_STATUS), rc);
+            wu32(this.add(MQ_ERRID), (-rc).max(0) as u32);
+            if rc == 0 {
+                let rd = |off: usize| -> u32 {
+                    let mut b = [0u8; 4];
+                    core::ptr::copy_nonoverlapping(rx.as_ptr().add(off), b.as_mut_ptr(), 4);
+                    u32::from_le_bytes(b)
+                };
+                let tl = rd(8).min(127) as usize;
+                *this.add(MQ_RXTOPIC_LEN) = tl as u8;
+                *this.add(MQ_RXTOPIC + tl) = 0;
+                let pl = rd(12).min(255) as usize;
+                *this.add(MQ_RXPAYLOAD_LEN) = pl as u8;
+                wu32(this.add(MQ_RXQOS), rd(16));
+                wu32(this.add(MQ_RXMSGID), rd(20));
+                wu32(this.add(MQ_RXRETAIN), rd(24));
+                wu32(this.add(MQ_RXPLEN), rd(12));
+                wu32(this.add(MQ_M5RXFMT), rd(48));
+                wu32(this.add(MQ_M5RXEXPIRY), rd(52));
+                wu32(this.add(MQ_M5RXSUBID), rd(56));
+                // NUL-terminated prop strings -> Str members
+                // (len byte + data); caps 63/127/255
+                let cstr = |dst_len: usize, dst: usize, src: usize,
+                            cap: usize| {
+                    let mut n = 0usize;
+                    while n < cap && rx[src + n] != 0 { n += 1; }
+                    *this.add(dst_len) = n as u8;
+                    core::ptr::copy_nonoverlapping(
+                        rx.as_ptr().add(src), this.add(dst), n);
+                    *this.add(dst + n) = 0;
+                };
+                cstr(MQ_M5RXCTYPE_LEN, MQ_M5RXCTYPE, 64, 63);
+                cstr(MQ_M5RXRTOPIC_LEN, MQ_M5RXRTOPIC, 128, 127);
+                cstr(MQ_M5RXUPROPS_LEN, MQ_M5RXUPROPS, 256, 255);
+                // correlation data @516, len @512 (binary)
+                let cn = rd(512).min(127) as usize;
+                wu32(this.add(MQ_M5RXCORRDLEN), cn as u32);
+                *this.add(MQ_M5RXCORR_LEN) = cn as u8;
+                core::ptr::copy_nonoverlapping(
+                    rx.as_ptr().add(516), this.add(MQ_M5RXCORR), cn);
+                *this.add(MQ_M5RXCORR + cn) = 0;
+            }
         }
         _ => {
             wi32(this.add(MQ_STATUS), -1);
