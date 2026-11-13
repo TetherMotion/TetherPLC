@@ -1199,6 +1199,47 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "FIFOLEN", udint());
             push(&mut off, "FIFOSEQ", udint());
         }
+        /* FB_Fifo — tplc-fifo service bridge (Tc2_NcFifoAxes numeric
+        setpoint FIFO channel). Synchronous op dispatch like
+        FB_NciChan: set OP + fields and call. OP 1=integrate axis
+        (AUX = axis | gpos<<16), 2=disintegrate, 3=append rows
+        (NROWS + ROWS, 8 LREAL cols per row), 4=overwrite rows,
+        5=command (AUX = TPLC_FIFO_CMD_*), 6=status+poll (fills
+        STATE/QLEN/SEQ/NAXES/MAXROWS), 7=set override (VAL),
+        8=status without poll. ROWS holds up to 32 rows per call;
+        wrappers chunk larger transfers. STATUS carries the service
+        return code, ERRID its positive form. */
+        "FB_Fifo" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "CHAN", udint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "NROWS", udint());
+            push(&mut off, "VAL", Type::Real { bits: 64 });
+            push(&mut off, "STATE", dint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "QLEN", udint());
+            push(&mut off, "SEQ", udint());
+            push(&mut off, "NAXES", udint());
+            push(&mut off, "MAXROWS", udint());
+            push(
+                &mut off,
+                "ROWS",
+                Type::Array {
+                    elem: Box::new(Type::Real { bits: 64 }),
+                    lo: 0,
+                    hi: 255,
+                },
+            );
+        }
         /* FB_UaClient — tplc-opcua service bridge (OPC UA client via
         libopen62541). Synchronous op dispatch like FB_NciChan: set
         OP + fields and call. OP 1=connect (URL string → HANDLE),

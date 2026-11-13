@@ -51,6 +51,8 @@ add_library(tplc_host STATIC
   runtime/host/src/MotionService.cpp
   runtime/host/src/MotionIoService.cpp
   runtime/host/src/NciIoService.cpp
+  runtime/host/src/FifoService.cpp
+  runtime/host/src/FifoIoService.cpp
   runtime/host/src/EcSyncService.cpp
   runtime/host/src/EcDiagService.cpp
   runtime/host/src/SoeService.cpp
@@ -366,6 +368,7 @@ endif()
 if(TARGET tplc_tether_io)
   set_source_files_properties(runtime/host/src/MotionIoService.cpp
                               runtime/host/src/NciIoService.cpp
+                              runtime/host/src/FifoIoService.cpp
                               runtime/host/src/EcSyncService.cpp
                               runtime/host/src/EcDiagService.cpp
                               runtime/host/src/SoeService.cpp
@@ -927,6 +930,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_nci PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_NcFifoAxes e2e: two simulated axes integrated into a FiFo
+  # channel, LREAL row writes, start/drain on the scan clock,
+  # overwrite rerun and disintegrate; in-process, no peer
+  add_test(NAME tc2_ncfifoaxes
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_ncfifoaxes.sh)
+  set_tests_properties(tc2_ncfifoaxes PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc3_NC_Camming e2e: two simulated axes, 3-point cam table
   # (master -> 2x slave), coupling while the master runs a velocity
   # move, periodic wrap, table clear, WritePt edge; in-process
@@ -1181,6 +1192,16 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_drive_io.sh)
   set_tests_properties(tc2_mc2_drive_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_NcFifoAxes over Tether IO: the fifo.* channel params drive
+  # rows onto the remote CiA402 fleet's 0x607A targets on the
+  # mc.time drive clock
+  add_test(NAME tc2_ncfifoaxes_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_ncfifoaxes_io.sh)
+  set_tests_properties(tc2_ncfifoaxes_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real

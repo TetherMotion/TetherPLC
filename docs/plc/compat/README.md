@@ -106,6 +106,21 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       (NCTOPLC_AXIS_REF + sNetId flatten to the
                       same UDINT axis handle + NetId string);
                       this file adds F_GetVersionTcNcDrive.
+  tc2_ncfifoaxes.st  Tc2_NcFifoAxes wrappers (8 APIs) over the
+                      tplc-fifo service + FB_Fifo builtin: FiFo-
+                      GetDimension/GroupIntegrate/GroupDisintegrate/
+                      Write/Overwrite/SetChannelOverride/Start/Stop.
+                      Numeric LREAL setpoint streaming (distinct
+                      from the nc.fifo G-code block queue): 4
+                      channels x 8 axes x 1000 rows, fixed
+                      8-column row stride, iGroupPosition is the
+                      1-based column index. In-process FifoService
+                      or FifoIoService over fifo.* params on
+                      tether_io_motion_server; rows emit one per
+                      1 ms of mc.time drive clock as 0x607A CSP
+                      targets on the integrated axes. Channel
+                      override is recorded but does not rescale
+                      absolute position rows.
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -429,6 +444,23 @@ tests/compat/
                       tether_io_motion_server (--clock sim, --axes 4)
                       via TPLC_MOTION_IO; skips when the Tether server
                       binary is unavailable
+  tc2_ncfifoaxes_case.st
+                     Tc2_NcFifoAxes program (14 packed checks: two
+                      axes, power, group integrate x2, dimension,
+                      row write, channel override, start + drain to
+                      finished, row positions, overwrite + second
+                      run, disintegrate)
+  tc2_ncfifoaxes.sh  ctest tc2_ncfifoaxes: builds tc2_mc2.st +
+                     tc2_ncfifoaxes.st as libraries, consumes via
+                     --lib, 301-step in-process replay expecting
+                     mask 0x3fff
+  tc2_ncfifoaxes_io.sh
+                     ctest tc2_ncfifoaxes_io: same case replayed
+                     over the Tether IO protocol against
+                     tether_io_motion_server (--clock sim, --axes 2)
+                     via TPLC_MOTION_IO; rows emit as 0x607A CSP
+                     targets on the mc.time drive clock; skips when
+                     the Tether server binary is unavailable
   tc2_nci_gcode_case.st
                      Tc2_NCI G-code channel program (14 packed
                       checks: text upload, file load, READY +
@@ -466,7 +498,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
 | C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool), an 8-state PLCopen operating state, and coupling/probe blocks (MC_TouchProbe cycle-level latch + MC_AbortTrigger via drive object 0x2001, MC_GearIn velocity-ratio coupling, MC_GearOut; e2e on both backends); exact hardware-latch touch-probe, phase-locked gearing/phasing pending; `compat/tc3/tc3_nccam.st` single-table cam coupling done (e2e `tc3_nccam{,_io}`) |
-| C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus`/`ItpFiFoWrite`/`ItpConfirmHsk`/`ItpWriteRParam`/`ItpReadRParam`/`ItpZeroShift` wrappers (e2e `tc2_nci_gcode_io` mask `0x7fffff`: FIFO queue + run-from-idle + chained blocks, R-param roundtrip, zero-shift, M8 pause→confirm→resume); cyclic-channel offsets pending |
+| C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus`/`ItpFiFoWrite`/`ItpConfirmHsk`/`ItpWriteRParam`/`ItpReadRParam`/`ItpZeroShift` wrappers (e2e `tc2_nci_gcode_io` mask `0x7fffff`: FIFO queue + run-from-idle + chained blocks, R-param roundtrip, zero-shift, M8 pause→confirm→resume); **Tc2_NcFifoAxes done**: `tplc-fifo` service + `FB_Fifo` builtin + `compat/tc2/tc2_ncfifoaxes.st` FiFo* wrappers over `fifo.*` params (numeric LREAL setpoint streaming, e2e `tc2_ncfifoaxes{,_io}`); cyclic-channel offsets pending |
 | C7 | Connectivity wave 2 | `tplc-opcua` **done** (OPC UA client via libopen62541 — opt-in like other special features, auto-detected, absent → `getService` nullptr): `FB_UaClient` builtin + `FB_UA_Connect`/`FB_UA_Disconnect`/`FB_UA_ConnectGetStatus`/`FB_UA_Read`/`FB_UA_Write`/`FB_UA_GetNamespaceIndex` wrappers in `compat/tc2/tc2_opcua.st` (TwinCAT Tc2_OPCUA/Tc3_PlcOpenOpcUa shape); the endpoint is Tether's `tether_io_motion_server --opcua` (open62541 server exposing the motion Registry as `ns=2;s=<name>` nodes); e2e `tc2_opcua_io` — connect/session/read `nc.state`/write+read `nc.scale`/ns-index/disconnect; node-handle registration, subscriptions, methods, history pending. `tplc-eip` **done** (EtherNet/IP explicit-messaging client — RegisterSession/ListIdentity/SendRRData + CIP Get/Set_Attribute_Single, nonblocking poll-bounded IO): `FB_Eip` builtin + `FB_EipConnect`/`Disconnect`/`Status`/`ListIdentity`/`GetAttribute`/`SetAttribute` wrappers in `compat/tc2/tc2_eip.st`; e2e `tc2_eip_io` vs `eip_adapter_fake.py` — register/identity/attr r-w/disconnect `0x7f`; cyclic class-1 I/O, ForwardOpen, CIP services beyond Get/Set pending. `tplc-iec61850` **done** (IEC 61850 MMS client via libiec61850 — opt-in, auto-downloaded + built via FetchContent, absent → `getService` nullptr): `FB_Iec61850` builtin + `FB_Iec61850Connect`/`Disconnect`/`Status`/`Read`/`Write`/`GetNameList` wrappers in `compat/tc2/tc2_iec61850.st` (domain+item addressing, `#FC` suffix selects functional constraint); e2e `tc2_iec61850_io` vs `iec61850_ied_fake` (real libiec61850 IedServer) — associate/status/read/write-error/namelist/disconnect `0x7f`; reporting/RCB, GOOSE/SMV, control sequences pending. `tplc-mqtt` **done** (MQTT 3.1.1 client via libpaho-mqtt3c — opt-in, FetchContent fallback, absent → `getService` nullptr): `FB_Mqtt` builtin + `FB_IotMqttClient`/`Disconnect`/`Publish`/`Subscribe`/`Unsubscribe`/`Receive` wrappers in `compat/tc2/tc2_mqtt.st`; e2e `tc2_mqtt_io` vs `mqtt_broker_fake.py` — connect/subscribe/publish/echo/disconnect `0x1f`; MQTT5 properties, wildcard detail, QoS2, retained, TLS pending. `tplc-ocpp` **done** (OCPP-J charge-point client — WebSocket RFC6455 + OCPP JSON-RPC framing, always available): `FB_Ocpp` builtin + `FB_OcppConnect`/`Disconnect`/`Call`/`Result`/`CallError`/`Receive` wrappers in `compat/tc2/tc2_ocpp.st`; e2e `tc2_ocpp_io` vs `ocpp_csms_fake.py` — WS upgrade/call/result/disconnect `0xf`; OCPP 2.x, security profiles, schema validation pending. `tplc-aes70` **done** (AES70/OCA audio-control client over OSCP TCP — OCP1 + OcaMessage PDU codec, always available): `FB_Aes70` builtin + `FB_Aes70Connect`/`Disconnect`/`Call`/`Keepalive`/`Receive` wrappers in `compat/tc2/tc2_aes70.st`; e2e `tc2_aes70_io` vs `aes70_device_fake.py` — connect/keepalive/call/response/disconnect `0x1f`; notification subscriptions, full OCA catalog, property shorthands pending. `tplc-dmx` **done** (DMX512 output over an opt-in serial port — TIOCSBRK break + MAB + start code + 512 ch at 250 kbaud): `FB_Dmx` builtin + `FB_DmxOpen`/`Close`/`SetChannel`/`SetChannels`/`Send`/`Status` wrappers in `compat/tc2/tc2_dmx.st`; e2e `tc2_dmx_io` vs `dmx_rx_fake.py` (PTY fake) — open/set/send/status/close `0x1f`; RDM + receive pending. DALI/EIB/LON/MBus/EnOcean follow the same opt-in-serial pattern |
 
 ### C1 coverage notes
@@ -1528,6 +1560,44 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   remains the interpreter-free single-block path. The in-process
   backend has no channel (by design). (DECISIONS D-IMPL-56,
   D-IMPL-57, D-IMPL-58).
+
+#### Tc2_NcFifoAxes (`fifo.*`)
+
+- **Model**: FiFoAxes is numeric LREAL setpoint streaming, distinct
+  from the `nc.fifo` G-code block queue above. `tether_io_motion_server`
+  exposes `fifo.*` params: `fifo.chan` selects one of 4 channels,
+  `fifo.integrate` maps a slave index + 1-based group position to a
+  row column, `fifo.write`/`fifo.overwrite` append/replace rows
+  (binary blob `u32 nrows` + `nrows*8` f64 LE, fixed 8-column
+  stride), `fifo.cmd` issues start(1)/stop(2)/reset(3), and
+  `fifo.state`/`naxes`/`maxrows`/`queued`/`seq`/`override` report
+  status. While running, each channel pops one row per 1 ms of
+  `mc.time` drive-clock time and writes it as `0x607A` CSP targets
+  on the integrated `SimulatedCiA402Drive` axes (CSP mode +
+  operation enable applied at start). Capacity is 1000 rows
+  (param `maxValueSize` is uint16).
+- **PLC side**: `tplc-fifo` service (`include/tplc/tplc_fifo.h`,
+  `TplcFifoService` vtable) served by `FifoIoService` when
+  `TPLC_MOTION_IO` exposes `fifo.*`, else the in-process
+  `FifoService` when `tplc-motion` is the local backend (IO-backed
+  axes would not see rows, so the service returns null there).
+  `FB_Fifo` is the op-multiplexed builtin (1=integrate, 2=
+  disintegrate, 3=append, 4=overwrite, 5=command, 6=status+poll,
+  7=override, 8=status) with a bounded 32-row `ROWS` member array;
+  `compat/tc2/tc2_ncfifoaxes.st` wraps it in TwinCAT `FiFo*` shape:
+  `FiFoGetDimension`, `FiFoGroupIntegrate`, `FiFoGroupDisintegrate`,
+  `FiFoWrite`, `FiFoOverwrite`, `FiFoSetChannelOverride`,
+  `FiFoStart`, `FiFoStop`. `iAxisId` is the AXIS_REF handle; the IO
+  adapter converts handle -> 0-based slave (`handle - 1`).
+- **Verified**: `tc2_ncfifoaxes` + `tc2_ncfifoaxes_io` replay
+  `tc2_ncfifoaxes_case.st` (mask `0x3fff`) on both backends —
+  two-axis group integrate, dimension query, row write, override,
+  start/drain to finished with `seq=2`, positions tracking the last
+  row, overwrite + second run (`seq=1`), disintegrate.
+- **Honest gaps**: override percent is recorded but does not
+  rescale absolute position rows; no handshake/busy-wait semantics
+  beyond the synchronous op dispatch; channel count fixed at 4,
+  axes per channel at 8, rows at 1000.
 
 ### C7 coverage notes
 

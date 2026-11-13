@@ -16718,7 +16718,7 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5060_TCNC_FIFOAXES_EN.pdf` · **API entries:** 8
-- **Status:** PENDING — FiFoAxes numeric LREAL streaming needs a stateful FIFO channel object in the runtime (service + builtin + Tether IO params); the existing `nc.fifo`/`FB_ItpFiFoWrite` surface is the G-code block queue, a different feature
+- **Status:** IMPLEMENTED — `compat/tc2/tc2_ncfifoaxes.st` wraps the `tplc-fifo` service + `FB_Fifo` builtin (4 channels x 8 axes x 1000 LREAL rows, 8-column fixed stride); `include/tplc/tplc_fifo.h` ABI, in-process `FifoService`, and `FifoIoService` over `fifo.*` params on `tether_io_motion_server` (rows consumed one per 1 ms of `mc.time` drive clock into `0x607A` CSP targets on the integrated CiA402 axes). e2e `tc2_ncfifoaxes` + `tc2_ncfifoaxes_io` green (integrate/dimension/write/override/start/drain/overwrite/disintegrate). Deviations: numeric setpoint FIFO (not the `nc.fifo` G-code block queue), override percent is recorded but does not rescale absolute rows, `iGroupPosition` is 1-based column index.
 - **Integration:** FIFO axes (synchronous data streams): NC kernel + deterministic buffers.
 
 #### PLC Library

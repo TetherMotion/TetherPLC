@@ -28,7 +28,9 @@ HostServices::HostServices(uint32_t caps)
       ftp_(&host_steady_ns, this), smtp_(&host_steady_ns, this),
       iec870_(&host_steady_ns, this), motion_(&host_steady_ns, this),
       motion_io_(&host_steady_ns, this), nci_io_(&host_steady_ns, this),
+      fifo_io_(&host_steady_ns, this), fifo_(&host_steady_ns, this),
       soe_(&host_steady_ns, this) {
+    fifo_.setMotion(&motion_.table());
     svc_.struct_size  = sizeof(TplcServices);
     svc_.caps         = caps | TPLC_EXT_MOVABLE_BETWEEN;
     svc_.host         = this;
@@ -122,6 +124,16 @@ void* HostServices::getService(const char* name, uint32_t len) {
            fallback. */
         if (nci_io_.active())
             return const_cast<TplcNciService*>(&nci_io_.table());
+        return nullptr;
+    }
+    if (len == 9 && memcmp(name, "tplc-fifo", 9) == 0) {
+        /* FiFoAxes setpoint FIFOs: prefer the Tether IO fifo.* surface;
+           the in-process table only applies when tplc-motion is the
+           local MotionService (IO-backed axes would not see rows). */
+        if (fifo_io_.active())
+            return const_cast<TplcFifoService*>(&fifo_io_.table());
+        if (!motion_io_.active())
+            return const_cast<TplcFifoService*>(&fifo_.table());
         return nullptr;
     }
     if (len == 10 && memcmp(name, "tplc-opcua", 10) == 0) {

@@ -15,6 +15,8 @@
 #include <tplc/host/EcDiagService.hpp>
 #include <tplc/host/EcSyncService.hpp>
 #include <tplc/host/EipService.hpp>
+#include <tplc/host/FifoIoService.hpp>
+#include <tplc/host/FifoService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
 #include <tplc/host/Iec870Service.hpp>
@@ -116,6 +118,11 @@ private:
     /* IO-backed NC interpreter channel; active() only when the
        TPLC_MOTION_IO endpoint also exposes nc.* params. */
     NciIoService  nci_io_;
+    /* FiFoAxes numeric setpoint FIFOs: IO-backed when the endpoint
+       exposes fifo.* params, otherwise the in-process channel table
+       (only meaningful while tplc-motion is the local backend). */
+    FifoIoService fifo_io_;
+    FifoService   fifo_;
     /* OPC UA client; active() only when built with libopen62541. */
     OpcUaService  opcua_;
     /* EtherNet/IP explicit-messaging client; always available. */
