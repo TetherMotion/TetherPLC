@@ -54,7 +54,7 @@ kill -0 "$SRV_PID" 2>/dev/null || { bad "broker fake start"; \
     for i in $(seq 0 800); do
         t=$((i * 10000000))
         if [ "$i" -eq 790 ]; then
-            echo "step $i time=$t in 0=00 expect 0=ff03"
+            echo "step $i time=$t in 0=00 expect 0=ff07"
         else
             echo "step $i time=$t in 0=00"
         fi

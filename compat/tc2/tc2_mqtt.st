@@ -378,6 +378,50 @@ END_VAR
     F_MqttTopicMatch := match AND LEN(t) = 0;
 END_FUNCTION
 
+// ---- FB_IotMqttStatus: session status + broker-message age ----
+// Level-triggered: while Execute is TRUE it polls the connection
+// status each scan.  TimeSinceLastBrokerMsgMs is the
+// GetTimeSinceLastBrokerMessage() equivalent — milliseconds since
+// the last inbound broker message (PUBLISH delivery or connect;
+// transport-level pings are not surfaced by the sync client).
+FUNCTION_BLOCK FB_IotMqttStatus
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+END_VAR
+VAR_OUTPUT
+    Connected : BOOL;
+    State : DINT;
+    LastMsgId : UDINT;
+    LastQos : UDINT;
+    LastError : DINT;
+    TimeSinceLastBrokerMsgMs : UDINT;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Mqtt;
+END_VAR
+    Connected := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute THEN
+        ch.OP := 3;
+        ch.HANDLE := ConnectionHdl;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Connected := ch.STATE = 2;
+            State := ch.STATE;
+            LastMsgId := ch.LASTMSGID;
+            LastError := ch.LASTERR;
+            TimeSinceLastBrokerMsgMs := ch.LASTMSGSINCE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+END_FUNCTION_BLOCK
+
 // ---- FB_IotMqttMessage: one queued MQTT message ----
 // TwinCAT exposes GetTopic/GetPayload/CompareTopic methods; this
 // dialect surfaces the same data as members.

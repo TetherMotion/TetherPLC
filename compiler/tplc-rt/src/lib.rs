@@ -5084,6 +5084,8 @@ const MQ_TLSCERT_LEN: usize = 1428;
 const MQ_TLSCERT: usize = 1429;
 const MQ_TLSKEY_LEN: usize = 1556;
 const MQ_TLSKEY: usize = 1557;
+// LASTMSGSINCE (appended): udint@1684.
+const MQ_LASTMSGSINCE: usize = 1684;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5244,6 +5246,7 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
                 wi32(this.add(MQ_STATE), rd(0));
                 wu32(this.add(MQ_LASTMSGID), rd(8) as u32);
                 wi32(this.add(MQ_LASTERR), rd(16));
+                wu32(this.add(MQ_LASTMSGSINCE), rd(20) as u32);
             } else {
                 wu32(this.add(MQ_ERRID), (-rc).max(0) as u32);
             }

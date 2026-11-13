@@ -25,7 +25,10 @@ typedef struct TplcMqttStatus {
     uint32_t last_msg_id;  /* last pub/sub message id */
     uint32_t last_qos;     /* last pub/sub qos */
     int32_t  last_error;   /* last MQTTReasonCode-ish error */
-    uint32_t reserved[7];  /* pad to 48 */
+    uint32_t last_msg_age_ms; /* ms since last inbound broker
+                                 message (PUBLISH delivery or
+                                 connect); saturates at UINT32_MAX */
+    uint32_t reserved[6];  /* pad to 48 */
 } TplcMqttStatus;
 
 /* ---- connection config ---- */

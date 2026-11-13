@@ -3,7 +3,8 @@
 // self-signed broker); conn2 verifies against TlsCaFile (the
 // broker's self-signed cert doubles as its own CA).  Each
 // connection: CONNECT -> SUBSCRIBE -> PUBLISH -> receive echo ->
-// DISCONNECT.  mask bits 0..10 -> expect 0x7ff.
+// DISCONNECT; conn1 also polls FB_IotMqttStatus for the
+// broker-message age.  mask bits 0..10 -> expect 0x7ff.
 PROGRAM tc2_mqtt_tls_case
 VAR
     con1 : FB_IotMqttClient;
@@ -16,6 +17,7 @@ VAR
     pub2 : FB_IotMqttPublish;
     rx2  : FB_IotMqttReceive;
     dis2 : FB_IotMqttDisconnect;
+    sts  : FB_IotMqttStatus;
     st : INT;
     waitN : INT;
     mask AT %QD0 : UDINT;
@@ -81,13 +83,27 @@ END_VAR
             IF rx1.Topic = 'tplc/tls/a' AND rx1.Payload = 'secure1' THEN
                 mask := mask + 8;
                 rx1.Execute := FALSE;
-                dis1.Execute := TRUE;
-                dis1.ConnectionHdl := hdl1;
-                st := 5;
+                sts.Execute := TRUE;
+                sts.ConnectionHdl := hdl1;
+                st := 12;
             END_IF;
         END_IF;
         IF rx1.Error THEN mask := 16#DEAD; st := 99; END_IF;
         IF waitN > 400 THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    // status poll right after the echo: connected and the
+    // broker-message age is fresh (the echo just landed)
+    IF st = 12 THEN
+        IF sts.Connected
+           AND sts.TimeSinceLastBrokerMsgMs < 60000 THEN
+            mask := mask + 1024;
+            sts.Execute := FALSE;
+            dis1.Execute := TRUE;
+            dis1.ConnectionHdl := hdl1;
+            st := 5;
+        END_IF;
+        IF sts.Error THEN mask := 16#DEAD; st := 99; END_IF;
     END_IF;
 
     IF st = 5 THEN
@@ -171,6 +187,6 @@ END_VAR
         IF dis2.Error THEN mask := 16#DEAD; st := 99; END_IF;
     END_IF;
 
-    con1(); sub1(); pub1(); rx1(); dis1();
+    con1(); sub1(); pub1(); rx1(); dis1(); sts();
     con2(); sub2(); pub2(); rx2(); dis2();
 END_PROGRAM

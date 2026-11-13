@@ -1308,6 +1308,9 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "TLSCAFILE", Type::Str { cap: 127 });
             push(&mut off, "TLSCERTFILE", Type::Str { cap: 127 });
             push(&mut off, "TLSKEYFILE", Type::Str { cap: 127 });
+            /* broker-message age (appended): OP3 copies
+               TplcMqttStatus.last_msg_age_ms here. */
+            push(&mut off, "LASTMSGSINCE", udint());
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:

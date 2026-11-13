@@ -16,6 +16,7 @@
 #include <MQTTClient.h>
 #endif
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <set>
@@ -61,6 +62,7 @@ struct Conn {
     uint32_t last_msg_id = 0;
     int32_t  last_error = 0;
     int      fd = -1;
+    std::chrono::steady_clock::time_point last_rx{};
 #else
     void*    conn = nullptr;
     int32_t  state = 0;
@@ -165,6 +167,7 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
             Conn& cn = impl_->conns[i];
             cn.conn = c; cn.state = 2;
             cn.last_msg_id = 0; cn.last_error = 0;
+            cn.last_rx = std::chrono::steady_clock::now();
             for (int fd : socket_fds())
                 if (!fds_before.count(fd)) { cn.fd = fd; break; }
             *out_handle = i + 1;
@@ -201,6 +204,10 @@ int32_t MqttService::status(void*, uint32_t h, TplcMqttStatus* out) {
     out->state = c.state;
     out->last_msg_id = c.last_msg_id;
     out->last_error = c.last_error;
+    auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - c.last_rx).count();
+    out->last_msg_age_ms = age < 0 ? 0
+        : (age > 0x7fffffffLL ? 0x7fffffffu : uint32_t(age));
     return TPLC_MQTT_OK;
 }
 
@@ -278,6 +285,7 @@ int32_t MqttService::receive(void*, uint32_t h, TplcMqttRx* rx) {
         if (topic) MQTTClient_free(topic);
         return TPLC_MQTT_E_NOMSG;
     }
+    c.last_rx = std::chrono::steady_clock::now();
     rx->topic_len = uint32_t(tlen < 0 ? int(std::strlen(topic)) : tlen);
     rx->payload_len = uint32_t(msg->payloadlen);
     rx->qos = uint32_t(msg->qos);
