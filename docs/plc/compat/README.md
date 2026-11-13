@@ -101,6 +101,11 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       DC time is the low 32 bits of the TON ns scan
                       clock; OUTPUT_REF/CAMSWITCH_REF/TRACK_REF/
                       XFC_TRIGGER_REF flatten to BOOL/LREAL members.
+  tc2_ncdrive.st     Tc2_NcDrive: the 20 SoE/CoE/AX5000 function
+                      blocks are provided by tc2_mc2_drive.st
+                      (NCTOPLC_AXIS_REF + sNetId flatten to the
+                      same UDINT axis handle + NetId string);
+                      this file adds F_GetVersionTcNcDrive.
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -1410,6 +1415,12 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   `XFC_EL1258_TouchProbe`, the five `XFC_*PathPosition*`/
   `XFC_Path*Cam`/`MC_PathDigitalCamSwitch` NciXFC blocks (need the
   NCI path kernel), and all AdvancedHoming step/reference blocks.
+- **Tc2_NcDrive coverage**: all 20 SoE/CoE/AX5000 function blocks
+  are satisfied by the `tc2_mc2_drive.st` implementations — the
+  NcDrive `NCTOPLC_AXIS_REF`/`sNetId` pair flattens to the same
+  UDINT axis handle and `NetId` string those FBs already accept.
+  `compat/tc2/tc2_ncdrive.st` carries `F_GetVersionTcNcDrive` and
+  documents the mapping; the e2e coverage is `tc2_mc2_drive_io`.
 - **Honest gaps**: `MC_TouchProbe` is a cycle-level software latch —
   TwinCAT's hardware touch-probe latches sub-cycle against an encoder
   event, but neither the in-process axis nor `SimulatedCiA402Drive`

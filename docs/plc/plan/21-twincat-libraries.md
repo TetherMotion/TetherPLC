@@ -16225,7 +16225,7 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_NcDrive_EN.pdf` · **API entries:** 21
-- **Status:** axis interface covered by `compat/tc2/tc2_mc2.st` axis model — Tether DS402 backend
+- **Status:** IMPLEMENTED — all 20 SoE/CoE/AX5000 FBs covered by `compat/tc2/tc2_mc2_drive.st` (NCTOPLC_AXIS_REF/sNetId flatten to the same UDINT axis handle + NetId; e2e `tc2_mc2_drive_io`); `compat/tc2/tc2_ncdrive.st` adds `F_GetVersionTcNcDrive`
 - **Integration:** NC drive function blocks: axis backend.
 
 #### Function blocks › General SoE
