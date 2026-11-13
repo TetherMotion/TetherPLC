@@ -1362,6 +1362,10 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   into `Value0..Value3` (the `MC_FlyingSawCharacValues` STRUCT is
   not representable). `FB_CoEAX8000BrakeTest` reports `Succeeded`
   on command acceptance — the sim has no torque verification.
+  The same three FBs also satisfy Tc2_MC2_FlyingSaw (plan row 18);
+  `MC_GearInPos` is position-ratio coupling only — the Universal
+  Flying Saw sync-point cam evaluation (`CamTableCharac` input,
+  exact synchronous point/velocity) is not modeled.
 - **Honest gaps**: `MC_TouchProbe` is a cycle-level software latch —
   TwinCAT's hardware touch-probe latches sub-cycle against an encoder
   event, but neither the in-process axis nor `SimulatedCiA402Drive`

@@ -15409,7 +15409,18 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5055_TC3_NC_Flying_Saw_EN.pdf` · **API entries:** 3
-- **Status:** core MC blocks in `compat/tc2/tc2_mc2.st`; flying-saw coordination on request
+- **Status: IMPLEMENTED (simplified coupling)** — all three FBs live
+  in `compat/tc2/tc2_mc2_drive.st` and are covered by the
+  `tc2_mc2_drive_io` e2e (mask `0xfffffff`): `MC_GearInVelo`
+  (velocity-ratio PV coupling, 0x606C -> 0x60FF),
+  `MC_GearInPos` (position-ratio CSP coupling, 0x6064 -> 0x607A),
+  `MC_ReadFlyingSawCharacteristics` (OD 0x2006..0x2009 ->
+  `Value0..Value3`, the `MC_FlyingSawCharacValues` STRUCT flattened).
+  Not modeled: the Universal Flying Saw sync-point cam evaluation —
+  `MC_GearInPos` has no `CamTableCharac` input and does not compute
+  the exact synchronous point/velocity of the real block; the
+  characteristic values are stored/read but not consumed by the
+  coupling.
 - **Integration:** Flying saw: specialized motion kernel on the axis backend.
 
 #### Flying saw
