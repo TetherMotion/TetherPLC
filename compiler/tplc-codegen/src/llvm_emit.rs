@@ -2799,7 +2799,16 @@ impl<'ctx> Gen<'ctx> {
             ],
             false,
         );
-        let vscope = program_ctx(self.layout);
+        // every layout field is top-level storage with an absolute blob
+        // offset (bare names single-program, PROG.name / GVL.name qualified
+        // otherwise) — program_ctx would drop the qualified ones and leave
+        // multi-program modules with an empty table
+        let vscope: Ctx = self
+            .layout
+            .fields
+            .iter()
+            .map(|(k, f)| (k.clone(), (f.offset, f.ty.clone())))
+            .collect();
         let ventries: Vec<_> = vscope
             .iter()
             .filter_map(|(name, (off, ty))| {
@@ -2811,7 +2820,17 @@ impl<'ctx> Gen<'ctx> {
                 nb[..bytes.len()].copy_from_slice(bytes);
                 let (is_at, region, tc, unit, img) = match io_binds
                     .iter()
-                    .find(|b| b.name.split('.').next_back() == Some(name.as_str()))
+                    .find(|b| {
+                        // binds are "POU.var"; single-program fields are
+                        // bare "var", qualified fields match in full
+                        b.name.eq_ignore_ascii_case(name.as_str())
+                            || (!name.contains('.')
+                                && b.name
+                                    .rsplit('.')
+                                    .next()
+                                    .map(|s| s.eq_ignore_ascii_case(name.as_str()))
+                                    == Some(true))
+                    })
                 {
                     Some(b) => {
                         let (r, t, u) = io_codes(&b.at, ty);
@@ -2834,13 +2853,10 @@ impl<'ctx> Gen<'ctx> {
                 ))
             })
             .collect();
-        let g_vars = self.module.add_global(
-            var_ty.array_type(ventries.len().max(1) as u32),
-            None,
-            "__tplc_vars",
-        );
+        let var_arr_ty = var_ty.array_type(ventries.len().max(1) as u32);
+        let g_vars = self.module.add_global(var_arr_ty, None, "__tplc_vars");
         if ventries.is_empty() {
-            g_vars.set_initializer(&var_ty.const_zero());
+            g_vars.set_initializer(&var_arr_ty.const_zero());
         } else {
             g_vars.set_initializer(&var_ty.const_array(&ventries));
         }
