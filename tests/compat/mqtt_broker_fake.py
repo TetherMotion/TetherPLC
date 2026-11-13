@@ -16,6 +16,7 @@ CONNS = set()   # live client sockets
 SRV = [None]    # listener socket
 TLSCTX = [None] # ssl context when --tls
 BOUNCE = [None] # {'topic','delay'} one-shot self-bounce
+RESPONDER = [None]  # topic that triggers a req/resp reply
 
 def read_varint(s):
     mult, val = 1, 0
@@ -305,6 +306,19 @@ def handle(conn):
                     with LOCK:
                         RETAINED[topic] = payload
                 publish_to(topic, payload, qos, props_raw)
+                # request/response responder: a v5 publish carrying
+                # ResponseTopic + CorrelationData gets a 'pong' reply
+                # on the response topic with the correlation echoed
+                if (v5 and RESPONDER[0] and topic == RESPONDER[0]
+                        and pprops.get('rtopic')):
+                    rt = pprops['rtopic']
+                    corr = bytes.fromhex(pprops.get('corr', ''))
+                    rprops = b'\x00'
+                    if corr:
+                        pb = b'\x09' + struct.pack('>H', len(corr)) + corr
+                        rprops = bytes([len(pb)]) + pb
+                    print('RESPONDER reply ->', rt, flush=True)
+                    publish_to(rt, b'pong', 0, rprops)
                 # one-shot self-bounce: after broadcasting the trigger
                 # topic, drop every client + the listener, then rebind
                 # after `delay` seconds (deterministic reconnect e2e)
@@ -404,6 +418,9 @@ def main():
         BOUNCE[0] = {'topic': sys.argv[i + 1],
                      'delay': float(sys.argv[i + 2]),
                      'port': port}
+    # optional req/resp responder: --responder <request-topic>
+    if '--responder' in sys.argv:
+        RESPONDER[0] = sys.argv[sys.argv.index('--responder') + 1]
     SRV[0] = s
     accept_loop(s)
 

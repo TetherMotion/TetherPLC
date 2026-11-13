@@ -960,3 +960,119 @@ END_VAR
     END_IF;
     rsPrev := ResetReq;
 END_FUNCTION_BLOCK
+
+// ---- FB_IotMqtt5RequestResponse: MQTT5 req/resp over the broker ----
+// TwinCAT's Request/Response methods publish with ResponseTopic +
+// CorrelationData properties and match the reply by correlation.
+// This FB drives that flow as a bounded state machine: subscribe the
+// response inbox once, publish the request, then poll
+// FB_IotMqtt5Receive until a message whose Topic and CorrelationData
+// match arrives (or TimeoutScans elapses -> Error).
+FUNCTION_BLOCK FB_IotMqtt5RequestResponse
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    RequestTopic : STRING[127];
+    RequestPayload : STRING[255];
+    QoS : UDINT;
+    ResponseTopic : STRING[127];   // inbox to subscribe + advertise
+    CorrelationData : STRING[127];
+    TimeoutScans : UDINT;          // 0 = wait forever
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    ResponseTopicOut : STRING[127];
+    ResponsePayload : STRING[255];
+    ResponseQoS : UDINT;
+    ResponseMessageId : UDINT;
+END_VAR
+VAR
+    st : UDINT;
+    waitN : UDINT;
+    exPrev : BOOL;
+    sub : FB_IotMqtt5Subscribe;
+    pub : FB_IotMqtt5Publish;
+    rx  : FB_IotMqtt5Receive;
+END_VAR
+    sub(); pub();
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    Busy := st <> 0;
+    IF Execute AND NOT exPrev AND st = 0 THEN
+        st := 1;
+        waitN := 0;
+    END_IF;
+    exPrev := Execute;
+    // st 1: subscribe the response inbox (once per request)
+    IF st = 1 THEN
+        sub.Execute := TRUE;
+        sub.ConnectionHdl := ConnectionHdl;
+        sub.TopicFilter := ResponseTopic;
+        sub.QoS := 0;
+        sub.NoLocal := FALSE;
+        sub.RetainAsPublished := FALSE;
+        sub.RetainHandling := 0;
+        sub.SubscriptionId := 0;
+        sub.UserProperties := '';
+        st := 2;
+    END_IF;
+    IF st = 2 THEN
+        IF sub.Done THEN
+            sub.Execute := FALSE;
+            pub.Execute := TRUE;
+            pub.ConnectionHdl := ConnectionHdl;
+            pub.Topic := RequestTopic;
+            pub.Payload := RequestPayload;
+            pub.QoS := QoS;
+            pub.RetainOn := FALSE;
+            pub.PayloadFormatUtf8 := FALSE;
+            pub.MessageExpiryS := 0;
+            pub.ContentType := '';
+            pub.ResponseTopic := ResponseTopic;
+            pub.CorrelationData := CorrelationData;
+            pub.UserProperties := '';
+            st := 3;
+        END_IF;
+        IF sub.Error THEN
+            Error := TRUE; ErrorID := sub.ErrorID; st := 0;
+        END_IF;
+    END_IF;
+    IF st = 3 THEN
+        IF pub.Done THEN
+            pub.Execute := FALSE;
+            st := 4;
+        END_IF;
+        IF pub.Error THEN
+            Error := TRUE; ErrorID := pub.ErrorID; st := 0;
+        END_IF;
+    END_IF;
+    // st 4: poll for the correlated response
+    IF st = 4 THEN
+        rx.Execute := TRUE;
+        rx.ConnectionHdl := ConnectionHdl;
+        rx();
+        rx.Execute := FALSE;
+        IF rx.Message THEN
+            IF rx.Topic = ResponseTopic
+               AND rx.CorrelationData = CorrelationData THEN
+                ResponseTopicOut := rx.Topic;
+                ResponsePayload := rx.Payload;
+                ResponseQoS := rx.QoS;
+                ResponseMessageId := rx.MessageId;
+                Done := TRUE;
+                st := 0;
+            END_IF;
+        END_IF;
+        IF rx.Error THEN
+            Error := TRUE; ErrorID := rx.ErrorID; st := 0;
+        END_IF;
+        waitN := waitN + 1;
+        IF TimeoutScans > 0 AND waitN >= TimeoutScans THEN
+            Error := TRUE; ErrorID := 90; st := 0;
+        END_IF;
+    END_IF;
+END_FUNCTION_BLOCK
