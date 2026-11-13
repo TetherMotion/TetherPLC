@@ -41,10 +41,10 @@ kill -0 "$SRV_PID" 2>/dev/null || { bad "broker fake start"; \
          echo "== $pass pass, $fail fail"; exit 1; }
 
 {
-    for i in $(seq 0 600); do
+    for i in $(seq 0 800); do
         t=$((i * 10000000))
-        if [ "$i" -eq 250 ]; then
-            echo "step $i time=$t in 0=00 expect 0=7f"
+        if [ "$i" -eq 790 ]; then
+            echo "step $i time=$t in 0=00 expect 0=ff0f"
         else
             echo "step $i time=$t in 0=00"
         fi
@@ -57,9 +57,9 @@ IMG=/tplc_tc2mqtt_$$; CTL="$WORK/mqtt.ctl"
     --ctl "$CTL" --settle-ms 1500 >"$WORK/sim.log" 2>&1
 rc=$?
 if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log"; then
-    ok "sim replay: MQTT connect/sub/pub/echo/disconnect"
+    ok "sim replay: MQTT connect/pub/echo/disconnect + last-will abort e2e"
 else
-    bad "sim replay: MQTT connect/sub/pub/echo/disconnect"
+    bad "sim replay: MQTT connect/pub/echo/disconnect + last-will abort e2e"
     tail -20 "$WORK/sim.log"
 fi
 

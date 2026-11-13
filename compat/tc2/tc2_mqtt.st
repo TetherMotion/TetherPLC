@@ -8,8 +8,11 @@
 // for a pending publish each scan (Retained reports the broker's
 // retain flag on delivery); Disconnect releases.  F_MqttTopicMatch
 // implements the MQTT 3.1.1 '+'/'#' filter semantics client-side.
-// MQTT5 properties, TLS, last-will, and QoS2 two-phase handshake
-// detail are out of scope for this tranche.
+// MQTT5 properties, TLS, and QoS2 two-phase handshake detail are
+// out of scope for this tranche.  Last-will is supported: set
+// WillTopic/WillPayload on FB_IotMqttClient and the broker publishes
+// the will when the link drops ungracefully — FB_IotMqttAbort drops
+// the TCP connection without DISCONNECT to trigger exactly that.
 //
 // Topics are bounded STRING[127], payloads STRING[255].  STATUS
 // carries the service return code, ErrorID its positive form;
@@ -23,6 +26,10 @@ VAR_INPUT
     Port : UDINT;
     CleanSession : BOOL;
     KeepAlive : UDINT;
+    WillTopic : STRING[127];
+    WillPayload : STRING[255];
+    WillQoS : UDINT;
+    WillRetain : BOOL;
 END_VAR
 VAR_OUTPUT
     Done : BOOL;
@@ -44,6 +51,10 @@ END_VAR
         ch.PORT := Port;
         IF CleanSession THEN ch.CLEAN := 1; ELSE ch.CLEAN := 0; END_IF;
         ch.KEEPALIVE := KeepAlive;
+        ch.WILLTOPIC := WillTopic;
+        ch.WILLPAYLOAD := WillPayload;
+        ch.WILLQOS := WillQoS;
+        IF WillRetain THEN ch.WILLRETAIN := 1; ELSE ch.WILLRETAIN := 0; END_IF;
         ch();
         IF ch.STATUS = 0 THEN
             Done := TRUE;
@@ -89,6 +100,38 @@ END_VAR
     END_IF;
     exPrev := Execute;
     Busy := FALSE;
+END_FUNCTION_BLOCK
+
+// ---- FB_IotMqttAbort: drop TCP without DISCONNECT (fires will) ----
+FUNCTION_BLOCK FB_IotMqttAbort
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Mqtt;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 9;
+        ch.HANDLE := ConnectionHdl;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
 END_FUNCTION_BLOCK
 
 // ---- FB_IotMqttPublish: PUBLISH/PUBACK ----

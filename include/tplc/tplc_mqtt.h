@@ -38,6 +38,13 @@ typedef struct TplcMqttConnectCfg {
     const char* username;     /* NUL-terminated or NULL */
     const char* password;     /* NUL-terminated or NULL */
     const char* client_id;    /* NUL-terminated or NULL (auto) */
+    /* last-will (MQTT 3.1.1): published by the broker when the
+       connection drops ungracefully.  will_topic NULL/empty = none. */
+    const char* will_topic;
+    const uint8_t* will_payload;
+    uint32_t will_payload_len;
+    uint32_t will_qos;
+    uint32_t will_retain;
 } TplcMqttConnectCfg;
 
 /* ---- received-message struct ---- */
@@ -87,7 +94,12 @@ typedef struct TplcMqttService {
     /* isConnected check (cheap, no IO) */
     int32_t (*mqtt_is_connected)(void*, uint32_t h);
 
-    void* reserved[8];
+    /* abort: tear down the TCP connection WITHOUT a DISCONNECT
+       packet, so the broker treats it as ungraceful and publishes
+       the registered last-will. */
+    int32_t (*mqtt_abort)(void*, uint32_t h);
+
+    void* reserved[7];
 } TplcMqttService;
 
 /* status / error codes */

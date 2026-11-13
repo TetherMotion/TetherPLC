@@ -47,6 +47,7 @@ private:
     int32_t unsubscribe(void*, uint32_t h, const char* filter);
     int32_t receive(void*, uint32_t h, TplcMqttRx* rx);
     int32_t isConnected(void*, uint32_t h);
+    int32_t abort(void*, uint32_t h);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

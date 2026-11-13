@@ -4997,6 +4997,15 @@ const MQ_LASTERR: usize = 884;
 const MQ_STATUS: usize = 888;
 const MQ_ERRID: usize = 892;
 const MQ_CONNECTED: usize = 896;
+// Will members (appended): WILLTOPIC u8len@900+data@901 cap127,
+// WILLPAYLOAD u8len@1028+data@1029 cap255, WILLQOS@1284,
+// WILLRETAIN@1288.
+const MQ_WILLTOPIC_LEN: usize = 900;
+const MQ_WILLTOPIC: usize = 901;
+const MQ_WILLPAYLOAD_LEN: usize = 1028;
+const MQ_WILLPAYLOAD: usize = 1029;
+const MQ_WILLQOS: usize = 1284;
+const MQ_WILLRETAIN: usize = 1288;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5008,6 +5017,7 @@ const MQ_SVC_SUBSCRIBE: usize = 48;
 const MQ_SVC_UNSUBSCRIBE: usize = 56;
 const MQ_SVC_RECEIVE: usize = 64;
 const MQ_SVC_IS_CONNECTED: usize = 72;
+const MQ_SVC_ABORT: usize = 80;
 
 /// service lookup for "tplc-mqtt" (9 chars)
 unsafe fn mqtt_service(ctx: *const u8) -> *const u8 {
@@ -5064,19 +5074,39 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
         1 => {
             let mut buf = [0u8; 64];
             uacstr(this, MQ_HOST_LEN, MQ_HOST, 63, buf.as_mut_ptr());
-            // TplcMqttConnectCfg: clean@0 i32, keepalive@4 u32,
+            // TplcMqttConnectCfg (72B): clean@0 i32, keepalive@4 u32,
             // version@8 u32, timeout@12 u32, username@16 ptr,
-            // password@24 ptr, client_id@32 ptr
-            let mut cfg = [0u8; 40];
-            let mut wi = |off: usize, v: i32| {
+            // password@24 ptr, client_id@32 ptr, will_topic@40 ptr,
+            // will_payload@48 ptr, will_payload_len@56 u32,
+            // will_qos@60 u32, will_retain@64 u32
+            let mut cfg = [0u8; 72];
+            let cfgp = cfg.as_mut_ptr();
+            let wi = |off: usize, v: i32| {
                 let b = v.to_le_bytes();
-                core::ptr::copy_nonoverlapping(b.as_ptr(), cfg.as_mut_ptr().add(off), 4);
+                core::ptr::copy_nonoverlapping(b.as_ptr(), cfgp.add(off), 4);
             };
             wi(0, ru32(this.add(MQ_CLEAN)) as i32);
             wi(4, ru32(this.add(MQ_KEEPALIVE)) as i32);
             wi(8, 3);       // MQTT 3.1.1 default
             wi(12, 5000);   // connect timeout ms
             // username/password/client_id ptrs left null
+            let mut wbuf = [0u8; 128];
+            let mut pbuf = [0u8; 256];
+            if *this.add(MQ_WILLTOPIC_LEN) > 0 {
+                uacstr(this, MQ_WILLTOPIC_LEN, MQ_WILLTOPIC, 127,
+                       wbuf.as_mut_ptr());
+                let plen = uacstr(this, MQ_WILLPAYLOAD_LEN,
+                                  MQ_WILLPAYLOAD, 255, pbuf.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (wbuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(40), 8);
+                core::ptr::copy_nonoverlapping(
+                    (pbuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(48), 8);
+                wi(56, plen as i32);
+                wi(60, ru32(this.add(MQ_WILLQOS)) as i32);
+                wi(64, ru32(this.add(MQ_WILLRETAIN)) as i32);
+            }
             let f: FMqttConnect = core::mem::transmute(mqfn(svc, MQ_SVC_CONNECT));
             let mut h: u32 = 0;
             let rc = f(svc, buf.as_ptr(), ru32(this.add(MQ_PORT)),
@@ -5180,6 +5210,11 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             let rc = f(svc, ru32(this.add(MQ_HANDLE)));
             wi32(this.add(MQ_STATUS), rc);
             wu32(this.add(MQ_CONNECTED), if rc == 1 { 1 } else { 0 });
+        }
+        9 => {
+            // abort: drop TCP without DISCONNECT -> broker fires will
+            let f: FMqttDisconnect = core::mem::transmute(mqfn(svc, MQ_SVC_ABORT));
+            set_rc(f(svc, ru32(this.add(MQ_HANDLE))));
         }
         _ => {
             wi32(this.add(MQ_STATUS), -1);

@@ -34163,7 +34163,7 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6701_TC3_IoT_Communication_MQTT_EN.pdf` · **API entries:** 372
-- **Status:** IoT function surface folded into `compat/tc2/tc2_mqtt.st` — ctest tc2_mqtt_io. Delivered: MQTT 3.1.1 client FBs (connect/disconnect/publish/subscribe/unsubscribe/receive/status), retained-message flag on delivery, client-side `F_MqttTopicMatch` wildcard matching, python fake-broker e2e incl. retained delivery. Remaining depth: MQTT5 properties, TLS, last-will, QoS2 handshake detail, `FB_IotMqttMessageQueue`/`FB_IotMqtt5Client` shapes, HTTP egress.
+- **Status:** IoT function surface folded into `compat/tc2/tc2_mqtt.st` — ctest tc2_mqtt_io. Delivered: MQTT 3.1.1 client FBs (connect/disconnect/publish/subscribe/unsubscribe/receive/status), retained-message flag on delivery, client-side `F_MqttTopicMatch` wildcard matching, MQTT 3.1.1 last-will (topic/payload/QoS/retain on connect) plus `FB_IotMqttAbort` for ungraceful drop (socket shutdown without DISCONNECT so the broker fires the will), python fake-broker e2e incl. retained delivery, cross-connection broadcast, and will delivery. Remaining depth: MQTT5 properties, TLS, QoS2 handshake detail, `FB_IotMqttMessageQueue`/`FB_IotMqtt5Client` shapes, HTTP egress.
 - **Integration:** IoT base: MQTT/HTTP egress via socket service.
 
 #### PLC API › Tc3_IotBase

@@ -465,8 +465,20 @@ int32_t Iec61850Service::rcbGet(void*, uint32_t h, const char* rcbRef,
     out->buffered  = ClientReportControlBlock_isBuffered(rcb) ? 1 : 0;
     out->gi        = ClientReportControlBlock_getGI(rcb) ? 1 : 0;
     out->purge_buf = ClientReportControlBlock_getPurgeBuf(rcb) ? 1 : 0;
-    out->resv_tms  = ClientReportControlBlock_getResvTms(rcb);
-    out->entry_id  = ClientReportControlBlock_getEntryId(rcb);
+    out->resv_tms  = uint32_t(ClientReportControlBlock_getResvTms(rcb));
+    /* EntryId is an opaque MMS octet string; fold it into a stable
+       u32 digest (0 = absent). */
+    if (MmsValue* eid =
+            ClientReportControlBlock_getEntryId(rcb)) {
+        uint32_t h = 2166136261u;
+        const int n = MmsValue_getOctetStringSize(eid);
+        for (int i = 0; i < n; ++i) {
+            h ^= uint32_t(MmsValue_getOctetStringOctet(eid, i));
+            h *= 16777619u;
+        }
+        out->entry_id = h;
+        MmsValue_delete(eid);
+    }
     ClientReportControlBlock_destroy(rcb);
     impl_->conns[h - 1].invoke_id++;
     return TPLC_61850_OK;

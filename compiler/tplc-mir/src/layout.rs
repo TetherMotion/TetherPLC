@@ -1287,6 +1287,14 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
             push(&mut off, "CONNECTED", udint());
+            /* last-will + abort (appended): OP1 reads WILLTOPIC/
+               WILLPAYLOAD/WILLQOS/WILLRETAIN; OP9 aborts the
+               connection without DISCONNECT so the broker fires
+               the will. */
+            push(&mut off, "WILLTOPIC", Type::Str { cap: 127 });
+            push(&mut off, "WILLPAYLOAD", Type::Str { cap: 255 });
+            push(&mut off, "WILLQOS", udint());
+            push(&mut off, "WILLRETAIN", udint());
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:

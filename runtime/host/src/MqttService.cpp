@@ -16,13 +16,43 @@
 #include <MQTTClient.h>
 #endif
 
+#include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 #include <vector>
+
+#ifdef TPLC_HAVE_MQTT
+#include <dirent.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 namespace tplc {
 
 namespace {
+
+#ifdef TPLC_HAVE_MQTT
+/* socket fds owned by this process; used to identify the fd Paho
+   opened for a client so abort() can drop it without DISCONNECT. */
+std::set<int> socket_fds() {
+    std::set<int> out;
+    DIR* d = opendir("/proc/self/fd");
+    if (!d) return out;
+    while (dirent* e = readdir(d)) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char path[280], l[128];
+        std::snprintf(path, sizeof(path), "/proc/self/fd/%s", e->d_name);
+        ssize_t n = readlink(path, l, sizeof(l) - 1);
+        if (n <= 0) continue;
+        l[n] = '\0';
+        if (std::strncmp(l, "socket:", 7) == 0)
+            out.insert(std::atoi(e->d_name));
+    }
+    closedir(d);
+    return out;
+}
+#endif
 
 struct Conn {
 #ifdef TPLC_HAVE_MQTT
@@ -30,6 +60,7 @@ struct Conn {
     int32_t  state = 0;
     uint32_t last_msg_id = 0;
     int32_t  last_error = 0;
+    int      fd = -1;
 #else
     void*    conn = nullptr;
     int32_t  state = 0;
@@ -69,6 +100,8 @@ MqttService::MqttService() {
         { return self(s)->receive(s, h, rx); };
     svc_.mqtt_is_connected = [](void* s, uint32_t h)
         { return self(s)->isConnected(s, h); };
+    svc_.mqtt_abort = [](void* s, uint32_t h)
+        { return self(s)->abort(s, h); };
 }
 
 MqttService::~MqttService() {
@@ -92,6 +125,7 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
             char uri[128];
             std::snprintf(uri, sizeof(uri), "tcp://%s:%u",
                           host, port ? port : 1883);
+            std::set<int> fds_before = socket_fds();
             int rc = MQTTClient_create(&c, uri,
                         cfg && cfg->client_id ? cfg->client_id : "tplc-client",
                         MQTTCLIENT_PERSISTENCE_NONE, nullptr);
@@ -102,6 +136,16 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
             opts.cleansession = cfg ? cfg->clean_session : 1;
             if (cfg && cfg->username) opts.username = cfg->username;
             if (cfg && cfg->password) opts.password = cfg->password;
+            MQTTClient_willOptions will;
+            if (cfg && cfg->will_topic && cfg->will_topic[0]) {
+                will = MQTTClient_willOptions_initializer;
+                will.topicName = cfg->will_topic;
+                will.payload.len = int(cfg->will_payload_len);
+                will.payload.data = cfg->will_payload;
+                will.qos = int(cfg->will_qos);
+                will.retained = cfg->will_retain ? 1 : 0;
+                opts.will = &will;
+            }
             rc = MQTTClient_connect(c, &opts);
             if (rc != MQTTCLIENT_SUCCESS) {
                 MQTTClient_destroy(&c);
@@ -110,6 +154,8 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
             Conn& cn = impl_->conns[i];
             cn.conn = c; cn.state = 2;
             cn.last_msg_id = 0; cn.last_error = 0;
+            for (int fd : socket_fds())
+                if (!fds_before.count(fd)) { cn.fd = fd; break; }
             *out_handle = i + 1;
             return TPLC_MQTT_OK;
         }
@@ -129,7 +175,7 @@ int32_t MqttService::disconnect(void*, uint32_t h) {
     MQTTClient_disconnect(c.conn, 500);
     MQTTClient_destroy(&c.conn);
 #endif
-    c.conn = nullptr; c.state = 0;
+    c.conn = nullptr; c.state = 0; c.fd = -1;
     return TPLC_MQTT_OK;
 }
 
@@ -247,6 +293,26 @@ int32_t MqttService::isConnected(void*, uint32_t h) {
 #else
     return 0;
 #endif
+}
+
+int32_t MqttService::abort(void*, uint32_t h) {
+    if (h == 0 || h > TPLC_MQTT_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_MQTT_E_HANDLE;
+    Conn& c = impl_->conns[h - 1];
+#ifdef TPLC_HAVE_MQTT
+    /* Drop the TCP connection without an MQTT DISCONNECT so the
+       broker publishes the registered last-will.  Paho has no abort
+       API and MQTTClient_destroy on a live client corrupts the
+       shared client state, so shut the socket down directly and let
+       Paho observe the EOF before freeing the (now disconnected)
+       client. */
+    if (c.fd > 0) shutdown(c.fd, SHUT_RDWR);
+    for (int i = 0; i < 50 && MQTTClient_isConnected(c.conn); ++i)
+        usleep(10000);
+    MQTTClient_destroy(&c.conn);
+#endif
+    c.conn = nullptr; c.state = 0; c.fd = -1;
+    return TPLC_MQTT_OK;
 }
 
 } // namespace tplc
