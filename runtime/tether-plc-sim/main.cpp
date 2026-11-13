@@ -339,6 +339,10 @@ int main(int argc, char** argv) {
             }
         }
         std::vector<uint8_t> obuf(out_size);
+        /* TASK_STEP is a mutating ctl op: the runtime rate-limits them
+           (20/s, burst 40). Pace scan steps under the limit or every
+           step past the burst is denied. */
+        uint64_t last_taskstep_ns = 0;
         for (auto& s : steps) {
             if (g_stop) break;
             uint64_t seq0 = tplc_img_load_u64(&img.hdr->out_seq);
@@ -429,6 +433,11 @@ int main(int argc, char** argv) {
                 uint32_t zero = 0, one = 1;
                 memcpy(rq, &zero, 4);
                 memcpy(rq + 4, &one, 4);
+                if (last_taskstep_ns) {
+                    uint64_t dt = mono_ns() - last_taskstep_ns;
+                    if (dt < 60000000ull) usleep((useconds_t)(60000000ull - dt) / 1000);
+                }
+                last_taskstep_ns = mono_ns();
                 if (ctl_call(ctl_fd, TPLC_OP_TASK_STEP, rq, sizeof rq,
                              rb, sizeof rb) < 0) {
                     fprintf(stderr, "step %u: TASK_STEP failed\n",
@@ -442,8 +451,19 @@ int main(int argc, char** argv) {
             while (tplc_img_load_u64(&img.hdr->out_seq) == seq0 &&
                    mono_ns() - wt < 2000000000ull)
                 usleep(500);
-            int rc2 = tplc_image_read_outputs(&img, obuf.data(), 0,
+            /* seqlock reads can lose to a fast-scanning plc — retry
+               transient SEQ_EXHAUSTED/EPOCH a bounded number of times
+               before calling the step divergent */
+            int rc2 = -1;
+            for (int att = 0; att < 200; att++) {
+                rc2 = tplc_image_read_outputs(&img, obuf.data(), 0,
                                               out_size);
+                if (rc2 == 0 ||
+                    (rc2 != TPLC_E_IMG_SEQ_EXHAUSTED &&
+                     rc2 != TPLC_E_IMG_EPOCH))
+                    break;
+                usleep(1000);
+            }
             if (rc2 != 0) {
                 fprintf(stderr, "step %u: read_outputs rc=%d\n",
                         s.idx, rc2);
