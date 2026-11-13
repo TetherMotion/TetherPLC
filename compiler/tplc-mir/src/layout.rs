@@ -1468,6 +1468,50 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
                 bits: 64,
             });
         }
+        /* FB_EcDiagRead — tplc-ecdiag service bridge (EtherCAT CoE
+        0x10F3 diag history over Tether IO ec.coediag.* params).
+        Synchronous op dispatch: OP 1=read (SLAVE -> COUNT/NEWEST/
+        ACKED/NEWMSGS/INFOFLAGS + 16-slot parallel entry arrays),
+        2=ack (SLAVE/ACKVAL -> STATUS). STATUS carries the service
+        return code, ERRID its positive form. */
+        "FB_EcDiagRead" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let arr32 = || Type::Array {
+                elem: Box::new(udint()),
+                lo: 0,
+                hi: 15,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "SLAVE", udint());
+            push(&mut off, "ACKVAL", udint());
+            push(&mut off, "COUNT", udint());
+            push(&mut off, "NEWEST", udint());
+            push(&mut off, "ACKED", udint());
+            push(&mut off, "NEWMSGS", udint());
+            push(&mut off, "INFOFLAGS", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "MSGTYPE", arr32());
+            push(&mut off, "ACKST", arr32());
+            push(&mut off, "TSMS", arr32());
+            push(&mut off, "CODE", arr32());
+            push(&mut off, "CODETYPE", arr32());
+            push(&mut off, "TEXTID", arr32());
+            push(&mut off, "MODULE", arr32());
+            push(&mut off, "CHANNEL", arr32());
+            push(&mut off, "MSGTEXT", Type::Array {
+                elem: Box::new(Type::Str { cap: 63 }),
+                lo: 0,
+                hi: 15,
+            });
+        }
         /* FB_Ocpp — tplc-ocpp service bridge (OCPP-J client over
         WebSocket + JSON-RPC). Synchronous op dispatch like FB_Eip:
         set OP + fields and call. OP 1=connect (HOST/PORT/PATH/OCPPID

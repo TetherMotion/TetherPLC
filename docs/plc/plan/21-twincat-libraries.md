@@ -346,7 +346,7 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T2
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_EtherCAT_EN.pdf` · **API entries:** 97
-- **Status:** EtherCAT master/stack lives in Tether (io/ethercat domain) — PLC surface only for diag reads on request
+- **Status:** EtherCAT master/stack lives in Tether (io/ethercat domain); the PLC diag-read surface is delivered via `tplc-ecdiag` (Tc3_EtherCATDiag, see its entry); mailbox/state FBs (`FB_EcPhysicalReadCmd` etc.) remain unimplemented pending a master control-plane bridge
 - **Integration:** EtherCAT mailbox/state access needs master service hooks.
 
 #### EtherCAT Commands
@@ -3498,7 +3498,7 @@ per-parameter prose.
 
 - **Category:** Standard · **Tier:** T2
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_EtherCATDiag_EN.pdf` · **API entries:** 2
-- **Status:** EtherCAT diagnostics live in Tether (io/ethercat) — PLC read surface on request
+- **Status:** IMPLEMENTED (sim contract) — `tplc-ecdiag` host service reads the `ec.coediag.*` params over Tether IO (`TPLC_EC_IO`, falls back to `TPLC_MOTION_IO`): `ec.coediag.slave` selects the port address, `ec.coediag.history` returns the 0x10F3 header + 22-byte ETG.1020 records, `ec.coediag.ack` writes newest-acked. `compat/tc3/tc3_ecdiag.st` provides `FB_CoE_DiagHistory_Read` over the `FB_EcDiagRead` builtin; entries surface as flattened parallel `aE*` member arrays (no user STRUCTs in this dialect), `sMsgText` is a generated `TID=/CODE=` fallback (ESI/XML texts unavailable), `tReadInterval` maps to `nReadIntervalScans`, and `diag_code_type` is approximated. `tc3_ecdiag_io` e2e green against `tether_io_motion_server --clock sim` (read/ack/slave counts). Remaining: real-master hookup needs per-slave CoE SDO 0x10F3 reads bridged into the same params; `FB_CoE_DiagHistory_ReadAxis` needs Tc2_MC2 `AXIS_REF` objects; ESI text lookup and module/profile diag-code typing unsupported.
 - **Integration:** EtherCAT diagnostics need master control-plane hooks (AL state, SII, PDO config). Tether (sibling repo) has an EtherCAT master; bridging is cross-repo work.
 
 #### Function blocks

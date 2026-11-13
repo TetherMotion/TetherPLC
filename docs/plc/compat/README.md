@@ -1407,6 +1407,28 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   status core TwinCAT apps use most.
   (DECISIONS D-IMPL-59).
 
+### EtherCAT surfaces (`tplc-ecsync` / `tplc-ecdiag`)
+
+- **Model**: both services are Tether-IO bridges — the PLC reads
+  `ec.*` params on `TPLC_EC_IO` (falling back to `TPLC_MOTION_IO`)
+  served by `tether_io_motion_server --clock sim`; a real master
+  bridges the same param names.
+- **`tplc-ecsync`** (`compat/tc3/tc3_ecsync.st`): `FB_EcSync`
+  builtin + `FB_EcExtSyncExtTimes`/`FB_EcExtSyncIsSynchronized`
+  wrappers over the `ec.dc.*` params — e2e `tc3_ecsync_io`.
+- **`tplc-ecdiag`** (`compat/tc3/tc3_ecdiag.st`): `FB_EcDiagRead`
+  builtin (OP 1=read CoE 0x10F3 diag history, OP 2=ack) +
+  `FB_CoE_DiagHistory_Read` wrapper exposing the entry set as
+  flattened parallel `aE*` member arrays (no user STRUCTs in this
+  dialect; `sMsgText` is a generated `TID=/CODE=` fallback since
+  ESI/XML texts are unavailable; `tReadInterval` maps to
+  `nReadIntervalScans`).  The wire blob is the 0x10F3 header plus
+  22-byte ETG.1020 records; `ec.coediag.slave` selects the port
+  address, `ec.coediag.ack` writes newest-acked.  e2e
+  `tc3_ecdiag_io` covers read/field decode/ack/per-slave counts.
+  `FB_CoE_DiagHistory_ReadAxis` needs Tc2_MC2 `AXIS_REF` objects and
+  is not provided.
+
 ### EtherNet/IP client (`tplc-eip`)
 
 - **Model**: the PLC is the scanner-side explicit-messaging client.

@@ -12,6 +12,7 @@
 #include <tplc/host/DbService.hpp>
 #include <tplc/host/DmxService.hpp>
 #include <tplc/host/DynmemService.hpp>
+#include <tplc/host/EcDiagService.hpp>
 #include <tplc/host/EcSyncService.hpp>
 #include <tplc/host/EipService.hpp>
 #include <tplc/host/FtpService.hpp>
@@ -124,6 +125,8 @@ private:
     MqttService   mqtt_;
     /* EtherCAT DC sync state over Tether IO ec.dc.* params. */
     EcSyncService ecsync_;
+    /* EtherCAT CoE diag history over Tether IO ec.coediag.* params. */
+    EcDiagService ecdiag_;
     /* OCPP-J client (WebSocket + JSON-RPC); always available. */
     OcppService   ocpp_;
     /* AES70/OCA audio-control client; always available. */

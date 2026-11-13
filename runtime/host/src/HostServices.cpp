@@ -194,6 +194,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcEcsyncService*>(&ecsync_.table());
         return nullptr;
     }
+    if (len == 11 && memcmp(name, "tplc-ecdiag", 11) == 0) {
+        /* EtherCAT CoE diag history: only when ec.coediag.* live. */
+        if (ecdiag_.active())
+            return const_cast<TplcEcDiagService*>(&ecdiag_.table());
+        return nullptr;
+    }
     if (len == 8 && memcmp(name, "tplc-sym", 8) == 0) {
         /* By-name symbol access (Tc2_DataExchange). */
         return const_cast<TplcSymService*>(&sym_.table());
