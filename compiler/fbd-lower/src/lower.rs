@@ -9,7 +9,7 @@
 //! `Assign` stmts; probed wires get a `__probe_<id>` field + store.
 
 use fbd_model::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use tplc_mir::diag::Diag;
 use tplc_mir::ir;
 use tplc_mir::ir::{
@@ -833,16 +833,6 @@ impl<'a> Cx<'a> {
     /// Non-contact/coil elements are rejected: FB/function pins need
     /// wire topology, which positional rungs do not carry.
     fn lower_ladder(&mut self, net: &Network, stmts: &mut Vec<Stmt>) {
-        // wires are ignored: rung reconstruction is positional. Imported
-        // LD with explicit branch wiring may not match — warn so the
-        // author knows series-chain semantics were applied.
-        if !net.wires.is_empty() {
-            self.warn(
-                codes::ORPHAN,
-                "ladder wires ignored — positional series-chain semantics",
-                0,
-            );
-        }
         // rung bands: sort by y, split where the gap exceeds half the
         // smallest inter-band spacing (adaptive to editor/import scale)
         let mut ys: Vec<u32> = net.blocks.iter().map(|b| b.pos.y).collect();
@@ -868,14 +858,61 @@ impl<'a> Cx<'a> {
                 _ => bands.push(vec![b]),
             }
         }
-        for mut band in bands {
+        // wires merge bands: a parallel branch drawn on its own row
+        // still belongs to the same rung as the contacts it ties to
+        let band_of = |id: NodeId, bands: &[Vec<&Block>]| -> Option<usize> {
+            bands.iter().position(|band| band.iter().any(|b| b.id == id))
+        };
+        let mut parent: Vec<usize> = (0..bands.len()).collect();
+        fn find(p: &mut Vec<usize>, i: usize) -> usize {
+            if p[i] != i {
+                p[i] = find(p, p[i]);
+            }
+            p[i]
+        }
+        for w in &net.wires {
+            let mut first: Option<usize> = None;
+            for id in std::iter::once(w.src.block)
+                .chain(w.dsts.iter().map(|d| d.block))
+            {
+                if let Some(bi) = band_of(id, &bands) {
+                    match first {
+                        None => first = Some(bi),
+                        Some(f) => {
+                            let (a, b) = (find(&mut parent, f), find(&mut parent, bi));
+                            if a != b {
+                                parent[b] = a;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut merged: BTreeMap<usize, Vec<&Block>> = BTreeMap::new();
+        for (i, band) in bands.into_iter().enumerate() {
+            merged.entry(find(&mut parent, i)).or_default().extend(band);
+        }
+        for mut band in merged.into_values() {
             band.sort_by_key(|b| b.pos.x);
+            // a band participates in wire topology when any wire has
+            // both endpoints inside it; otherwise positional series
+            if self.band_has_wires(net, &band) {
+                self.lower_ladder_wired(net, &band, stmts);
+            } else {
+                self.lower_ladder_positional(&band, stmts);
+            }
+        }
+    }
+
+    /// Positional rung: contacts AND left→right, coils latch the flow.
+    fn lower_ladder_positional(&mut self, band: &[&Block], stmts: &mut Vec<Stmt>) {
+        {
             let mut flow = Expr {
                 kind: ExprKind::Lit(Lit::Bool(true)),
                 ty: Type::Bool,
                 prov: self.prov(band[0].id, 0),
             };
-            for b in band {
+            for &b in band {
                 match (b.kind, b.role) {
                     (BlockKind::Variable, Some(VarRole::In)) => {
                         // NO/NC contact: flow AND (var [NOT])
@@ -934,6 +971,240 @@ impl<'a> Cx<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// True when any wire has an endpoint inside `band` — such bands
+    /// lower by wire topology instead of positional x-order.
+    fn band_has_wires(&self, net: &Network, band: &[&Block]) -> bool {
+        let ids: HashSet<NodeId> = band.iter().map(|b| b.id).collect();
+        net.wires.iter().any(|w| {
+            ids.contains(&w.src.block)
+                || w.dsts.iter().any(|d| ids.contains(&d.block))
+        })
+    }
+
+    /// Wire-topology rung: contacts gate flow (value ∧ flow-in, NC
+    /// inverts the value), merges OR incoming flows, fan-out splits
+    /// them, coils latch their merged flow-in. A contact with no
+    /// incoming wire is rail-powered (flow-in = TRUE); a coil with
+    /// none latches FALSE. Wire ports are ignored — LD variable
+    /// blocks carry a single implicit flow port.
+    fn lower_ladder_wired(
+        &mut self,
+        net: &Network,
+        band: &[&Block],
+        stmts: &mut Vec<Stmt>,
+    ) {
+        let ids: HashMap<NodeId, &Block> =
+            band.iter().map(|b| (b.id, *b)).collect();
+        // wires touching this band; cross-rung endpoints are an error
+        let mut incoming: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        let mut wired: HashSet<NodeId> = HashSet::new();
+        for w in &net.wires {
+            let touches = ids.contains_key(&w.src.block)
+                || w.dsts.iter().any(|d| ids.contains_key(&d.block));
+            if !touches {
+                continue;
+            }
+            if !ids.contains_key(&w.src.block)
+                || w.dsts.iter().any(|d| !ids.contains_key(&d.block))
+            {
+                self.err(
+                    codes::UNSUPPORTED,
+                    format!("ladder wire {} crosses rung boundaries", w.id),
+                    w.src.block,
+                );
+                continue;
+            }
+            let src = ids[&w.src.block];
+            if !(src.kind == BlockKind::Variable
+                && src.role == Some(VarRole::In))
+            {
+                self.err(
+                    codes::UNSUPPORTED,
+                    format!(
+                        "ladder wire source block {} is not a contact",
+                        w.src.block
+                    ),
+                    w.src.block,
+                );
+                continue;
+            }
+            for d in &w.dsts {
+                let dst = ids[&d.block];
+                let ok = dst.kind == BlockKind::Variable
+                    && matches!(dst.role, Some(VarRole::In) | Some(VarRole::Out));
+                if !ok {
+                    self.err(
+                        codes::UNSUPPORTED,
+                        format!(
+                            "ladder wire destination block {} is not a contact/coil",
+                            d.block
+                        ),
+                        d.block,
+                    );
+                    continue;
+                }
+                incoming.entry(d.block).or_default().push(w.src.block);
+                wired.insert(w.src.block);
+                wired.insert(d.block);
+            }
+        }
+        // unwired elements in a wired rung: warn — they contribute
+        // nothing to the flow graph
+        for b in band {
+            if !wired.contains(&b.id) {
+                self.warn(
+                    codes::ORPHAN,
+                    format!("ladder element {} not in wire graph", b.id),
+                    b.id,
+                );
+            }
+        }
+        // topo-order the contacts: flow_out[c] feeds flow_in of its
+        // dsts, so evaluate sources before consumers (Kahn)
+        let mut deps: HashMap<NodeId, usize> = HashMap::new();
+        let mut consumers: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        for (&dst, srcs) in &incoming {
+            for &s in srcs {
+                if ids[&s].role == Some(VarRole::In) {
+                    *deps.entry(dst).or_insert(0) += 1;
+                    consumers.entry(s).or_default().push(dst);
+                }
+            }
+        }
+        let mut queue: VecDeque<NodeId> = deps
+            .iter()
+            .filter(|(_, &d)| d == 0)
+            .map(|(&id, _)| id)
+            .chain(
+                wired.iter()
+                    .filter(|id| ids[id].role == Some(VarRole::In) && !deps.contains_key(*id))
+                    .copied(),
+            )
+            .collect();
+        let mut out_expr: HashMap<NodeId, Expr> = HashMap::new();
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        while let Some(id) = queue.pop_front() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let b = ids[&id];
+            if b.role != Some(VarRole::In) {
+                continue; // coils are sinks, handled below
+            }
+            // flow-in: OR of source flow-outs, TRUE when rail-powered
+            let mut fin = Expr {
+                kind: ExprKind::Lit(Lit::Bool(false)),
+                ty: Type::Bool,
+                prov: self.prov(id, 0),
+            };
+            let mut any = false;
+            if let Some(srcs) = incoming.get(&id) {
+                for &s in srcs {
+                    if let Some(e) = out_expr.get(&s) {
+                        fin = Expr {
+                            kind: ExprKind::Bin(BinOp::Or, Box::new(fin), Box::new(e.clone())),
+                            ty: Type::Bool,
+                            prov: self.prov(id, 0),
+                        };
+                        any = true;
+                    }
+                }
+            }
+            if !any {
+                fin = Expr {
+                    kind: ExprKind::Lit(Lit::Bool(true)),
+                    ty: Type::Bool,
+                    prov: self.prov(id, 0),
+                };
+            }
+            // gated value: var [NOT] AND flow-in
+            let Some(r) = self.var_ref(b) else { continue };
+            let mut val = Expr {
+                kind: ExprKind::Ref(r),
+                ty: Type::Bool,
+                prov: self.prov(id, 0),
+            };
+            if !b.negated.is_empty() {
+                val = Expr {
+                    kind: ExprKind::Un(UnOp::Not, Box::new(val)),
+                    ty: Type::Bool,
+                    prov: self.prov(id, 0),
+                };
+            }
+            out_expr.insert(
+                id,
+                Expr {
+                    kind: ExprKind::Bin(BinOp::And, Box::new(val), Box::new(fin)),
+                    ty: Type::Bool,
+                    prov: self.prov(id, 0),
+                },
+            );
+            if let Some(cs) = consumers.get(&id) {
+                for &c in cs {
+                    if let Some(d) = deps.get_mut(&c) {
+                        *d -= 1;
+                        if *d == 0 {
+                            queue.push_back(c);
+                        }
+                    }
+                }
+            }
+        }
+        // cycle check: contacts still holding deps never evaluated
+        for (&id, &d) in &deps {
+            if d > 0 && !seen.contains(&id) {
+                self.err(
+                    codes::UNSUPPORTED,
+                    format!("ladder wire cycle at block {id}"),
+                    id,
+                );
+            }
+        }
+        // coils: latch OR of incoming source flow-outs (FALSE if none)
+        for &b in band {
+            if b.role != Some(VarRole::Out) {
+                continue;
+            }
+            let Some(lhs) = self.var_ref(b) else { continue };
+            let mut rhs = Expr {
+                kind: ExprKind::Lit(Lit::Bool(false)),
+                ty: Type::Bool,
+                prov: self.prov(b.id, 0),
+            };
+            let mut any = false;
+            if let Some(srcs) = incoming.get(&b.id) {
+                for &s in srcs {
+                    if let Some(e) = out_expr.get(&s) {
+                        rhs = Expr {
+                            kind: ExprKind::Bin(BinOp::Or, Box::new(rhs), Box::new(e.clone())),
+                            ty: Type::Bool,
+                            prov: self.prov(b.id, 0),
+                        };
+                        any = true;
+                    }
+                }
+            }
+            if !any {
+                self.warn(
+                    codes::ORPHAN,
+                    format!("ladder coil {} has no incoming flow", b.id),
+                    b.id,
+                );
+            }
+            if !b.negated.is_empty() {
+                rhs = Expr {
+                    kind: ExprKind::Un(UnOp::Not, Box::new(rhs)),
+                    ty: Type::Bool,
+                    prov: self.prov(b.id, 0),
+                };
+            }
+            stmts.push(Stmt {
+                kind: StmtKind::Assign { lhs, rhs },
+                prov: self.prov(b.id, 0),
+            });
         }
     }
 
