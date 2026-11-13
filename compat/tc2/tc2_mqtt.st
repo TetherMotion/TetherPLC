@@ -823,3 +823,140 @@ END_VAR
         END_IF;
     END_IF;
 END_FUNCTION_BLOCK
+
+// ---- FB_IotMqtt5Message: one queued MQTT5 message ----
+// TwinCAT's FB_IotMqtt5Message carries the PUBLISH property block
+// alongside topic/payload; this dialect surfaces them as members.
+FUNCTION_BLOCK FB_IotMqtt5Message
+VAR
+    TOPIC : STRING[127];
+    PAYLOAD : STRING[255];
+    PAYLOADLEN : UDINT;
+    QOS : UDINT;
+    MSGID : UDINT;
+    RETAINED : BOOL;
+    PAYLOADFORMATUTF8 : BOOL;
+    MESSAGEEXPIRYS : UDINT;
+    SUBSCRIPTIONID : UDINT;
+    CONTENTTYPE : STRING[63];
+    RESPONSETOPIC : STRING[127];
+    CORRELATIONDATA : STRING[127];
+    CORRELATIONLEN : UDINT;
+    USERPROPERTIES : STRING[255];
+END_VAR
+END_FUNCTION_BLOCK
+
+// ---- FB_IotMqtt5MessageQueue: bounded FIFO of inbound v5 msgs ----
+// Same pump/dequeue model as FB_IotMqttMessageQueue but drains via
+// FB_IotMqtt5Receive so queued entries keep the PUBLISH properties.
+FUNCTION_BLOCK FB_IotMqtt5MessageQueue
+VAR_INPUT
+    Pump : BOOL;
+    ConnectionHdl : UDINT;
+    DequeueReq : BOOL;
+    ResetReq : BOOL;
+END_VAR
+VAR_OUTPUT
+    HasMessage : BOOL;
+    Topic : STRING[127];
+    Payload : STRING[255];
+    PayloadLen : UDINT;
+    QoS : UDINT;
+    MessageId : UDINT;
+    Retained : BOOL;
+    PayloadFormatUtf8 : BOOL;
+    MessageExpiryS : UDINT;
+    SubscriptionId : UDINT;
+    ContentType : STRING[63];
+    ResponseTopic : STRING[127];
+    CorrelationData : STRING[127];
+    CorrelationLen : UDINT;
+    UserProperties : STRING[255];
+    Queued : UDINT;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    head : UDINT;
+    count : UDINT;
+    qTopic : ARRAY[0..15] OF STRING[127];
+    qPayload : ARRAY[0..15] OF STRING[255];
+    qPayLen : ARRAY[0..15] OF UDINT;
+    qQos : ARRAY[0..15] OF UDINT;
+    qId : ARRAY[0..15] OF UDINT;
+    qRet : ARRAY[0..15] OF BOOL;
+    qFmt : ARRAY[0..15] OF BOOL;
+    qExp : ARRAY[0..15] OF UDINT;
+    qSub : ARRAY[0..15] OF UDINT;
+    qCType : ARRAY[0..15] OF STRING[63];
+    qRTopic : ARRAY[0..15] OF STRING[127];
+    qCorr : ARRAY[0..15] OF STRING[127];
+    qCorrLen : ARRAY[0..15] OF UDINT;
+    qUProps : ARRAY[0..15] OF STRING[255];
+    rx : FB_IotMqtt5Receive;
+    slot : UDINT;
+    dqPrev : BOOL;
+    rsPrev : BOOL;
+END_VAR
+    HasMessage := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Pump AND count < 16 THEN
+        rx.Execute := TRUE;
+        rx.ConnectionHdl := ConnectionHdl;
+        rx();
+        rx.Execute := FALSE;
+        IF rx.Message THEN
+            slot := head + count;
+            IF slot >= 16 THEN slot := slot - 16; END_IF;
+            qTopic[slot] := rx.Topic;
+            qPayload[slot] := rx.Payload;
+            qPayLen[slot] := rx.PayloadLen;
+            qQos[slot] := rx.QoS;
+            qId[slot] := rx.MessageId;
+            qRet[slot] := rx.Retained;
+            qFmt[slot] := rx.PayloadFormatUtf8;
+            qExp[slot] := rx.MessageExpiryS;
+            qSub[slot] := rx.SubscriptionId;
+            qCType[slot] := rx.ContentType;
+            qRTopic[slot] := rx.ResponseTopic;
+            qCorr[slot] := rx.CorrelationData;
+            qCorrLen[slot] := rx.CorrelationLen;
+            qUProps[slot] := rx.UserProperties;
+            count := count + 1;
+        END_IF;
+        IF rx.Error THEN
+            Error := TRUE;
+            ErrorID := rx.ErrorID;
+        END_IF;
+    END_IF;
+    Queued := count;
+    IF DequeueReq AND NOT dqPrev AND count > 0 THEN
+        Topic := qTopic[head];
+        Payload := qPayload[head];
+        PayloadLen := qPayLen[head];
+        QoS := qQos[head];
+        MessageId := qId[head];
+        Retained := qRet[head];
+        PayloadFormatUtf8 := qFmt[head];
+        MessageExpiryS := qExp[head];
+        SubscriptionId := qSub[head];
+        ContentType := qCType[head];
+        ResponseTopic := qRTopic[head];
+        CorrelationData := qCorr[head];
+        CorrelationLen := qCorrLen[head];
+        UserProperties := qUProps[head];
+        HasMessage := TRUE;
+        head := head + 1;
+        IF head >= 16 THEN head := 0; END_IF;
+        count := count - 1;
+        Queued := count;
+    END_IF;
+    dqPrev := DequeueReq;
+    IF ResetReq AND NOT rsPrev THEN
+        head := 0;
+        count := 0;
+        Queued := 0;
+    END_IF;
+    rsPrev := ResetReq;
+END_FUNCTION_BLOCK

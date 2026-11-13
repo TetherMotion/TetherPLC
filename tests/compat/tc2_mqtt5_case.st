@@ -11,12 +11,13 @@ VAR
     pub5 : FB_IotMqtt5Publish;
     rx  : FB_IotMqttReceive;
     rx5 : FB_IotMqtt5Receive;
+    mq  : FB_IotMqtt5MessageQueue;
     st : INT;
     waitN : INT;
     mask AT %QD0 : UDINT;
     hdl : UDINT;
 END_VAR
-    con(); dis(); sub(); unsub(); pub(); pub5(); rx(); rx5();
+    con(); dis(); sub(); unsub(); pub(); pub5(); rx(); rx5(); mq();
     IF st = 0 THEN
         mask := 0;
         con.Execute := TRUE;
@@ -101,6 +102,47 @@ END_VAR
         IF waitN > 300 THEN mask := 16#DEAD; st := 99; END_IF;
     END_IF;
 
+    IF st = 57 THEN
+        IF pub5.Done THEN
+            pub5.Execute := FALSE;
+            waitN := 0;
+            st := 58;
+        END_IF;
+        IF pub5.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    IF st = 58 THEN
+        IF mq.Queued > 0 THEN
+            mq.DequeueReq := TRUE;
+            st := 59;
+        END_IF;
+        waitN := waitN + 1;
+        IF waitN > 300 THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    IF st = 59 THEN
+        IF mq.HasMessage THEN
+            mq.DequeueReq := FALSE;
+            IF mq.Topic = 'tplc/v5/q/one'
+               AND mq.Payload = 'qm'
+               AND mq.MessageExpiryS = 10
+               AND mq.ContentType = 'text/plain'
+               AND mq.CorrelationData = 'qc'
+               AND mq.CorrelationLen = 2
+               AND mq.UserProperties = 'qk=qv' THEN
+                mask := mask + 256;  // bit8: queued v5 props
+                unsub.Execute := TRUE;
+                unsub.ConnectionHdl := hdl;
+                unsub.TopicFilter := 'tplc/v5/#';
+                st := 5;
+            ELSE
+                mask := 16#DEAD; st := 99;
+            END_IF;
+        END_IF;
+        waitN := waitN + 1;
+        IF waitN > 300 THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
     IF st = 5 THEN
         IF unsub.Done THEN
             unsub.Execute := FALSE;
@@ -138,10 +180,19 @@ END_VAR
                AND rx5.CorrelationLen = 6
                AND rx5.UserProperties = 'k1=v1;k2=v2' THEN
                 mask := mask + 128; // bit7: props publish echoed
-                unsub.Execute := TRUE;
-                unsub.ConnectionHdl := hdl;
-                unsub.TopicFilter := 'tplc/v5/#';
-                st := 5;
+                // stage a queued v5 message with properties
+                mq.Pump := TRUE;
+                mq.ConnectionHdl := hdl;
+                pub5.Execute := TRUE;
+                pub5.Topic := 'tplc/v5/q/one';
+                pub5.Payload := 'qm';
+                pub5.PayloadFormatUtf8 := FALSE;
+                pub5.MessageExpiryS := 10;
+                pub5.ContentType := 'text/plain';
+                pub5.ResponseTopic := '';
+                pub5.CorrelationData := 'qc';
+                pub5.UserProperties := 'qk=qv';
+                st := 57;
             END_IF;
         END_IF;
         waitN := waitN + 1;
