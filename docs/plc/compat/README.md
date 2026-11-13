@@ -109,6 +109,13 @@ compat/tc3/
                       FB_S7CommConnection/AddReadVar/
                       AddReadBit/AddReadByteArray concepts and
                       the FB_NLinkOpen/Close/Fetch/Write set
+  tc2_s5s7com.st     Tc2_S5S7Com S5 side over the builtins
+                      FB_S5Conn / FB_S5Io (tplc-s5 service):
+                      Siemens S5 client via RK512 job protocol
+                      over TCP with 3964 STX/BCC/ETX framing —
+                      FB_NLinkOpen session wrapper plus
+                      FB_NLinkFetch / FB_NLinkWrite transaction
+                      wrappers on the DB area
   tc3_ftp.st         Tc3_FTP + Tc2_FTP over the builtins
                       FB_FtpConn / FB_FtpCmd / FB_FtpXfer
                       (tplc-ftp service): FTP client over
@@ -228,6 +235,17 @@ tests/compat/
                       tc3_s7comm.sh: TPKT + COTP CR/CC/DT,
                       setup communication, Read/Write Var;
                       DB1 + MK memory areas, spec bit semantics
+  tc2_s5s7com_case.st  autonomous S5 program (6 packed checks:
+                      connect, DB fetch, write+readback,
+                      unknown-DB s5err, refused connect,
+                      session close)
+  tc2_s5s7com.sh       ctest tc2_s5s7com: library + consumer +
+                      300-step sim replay expecting mask 0x3f,
+                      python S5 peer (s5_test_peer.py)
+  s5_test_peer.py      minimal Siemens S5 RK512/3964 responder
+                      on TCP 1103 used by tc2_s5s7com.sh:
+                      STX/BCC/ETX framing, FETCH/SEND job
+                      header; DB1 + DB2 memory areas
   tc3_ftp_case.st      autonomous FTP program (12 packed
                       checks: login, SIZE, MKD, RETR, LIST,
                       STOR, SIZE verify, file/dir exists,
@@ -909,12 +927,54 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   - Single-item requests only; no multi-item Read/Write Var,
     no Read String with S7 string header, no area DB-symbolic
     addressing, no PUT/GET, GET_PDU, SZL, or H-CPU functions.
-  - S5 protocol (3964/PKW) used by `FB_NLink*` on S5 targets is
-    not implemented — `tplc-s7` speaks S7comm only; S5 links
-    need a separate service.
+  - S5 links are covered by the separate `tplc-s5` service
+    (RK512/3964, DB-area FETCH/SEND subset) — see the
+    `Tc2_S5S7Com` notes below; serial 3964(R) links and the
+    non-DB RK512 areas remain unimplemented.
   - Rack/slot map only into the COTP called TSAP; no ISO-on-TCP
     port negotiation beyond the fixed/default port, no DNS,
     no IPv6.
+
+### C4 coverage notes (tplc-s5 / Tc2_S5S7Com S5 side)
+
+- **Transport**: `tplc-s5` is an RK512 job-protocol client over
+  TCP (default port 102, `TPLC_S5_PORT`) carrying 3964
+  STX/BCC/ETX frames. The serial 3964(R) DLE link-acquisition
+  handshake is not used; over TCP the frames are sent
+  byte-streamed. BCC is the XOR of every message byte plus the
+  trailing ETX; ETX bytes inside payloads are disambiguated by
+  BCC verification rather than DLE stuffing.
+- **Protocol subset**: RK512 command telegram 10-byte header
+  (id `00 00`, order type `'E'` FETCH / `'A'` SEND, area `'D'`
+  DB, DB number, word offset, word length big-endian, flags
+  `0xFF`) and a 4-byte response header (id/type echo, status
+  byte). DB-area word access only: DB 0..255, word offset
+  0..255 words (byte offsets 0..510), at most 255 words per
+  transaction, one outstanding io per connection. SEND payloads
+  are transferred most-significant-byte first and FETCH
+  responses return wire-order bytes; `BYTE_OFF`/`LEN` in the
+  FBs are byte units converted to words by the service. Other
+  RK512 areas (I/O, memory, flags, timers, counters, DX),
+  continuation telegrams, and job priorities are not
+  implemented.
+- **Builtins**: `FB_S5Conn` (EXEC opens the TCP session, no
+  handshake; STATUS 0=pending 1=ready 2=error, CLOSE edge
+  tears down) and `FB_S5Io` (MODE 0=FETCH 1=SEND on a live
+  CONN_HANDLE; STATUS 0=pending 1=ok 2=timeout 3=error
+  4=badresp 5=s5err).
+- **Wrappers**: `compat/tc2/tc2_s5s7com.st` provides
+  `FB_NLinkOpen` (covers `FB_NLinkOpen`/`FB_NLinkClose` and the
+  S7-side `FB_NLink*` connect pair), `FB_NLinkFetch` /
+  `FB_NLinkWrite` (DB-area only; `POINTER TO BYTE` buffers are
+  `ARRAY[0..509] OF BYTE`, `nArea` accepts only the DB value),
+  and `F_GetVersionTcS5S7Comm`.
+- **Verified**: `tc2_s5s7com` ctest builds the library and a
+  consumer program, then replays 300 free-running sim steps
+  against `tests/compat/s5_test_peer.py` — a python RK512/3964
+  responder on TCP 1103. Six packed checks (`0x3f`): connect,
+  DB1 fetch with pattern check, write+readback, unknown-DB
+  status byte → `STATUS = 5`, refused connect → conn
+  `STATUS = 2`, session close.
 
 ### C4 coverage notes (tplc-ftp / Tc3_FTP + Tc2_FTP)
 

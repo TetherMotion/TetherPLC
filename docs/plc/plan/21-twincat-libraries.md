@@ -28242,7 +28242,7 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6610_TC3_S5S7_Communication_EN.pdf` · **API entries:** 5
-- **Status:** S7 portion folded into `compat/tc3/tc3_s7comm.st` — ctest tc3_s7comm; S5 protocol variant on request
+- **Status:** implemented — S7 portion in `compat/tc3/tc3_s7comm.st` (ctest tc3_s7comm), S5 RK512/3964 portion in `compat/tc2/tc2_s5s7com.st` over `FB_S5Conn`/`FB_S5Io` (ctest tc2_s5s7com); serial 3964(R) and non-DB RK512 areas remain unimplemented
 - **Integration:** Siemens S7 protocol (RFC1006): socket service + S7 packet codec.
 
 #### API › PLC Reference › Function blocks

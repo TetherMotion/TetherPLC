@@ -34,6 +34,7 @@
 #include <tplc/host/RtmonService.hpp>
 #include <tplc/host/SacnService.hpp>
 #include <tplc/host/S7Service.hpp>
+#include <tplc/host/S5Service.hpp>
 #include <tplc/host/SmtpService.hpp>
 #include <tplc/host/SerialService.hpp>
 #include <tplc/host/SymService.hpp>
@@ -102,6 +103,7 @@ private:
     BacnetService bacnet_;
     PjlinkService pjlink_;
     S7Service    s7_;
+    S5Service    s5_;
     FtpService   ftp_;
     SmtpService  smtp_;
     Iec870Service iec870_;

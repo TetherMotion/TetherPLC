@@ -24,6 +24,7 @@ HostServices::HostServices(uint32_t caps)
     : rtmon_(&host_steady_ns, this), modbus_(&host_steady_ns, this),
       sacn_(&host_steady_ns, this), bacnet_(&host_steady_ns, this),
       pjlink_(&host_steady_ns, this), s7_(&host_steady_ns, this),
+      s5_(&host_steady_ns, this),
       ftp_(&host_steady_ns, this), smtp_(&host_steady_ns, this),
       iec870_(&host_steady_ns, this), motion_(&host_steady_ns, this),
       motion_io_(&host_steady_ns, this), nci_io_(&host_steady_ns, this) {
@@ -98,6 +99,8 @@ void* HostServices::getService(const char* name, uint32_t len) {
         return const_cast<TplcPjlinkService*>(&pjlink_.table());
     if (len == 7 && memcmp(name, "tplc-s7", 7) == 0)
         return const_cast<TplcS7Service*>(&s7_.table());
+    if (len == 7 && memcmp(name, "tplc-s5", 7) == 0)
+        return const_cast<TplcS5Service*>(&s5_.table());
     if (len == 8 && memcmp(name, "tplc-ftp", 8) == 0)
         return const_cast<TplcFtpService*>(&ftp_.table());
     if (len == 9 && memcmp(name, "tplc-smtp", 9) == 0)

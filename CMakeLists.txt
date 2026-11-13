@@ -44,6 +44,7 @@ add_library(tplc_host STATIC
   runtime/host/src/BacnetService.cpp
   runtime/host/src/PjlinkService.cpp
   runtime/host/src/S7Service.cpp
+  runtime/host/src/S5Service.cpp
   runtime/host/src/FtpService.cpp
   runtime/host/src/SmtpService.cpp
   runtime/host/src/Iec870Service.cpp
@@ -813,6 +814,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_s7comm
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_s7comm.sh)
   set_tests_properties(tc3_s7comm PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_S5S7Com S5 compat: tplc-s5 RK512/3964 client e2e
+  # (open/fetch/write/readback/s5err/connerr/close) against a
+  # python S5 peer on TCP 1103
+  add_test(NAME tc2_s5s7com
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_s5s7com.sh)
+  set_tests_properties(tc2_s5s7com PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc3_FTP + Tc2_FTP compat (plan 21 C4): tplc-ftp PASV client

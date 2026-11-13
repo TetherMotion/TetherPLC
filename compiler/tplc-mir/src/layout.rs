@@ -747,6 +747,95 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "DONE", Type::Bool);
             push(&mut off, "__last_exec", Type::Bool);
         }
+        /* FB_S5Conn — tplc-s5 service bridge (Siemens S5, RK512
+        job protocol over TCP with 3964 STX/ETX+BCC framing).
+        EXEC rising edge opens a connection (plain TCP connect;
+        the RK512 layer has no handshake) polled via BUSY until
+        STATUS leaves 0=pending; 1=ready, 2=error (ERRID carries
+        errno). CONN_HANDLE stays valid while STATUS=1 and feeds
+        FB_S5Io. CLOSE rising edge tears the session down
+        (CONN_HANDLE -> 0). HOST is a dotted-quad IPv4 string,
+        PORT 0 = 102, TIMEOUT bounds the connect. */
+        "FB_S5Conn" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            push(&mut off, "HOST", Type::Str { cap: 15 });
+            push(&mut off, "PORT", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "CLOSE", Type::Bool);
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+            push(&mut off, "__last_close", Type::Bool);
+        }
+        /* FB_S5Io — tplc-s5 service bridge for one RK512 FETCH
+        / SEND transaction on an FB_S5Conn connection.
+        CONN_HANDLE comes from FB_S5Conn.CONN_HANDLE. MODE
+        0=read(FETCH) 1=write(SEND). DB is the data block
+        number (0..255); BYTE_OFF an even byte offset within the
+        DB (<=510, the wire addresses words); LEN the byte count
+        (<=510). DATA carries the write payload (LEN bytes);
+        R_DATA receives read bytes (DATA_LEN valid, wire-order
+        big-endian words). STATUS 0=pending 1=ok 2=timeout
+        3=error 4=badresp 5=s5err; ERRID the transport errno or
+        RK512 status byte. One outstanding transaction per
+        connection. */
+        "FB_S5Io" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "CONN_HANDLE", udint());
+            push(&mut off, "MODE", udint());
+            push(&mut off, "DB", udint());
+            push(&mut off, "BYTE_OFF", udint());
+            push(&mut off, "LEN", udint());
+            push(&mut off, "TIMEOUT", Type::Time);
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "DATA_LEN", udint());
+            push(
+                &mut off,
+                "DATA",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 509,
+                },
+            );
+            push(
+                &mut off,
+                "R_DATA",
+                Type::Array {
+                    elem: Box::new(byte()),
+                    lo: 0,
+                    hi: 509,
+                },
+            );
+            push(&mut off, "EXEC", Type::Bool);
+            push(&mut off, "BUSY", Type::Bool);
+            push(&mut off, "DONE", Type::Bool);
+            push(&mut off, "__last_exec", Type::Bool);
+        }
         /* FB_FtpConn — tplc-ftp service bridge (FTP client,
         RFC 959 over TCP). EXEC rising edge opens a control
         connection (TCP connect -> 220 greeting -> USER ->
