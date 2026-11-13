@@ -568,3 +568,42 @@ END_VAR
     END_IF;
     exPrev := Execute;
 END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850DataSetWrite: MMS WriteDataSet ----
+// Values is the same newline-separated shape ReadDataSet produces
+// ("FCDA=value" lines or bare values in member order); member
+// types come from a fresh ReadDataSet on the server.
+FUNCTION_BLOCK FB_Iec61850DataSetWrite
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    DataSetRef : STRING[127];
+    Values : STRING[255];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 14;
+        ch.HANDLE := ConnectionHdl;
+        ch.DSREF := DataSetRef;
+        ch.VAL := Values;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK

@@ -145,6 +145,14 @@ typedef struct TplcIec61850Service {
     int32_t (*iec61850_ds_directory)(void* svc, uint32_t handle,
                                      const char* ds_ref,
                                      char* out, uint32_t cap);
+    /* MMS WriteDataSet: values is the same newline-separated text
+       shape ds_read produces ("FCDA=value" lines or bare values in
+       member order).  Member types are taken from a fresh
+       ReadDataSet; returns TPLC_61850_OK when every member access
+       result succeeded, TPLC_61850_E_MMS otherwise. */
+    int32_t (*iec61850_ds_write)(void* svc, uint32_t handle,
+                                 const char* ds_ref,
+                                 const char* values, uint32_t len);
 } TplcIec61850Service;
 
 #ifdef __cplusplus

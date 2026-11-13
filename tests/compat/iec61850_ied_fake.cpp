@@ -63,6 +63,9 @@ int main(int argc, char** argv) {
     CDC_SAV_create("Meas", (ModelNode*)lln0, 0, false);
     /* SetPt: analogue setting (setMag.f float) R/W under SP. */
     CDC_ASG_create("SetPt", (ModelNode*)lln0, 0, false);
+    /* SetPt2: second writable setting for the WriteDataSet e2e
+       (Health.stVal is read-only). */
+    CDC_ASG_create("SetPt2", (ModelNode*)lln0, 0, false);
     /* Name: visible string (read). */
     CDC_VSS_create("Name", (ModelNode*)lln0, 0);
 
@@ -81,6 +84,11 @@ int main(int argc, char** argv) {
     if (setpt) {
         DataAttribute* sm = (DataAttribute*)ModelNode_getChild(setpt, "setMag.f");
         if (sm) DataAttribute_setValue(sm, MmsValue_newFloat(1.0f));
+    }
+    ModelNode* setpt2 = ModelNode_getChild((ModelNode*)lln0, "SetPt2");
+    if (setpt2) {
+        DataAttribute* sm2 = (DataAttribute*)ModelNode_getChild(setpt2, "setMag.f");
+        if (sm2) DataAttribute_setValue(sm2, MmsValue_newFloat(2.0f));
     }
     ModelNode* name = ModelNode_getChild((ModelNode*)lln0, "Name");
     if (name) {
@@ -112,6 +120,11 @@ int main(int argc, char** argv) {
                               RPT_OPT_DATA_SET |
                               RPT_OPT_TIME_STAMP,
                               50, 200);
+    /* writable twin for WriteDataSet e2e: ST + SP members only
+       (instMag.f under MX is read-only and would fail the write). */
+    DataSet* wds = DataSet_create("writeds", lln0);
+    DataSetEntry_create(wds, "LLN0$SP$SetPt$setMag$f", -1, NULL);
+    DataSetEntry_create(wds, "LLN0$SP$SetPt2$setMag$f", -1, NULL);
 
     /* SWI1: controllable single point (BSC), SBO normal security with
        cancel — exercises select/operate/cancel over the CO model. */

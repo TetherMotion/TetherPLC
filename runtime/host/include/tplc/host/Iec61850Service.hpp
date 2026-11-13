@@ -52,6 +52,7 @@ private:
     int32_t controlPoll(void*, uint32_t, TplcIec61850Ctl*);
     int32_t dsRead(void*, uint32_t, const char*, char*, uint32_t);
     int32_t dsDirectory(void*, uint32_t, const char*, char*, uint32_t);
+    int32_t dsWrite(void*, uint32_t, const char*, const char*, uint32_t);
 
     static Iec61850Service* self(void* p) {
         return static_cast<Iec61850Service*>(p);

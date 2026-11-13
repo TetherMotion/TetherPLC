@@ -42,7 +42,7 @@ sed "s/11020/$PORT/g" tests/compat/tc2_iec61850_ds_case.st > "$WORK/ds_case.st"
     for i in $(seq 0 500); do
         t=$((i*10000000))
         if [ $i -eq 500 ]; then
-            echo "step $i time=$t in 0=00 expect 0=0f"
+            echo "step $i time=$t in 0=00 expect 0=77"
         else
             echo "step $i time=$t in 0=00"
         fi
@@ -55,13 +55,13 @@ if ./build/tether-plc-sim --image /tplc_ds \
     --ctl "$WORK/tether-plc.ctl" --settle-ms 1500 \
     >"$WORK/sim.log" 2>&1; then
     if grep -q "all matched" "$WORK/sim.log"; then
-        ok "sim replay: data-set directory + read"
+        ok "sim replay: data-set directory/read/write"
     else
-        bad "sim replay: data-set directory + read"
+        bad "sim replay: data-set directory/read/write"
         grep -i "divergent\|error" "$WORK/sim.log" | head -5
     fi
 else
-    bad "sim replay: data-set directory + read"
+    bad "sim replay: data-set directory/read/write"
     tail -10 "$WORK/sim.log"
 fi
 

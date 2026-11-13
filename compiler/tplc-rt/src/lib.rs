@@ -4710,6 +4710,7 @@ const IEC_SVC_CONTROL: usize = 88;
 const IEC_SVC_CONTROL_POLL: usize = 96;
 const IEC_SVC_DS_READ: usize = 104;
 const IEC_SVC_DS_DIRECTORY: usize = 112;
+const IEC_SVC_DS_WRITE: usize = 120;
 
 /// service lookup for "tplc-iec61850" (12 chars)
 unsafe fn iec_service(ctx: *const u8) -> *const u8 {
@@ -4982,6 +4983,18 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
                 *this.add(IEC_VAL_LEN) = n as u8;
                 *this.add(IEC_VAL + n) = 0;
             }
+        }
+        14 => {
+            // WriteDataSet: DSREF + VAL (newline-separated values,
+            // optional "name=" prefixes) -> STATUS only
+            let mut rbuf = [0u8; 128];
+            uacstr(this, IEC_DSREF_LEN, IEC_DSREF, 127, rbuf.as_mut_ptr());
+            let n = (*this.add(IEC_VAL_LEN) as usize).min(255);
+            let f: FIecDsRead = core::mem::transmute(iecfn(svc, IEC_SVC_DS_WRITE));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       rbuf.as_ptr(), this.add(IEC_VAL), n as u32);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
         }
         _ => {
             wi32(this.add(IEC_STATUS), -1);

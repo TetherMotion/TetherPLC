@@ -163,6 +163,9 @@ Iec61850Service::Iec61850Service() {
     svc_.iec61850_ds_directory = [](void* s, uint32_t h, const char* r,
                                     char* o, uint32_t c)
         { return self(s)->dsDirectory(s, h, r, o, c); };
+    svc_.iec61850_ds_write = [](void* s, uint32_t h, const char* r,
+                                const char* v, uint32_t n)
+        { return self(s)->dsWrite(s, h, r, v, n); };
 }
 
 Iec61850Service::~Iec61850Service() {
@@ -778,6 +781,134 @@ int32_t Iec61850Service::dsDirectory(void*, uint32_t h,
     out[off < cap ? off : cap - 1] = 0;
     impl_->conns[h - 1].invoke_id++;
     return count;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+#ifdef TPLC_HAVE_IEC61850
+namespace {
+
+/* text -> MmsValue matching a template element's type (used by
+   ds_write; structured types return nullptr). */
+MmsValue* mmsFromText(const MmsValue* tmpl, const std::string& t) {
+    if (!tmpl) return nullptr;
+    switch (MmsValue_getType(tmpl)) {
+        case MMS_BOOLEAN:
+            return MmsValue_newBoolean(
+                t == "true" || t == "1" || t == "TRUE");
+        case MMS_INTEGER:
+            return MmsValue_newInteger(
+                int32_t(std::strtoll(t.c_str(), nullptr, 10)));
+        case MMS_UNSIGNED:
+            return MmsValue_newUnsigned(
+                uint32_t(std::strtoull(t.c_str(), nullptr, 10)));
+        case MMS_FLOAT:
+            return MmsValue_newFloat(float(std::strtod(t.c_str(), nullptr)));
+        case MMS_BIT_STRING: {
+            MmsValue* bs = MmsValue_newBitString(MmsValue_getBitStringSize(tmpl));
+            const bool on = t == "true" || t == "1" ||
+                            std::strtoll(t.c_str(), nullptr, 10) != 0;
+            MmsValue_setBitStringFromInteger(bs, on ? 1u : 0u);
+            return bs;
+        }
+        case MMS_VISIBLE_STRING:
+            return MmsValue_newVisibleString(t.c_str());
+        case MMS_OCTET_STRING: {
+            MmsValue* os = MmsValue_newOctetString(
+                int(t.size()), int(t.size()));
+            MmsValue_setOctetString(os,
+                reinterpret_cast<const uint8_t*>(t.data()), int(t.size()));
+            return os;
+        }
+        default:
+            return nullptr;
+    }
+}
+
+} // namespace
+#endif
+
+int32_t Iec61850Service::dsWrite(void*, uint32_t h, const char* dsRef,
+                                 const char* values, uint32_t len) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+    if (!dsRef || !*dsRef || !values || !len) return TPLC_61850_E_PARAM;
+#ifdef TPLC_HAVE_IEC61850
+    IedClientError err;
+    /* read first: the returned array carries each member's type,
+       which the text values are converted against. */
+    ClientDataSet tmpl = IedConnection_readDataSetValues(
+        impl_->conns[h - 1].conn, &err, dsRef, nullptr);
+    if (err != IED_ERROR_OK || !tmpl) {
+        impl_->conns[h - 1].last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    MmsValue* arr = ClientDataSet_getValues(tmpl);
+    if (!arr || MmsValue_getType(arr) != MMS_ARRAY) {
+        ClientDataSet_destroy(tmpl);
+        return TPLC_61850_E_MMS;
+    }
+    const int n = MmsValue_getArraySize(arr);
+    /* split into per-member value texts; a leading "name=" prefix
+       (the ds_read output shape) is stripped. */
+    std::vector<std::string> texts;
+    size_t pos = 0;
+    while (pos <= len && texts.size() < size_t(n)) {
+        size_t eol = pos;
+        while (eol < len && values[eol] != '\n') eol++;
+        std::string line(values + pos, eol - pos);
+        pos = eol + 1;
+        if (line.empty()) continue;
+        size_t eq = line.find('=');
+        if (eq != std::string::npos && eq > 0)
+            line = line.substr(eq + 1);
+        texts.push_back(std::move(line));
+    }
+    if (int(texts.size()) != n) {
+        ClientDataSet_destroy(tmpl);
+        return TPLC_61850_E_PARAM;
+    }
+    LinkedList list = LinkedList_create();
+    bool convOk = true;
+    for (int i = 0; i < n && convOk; ++i) {
+        MmsValue* e = MmsValue_getElement(arr, i);
+        MmsValue* nv = mmsFromText(e, texts[i]);
+        if (!nv) { convOk = false; break; }
+        LinkedList_add(list, nv);
+    }
+    if (!convOk) {
+        LinkedList_destroyDeep(list,
+            [](void* p) { MmsValue_delete(static_cast<MmsValue*>(p)); });
+        ClientDataSet_destroy(tmpl);
+        return TPLC_61850_E_PARAM;
+    }
+    LinkedList results = nullptr;
+    IedConnection_writeDataSetValues(
+        impl_->conns[h - 1].conn, &err, dsRef, list, &results);
+    bool ok = err == IED_ERROR_OK;
+    if (results) {
+        for (LinkedList e = results; e; e = LinkedList_getNext(e)) {
+            MmsValue* r = static_cast<MmsValue*>(LinkedList_getData(e));
+            if (r) {
+                if (MmsValue_getType(r) == MMS_DATA_ACCESS_ERROR) {
+                    if (MmsValue_getDataAccessError(r) >= 0)
+                        ok = false;
+                }
+            }
+        }
+        LinkedList_destroyDeep(results,
+            [](void* p) { MmsValue_delete(static_cast<MmsValue*>(p)); });
+    }
+    LinkedList_destroyDeep(list,
+        [](void* p) { MmsValue_delete(static_cast<MmsValue*>(p)); });
+    ClientDataSet_destroy(tmpl);
+    if (!ok) {
+        impl_->conns[h - 1].last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    impl_->conns[h - 1].invoke_id++;
+    return TPLC_61850_OK;
 #else
     return TPLC_61850_E_CONN;
 #endif
