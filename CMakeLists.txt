@@ -904,6 +904,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_mc2_probe PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_MC2_XFC e2e: kinematic blocks over the TON scan clock,
+  # position/time/break cams, digital cam switches and the XFC
+  # touch probe on one simulated axis; in-process, no peer
+  add_test(NAME tc2_mc2_xfc
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_mc2_xfc.sh)
+  set_tests_properties(tc2_mc2_xfc PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc2_NCI channel-interpolation e2e: 3-axis group powered, a
   # coordinated FB_NciLine move streaming CSP setpoints, return move,
   # and a group E-stop; in-process, no peer

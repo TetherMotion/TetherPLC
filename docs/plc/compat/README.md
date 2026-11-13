@@ -89,6 +89,18 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       characteristics) exposed as mc.<slave>.<idx>
                       params; AXIS_REF is the UDINT handle and
                       Axis selects slave = handle - 1.
+  tc2_mc2_xfc.st     Tc2_MC2_XFC wrappers (subset): kinematic
+                      blocks (XFC_PositionAtTime/TimeOfPosition/
+                      TimeToPosition/TimeToModuloPosition) over
+                      FB_MotionAxis OP6 with linear extrapolation,
+                      DC-time helpers (XFC_Clock/XFC_GetCurDcTask-
+                      Time/XFC_ExtendDcTime), cam controllers
+                      (XFC_PositionCam/TimeCam/BreakCam),
+                      MC_DigitalCamSwitch(+MultiEdge) flattened to
+                      single-cam BOOL outputs, and XFC_TouchProbe.
+                      DC time is the low 32 bits of the TON ns scan
+                      clock; OUTPUT_REF/CAMSWITCH_REF/TRACK_REF/
+                      XFC_TRIGGER_REF flatten to BOOL/LREAL members.
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -390,6 +402,16 @@ tests/compat/
                       (--clock sim, --axes 2) expecting mask
                       0xfffffff; skips when the Tether server
                       binary is unavailable
+  tc2_mc2_xfc_case.st
+                     Tc2_MC2_XFC program (16 packed checks: axis,
+                      power, position preset, velocity ramp, the
+                      four kinematic blocks + DC-time helpers,
+                      position/time/break cams, digital cam
+                      switches, XFC touch probe)
+  tc2_mc2_xfc.sh    ctest tc2_mc2_xfc: builds tc2_mc2.st +
+                     tc2_mc2_xfc.st as libraries, consumes via
+                     --lib, 301-step in-process replay expecting
+                     mask 0xffff
   tc2_nci_case.st    Tc2_NCI program (8 packed checks: 3-axis group,
                       powered, FB_NciLine move to (1000,600,300),
                       endpoints hit, path length, return move, origin,
@@ -1366,6 +1388,28 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   `MC_GearInPos` is position-ratio coupling only — the Universal
   Flying Saw sync-point cam evaluation (`CamTableCharac` input,
   exact synchronous point/velocity) is not modeled.
+- **Tc2_MC2_XFC wrappers**: `compat/tc2/tc2_mc2_xfc.st` implements
+  the kinematic, cam-controller, digital-cam-switch and touch-probe
+  subset of the 30 documented APIs. Kinematics read the OP6
+  pos/vel snapshot and extrapolate linearly — the real XFC kernel
+  evaluates the full motion profile (trapezoid/segment
+  extrapolation is a gap). `T_DCTIME32` is flattened to the low 32
+  bits of a per-FB TON scan clock (~4.29 s wrap); callers must
+  invoke the FBs cyclically so the clocks share the program-start
+  epoch, and `XFC_ExtendDcTime` reports a signed ns offset rather
+  than a 64-bit `T_DCTIME`. `XFC_PositionCam`/`MC_DigitalCamSwitch`
+  evaluate a single flattened cam window
+  (`FirstOnPosition`/`LastOnPosition`/`Modulo`/`ModuloFactor`);
+  `CAMSWITCH_REF` tables, `TRACK_REF` tracking and the EL5131
+  multi-edge hardware variant are not modeled. `XFC_TimeCam` is
+  one-shot per position crossing; `XFC_BreakCam` follows
+  `BreakRelease` without the position-dependent release curve.
+  `XFC_TouchProbe` records `POS_ACTUAL` on a scan-synchronous
+  trigger edge (XFC_TRIGGER_REF flattened to BOOL). Not covered:
+  the EL1258/EL2212/EL2258/EL2262 terminal-specific blocks,
+  `XFC_EL1258_TouchProbe`, the five `XFC_*PathPosition*`/
+  `XFC_Path*Cam`/`MC_PathDigitalCamSwitch` NciXFC blocks (need the
+  NCI path kernel), and all AdvancedHoming step/reference blocks.
 - **Honest gaps**: `MC_TouchProbe` is a cycle-level software latch —
   TwinCAT's hardware touch-probe latches sub-cycle against an encoder
   event, but neither the in-process axis nor `SimulatedCiA402Drive`

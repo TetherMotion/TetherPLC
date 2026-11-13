@@ -15498,8 +15498,8 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5065_TC3_Motion_Control_XFC_XFC_NCI_EN.pdf` · **API entries:** 30
-- **Status:** core MC + NCI in `compat/tc2/tc2_mc2.st`/`tc2_nci.st`; XFC/homing variants on request
-- **Integration:** XFC/NCI extensions + advanced homing: NC kernel features.
+- **Status:** PARTIAL — kinematic/DC-time/cam/switch/touch-probe subset in `compat/tc2/tc2_mc2_xfc.st` (`tc2_mc2_xfc` ctest, mask `0xffff`); EL-terminal, NciXFC path and AdvancedHoming blocks pending
+- **Integration:** XFC/NCI extensions + advanced homing: NC kernel features. Implemented subset uses `FB_MotionAxis` OP6 snapshots + per-FB TON scan clocks (T_DCTIME32 = low32 of ns clock, ~4.29 s wrap; linear extrapolation only, no profile evaluation). Not covered: `XFC_EL1258_TouchProbe`, `XFC_EL2212/EL2258/EL2262_MultiEdge`, `XFC_*PathPosition*`/`XFC_Path*Cam`/`MC_PathDigitalCamSwitch_MultiEdge` (NCI path kernel), all AdvancedHoming step/reference blocks; `CAMSWITCH_REF`/`TRACK_REF`/`OUTPUT_REF`/`XFC_TRIGGER_REF` flatten to BOOL/LREAL members.
 
 #### PLC libraries › Tc2_MC2_XFC › Function blocks › Basic blocks
 
