@@ -1240,6 +1240,12 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "CTLTYPE", udint());
             push(&mut off, "CTLNUM", udint());
             push(&mut off, "CTLPEND", udint());
+            /* RCB snapshot extras (appended): OP 7 also fills
+               GI/PURGEBUF/RESVTMS/ENTRYID. */
+            push(&mut off, "GI", dint());
+            push(&mut off, "PURGEBUF", dint());
+            push(&mut off, "RESVTMS", udint());
+            push(&mut off, "ENTRYID", udint());
         }
         /* FB_Mqtt — tplc-mqtt service bridge (MQTT client via
         libpaho-mqtt3c). Synchronous op dispatch like FB_Eip: set OP +

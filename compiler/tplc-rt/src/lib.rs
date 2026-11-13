@@ -4683,6 +4683,12 @@ const IEC_CTLERR: usize = 1016;
 const IEC_CTLTYPE: usize = 1020;
 const IEC_CTLNUM: usize = 1024;
 const IEC_CTLPEND: usize = 1028;
+// RCB snapshot extras (appended): GI@1032, PURGEBUF@1036,
+// RESVTMS@1040, ENTRYID@1044.
+const IEC_GI: usize = 1032;
+const IEC_PURGEBUF: usize = 1036;
+const IEC_RESVTMS: usize = 1040;
+const IEC_ENTRYID: usize = 1044;
 
 // tplc-iec61850 service vtable offsets (TplcIec61850Service):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -4869,6 +4875,10 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
                 wi32(this.add(IEC_RPTENA), rd32(120));
                 wi32(this.add(IEC_RESV), rd32(124));
                 wi32(this.add(IEC_BUFFERED), rd32(128));
+                wi32(this.add(IEC_GI), rd32(132));
+                wi32(this.add(IEC_PURGEBUF), rd32(136));
+                wu32(this.add(IEC_RESVTMS), rd32(140) as u32);
+                wu32(this.add(IEC_ENTRYID), rd32(144) as u32);
             }
         }
         8 => {

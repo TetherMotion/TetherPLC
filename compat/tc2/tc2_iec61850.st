@@ -260,6 +260,10 @@ VAR_OUTPUT
     RptEna : BOOL;
     Resv : BOOL;
     Buffered : BOOL;
+    GI : BOOL;
+    PurgeBuf : BOOL;
+    ResvTms : UDINT;
+    EntryId : UDINT;
 END_VAR
 VAR
     ch : FB_Iec61850;
@@ -286,6 +290,10 @@ END_VAR
             RptEna := ch.RPTENA <> 0;
             Resv := ch.RESV <> 0;
             Buffered := ch.BUFFERED <> 0;
+            GI := ch.GI <> 0;
+            PurgeBuf := ch.PURGEBUF <> 0;
+            ResvTms := ch.RESVTMS;
+            EntryId := ch.ENTRYID;
         ELSE
             Error := TRUE;
             ErrorID := ch.ERRID;

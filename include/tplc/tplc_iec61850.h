@@ -52,7 +52,11 @@ typedef struct TplcIec61850Rcb {
     int32_t  rpt_ena;
     int32_t  resv;
     int32_t  buffered;
-    uint32_t reserved[5];
+    int32_t  gi;
+    int32_t  purge_buf;
+    uint32_t resv_tms;
+    uint32_t entry_id;
+    uint32_t reserved[1];
 } TplcIec61850Rcb;           /* 152 bytes */
 
 /* Control-object command-termination event (Select/Operate/

@@ -463,6 +463,10 @@ int32_t Iec61850Service::rcbGet(void*, uint32_t h, const char* rcbRef,
     out->rpt_ena   = ClientReportControlBlock_getRptEna(rcb) ? 1 : 0;
     out->resv      = ClientReportControlBlock_getResv(rcb) ? 1 : 0;
     out->buffered  = ClientReportControlBlock_isBuffered(rcb) ? 1 : 0;
+    out->gi        = ClientReportControlBlock_getGI(rcb) ? 1 : 0;
+    out->purge_buf = ClientReportControlBlock_getPurgeBuf(rcb) ? 1 : 0;
+    out->resv_tms  = ClientReportControlBlock_getResvTms(rcb);
+    out->entry_id  = ClientReportControlBlock_getEntryId(rcb);
     ClientReportControlBlock_destroy(rcb);
     impl_->conns[h - 1].invoke_id++;
     return TPLC_61850_OK;
