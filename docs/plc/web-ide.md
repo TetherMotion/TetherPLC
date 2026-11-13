@@ -244,6 +244,25 @@ prog + rt + retain cards plus the event-driven refresh; the ctl URL is
 `localStorage`-persisted (`tether.plc.ctlUrl`, default
 `http://127.0.0.1:8089`).
 
+`DEPLOY_COMMIT` only *stores* the package under `packages_dir` — it does
+not run it. Both deploy paths (`build & deploy`, `deploy .tplc…`) then
+chain `PROG_STOP` (prepare rejects while RUNNING) → `PROG_PREPARE
+<uuid>` → `PROG_START`, so a successful deploy leaves the new program
+running. State-preserving online change stays on the shadow path
+(deploy → `SHADOW_LOAD` → compare → `SHADOW_PROMOTE`).
+
+### Live-runtime E2E
+
+`TetherWebUI/e2e/live-stack.sh` boots a real `tether-plc` (shm image +
+pre-deployed `LiveDemo` package + ctl socket) behind `tplc-ctl-proxy`
+on `:8090` (`--socket` = the runtime ctl.sock, so `/health`, `/ctl` and
+`/events` all reach it). `e2e/plc-live.spec.ts` then drives the real
+scan loop from the browser: cycle counters advance, `stop`/`start`
+freeze/resume them, task suspend/step/resume hit the scheduler, and
+`build & deploy` ships a project package that ends up RUNNING. The
+stack spawns automatically when `tether-plc`, `tplc-image` and `tplcc`
+are built; the spec skips otherwise.
+
 ## 9. What is deliberately not here
 
 - No compile logic in the browser — `/compile` is always server-side
