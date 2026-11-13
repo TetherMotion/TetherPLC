@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <string>
 #include <vector>
 #include <netdb.h>
@@ -198,21 +199,29 @@ static bool parse_srcs(const std::vector<uint8_t>& body,
     return o == body.size() && !files.empty();
 }
 
-/* collect *.st / *.tplc under dir (non-recursive) */
+/* POSIX single-quote escaping for embedding a path in a shell command */
+static std::string shq(const std::string& s) {
+    std::string o = "'";
+    for (char c : s) {
+        if (c == '\'') o += "'\\''";
+        else o += c;
+    }
+    return o + "'";
+}
+
+/* collect *.st / *.tplc under dir (non-recursive) — no shell: the dir
+ * comes from --libdir but filenames are untrusted directory content */
 static void collect_lib_files(const std::string& dir,
                               std::vector<std::string>& out) {
-    std::string cmd = "ls \"" + dir + "\" 2>/dev/null";
-    FILE* p = popen(cmd.c_str(), "r");
-    if (!p) return;
-    char b[4096];
-    while (fgets(b, sizeof b, p)) {
-        std::string n = b;
-        while (!n.empty() && (n.back() == '\n' || n.back() == '\r')) n.pop_back();
+    DIR* d = opendir(dir.c_str());
+    if (!d) return;
+    while (dirent* e = readdir(d)) {
+        std::string n = e->d_name;
         if (n.size() > 3 &&
             (n.rfind(".st") == n.size() - 3 || n.rfind(".tplc") == n.size() - 5))
             out.push_back(dir + "/" + n);
     }
-    pclose(p);
+    closedir(d);
 }
 
 static std::string json_escape(const std::string& s) {
@@ -236,8 +245,8 @@ static void handle_blocks(int cfd, bool refresh) {
             std::vector<std::string> files;
             collect_lib_files(dir, files);
             if (files.empty()) continue;
-            std::string cmd = g_tplcc + " blocks --json";
-            for (auto& f : files) cmd += " \"" + f + "\"";
+            std::string cmd = shq(g_tplcc) + " blocks --json";
+            for (auto& f : files) cmd += " " + shq(f);
             cmd += " 2>/dev/null";
             FILE* p = popen(cmd.c_str(), "r");
             std::string out;
@@ -288,8 +297,17 @@ static void handle_libsrc(int cfd, const std::string& query) {
         return o;
     };
     std::string lib = qval("lib"), file = qval("file");
+    /* file is interpolated into a shell command — restrict it to the
+     * same basename charset /compile accepts (no quotes, no $(), no
+     * whitespace), on top of the .. and / rejection above */
+    bool safe_name = !file.empty();
+    for (char c : file) {
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-'))
+            safe_name = false;
+    }
     if (lib.empty() || file.empty() || file.find("..") != std::string::npos ||
-        file.find('/') != std::string::npos) {
+        file.find('/') != std::string::npos || !safe_name) {
         const char* m = "bad libsrc query";
         http_reply(cfd, 400, "Bad Request", (const uint8_t*)m, strlen(m), "text/plain");
         return;
@@ -323,7 +341,7 @@ static void handle_libsrc(int cfd, const std::string& query) {
         collect_lib_files(dir, pkgs);
         for (auto& p : pkgs) {
             if (p.size() < 5 || p.rfind(".tplc") != p.size() - 5) continue;
-            std::string cmd = g_tplcc + " src \"" + p + "\" \"" + file + "\"";
+            std::string cmd = shq(g_tplcc) + " src " + shq(p) + " " + shq(file);
             FILE* fp = popen(cmd.c_str(), "r");
             if (!fp) continue;
             body.clear();
@@ -377,7 +395,7 @@ static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build
         return;
     }
     std::string dir = dir_t;
-    std::string cmd = std::string("cd ") + dir + " && " + g_tplcc +
+    std::string cmd = "cd " + shq(dir) + " && " + shq(g_tplcc) +
                       (build ? " build --json -o out.tplc" : " check --json");
     for (auto& [name, content] : files) {
         std::string p = dir + "/" + name;
@@ -389,7 +407,7 @@ static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build
             return;
         }
         fclose(f);
-        cmd += " " + name;
+        cmd += " " + shq(name);
     }
     cmd += " 2>err.log";
     FILE* pipe = popen(cmd.c_str(), "r");

@@ -125,8 +125,9 @@ else bad "proxy /blocks"; head -c 300 "$W/blocks.json" 2>/dev/null; fi
 
 if curl -s -m 30 "http://127.0.0.1:$PORT/libsrc?lib=tempctrl&file=atc_tempctrl.st" -o "$W/lib.st" \
    && grep -q "FUNCTION_BLOCK FB_AtcProfile" "$W/lib.st" \
-   && curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/libsrc?lib=tc2&file=..%2F..%2Fevil" | grep -q '^4'
-then ok "proxy /libsrc: serves source, rejects traversal"
+   && curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/libsrc?lib=tc2&file=..%2F..%2Fevil" | grep -q '^4' \
+   && curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/libsrc?lib=tempctrl&file=x%22%3Btouch%24%28pwd%29" | grep -q '^4'
+then ok "proxy /libsrc: serves source, rejects traversal+injection"
 else bad "proxy /libsrc"; head -c 200 "$W/lib.st" 2>/dev/null; fi
 
 echo "== $pass pass, $fail fail"
