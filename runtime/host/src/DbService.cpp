@@ -6,10 +6,12 @@
 
 #include <tplc/host/DbService.hpp>
 
-#include <sqlite3.h>
-
 #include <cstring>
 #include <string>
+
+#if defined(TPLC_HAVE_SQLITE3)
+
+#include <sqlite3.h>
 
 namespace tplc {
 
@@ -147,3 +149,54 @@ int32_t DbService::error(void*, uint32_t h, uint8_t* out,
 }
 
 } /* namespace tplc */
+
+#else /* !TPLC_HAVE_SQLITE3 — service compiles inert */
+
+namespace tplc {
+
+struct DbService::Impl {
+    std::string last_error = "sqlite3 support not compiled in";
+};
+
+DbService::DbService() : impl_(new Impl) {
+    svc_.struct_size = sizeof(TplcDbService);
+    svc_.abi_version = TPLC_DB_ABI_VERSION;
+    svc_.host = this;
+    svc_.db_open = [](void* s, const char* p, uint32_t* o)
+        { return self(s)->open(s, p, o); };
+    svc_.db_close = [](void* s, uint32_t h)
+        { return self(s)->close(s, h); };
+    svc_.db_exec = [](void* s, uint32_t h, const char* q, uint32_t* c)
+        { return self(s)->exec(s, h, q, c); };
+    svc_.db_query = [](void* s, uint32_t h, const char* q, uint8_t* b,
+                       uint32_t n, uint32_t* r, uint32_t* c)
+        { return self(s)->query(s, h, q, b, n, r, c); };
+    svc_.db_error = [](void* s, uint32_t h, uint8_t* o, uint32_t n,
+                       uint32_t* l)
+        { return self(s)->error(s, h, o, n, l); };
+}
+DbService::~DbService() = default;
+int32_t DbService::open(void*, const char*, uint32_t*) { return TPLC_DB_E_OPEN; }
+int32_t DbService::close(void*, uint32_t) { return TPLC_DB_E_HANDLE; }
+int32_t DbService::exec(void*, uint32_t, const char*, uint32_t*) {
+    return TPLC_DB_E_HANDLE;
+}
+int32_t DbService::query(void*, uint32_t, const char*, uint8_t*,
+                         uint32_t, uint32_t*, uint32_t*) {
+    return TPLC_DB_E_HANDLE;
+}
+int32_t DbService::error(void*, uint32_t, uint8_t* out, uint32_t cap,
+                         uint32_t* out_len) {
+    if (!out || cap == 0) return TPLC_DB_E_PARAM;
+    const std::string& msg = impl_->last_error;
+    uint32_t n = (uint32_t)msg.size();
+    if (n >= cap) n = cap - 1;
+    std::memcpy(out, msg.data(), n);
+    out[n] = 0;
+    if (out_len) *out_len = n;
+    return TPLC_DB_OK;
+}
+
+} /* namespace tplc */
+
+#endif /* TPLC_HAVE_SQLITE3 */

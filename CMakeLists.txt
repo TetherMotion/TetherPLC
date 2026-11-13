@@ -68,7 +68,20 @@ add_library(tplc_host STATIC
   runtime/host/src/MbusService.cpp
   runtime/host/src/CtlServer.cpp)
 target_include_directories(tplc_host PUBLIC runtime/host/include)
-target_link_libraries(tplc_host PUBLIC tplc_image dl sqlite3)
+target_link_libraries(tplc_host PUBLIC tplc_image dl)
+
+# tplc-db SQLite service: optional — without sqlite3 dev files the
+# service compiles inert and db ops return TPLC_DB_E_* errors.
+find_library(TPLC_SQLITE3_LIBRARY NAMES sqlite3)
+find_path(TPLC_SQLITE3_INCLUDE_DIR NAMES sqlite3.h)
+if(TPLC_SQLITE3_LIBRARY AND TPLC_SQLITE3_INCLUDE_DIR)
+  target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_SQLITE3)
+  target_include_directories(tplc_host PRIVATE ${TPLC_SQLITE3_INCLUDE_DIR})
+  target_link_libraries(tplc_host PUBLIC ${TPLC_SQLITE3_LIBRARY})
+  message(STATUS "tplc_host: tplc-db via sqlite3")
+else()
+  message(STATUS "tplc_host: no sqlite3 — tplc-db inactive")
+endif()
 
 # ------------------------------------------------------------------ #
 # Package library (.tplc C++ reader)
@@ -1089,13 +1102,16 @@ if(NOT CMAKE_CROSSCOMPILING)
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc2_Database/Tc3_Database (C7 connectivity): tplc-db SQLite
-  # service — open/create/insert/select/error/close
-  add_test(NAME tc3_database_io
-    COMMAND ${CMAKE_COMMAND} -E env
-      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
-      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_database_io.sh)
-  set_tests_properties(tc3_database_io PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  # service — open/create/insert/select/error/close. Only registered
+  # when sqlite3 dev files were found (service compiles inert otherwise).
+  if(TPLC_SQLITE3_LIBRARY AND TPLC_SQLITE3_INCLUDE_DIR)
+    add_test(NAME tc3_database_io
+      COMMAND ${CMAKE_COMMAND} -E env
+        "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_database_io.sh)
+    set_tests_properties(tc3_database_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  endif()
 
   # Tc2_XmlDataSrv (C7 connectivity): tplc-xmlsrv file-backed XML
   # value store — write/read/ByName/missing-key/obfuscation
