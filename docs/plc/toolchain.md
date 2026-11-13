@@ -100,6 +100,8 @@ HTTP/1.1 server (`tools/tplc_ctl_proxy.cpp`, no deps) exposing:
 | `/ctl` | POST | one verbatim ctl frame round-trip (auto-issues the session `HELLO` per UDS connection) |
 | `/compile` | POST | binary src frame → `tplcc check|build --json`; wraps output as `{compile, exit, package?b64}` |
 | `/events` | GET | SSE stream of ctl `F_EVENT` frames (see `web-ide.md` §events) |
+| `/blocks` | GET | merged `tplcc blocks --json` catalog over every `--libdir` (cached; `?refresh=1` forces) |
+| `/libsrc` | GET | `?lib=<name|index>&file=<name>` → raw ST source (direct `.st` or extracted from a `.tplc`) |
 | `/health` | GET | `ok` iff the ctl UDS connects |
 | any | OPTIONS | CORS preflight (`Access-Control-Allow-Origin: *`) |
 
@@ -115,7 +117,10 @@ treated as exit 0 and still attaches the package
 
 Flags: `--socket` (ctl UDS, default `/tmp/tplc-image.ctl`), `--port`,
 `--bind`, `--tplcc` (compiler path for the popen path), `--tplccd`
-(daemon UDS, default `/tmp/tplccd.sock`).
+(daemon UDS, default `/tmp/tplccd.sock`), `--libdir <dir>` (repeatable;
+each dir's `.st` files and `.tplc` packages feed `/blocks` and
+`/libsrc` — point it at the installed `libraries/` tree, e.g.
+`--libdir libraries/tempctrl --libdir libraries/compat/tc2`).
 
 ## 4. `tplcc serve` — the compile daemon
 
