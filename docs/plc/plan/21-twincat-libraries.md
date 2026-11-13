@@ -16871,7 +16871,15 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5110-TF5113_TC3_Kinematic_Transformation_EN.pdf` · **API entries:** 12
-- **Status:** kinematic transforms are Tether motion-domain (path planning lives in Tether); PLC surface on request
+- **Status:** IMPLEMENTED — `compat/tc2/tc2_nckin.st` (all 12 APIs over the
+  `tplc-kin` service / `FB_Kin` builtin; Tether `kinematics::ForwardKinematics`
+  engine on both backends) — ctest `tc2_nckin` + `tc2_nckin_io`.
+  Deviations: `oidTrafo` is the object index 0..7 (TwinCAT binds the object
+  via the project); `ST_KinAxes`/`NCTOPLC_NCICHANNEL_REF`/`U_KinMetaInfo`/
+  `E_KINSTATUS` flatten to arrays + scalars; pointer-based `FB_KinCalcMultiTrafo`
+  carries one object's LREAL vector per call; the two FUNCTIONs with output
+  params are FUNCTION_BLOCKs; backward IK is position-only damped least
+  squares (orientation unconstrained, seed joints in input slots 4+).
 - **Integration:** Kinematic transformations (robot-like chains): kinematics engine on the axis backend.
 
 #### Plc Library › Function Blocks

@@ -53,6 +53,8 @@ add_library(tplc_host STATIC
   runtime/host/src/NciIoService.cpp
   runtime/host/src/FifoService.cpp
   runtime/host/src/FifoIoService.cpp
+  runtime/host/src/KinService.cpp
+  runtime/host/src/KinIoService.cpp
   runtime/host/src/EcSyncService.cpp
   runtime/host/src/EcDiagService.cpp
   runtime/host/src/SoeService.cpp
@@ -369,11 +371,15 @@ if(TARGET tplc_tether_io)
   set_source_files_properties(runtime/host/src/MotionIoService.cpp
                               runtime/host/src/NciIoService.cpp
                               runtime/host/src/FifoIoService.cpp
+                              runtime/host/src/KinIoService.cpp
+                              runtime/host/src/KinService.cpp
                               runtime/host/src/EcSyncService.cpp
                               runtime/host/src/EcDiagService.cpp
                               runtime/host/src/SoeService.cpp
     PROPERTIES COMPILE_OPTIONS "-std=c++23")
   target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_TETHER_IO)
+  target_include_directories(tplc_host PRIVATE
+    ${TETHER_DIR}/dependencies/eigen)
   target_link_libraries(tplc_host PUBLIC tplc_tether_io)
   message(STATUS "tplc_host: Tether IO motion backend enabled")
 endif()
@@ -938,6 +944,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_ncfifoaxes PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc2_NcKinematicTransformation e2e: planar2d + serial6 UR5
+  # objects, ACS/MCS axis binding, forward + IK transforms, param
+  # lock, rotation save/restore, group reset, status, error paths;
+  # in-process Tether kinematics engine, no peer
+  add_test(NAME tc2_nckin
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_nckin.sh)
+  set_tests_properties(tc2_nckin PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc3_NC_Camming e2e: two simulated axes, 3-point cam table
   # (master -> 2x slave), coupling while the master runs a velocity
   # move, periodic wrap, table clear, WritePt edge; in-process
@@ -1202,6 +1217,15 @@ if(NOT CMAKE_CROSSCOMPILING)
       "BUILD=$<TARGET_FILE_DIR:tether-plc>"
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_ncfifoaxes_io.sh)
   set_tests_properties(tc2_ncfifoaxes_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc2_NcKinematicTransformation over Tether IO: the kin.* params
+  # run the same transforms on the remote server's FK models
+  add_test(NAME tc2_nckin_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_nckin_io.sh)
+  set_tests_properties(tc2_nckin_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real

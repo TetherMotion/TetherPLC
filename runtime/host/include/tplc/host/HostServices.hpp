@@ -17,6 +17,8 @@
 #include <tplc/host/EipService.hpp>
 #include <tplc/host/FifoIoService.hpp>
 #include <tplc/host/FifoService.hpp>
+#include <tplc/host/KinIoService.hpp>
+#include <tplc/host/KinService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
 #include <tplc/host/Iec870Service.hpp>
@@ -123,6 +125,11 @@ private:
        (only meaningful while tplc-motion is the local backend). */
     FifoIoService fifo_io_;
     FifoService   fifo_;
+    /* Kinematic transformation objects: IO-backed when the endpoint
+       exposes kin.* params, otherwise the in-process Tether
+       kinematics engine (backend-independent, always valid). */
+    KinIoService  kin_io_;
+    KinService    kin_;
     /* OPC UA client; active() only when built with libopen62541. */
     OpcUaService  opcua_;
     /* EtherNet/IP explicit-messaging client; always available. */

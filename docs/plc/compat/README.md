@@ -121,6 +121,23 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       targets on the integrated axes. Channel
                       override is recorded but does not rescale
                       absolute position rows.
+  tc2_nckin.st       Tc2_NcKinematicTransformation wrappers (12
+                      APIs) over the tplc-kin service + FB_Kin
+                      builtin: FB_KinConfigGroup/ResetGroup/
+                      CalcTrafo/CalcMultiTrafo/UnlockTrafoParam/
+                      LockTrafoParam/ExtendedRotationRange/
+                      PresetRotation/CheckActualStatus +
+                      F_KinGetChnOperationState/
+                      F_KinGetAcsMcsAxisIds (FUNCTIONs flattened
+                      to FBs)/F_KinAxesInTolerance. Up to 8
+                      objects (oidTrafo 0..7) bind a Tether
+                      ForwardKinematicsBase chain (cartesian,
+                      planar2d, articulated3, scara, serial6,
+                      serial7, gantry5, delta, stewart) to ACS/
+                      MCS axis lists, a param lock, a rotation
+                      preset, and an NC channel id. Forward maps
+                      joints to Pose6D; backward runs position-
+                      only damped least-squares IK.
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -461,6 +478,22 @@ tests/compat/
                      via TPLC_MOTION_IO; rows emit as 0x607A CSP
                      targets on the mc.time drive clock; skips when
                      the Tether server binary is unavailable
+  tc2_nckin_case.st  Tc2_NcKinematicTransformation program (13
+                     packed checks: planar2d + serial6 UR5 config,
+                     axis binding + channel, op state + axis
+                     readback, forward pose, IK joints, serial6
+                     IK roundtrip, param lock rejection, rotation
+                     save/restore, group reset + tolerance fn,
+                     no-model + bad-object errors)
+  tc2_nckin.sh       ctest tc2_nckin: builds tc2_nckin.st as a
+                     library, consumes via --lib, 201-step
+                     in-process replay expecting mask 0x1fff
+  tc2_nckin_io.sh    ctest tc2_nckin_io: same case replayed over
+                     the Tether IO protocol against
+                     tether_io_motion_server (--clock sim) via
+                     TPLC_MOTION_IO; the kin.* params run the
+                     transforms server-side; skips when the
+                     Tether server binary is unavailable
   tc2_nci_gcode_case.st
                      Tc2_NCI G-code channel program (14 packed
                       checks: text upload, file load, READY +
@@ -498,7 +531,7 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
 | C3 | T1 services II | `tplc-rtmon` done (FB_RtMon + Tc3_RealtimeMonitoring, in-process e2e); Tc3_DynamicMemory blocked (needs PVOID/REFERENCE TO PVOID); Tc3_Module blocked (TwinCAT COM object model); Tc3_JsonXml blocked (METHOD/interface/POINTER/REFERENCE/HRESULT pervade all 8 FBs); Tc3_EventLogger blocked (I_Tc* interfaces, methods, HRESULT, GUID type) |
 | C4 | Connectivity wave 1 | `tplc-modbus` done (Tc2_ModbusSrv 20/20 TCP+UDP + Tc2_ModbusRTU V2-master subset, pty e2e); `tplc-sacn` done (Tc3_sACN source/receiver + pure-IEC helpers, multicast e2e); `tplc-bacnet` done (BACnet/IP Who-Is/ReadProperty/WriteProperty + wrappers, UDP e2e); `tplc-pjlink` done (PJLink TCP client + auth + wrappers, TCP e2e); `tplc-s7` done (S7comm RFC1006 client + session/io FBs + wrappers, TCP e2e); `tplc-ftp` done (FTP PASV client + conn/cmd/xfer FBs + wrappers, TCP e2e); `tplc-smtp` + GSM AT SMS done (RFC 5321 client + AUTH LOGIN, AT state machine over tplc-serial, pty/TCP e2e); `tplc-iec870` done (IEC 60870-5-104 client + conn/tx/rx FBs + pure helpers, TCP e2e). C4 complete |
 | C5 | Motion core | `tplc-motion` backend done (simulated CiA402/DS402 axis pool + `FB_MotionAxis` builtin); Tether-IO-backed backend done (`MotionIoService` maps object ops to `mc.<slave>.<index>` params on `tether_io_motion_server`/`SimulatedCiA402Drive`, deterministic via `mc.time` + `--clock sim`, in-process fallback retained); `compat/tc2/tc2_mc2.st` axis-management + command wrappers done (MC_Power/MC_Reset/MC_SetPosition abs+rel/MC_Read* plus MC_MoveAbsolute/Relative/Modulo/Velocity/MC_Stop/MC_Halt/MC_Home/MC_Jog/MC_SetOverride/MC_Read|WriteParameter(+Bool), an 8-state PLCopen operating state, and coupling/probe blocks (MC_TouchProbe cycle-level latch + MC_AbortTrigger via drive object 0x2001, MC_GearIn velocity-ratio coupling, MC_GearOut; e2e on both backends); exact hardware-latch touch-probe, phase-locked gearing/phasing pending; `compat/tc3/tc3_nccam.st` single-table cam coupling done (e2e `tc3_nccam{,_io}`) |
-| C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus`/`ItpFiFoWrite`/`ItpConfirmHsk`/`ItpWriteRParam`/`ItpReadRParam`/`ItpZeroShift` wrappers (e2e `tc2_nci_gcode_io` mask `0x7fffff`: FIFO queue + run-from-idle + chained blocks, R-param roundtrip, zero-shift, M8 pause→confirm→resume); **Tc2_NcFifoAxes done**: `tplc-fifo` service + `FB_Fifo` builtin + `compat/tc2/tc2_ncfifoaxes.st` FiFo* wrappers over `fifo.*` params (numeric LREAL setpoint streaming, e2e `tc2_ncfifoaxes{,_io}`); cyclic-channel offsets pending |
+| C6 | NC interpolation | `compat/tc2/tc2_nci.st` interpolation core done (`FB_NciLine` coordinated 3-axis linear CSP move, `F_NciSqrt`, `FB_NciEStop`, e2e on both backends); **Tether-owned G-code channel done**: `tether_io_motion_server` compiles program text/files with `GCode::PlanningSegmentBuilder`, builds a `MotionPlanner::MotionPlan` (corner blending, jerk-limited profile, linear/arc/dwell), and streams CSP `0x607A` setpoints to slaves 0-2 on the `mc.time` clock — PLC side is the `tplc-nci` service + `FB_NciChan` builtin + `FB_ItpLoadText`/`ItpLoadProg`/`ItpStartStop`/`ItpReset`/`ItpEStop`/`ItpStatus`/`ItpFiFoWrite`/`ItpConfirmHsk`/`ItpWriteRParam`/`ItpReadRParam`/`ItpZeroShift` wrappers (e2e `tc2_nci_gcode_io` mask `0x7fffff`: FIFO queue + run-from-idle + chained blocks, R-param roundtrip, zero-shift, M8 pause→confirm→resume); **Tc2_NcFifoAxes done**: `tplc-fifo` service + `FB_Fifo` builtin + `compat/tc2/tc2_ncfifoaxes.st` FiFo* wrappers over `fifo.*` params (numeric LREAL setpoint streaming, e2e `tc2_ncfifoaxes{,_io}`); **Tc2_NcKinematicTransformation done**: `tplc-kin` service + `FB_Kin` builtin + `compat/tc2/tc2_nckin.st` over `kin.*` params and the shared Tether `ForwardKinematics` engine (forward + position IK, e2e `tc2_nckin{,_io}`); cyclic-channel offsets pending |
 | C7 | Connectivity wave 2 | `tplc-opcua` **done** (OPC UA client via libopen62541 — opt-in like other special features, auto-detected, absent → `getService` nullptr): `FB_UaClient` builtin + `FB_UA_Connect`/`FB_UA_Disconnect`/`FB_UA_ConnectGetStatus`/`FB_UA_Read`/`FB_UA_Write`/`FB_UA_GetNamespaceIndex` wrappers in `compat/tc2/tc2_opcua.st` (TwinCAT Tc2_OPCUA/Tc3_PlcOpenOpcUa shape); the endpoint is Tether's `tether_io_motion_server --opcua` (open62541 server exposing the motion Registry as `ns=2;s=<name>` nodes); e2e `tc2_opcua_io` — connect/session/read `nc.state`/write+read `nc.scale`/ns-index/disconnect; node-handle registration, subscriptions, methods, history pending. `tplc-eip` **done** (EtherNet/IP explicit-messaging client — RegisterSession/ListIdentity/SendRRData + CIP Get/Set_Attribute_Single, nonblocking poll-bounded IO): `FB_Eip` builtin + `FB_EipConnect`/`Disconnect`/`Status`/`ListIdentity`/`GetAttribute`/`SetAttribute` wrappers in `compat/tc2/tc2_eip.st`; e2e `tc2_eip_io` vs `eip_adapter_fake.py` — register/identity/attr r-w/disconnect `0x7f`; cyclic class-1 I/O, ForwardOpen, CIP services beyond Get/Set pending. `tplc-iec61850` **done** (IEC 61850 MMS client via libiec61850 — opt-in, auto-downloaded + built via FetchContent, absent → `getService` nullptr): `FB_Iec61850` builtin + `FB_Iec61850Connect`/`Disconnect`/`Status`/`Read`/`Write`/`GetNameList` wrappers in `compat/tc2/tc2_iec61850.st` (domain+item addressing, `#FC` suffix selects functional constraint); e2e `tc2_iec61850_io` vs `iec61850_ied_fake` (real libiec61850 IedServer) — associate/status/read/write-error/namelist/disconnect `0x7f`; reporting/RCB, GOOSE/SMV, control sequences pending. `tplc-mqtt` **done** (MQTT 3.1.1 client via libpaho-mqtt3c — opt-in, FetchContent fallback, absent → `getService` nullptr): `FB_Mqtt` builtin + `FB_IotMqttClient`/`Disconnect`/`Publish`/`Subscribe`/`Unsubscribe`/`Receive` wrappers in `compat/tc2/tc2_mqtt.st`; e2e `tc2_mqtt_io` vs `mqtt_broker_fake.py` — connect/subscribe/publish/echo/disconnect `0x1f`; MQTT5 properties, wildcard detail, QoS2, retained, TLS pending. `tplc-ocpp` **done** (OCPP-J charge-point client — WebSocket RFC6455 + OCPP JSON-RPC framing, always available): `FB_Ocpp` builtin + `FB_OcppConnect`/`Disconnect`/`Call`/`Result`/`CallError`/`Receive` wrappers in `compat/tc2/tc2_ocpp.st`; e2e `tc2_ocpp_io` vs `ocpp_csms_fake.py` — WS upgrade/call/result/disconnect `0xf`; OCPP 2.x, security profiles, schema validation pending. `tplc-aes70` **done** (AES70/OCA audio-control client over OSCP TCP — OCP1 + OcaMessage PDU codec, always available): `FB_Aes70` builtin + `FB_Aes70Connect`/`Disconnect`/`Call`/`Keepalive`/`Receive` wrappers in `compat/tc2/tc2_aes70.st`; e2e `tc2_aes70_io` vs `aes70_device_fake.py` — connect/keepalive/call/response/disconnect `0x1f`; notification subscriptions, full OCA catalog, property shorthands pending. `tplc-dmx` **done** (DMX512 output over an opt-in serial port — TIOCSBRK break + MAB + start code + 512 ch at 250 kbaud): `FB_Dmx` builtin + `FB_DmxOpen`/`Close`/`SetChannel`/`SetChannels`/`Send`/`Status` wrappers in `compat/tc2/tc2_dmx.st`; e2e `tc2_dmx_io` vs `dmx_rx_fake.py` (PTY fake) — open/set/send/status/close `0x1f`; RDM + receive pending. DALI/EIB/LON/MBus/EnOcean follow the same opt-in-serial pattern |
 
 ### C1 coverage notes
@@ -1598,6 +1631,55 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   rescale absolute position rows; no handshake/busy-wait semantics
   beyond the synchronous op dispatch; channel count fixed at 4,
   axes per channel at 8, rows at 1000.
+
+#### Tc2_NcKinematicTransformation (`kin.*`)
+
+- **Model**: `tether_io_motion_server` exposes `kin.*` params for
+  up to 8 kinematic objects (`kin.obj` selects 0..7): `kin.type`
+  picks the chain (0 cartesian, 1 planar2d, 2 articulated3,
+  3 scara, 4 serial6, 5 serial7, 6 gantry5, 7 delta, 8 stewart),
+  `kin.preset` the model preset (serial6 UR5/KUKA), `kin.cfg` a
+  `u32 n + n f64` geometry blob, `kin.locked` gates config
+  writes, `kin.in` the transform input (`u32 n + n f64`),
+  `kin.out`/`kin.q` fixed f64[8] result blobs, `kin.cmd` the
+  synchronous command (1 fwd, 2 IK, 3 reset, 4/5 rotation
+  save/restore), `kin.state`/`kin.err` status, `kin.acs`/`kin.mcs`
+  axis lists, `kin.nacs`/`kin.nmcs` counts, `kin.rot` the
+  f64[3] rotation preset, `kin.chn`/`kin.chnstate` the NC
+  channel binding. The server instantiates the same
+  `tether::kinematics::ForwardKinematicsBase` models the in-process
+  backend compiles from `ForwardKinematics.hpp`, so results are
+  bit-identical.
+- **IK**: `kinematics::numericPositionIK` (shared Tether header)
+  solves position only via a forward-difference numeric Jacobian,
+  damped normal equations, and Gaussian elimination; fixed 1e-4
+  differencing step, 1e-4 m residual, 60 iterations, per-joint
+  step clamp. Seeds come from `kin.in[3..]`; chains above 5 DOF
+  get truncated seeds (the input blob caps at 8 f64).
+- **PLC side**: `tplc-kin` service (`include/tplc/tplc_kin.h`,
+  `TplcKinService` vtable) served by `KinIoService` when
+  `TPLC_MOTION_IO` exposes `kin.*`, else the in-process
+  `KinService` (valid regardless of the motion backend; it only
+  stores axis lists). `FB_Kin` is the op-multiplexed builtin
+  (1 configure, 2 set axes, 3 command, 4 calc input, 5 result,
+  6 set locked, 7 rotation, 8 status, 9 set channel, 10 get
+  axes); `compat/tc2/tc2_nckin.st` wraps it in TwinCAT shape.
+  Flattening: `oidTrafo` is the object index (TwinCAT binds via
+  the project), `ST_KinAxes`/`NCTOPLC_NCICHANNEL_REF`/
+  `U_KinMetaInfo`/`E_KINSTATUS` become arrays + scalars,
+  `FB_KinCalcMultiTrafo` pointers become LREAL vectors,
+  `F_KinGetChnOperationState`/`F_KinGetAcsMcsAxisIds` are FBs.
+- **Verified**: `tc2_nckin` + `tc2_nckin_io` replay
+  `tc2_nckin_case.st` (mask `0x1fff`, 13 checks) on both
+  backends — configure, axis binding, forward pose, planar IK,
+  serial6 IK roundtrip, lock rejection, rotation save/restore,
+  group reset, axis-list readback, error paths.
+- **Honest gaps**: IK is position-only (orientation unconstrained,
+  redundant chains return seed-dependent solutions); no project-
+  side kinematic object configuration (use `FB_Kin` OP1 directly
+  or the wrappers); `FB_KinExtendedRotationRange` interprets
+  execute-edge = save, release-edge = restore; `bCartesianMode`
+  is accepted but both axis lists are always stored.
 
 ### C7 coverage notes
 

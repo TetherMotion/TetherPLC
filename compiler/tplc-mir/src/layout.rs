@@ -1240,6 +1240,65 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
                 },
             );
         }
+        /* FB_Kin — tplc-kin service bridge (Tc2_NcKinematicTransformation
+        kinematic transformation objects). Synchronous op dispatch like
+        FB_Fifo: set OP + fields and call. OP 1=configure (TYPE/PRESET/
+        NCFG + CFG f64[32] geometry), 2=set axes (NACS/NMCS + ACS/MCS
+        u32[8] slave lists), 3=command (CMD = TPLC_KIN_CMD_*),
+        4=calc input (NIN + IN f64[8]: joints or target xyz + seed),
+        5=result (fills OUT f64[8] pose + Q f64[8] joints),
+        6=set locked (LOCKED), 7=rotation (ROP + ROT f64[3]),
+        8=status (fills STATE/KTYPE/DOF/ERR/CHNST/CHN + NACS/NMCS/
+        LOCKED), 9=set channel (CHN), 10=get axes (fills ACS/MCS +
+        NACS/NMCS). STATUS carries the service
+        return code, ERRID its positive form. */
+        "FB_Kin" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let lreal = || Type::Real { bits: 64 };
+            let f64arr = |n: u64| Type::Array {
+                elem: Box::new(lreal()),
+                lo: 0,
+                hi: n as i64 - 1,
+            };
+            let u32arr = |n: u64| Type::Array {
+                elem: Box::new(udint()),
+                lo: 0,
+                hi: n as i64 - 1,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "OBJ", udint());
+            push(&mut off, "TYPEIN", dint());
+            push(&mut off, "PRESET", udint());
+            push(&mut off, "NCFG", udint());
+            push(&mut off, "NIN", udint());
+            push(&mut off, "NACS", udint());
+            push(&mut off, "NMCS", udint());
+            push(&mut off, "CMD", udint());
+            push(&mut off, "ROP", udint());
+            push(&mut off, "CHN", udint());
+            push(&mut off, "LOCKED", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "STATE", dint());
+            push(&mut off, "KTYPE", dint());
+            push(&mut off, "DOF", dint());
+            push(&mut off, "ERR", dint());
+            push(&mut off, "CHNST", dint());
+            push(&mut off, "CFG", f64arr(32));
+            push(&mut off, "IN", f64arr(8));
+            push(&mut off, "OUT", f64arr(8));
+            push(&mut off, "Q", f64arr(8));
+            push(&mut off, "ACS", u32arr(8));
+            push(&mut off, "MCS", u32arr(8));
+            push(&mut off, "ROT", f64arr(3));
+        }
         /* FB_UaClient — tplc-opcua service bridge (OPC UA client via
         libopen62541). Synchronous op dispatch like FB_NciChan: set
         OP + fields and call. OP 1=connect (URL string → HANDLE),
