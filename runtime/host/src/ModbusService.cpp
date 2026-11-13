@@ -19,6 +19,13 @@
 #include <time.h>
 #include <unistd.h>
 
+/* glibc <termios.h> does not export BOTHER (kernel UAPI c_cflag value
+   0x1000) — required to select a literal baud rate via c_ispeed/
+   c_ospeed for non-standard speeds */
+#ifndef BOTHER
+#define BOTHER 0x1000
+#endif
+
 namespace tplc {
 
 namespace {
@@ -270,11 +277,17 @@ static int openRtuSerial(const char* dev, uint32_t baud, uint8_t parity,
         return TPLC_MB_E_IO;
     }
     cfmakeraw(&tio);
-    tio.c_cflag &= ~(tcflag_t)(CSIZE | PARENB | PARODD | CSTOPB);
-    tio.c_cflag |= (tcflag_t)BOTHER;
+    tio.c_cflag &= ~(tcflag_t)(CBAUD | CSIZE | PARENB | PARODD | CSTOPB);
     speed_t sp = rtuBaudOf(baud);
-    tio.c_ispeed = sp;
-    tio.c_ospeed = sp;
+    if (sp) {
+        /* standard rate: the B* constant goes in the c_cflag baud field */
+        tio.c_cflag |= sp;
+    } else {
+        /* non-standard rate: BOTHER selects c_ispeed/c_ospeed literally */
+        tio.c_cflag |= (tcflag_t)BOTHER;
+        tio.c_ispeed = (speed_t)baud;
+        tio.c_ospeed = (speed_t)baud;
+    }
     switch (databits) {
     case 5: tio.c_cflag |= CS5; break;
     case 6: tio.c_cflag |= CS6; break;

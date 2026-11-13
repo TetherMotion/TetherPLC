@@ -117,10 +117,11 @@ int32_t SerialService::serialOpen(void* s, const char* device_path,
                                              : mapErr(e);
     }
     cfmakeraw(&tio);
-    tio.c_cflag &= ~(tcflag_t)(CSIZE | PARENB | PARODD | CSTOPB);
-    tio.c_cflag |= (tcflag_t)BOTHER;
-    tio.c_ispeed = sp;
-    tio.c_ospeed = sp;
+    /* standard rates only (baud_of rejects others): the B* constant
+       selects the baud in c_cflag; c_ispeed/c_ospeed apply only under
+       BOTHER, which glibc does not export */
+    tio.c_cflag &= ~(tcflag_t)(CBAUD | CSIZE | PARENB | PARODD | CSTOPB);
+    tio.c_cflag |= sp;
     switch (databits) {
     case 5: tio.c_cflag |= CS5; break;
     case 6: tio.c_cflag |= CS6; break;
