@@ -21749,6 +21749,7 @@ per-parameter prose.
 
 - **Category:** Motion · **Tier:** T3
 - **Manual:** `TF5810_TC3_Hydraulic_Positioning_EN.pdf` · **API entries:** 118
+- **Status:** the standard PLCopen `MC_*_BkPlcMc` blocks (power/read/write/cam/gear/halt/jog/home/stop/table-select, ~75 entries) are covered by `compat/tc2/tc2_mc2.st` — ctest tc2_mc2_*_io. Remaining: the hydraulic drive-model FBs — `MC_AxCtrl*` (pressure/force/PI/de-stall control), `MC_AxRt*` (runtime axis: force/pressure/encoder actuals, hybrid axis, function generators), `MC_AxTable*` (cam-table file I/O), `MC_AxRuntime` — need a hydraulic axis model in Tether motion; on request.
 - **Integration:** Hydraulic positioning: axis backend with hydraulic drive model.
 
 #### PLCopen Motion Control › Administrative
@@ -28408,6 +28409,7 @@ per-parameter prose.
 
 - **Category:** Connectivity · **Tier:** T2
 - **Manual:** `TF6510_TC3_IEC61850_EN.pdf` · **API entries:** 485
+- **Status:** MMS client core delivered in `compat/tc2/tc2_iec61850.st` + `tplc-iec61850` host service (libiec61850): connect/associate, read/write with FC suffixes, GetNameList, disconnect, status — e2e `tc2_iec61850_io` green against `tests/compat/iec61850_ied_fake`. RCB tranche delivered: `FB_Iec61850RCBGet`/`FB_Iec61850RCBSet`/`FB_Iec61850ReportPoll` (URCB `$RP$` refs, rptEna/resv/GI flags, dchg+GI InformationReport reception) — e2e `tc2_iec61850_rcb_io` green (0x1ff). Remaining depth: buffered RCBs (`$BR$`, purgeBuf/integrity), control services (SelectWithValue/Operate/CommandTermination), GetRCBValues attribute subset, ACSI service model (RP/CO/GO/LS/SG/US/LSA), server-side scaffolding, GOOSE/SMV (blocked: AF_PACKET needs CAP_NET_RAW).
 - **Integration:** IEC 61850/ACSI substation protocols: socket/MMS stack; large implementation.
 
 #### Technical introduction

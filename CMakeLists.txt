@@ -966,6 +966,16 @@ if(NOT CMAKE_CROSSCOMPILING)
         bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_iec61850_io.sh)
     set_tests_properties(tc2_iec61850_io PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+    # RCB tranche: GetRCBValues/SetRCBValues + dchg InformationReport
+    # reception over the same fake IED (measds + measurcb URCB)
+    add_test(NAME tc2_iec61850_rcb_io
+      COMMAND ${CMAKE_COMMAND} -E env
+        "IEC61850_FAKE=$<TARGET_FILE:iec61850_ied_fake>"
+        "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+        bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_iec61850_rcb_io.sh)
+    set_tests_properties(tc2_iec61850_rcb_io PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
   endif()
 
   # MQTT client surface (C7): FB_IotMqtt* wrappers drive a real

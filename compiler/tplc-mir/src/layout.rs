@@ -1180,7 +1180,9 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
         set OP + fields and call. OP 1=connect+associate (HOST/PORT →
         HANDLE), 2=close+release, 3=status (→ STATE/INVOKE/LASTERR),
         4=read (DOMAIN/ITEM → VAL), 5=write (DOMAIN/ITEM + VAL),
-        6=GetNameList (DOMAIN → VAL). STATUS carries the service
+        6=GetNameList (DOMAIN → VAL), 7=GetRCBValues (RCBREF → RCB
+        attrs), 8=SetRCBValues (RCBREF + FLAGS), 9=report poll
+        (→ VAL/RCNT). STATUS carries the service
         return code, ERRID its positive form. Data attributes are
         addressed by domain (LD) + item (VariableAccess name); values
         travel as bounded STRING[255] (numerics as their ASCII repr,
@@ -1206,6 +1208,25 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "LASTERR", udint());
             push(&mut off, "STATUS", dint());
             push(&mut off, "ERRID", udint());
+            /* RCB ops (appended): OP 7=GetRCBValues (RCBREF ->
+               RPTID/DATASET/RPTENA/RESV/BUFFERED/CONFREV/BUFTM/
+               INTGPD/SQNUM/OPTFLDS/TRGOPS), 8=SetRCBValues (RCBREF +
+               FLAGS bit0=rptEna bit1=resv bit2=GI), 9=report poll
+               (-> VAL lines, RCNT bytes). */
+            push(&mut off, "RCBREF", Type::Str { cap: 127 });
+            push(&mut off, "FLAGS", udint());
+            push(&mut off, "RPTENA", dint());
+            push(&mut off, "RESV", dint());
+            push(&mut off, "BUFFERED", dint());
+            push(&mut off, "RPTID", Type::Str { cap: 31 });
+            push(&mut off, "DATASET", Type::Str { cap: 63 });
+            push(&mut off, "CONFREV", udint());
+            push(&mut off, "BUFTM", udint());
+            push(&mut off, "INTGPD", udint());
+            push(&mut off, "SQNUM", udint());
+            push(&mut off, "OPTFLDS", udint());
+            push(&mut off, "TRGOPS", udint());
+            push(&mut off, "RCNT", udint());
         }
         /* FB_Mqtt — tplc-mqtt service bridge (MQTT client via
         libpaho-mqtt3c). Synchronous op dispatch like FB_Eip: set OP +

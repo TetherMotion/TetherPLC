@@ -5,9 +5,10 @@
  * MMS.  iec61850_connect runs the associate handshake;
  * iec61850_read/write carry Confirmed-Request Read/Write on
  * domain+item named variables; iec61850_getnamelist lists a domain's
- * objects.  Synchronous per-transaction model on nonblocking
- * poll-bounded IO.  Reporting/RCB, GOOSE/SMV, and the full data
- * model are deliberately out of scope.
+ * objects.  RCB ops carry Get/SetRCBValues plus report reception
+ * into a per-connection queue drained by report_poll.  Synchronous
+ * per-transaction model on nonblocking poll-bounded IO.
+ * GOOSE/SMV and the full data model are deliberately out of scope.
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 #ifndef TPLC_HOST_IEC61850_SERVICE_HPP
 #define TPLC_HOST_IEC61850_SERVICE_HPP
@@ -43,6 +44,9 @@ private:
     int32_t write(void*, uint32_t, const char*, const char*,
                   const uint8_t*, uint32_t);
     int32_t getNameList(void*, uint32_t, const char*, char*, uint32_t);
+    int32_t rcbGet(void*, uint32_t, const char*, TplcIec61850Rcb*);
+    int32_t rcbSet(void*, uint32_t, const char*, uint32_t);
+    int32_t reportPoll(void*, uint32_t, char*, uint32_t);
 
     static Iec61850Service* self(void* p) {
         return static_cast<Iec61850Service*>(p);

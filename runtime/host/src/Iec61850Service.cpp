@@ -17,7 +17,9 @@
 #include <linked_list.h>
 #endif
 
+#include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -34,6 +36,10 @@ struct Conn {
     int32_t  state = 0;
     uint32_t invoke_id = 0;
     uint32_t last_error = 0;
+    /* reports received on the libiec61850 receiver thread, drained
+       by report_poll on the PLC thread */
+    std::mutex           reportsMtx;
+    std::vector<std::string> reports;
 };
 
 /* build the MMS objectReference "domain/item" or just "item" when
@@ -122,6 +128,13 @@ Iec61850Service::Iec61850Service() {
     svc_.iec61850_getnamelist = [](void* s, uint32_t h, const char* d,
                                    char* o, uint32_t cap)
         { return self(s)->getNameList(s, h, d, o, cap); };
+    svc_.iec61850_rcb_get = [](void* s, uint32_t h, const char* r,
+                               TplcIec61850Rcb* o)
+        { return self(s)->rcbGet(s, h, r, o); };
+    svc_.iec61850_rcb_set = [](void* s, uint32_t h, const char* r, uint32_t f)
+        { return self(s)->rcbSet(s, h, r, f); };
+    svc_.iec61850_report_poll = [](void* s, uint32_t h, char* o, uint32_t c)
+        { return self(s)->reportPoll(s, h, o, c); };
 }
 
 Iec61850Service::~Iec61850Service() {
@@ -298,6 +311,168 @@ int32_t Iec61850Service::getNameList(void*, uint32_t h, const char* domain,
     out[off < cap ? off : cap - 1] = 0;
     LinkedList_destroy(names);
     return count;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+#ifdef TPLC_HAVE_IEC61850
+namespace {
+
+void cpyStr(char* dst, size_t cap, const char* src) {
+    if (!dst || !cap) return;
+    if (!src) { dst[0] = 0; return; }
+    std::snprintf(dst, cap, "%s", src);
+}
+
+/* report handler: runs on the libiec61850 receiver thread; formats
+   "dataset|reason|v0,v1,..." into the connection queue. */
+void onIecReport(void* param, ClientReport report) {
+    Conn* c = static_cast<Conn*>(param);
+    if (!c || !report) return;
+    std::string line;
+    const char* ds = ClientReport_getDataSetName(report);
+    line += ds ? ds : "?";
+    line += '|';
+    MmsValue* vals = ClientReport_getDataSetValues(report);
+    if (vals && MmsValue_getType(vals) == MMS_ARRAY) {
+        const int n = MmsValue_getArraySize(vals);
+        for (int i = 0; i < n; ++i) {
+            if (i) line += ',';
+            MmsValue* e = MmsValue_getElement(vals, i);
+            if (!e) { line += '-'; continue; }
+            char vb[96];
+            vb[0] = 0;
+            MmsValue_printToBuffer(e, vb, sizeof(vb));
+            line += vb[0] ? vb : "?";
+        }
+    }
+    std::lock_guard<std::mutex> lk(c->reportsMtx);
+    if (c->reports.size() < 64) c->reports.push_back(std::move(line));
+}
+
+} // namespace
+#endif
+
+int32_t Iec61850Service::rcbGet(void*, uint32_t h, const char* rcbRef,
+                                TplcIec61850Rcb* out) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+    if (!rcbRef || !*rcbRef || !out) return TPLC_61850_E_PARAM;
+#ifdef TPLC_HAVE_IEC61850
+    std::memset(out, 0, sizeof(*out));
+    IedClientError err;
+    ClientReportControlBlock rcb = IedConnection_getRCBValues(
+        impl_->conns[h - 1].conn, &err, rcbRef, nullptr);
+    if (err != IED_ERROR_OK || !rcb) {
+        impl_->conns[h - 1].last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    cpyStr(out->rpt_id, sizeof(out->rpt_id),
+           ClientReportControlBlock_getRptId(rcb));
+    cpyStr(out->data_set, sizeof(out->data_set),
+           ClientReportControlBlock_getDataSetReference(rcb));
+    out->conf_rev  = ClientReportControlBlock_getConfRev(rcb);
+    out->buf_tm    = ClientReportControlBlock_getBufTm(rcb);
+    out->intg_pd   = ClientReportControlBlock_getIntgPd(rcb);
+    out->sq_num    = ClientReportControlBlock_getSqNum(rcb);
+    out->opt_flds  = uint32_t(ClientReportControlBlock_getOptFlds(rcb));
+    out->trg_ops   = uint32_t(ClientReportControlBlock_getTrgOps(rcb));
+    out->rpt_ena   = ClientReportControlBlock_getRptEna(rcb) ? 1 : 0;
+    out->resv      = ClientReportControlBlock_getResv(rcb) ? 1 : 0;
+    out->buffered  = ClientReportControlBlock_isBuffered(rcb) ? 1 : 0;
+    ClientReportControlBlock_destroy(rcb);
+    impl_->conns[h - 1].invoke_id++;
+    return TPLC_61850_OK;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+int32_t Iec61850Service::rcbSet(void*, uint32_t h, const char* rcbRef,
+                                uint32_t flags) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+    if (!rcbRef || !*rcbRef) return TPLC_61850_E_PARAM;
+#ifdef TPLC_HAVE_IEC61850
+    Conn& c = impl_->conns[h - 1];
+    ClientReportControlBlock rcb =
+        ClientReportControlBlock_create(rcbRef);
+    if (!rcb) return TPLC_61850_E_PARAM;
+    const bool ena = (flags & 1) != 0;
+    const bool resv = (flags & 2) != 0;
+    const bool gi = (flags & 4) != 0;
+    ClientReportControlBlock_setRptEna(rcb, ena);
+    ClientReportControlBlock_setResv(rcb, resv);
+    ClientReportControlBlock_setGI(rcb, gi);
+    uint32_t mask = RCB_ELEMENT_RPT_ENA | RCB_ELEMENT_RESV |
+                    RCB_ELEMENT_SQ_NUM;
+    if (gi) mask |= RCB_ELEMENT_GI;
+    /* install/refresh the report handler BEFORE enabling so an
+       immediate report cannot hit the connection unhandled.  When
+       the RCB is already enabled, drop RptEna from the mask: servers
+       reject a redundant RptEna=true write with
+       TEMPORARILY_UNAVAILABLE even though sibling attributes apply. */
+    bool skipWrite = false;
+    if (ena) {
+        TplcIec61850Rcb snap{};
+        if (rcbGet(nullptr, h, rcbRef, &snap) == TPLC_61850_OK &&
+            snap.rpt_id[0]) {
+            IedConnection_installReportHandler(
+                c.conn, rcbRef, snap.rpt_id, onIecReport, &c);
+            if (snap.rpt_ena) {
+                /* enabled RCBs accept only RptEna/GI writes: a GI
+                   trigger goes out GI-only, a redundant enable is a
+                   no-op. */
+                if (gi) {
+                    mask = uint32_t(RCB_ELEMENT_GI);
+                } else {
+                    skipWrite = true;
+                }
+            }
+        }
+    }
+    if (skipWrite) {
+        ClientReportControlBlock_destroy(rcb);
+        c.invoke_id++;
+        return TPLC_61850_OK;
+    }
+    IedClientError err;
+    IedConnection_setRCBValues(c.conn, &err, rcb, mask, true);
+    ClientReportControlBlock_destroy(rcb);
+    if (err != IED_ERROR_OK) {
+        c.last_error = uint32_t(err);
+        return TPLC_61850_E_MMS;
+    }
+    c.invoke_id++;
+    return TPLC_61850_OK;
+#else
+    return TPLC_61850_E_CONN;
+#endif
+}
+
+int32_t Iec61850Service::reportPoll(void*, uint32_t h, char* out,
+                                    uint32_t cap) {
+    if (h == 0 || h > TPLC_IEC61850_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_61850_E_HANDLE;
+    if (!out || !cap) return TPLC_61850_E_PARAM;
+#ifdef TPLC_HAVE_IEC61850
+    Conn& c = impl_->conns[h - 1];
+    std::vector<std::string> pending;
+    {
+        std::lock_guard<std::mutex> lk(c.reportsMtx);
+        pending.swap(c.reports);
+    }
+    size_t off = 0;
+    for (const auto& r : pending) {
+        const size_t need = r.size() + 1;
+        if (off + need > cap) break;
+        std::memcpy(out + off, r.data(), r.size());
+        off += r.size();
+        out[off++] = '\n';
+    }
+    out[off < cap ? off : cap - 1] = 0;
+    return int32_t(off);
 #else
     return TPLC_61850_E_CONN;
 #endif

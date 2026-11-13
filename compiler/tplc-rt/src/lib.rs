@@ -4647,6 +4647,27 @@ const IEC_INVOKE: usize = 528;
 const IEC_LASTERR: usize = 532;
 const IEC_STATUS: usize = 536;
 const IEC_ERRID: usize = 540;
+// RCB members (appended): RCBREF u8len@544+data@545 cap127, FLAGS@672,
+// RPTENA@676, RESV@680, BUFFERED@684, RPTID u8len@688+data@689 cap31,
+// DATASET u8len@720+data@721 cap63, CONFREV@784, BUFTM@788,
+// INTGPD@792, SQNUM@796, OPTFLDS@800, TRGOPS@804, RCNT@808.
+const IEC_RCBREF_LEN: usize = 544;
+const IEC_RCBREF: usize = 545;
+const IEC_FLAGS: usize = 672;
+const IEC_RPTENA: usize = 676;
+const IEC_RESV: usize = 680;
+const IEC_BUFFERED: usize = 684;
+const IEC_RPTID_LEN: usize = 688;
+const IEC_RPTID: usize = 689;
+const IEC_DATASET_LEN: usize = 720;
+const IEC_DATASET: usize = 721;
+const IEC_CONFREV: usize = 784;
+const IEC_BUFTM: usize = 788;
+const IEC_INTGPD: usize = 792;
+const IEC_SQNUM: usize = 796;
+const IEC_OPTFLDS: usize = 800;
+const IEC_TRGOPS: usize = 804;
+const IEC_RCNT: usize = 808;
 
 // tplc-iec61850 service vtable offsets (TplcIec61850Service):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -4656,6 +4677,9 @@ const IEC_SVC_STATUS: usize = 32;
 const IEC_SVC_READ: usize = 40;
 const IEC_SVC_WRITE: usize = 48;
 const IEC_SVC_GETNAMELIST: usize = 56;
+const IEC_SVC_RCB_GET: usize = 64;
+const IEC_SVC_RCB_SET: usize = 72;
+const IEC_SVC_REPORT_POLL: usize = 80;
 
 /// service lookup for "tplc-iec61850" (12 chars)
 unsafe fn iec_service(ctx: *const u8) -> *const u8 {
@@ -4681,6 +4705,9 @@ type FIecStatus = unsafe extern "C" fn(*const u8, u32, *mut u8) -> i32;
 type FIecRead = unsafe extern "C" fn(*const u8, u32, *const u8, *const u8, *mut u8, u32) -> i32;
 type FIecWrite = unsafe extern "C" fn(*const u8, u32, *const u8, *const u8, *const u8, u32) -> i32;
 type FIecGetNameList = unsafe extern "C" fn(*const u8, u32, *const u8, *mut u8, u32) -> i32;
+type FIecRcbGet = unsafe extern "C" fn(*const u8, u32, *const u8, *mut u8) -> i32;
+type FIecRcbSet = unsafe extern "C" fn(*const u8, u32, *const u8, u32) -> i32;
+type FIecReportPoll = unsafe extern "C" fn(*const u8, u32, *mut u8, u32) -> i32;
 
 /// `__tplc_rt_FB_Iec61850` — synchronous op dispatch over the
 /// tplc-iec61850 MMS client. OP: 1=connect+associate (HOST/PORT ->
@@ -4783,6 +4810,68 @@ pub unsafe extern "C" fn __tplc_rt_FB_Iec61850(this: *mut u8, ctx: *mut u8) -> i
             if rc >= 0 {
                 let mut n = 0usize;
                 while n < 255 && out[n] != 0 { n += 1; }
+                core::ptr::copy_nonoverlapping(out.as_ptr(), this.add(IEC_VAL), n);
+                *this.add(IEC_VAL_LEN) = n as u8;
+                *this.add(IEC_VAL + n) = 0;
+            }
+        }
+        7 => {
+            // GetRCBValues: RCBREF -> TplcIec61850Rcb (152B)
+            let mut rbuf = [0u8; 128];
+            uacstr(this, IEC_RCBREF_LEN, IEC_RCBREF, 127, rbuf.as_mut_ptr());
+            let mut rcb = [0u8; 152];
+            let f: FIecRcbGet = core::mem::transmute(iecfn(svc, IEC_SVC_RCB_GET));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       rbuf.as_ptr(), rcb.as_mut_ptr());
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc == 0 {
+                let rd32 = |off: usize| -> i32 {
+                    let mut b = [0u8; 4];
+                    core::ptr::copy_nonoverlapping(rcb.as_ptr().add(off), b.as_mut_ptr(), 4);
+                    i32::from_le_bytes(b)
+                };
+                let wr_str = |dst_len: usize, dst: usize, src: usize, cap: usize| {
+                    let mut n = 0usize;
+                    while n < cap && rcb[src + n] != 0 { n += 1; }
+                    core::ptr::copy_nonoverlapping(rcb.as_ptr().add(src), this.add(dst), n);
+                    *this.add(dst_len) = n as u8;
+                    *this.add(dst + n) = 0;
+                };
+                wr_str(IEC_RPTID_LEN, IEC_RPTID, 0, 31);
+                wr_str(IEC_DATASET_LEN, IEC_DATASET, 32, 63);
+                wu32(this.add(IEC_CONFREV), rd32(96) as u32);
+                wu32(this.add(IEC_BUFTM), rd32(100) as u32);
+                wu32(this.add(IEC_INTGPD), rd32(104) as u32);
+                wu32(this.add(IEC_SQNUM), rd32(108) as u32);
+                wu32(this.add(IEC_OPTFLDS), rd32(112) as u32);
+                wu32(this.add(IEC_TRGOPS), rd32(116) as u32);
+                wi32(this.add(IEC_RPTENA), rd32(120));
+                wi32(this.add(IEC_RESV), rd32(124));
+                wi32(this.add(IEC_BUFFERED), rd32(128));
+            }
+        }
+        8 => {
+            // SetRCBValues: RCBREF + FLAGS (bit0 ena, bit1 resv, bit2 GI)
+            let mut rbuf = [0u8; 128];
+            uacstr(this, IEC_RCBREF_LEN, IEC_RCBREF, 127, rbuf.as_mut_ptr());
+            let f: FIecRcbSet = core::mem::transmute(iecfn(svc, IEC_SVC_RCB_SET));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       rbuf.as_ptr(), ru32(this.add(IEC_FLAGS)));
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+        }
+        9 => {
+            // report poll: drain queued reports into VAL, RCNT bytes
+            let mut out = [0u8; 255];
+            let f: FIecReportPoll = core::mem::transmute(iecfn(svc, IEC_SVC_REPORT_POLL));
+            let rc = f(svc, ru32(this.add(IEC_HANDLE)),
+                       out.as_mut_ptr(), 255);
+            wi32(this.add(IEC_STATUS), rc);
+            wu32(this.add(IEC_ERRID), (-rc).max(0) as u32);
+            if rc >= 0 {
+                wu32(this.add(IEC_RCNT), rc as u32);
+                let n = (rc as usize).min(255);
                 core::ptr::copy_nonoverlapping(out.as_ptr(), this.add(IEC_VAL), n);
                 *this.add(IEC_VAL_LEN) = n as u8;
                 *this.add(IEC_VAL + n) = 0;

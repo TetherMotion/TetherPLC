@@ -59,6 +59,21 @@ int main(int argc, char** argv) {
         if (nm) DataAttribute_setValue(nm, MmsValue_newVisibleString("TetherIED"));
     }
 
+    /* RCB surface: a data set over Meas.instMag.f + Health.stVal and
+       an unbuffered report control block (URCB, FC RP).  Clients
+       enable it via SetRCBValues; data changes then trigger dchg
+       InformationReports. */
+    DataSet* ds = DataSet_create("measds", lln0);
+    DataSetEntry_create(ds, "LLN0$MX$Meas$instMag$f", -1, NULL);
+    DataSetEntry_create(ds, "LLN0$SP$SetPt$setMag$f", -1, NULL);
+    ReportControlBlock_create("measurcb", lln0, "rptMeas", false,
+                              "measds", 1,
+                              TRG_OPT_DATA_CHANGED | TRG_OPT_GI,
+                              RPT_OPT_SEQ_NUM | RPT_OPT_REASON_FOR_INCLUSION |
+                              RPT_OPT_DATA_SET |
+                              RPT_OPT_TIME_STAMP,
+                              0, 0);
+
     IedServer ied = IedServer_create(model);
     IedServer_setLocalIpAddress(ied, "127.0.0.1");
     IedServer_start(ied, port);

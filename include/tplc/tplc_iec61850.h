@@ -39,6 +39,22 @@ typedef struct TplcIec61850Status {
     uint32_t reserved[5];
 } TplcIec61850Status;        /* 32 bytes                            */
 
+/* Report control block attribute snapshot (GetRCBValues). */
+typedef struct TplcIec61850Rcb {
+    char     rpt_id[32];
+    char     data_set[64];
+    uint32_t conf_rev;
+    uint32_t buf_tm;
+    uint32_t intg_pd;
+    uint32_t sq_num;
+    uint32_t opt_flds;
+    uint32_t trg_ops;
+    int32_t  rpt_ena;
+    int32_t  resv;
+    int32_t  buffered;
+    uint32_t reserved[5];
+} TplcIec61850Rcb;           /* 152 bytes */
+
 typedef struct TplcIec61850Service {
     uint32_t struct_size;
     uint32_t abi_version;
@@ -71,6 +87,22 @@ typedef struct TplcIec61850Service {
     int32_t (*iec61850_getnamelist)(void* svc, uint32_t handle,
                                     const char* domain,
                                     char* out, uint32_t cap);
+    /* MMS GetRCBValues on a report control block object reference
+       ("domain/LN$BR$name" style). Fills out; returns TPLC_61850_OK
+       or an error code. */
+    int32_t (*iec61850_rcb_get)(void* svc, uint32_t handle,
+                                const char* rcb_ref,
+                                TplcIec61850Rcb* out);
+    /* MMS SetRCBValues: flags bit0=rptEna, bit1=resv (URCB only),
+       bit2=GI trigger.  Enabling also installs the report handler. */
+    int32_t (*iec61850_rcb_set)(void* svc, uint32_t handle,
+                                const char* rcb_ref, uint32_t flags);
+    /* drain pending reports received since the last poll into out as
+       newline-separated "dataset|reason|v0,v1,..." lines (cap).
+       Returns byte count or a TPLC_61850_E_* code. */
+    int32_t (*iec61850_report_poll)(void* svc, uint32_t handle,
+                                    char* out, uint32_t cap);
+    void* reserved[4];
 } TplcIec61850Service;
 
 #ifdef __cplusplus

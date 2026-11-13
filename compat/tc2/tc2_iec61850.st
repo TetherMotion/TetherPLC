@@ -235,3 +235,139 @@ END_VAR
     END_IF;
     exPrev := Execute;
 END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850RCBGet: MMS GetRCBValues on an RCB reference ----
+// RcbRef is the MMS object reference of the report control block,
+// e.g. 'tetherIEDtetherTestLD/LLN0$BR$MeasURCB'.
+FUNCTION_BLOCK FB_Iec61850RCBGet
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    RcbRef : STRING[127];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    RptId : STRING[31];
+    DataSet : STRING[63];
+    ConfRev : UDINT;
+    BufTm : UDINT;
+    IntgPd : UDINT;
+    SqNum : UDINT;
+    OptFlds : UDINT;
+    TrgOps : UDINT;
+    RptEna : BOOL;
+    Resv : BOOL;
+    Buffered : BOOL;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 7;
+        ch.HANDLE := ConnectionHdl;
+        ch.RCBREF := RcbRef;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+            RptId := ch.RPTID;
+            DataSet := ch.DATASET;
+            ConfRev := ch.CONFREV;
+            BufTm := ch.BUFTM;
+            IntgPd := ch.INTGPD;
+            SqNum := ch.SQNUM;
+            OptFlds := ch.OPTFLDS;
+            TrgOps := ch.TRGOPS;
+            RptEna := ch.RPTENA <> 0;
+            Resv := ch.RESV <> 0;
+            Buffered := ch.BUFFERED <> 0;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850RCBSet: MMS SetRCBValues (URCB-safe subset) ----
+// Flags: bit0 RptEna, bit1 Resv, bit2 GI.  Enabling installs the
+// report handler on the connection.
+FUNCTION_BLOCK FB_Iec61850RCBSet
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    RcbRef : STRING[127];
+    Flags : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 8;
+        ch.HANDLE := ConnectionHdl;
+        ch.RCBREF := RcbRef;
+        ch.FLAGS := Flags;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
+
+// ---- FB_Iec61850ReportPoll: drain received reports ----
+// Report holds newline-separated "dataset|v0,v1,..." lines received
+// since the last poll; ReportBytes is the drained byte count.
+FUNCTION_BLOCK FB_Iec61850ReportPoll
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+    Report : STRING[255];
+    ReportBytes : UDINT;
+END_VAR
+VAR
+    ch : FB_Iec61850;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    Report := '';
+    ReportBytes := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 9;
+        ch.HANDLE := ConnectionHdl;
+        ch();
+        IF ch.STATUS >= 0 THEN
+            Done := TRUE;
+            Report := ch.VAL;
+            ReportBytes := ch.RCNT;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK
