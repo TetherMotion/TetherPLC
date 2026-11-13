@@ -2277,3 +2277,27 @@ compact-array mode, indent capped at 8, and pretty output shares
 the 255-char sDoc cap so it truncates sooner.
 
 ctest `tc3_jsonxml_io` green (7 checks: JSON + XML + pretty).
+
+## D-IMPL-96 — tc3_jsonxml JSON DOM + string-compare fixes
+
+`FB_JsonDomParser`/`FB_JsonDom` add a fixed-table JSON DOM (48
+nodes, object/array/string/number/bool/null types, '#doc' root):
+iterative descent Load (explicit phase stack, no recursion),
+Root/Child/ChildByName/ChildCount/NodeType/NodeKey/NodeText
+queries, compact ToJson serializer, and Append* builders.
+Reductions: no iterators/events, raw escapes kept, interior
+whitespace dropped, sOut 511 chars.
+
+Two real bugs the wired test caught:
+- The number scanner set `j := LEN+1` on the first non-digit, so
+  the token length swallowed the rest of the document and `pos`
+  jumped to end — `done` never set, Load always errored.  Loop
+  now exits via a flag, leaving `pos` on the delimiter.
+- String `=` comparisons (`JKEY[ch] = sKey`, and the same pattern
+  in the XML FB's ChildByName/AttrByName) are unreliable in this
+  codegen; all name lookups now use `LEN(a)=LEN(b) AND
+  FIND(a,b)=1`, matching F_JsonObjFind's existing idiom.
+- ToJson on `hNode=0` must seed the sibling walk with
+  `JFIRST[0]` (not 0) and the '#doc' close marker emits nothing.
+
+ctest `tc3_jsonxml_io` green (9 checks: JSON + XML + pretty + DOM).

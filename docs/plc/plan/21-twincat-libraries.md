@@ -6920,7 +6920,7 @@ per-parameter prose.
 - **Category:** Standard · **Tier:** T1
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_JsonXml_EN.pdf` · **API entries:** 322
 - **Status: IMPLEMENTED (JSON SAX core, nested, pretty writer,
-  reduced XML DOM)** —
+  JSON DOM, reduced XML DOM)** —
   `compat/tc3/tc3_jsonxml.st`: `FB_JsonSaxWriter` (Begin/AddString/
   AddInt/AddReal/AddBool/AddNull/End/Clear plus ObjBegin/ArrBegin/
   EndAny on a 16-level container stack; `"`/`\` escaping),
@@ -6929,17 +6929,23 @@ per-parameter prose.
   indices; container values return raw JSON text), `FB_JsonWriter`/
   `FB_JsonReader` aliases, `FB_JsonSaxPrettyWriter`/`FB_JsonPrettyWriter`
   (same command set + SetIndent, newline+space indentation; no
-  compact-array mode), and `FB_XmlDomParser`/`FB_XmlDom` — a
+  compact-array mode), `FB_JsonDomParser`/`FB_JsonDom` — a
+  fixed-table JSON DOM (48 nodes): iterative descent Load,
+  Clear, Root, Child (0-based), ChildByName, ChildCount,
+  NodeType, NodeKey, NodeText, ToJson, AppendObject/Array/
+  String/Int/Real/Bool/Null; `bError`/`nErrId` on malformed
+  input — and `FB_XmlDomParser`/`FB_XmlDom` — a
   fixed-table DOM (48 nodes, depth 16, 4 attrs/node, names ≤31,
   text/attr ≤127, output ≤511): Load-from-string, Clear, Root,
   Child (0-based), ChildByName, ChildCount, NodeName, NodeText,
   NodeXml, AttrCount, AttrByName, ToXml, AppendChild,
   AppendAttribute, AppendText; `bError`/`nErrId` on malformed
-  input.  Documented reductions: no JSON DOM/DynDom/
-  ReadWriteDataType, no XML iterators/namespaces/entities/
+  input.  Documented reductions: no JSON DynDom/
+  ReadWriteDataType, no DOM iterators/events, no XML
+  iterators/namespaces/entities/
   CDATA/comments, no file persistence, 3-decimal REAL printing,
   255/1023-char documents, `.`-separated path keys.
-  Ctest `tc3_jsonxml_io` (JSON + XML + pretty consumers).
+  Ctest `tc3_jsonxml_io` (JSON + XML + pretty + DOM consumers).
 - **Integration:** JSON/XML codecs are pure (T0); file persistence needs a filesystem service.
 
 #### Function blocks

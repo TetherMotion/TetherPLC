@@ -111,5 +111,35 @@ else
     tail -20 "$WORK/simp.log"
 fi
 
+"$TPLCC" build tests/compat/tc3_jsonxml_dom_case.st \
+    --lib "$WORK/tc3_json.tplc" \
+    -o "$WORK/dom_case.tplc" >/dev/null 2>&1 \
+    && ok "DOM consumer build with --lib" \
+    || { bad "DOM consumer build with --lib"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+
+{
+    for i in $(seq 0 55); do
+        t=$((i * 10000000))
+        if [ "$i" -eq 55 ]; then
+            echo "step $i time=$t in 0=00 expect 0=ff7f"
+        else
+            echo "step $i time=$t in 0=00"
+        fi
+    done
+} > "$WORK/dom.steps"
+
+IMG=/tplc_tc3dj_$$; CTL="$WORK/dmd.ctl"
+"$BUILD/tether-plc-sim" --image "$IMG" --package "$WORK/dom_case.tplc" \
+    --steps "$WORK/dom.steps" --plc "$BUILD/tether-plc" \
+    --ctl "$CTL" --settle-ms 1500 >"$WORK/simd.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/simd.log"; then
+    ok "sim replay: dom load/query/serialize/build/error"
+else
+    bad "sim replay: dom load/query/serialize/build/error"
+    tail -20 "$WORK/simd.log"
+fi
+
 echo "== $pass pass, $fail fail"
 [ $fail -eq 0 ]

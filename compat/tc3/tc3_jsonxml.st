@@ -1332,8 +1332,12 @@ END_VAR
             ELSE
                 ch := NFIRST[hNode]; hOut := 0;
                 WHILE ch <> 0 AND hOut = 0 DO
-                    IF NNAME[ch] = sName THEN hOut := ch;
-                    ELSE ch := NNEXT[ch]; END_IF;
+                    IF LEN(NNAME[ch]) = LEN(sName)
+                       AND FIND(NNAME[ch], sName) = 1 THEN
+                        hOut := ch;
+                    ELSE
+                        ch := NNEXT[ch];
+                    END_IF;
                 END_WHILE;
                 bDone := TRUE;
             END_IF;
@@ -1358,7 +1362,8 @@ END_VAR
             IF hNode < nn THEN
                 IF NATT[hNode] > 0 THEN
                     FOR a := 0 TO NATT[hNode] - 1 DO
-                        IF XAN[hNode * 4 + a] = sName THEN
+                        IF LEN(XAN[hNode * 4 + a]) = LEN(sName)
+                           AND FIND(XAN[hNode * 4 + a], sName) = 1 THEN
                             sOut := XAV[hNode * 4 + a];
                         END_IF;
                     END_FOR;
@@ -1495,4 +1500,764 @@ END_VAR
     x();
     hOut := x.hOut; sOut := x.sOut; nOut := x.nOut;
     bDone := x.bDone; bError := x.bError; nErrId := x.nErrId;
+END_FUNCTION_BLOCK
+
+// ---- FB_JsonDomParser: fixed-table JSON DOM ----
+// Beckhoff's FB_JsonDomParser/FB_JsonDynDomParser are heap DOMs with
+// iterators and typed accessors.  This reduced surface keeps the
+// same idea on fixed tables (no allocator):
+//   - cmd 1 Load parses sIn (STRING[1023]) into a node table;
+//     2 Clear; 3 Root; 4 Child(parent,nIdx 0-based); 5 ChildByName;
+//     6 ChildCount; 7 NodeType; 8 NodeKey; 9 NodeText;
+//     10 ToJson (hNode=0 serializes the whole document);
+//     11 AppendObject 12 AppendArray 13 AppendString
+//     14 AppendInt 15 AppendReal 16 AppendBool 17 AppendNull.
+// Node types: 1 object, 2 array, 3 string, 4 number, 5 bool,
+// 6 null; node 0 is the '#doc' root.  Documented reductions: no
+// iterators, no DOM events, strings keep raw escapes, interior
+// whitespace is not preserved, sOut capped at 511 chars.
+FUNCTION F_JSkipWs : DINT
+VAR_INPUT
+    s : STRING[1023];
+    p : DINT;
+END_VAR
+VAR
+    c : STRING[1];
+    go : BOOL;
+END_VAR
+    go := TRUE;
+    WHILE go DO
+        IF p > LEN(s) THEN
+            go := FALSE;
+        ELSE
+            c := MID(s, 1, p);
+            IF FIND(c, ' ') = 1 THEN
+                p := p + 1;
+            ELSE
+                go := FALSE;
+            END_IF;
+        END_IF;
+    END_WHILE;
+    F_JSkipWs := p;
+END_FUNCTION
+
+FUNCTION_BLOCK FB_JsonDomParser
+VAR_INPUT
+    nCmd : UDINT;
+    hNode : UDINT;
+    nIdx : UDINT;
+    sKey : STRING[31];
+    sVal : STRING[127];
+    nInt : DINT;
+    fReal : LREAL;
+    bBool : BOOL;
+    sIn : STRING[1023];
+END_VAR
+VAR_OUTPUT
+    hOut : UDINT;
+    sOut : STRING[511];
+    nOut : UDINT;
+    bDone : BOOL;
+    bError : BOOL;
+    nErrId : UDINT;
+END_VAR
+VAR
+    prev : UDINT;
+    nn : UDINT;
+    i : DINT;
+    JPAR : ARRAY[0..47] OF INT;
+    JFIRST : ARRAY[0..47] OF INT;
+    JLAST : ARRAY[0..47] OF INT;
+    JNEXT : ARRAY[0..47] OF INT;
+    JTYPE : ARRAY[0..47] OF UDINT;
+    JKEY : ARRAY[0..47] OF STRING[31];
+    JVAL : ARRAY[0..47] OF STRING[127];
+    // parse scratch
+    pos : DINT;
+    j : DINT;
+    k : DINT;
+    l : DINT;
+    idx : UDINT;
+    p : INT;
+    sp : INT;
+    top : INT;
+    done : BOOL;
+    bad : BOOL;
+    closed : BOOL;
+    esc : BOOL;
+    okdel : BOOL;
+    c : STRING[1];
+    cc : STRING[1];
+    del : STRING[1];
+    ktmp : STRING[31];
+    JSTK : ARRAY[0..15] OF INT;
+    JSTP : ARRAY[0..15] OF INT;
+    // serializer scratch
+    ssp : INT;
+    XSX : ARRAY[0..127] OF INT;
+    XSK : ARRAY[0..127] OF INT;
+    XSA : ARRAY[0..127] OF INT;
+    sn : INT;
+    spar : INT;
+    snx : INT;
+    ch : INT;
+    cnt : UDINT;
+END_VAR
+    bDone := FALSE; bError := FALSE; nErrId := 0;
+    hOut := 0; sOut := ''; nOut := 0;
+    IF nCmd <> 0 AND prev = 0 THEN
+        IF nCmd = 2 THEN
+            // ---- Clear ----
+            nn := 1;
+            JPAR[0] := -1; JFIRST[0] := 0; JLAST[0] := 0;
+            JNEXT[0] := 0; JTYPE[0] := 0; JKEY[0] := '';
+            JVAL[0] := '';
+            FOR i := 1 TO 47 DO
+                JPAR[i] := 0; JFIRST[i] := 0; JLAST[i] := 0;
+                JNEXT[i] := 0; JTYPE[i] := 0;
+                JKEY[i] := ''; JVAL[i] := '';
+            END_FOR;
+            bDone := TRUE;
+        ELSIF nCmd = 1 THEN
+            // ---- Load: iterative descent parser ----
+            nn := 1;
+            JPAR[0] := -1; JFIRST[0] := 0; JLAST[0] := 0;
+            JNEXT[0] := 0; JTYPE[0] := 0; JKEY[0] := '';
+            JVAL[0] := '';
+            FOR i := 1 TO 47 DO
+                JPAR[i] := 0; JFIRST[i] := 0; JLAST[i] := 0;
+                JNEXT[i] := 0; JTYPE[i] := 0;
+                JKEY[i] := ''; JVAL[i] := '';
+            END_FOR;
+            pos := F_JSkipWs(sIn, 1);
+            sp := 0; done := FALSE; bad := FALSE; ktmp := '';
+            WHILE pos <= LEN(sIn) AND NOT bad AND NOT done DO
+                c := MID(sIn, 1, pos);
+                IF sp = 0 THEN
+                    // top-level: exactly one value
+                    IF nn >= 48 THEN bad := TRUE;
+                    ELSE
+                        idx := nn; nn := nn + 1; p := 0;
+                        JPAR[idx] := p; JKEY[idx] := '';
+                        JVAL[idx] := ''; JNEXT[idx] := 0;
+                        IF JLAST[p] = 0 THEN JFIRST[p] := idx;
+                        ELSE JNEXT[JLAST[p]] := idx; END_IF;
+                        JLAST[p] := idx;
+                        IF FIND(c, '{') = 1 THEN
+                            JTYPE[idx] := 1; pos := pos + 1;
+                            sp := sp + 1; JSTK[sp] := idx; JSTP[sp] := 0;
+                        ELSIF FIND(c, '[') = 1 THEN
+                            JTYPE[idx] := 2; pos := pos + 1;
+                            sp := sp + 1; JSTK[sp] := idx; JSTP[sp] := 0;
+                        ELSIF FIND(c, '"') = 1 THEN
+                            JTYPE[idx] := 3;
+                            j := pos + 1; closed := FALSE; esc := FALSE;
+                            WHILE j <= LEN(sIn) AND NOT closed DO
+                                cc := MID(sIn, 1, j);
+                                IF esc THEN esc := FALSE;
+                                ELSIF FIND(cc, '\') = 1 THEN esc := TRUE;
+                                ELSIF FIND(cc, '"') = 1 THEN
+                                    closed := TRUE;
+                                END_IF;
+                                j := j + 1;
+                            END_WHILE;
+                            IF NOT closed THEN bad := TRUE;
+                            ELSE
+                                l := j - pos - 2;
+                                IF l > 127 THEN l := 127; END_IF;
+                                JVAL[idx] := MID(sIn, l, pos + 1);
+                                pos := j; done := TRUE;
+                            END_IF;
+                        ELSIF FIND(c, 't') = 1
+                              AND FIND(MID(sIn, 4, pos), 'true') = 1 THEN
+                            k := pos + 4; okdel := TRUE;
+                            IF k <= LEN(sIn) THEN
+                                del := MID(sIn, 1, k);
+                                IF FIND(del, ' ') <> 1
+                                   AND FIND(del, ',') <> 1
+                                   AND FIND(del, '}') <> 1
+                                   AND FIND(del, ']') <> 1 THEN
+                                    okdel := FALSE;
+                                END_IF;
+                            END_IF;
+                            IF NOT okdel THEN bad := TRUE;
+                            ELSE
+                                JTYPE[idx] := 5; JVAL[idx] := 'true';
+                                pos := k; done := TRUE;
+                            END_IF;
+                        ELSIF FIND(c, 'f') = 1
+                              AND FIND(MID(sIn, 5, pos), 'false') = 1 THEN
+                            k := pos + 5; okdel := TRUE;
+                            IF k <= LEN(sIn) THEN
+                                del := MID(sIn, 1, k);
+                                IF FIND(del, ' ') <> 1
+                                   AND FIND(del, ',') <> 1
+                                   AND FIND(del, '}') <> 1
+                                   AND FIND(del, ']') <> 1 THEN
+                                    okdel := FALSE;
+                                END_IF;
+                            END_IF;
+                            IF NOT okdel THEN bad := TRUE;
+                            ELSE
+                                JTYPE[idx] := 5; JVAL[idx] := 'false';
+                                pos := k; done := TRUE;
+                            END_IF;
+                        ELSIF FIND(c, 'n') = 1
+                              AND FIND(MID(sIn, 4, pos), 'null') = 1 THEN
+                            k := pos + 4; okdel := TRUE;
+                            IF k <= LEN(sIn) THEN
+                                del := MID(sIn, 1, k);
+                                IF FIND(del, ' ') <> 1
+                                   AND FIND(del, ',') <> 1
+                                   AND FIND(del, '}') <> 1
+                                   AND FIND(del, ']') <> 1 THEN
+                                    okdel := FALSE;
+                                END_IF;
+                            END_IF;
+                            IF NOT okdel THEN bad := TRUE;
+                            ELSE
+                                JTYPE[idx] := 6; JVAL[idx] := 'null';
+                                pos := k; done := TRUE;
+                            END_IF;
+                        ELSIF FIND('-+0123456789.', c) > 0 THEN
+                            JTYPE[idx] := 4;
+                            j := pos;
+                            closed := FALSE;
+                            WHILE NOT closed DO
+                                IF j > LEN(sIn) THEN
+                                    closed := TRUE;
+                                ELSE
+                                    cc := MID(sIn, 1, j);
+                                    IF FIND('-+0123456789.eE', cc) > 0 THEN
+                                        j := j + 1;
+                                    ELSE
+                                        closed := TRUE;
+                                    END_IF;
+                                END_IF;
+                            END_WHILE;
+                            l := j - pos;
+                            JVAL[idx] := MID(sIn, l, pos);
+                            pos := j; done := TRUE;
+                        ELSE
+                            bad := TRUE;
+                        END_IF;
+                    END_IF;
+                ELSE
+                    top := JSTK[sp];
+                    IF JSTP[sp] = 0 THEN
+                        // expect key (object) / value-or-close (array)
+                        IF JTYPE[top] = 1 THEN
+                            IF FIND(c, '}') = 1 THEN
+                                pos := pos + 1; sp := sp - 1;
+                                IF sp > 0 THEN JSTP[sp] := 3;
+                                ELSE done := TRUE; END_IF;
+                            ELSIF FIND(c, '"') = 1 THEN
+                                // member key
+                                j := pos + 1; closed := FALSE;
+                                esc := FALSE;
+                                WHILE j <= LEN(sIn) AND NOT closed DO
+                                    cc := MID(sIn, 1, j);
+                                    IF esc THEN esc := FALSE;
+                                    ELSIF FIND(cc, '\') = 1 THEN
+                                        esc := TRUE;
+                                    ELSIF FIND(cc, '"') = 1 THEN
+                                        closed := TRUE;
+                                    END_IF;
+                                    j := j + 1;
+                                END_WHILE;
+                                IF NOT closed THEN bad := TRUE;
+                                ELSE
+                                    l := j - pos - 2;
+                                    IF l > 31 THEN l := 31; END_IF;
+                                    ktmp := MID(sIn, l, pos + 1);
+                                    pos := F_JSkipWs(sIn, j);
+                                    IF pos > LEN(sIn)
+                                       OR FIND(MID(sIn, 1, pos), ':') <> 1
+                                    THEN
+                                        bad := TRUE;
+                                    ELSE
+                                        pos := F_JSkipWs(sIn, pos + 1);
+                                        JSTP[sp] := 2;
+                                    END_IF;
+                                END_IF;
+                            ELSE
+                                bad := TRUE;
+                            END_IF;
+                        ELSE
+                            IF FIND(c, ']') = 1 THEN
+                                pos := pos + 1; sp := sp - 1;
+                                IF sp > 0 THEN JSTP[sp] := 3;
+                                ELSE done := TRUE; END_IF;
+                            ELSE
+                                // array element: parse value, then phase 3
+                                IF nn >= 48 THEN bad := TRUE;
+                                ELSE
+                                    idx := nn; nn := nn + 1;
+                                    p := top; JPAR[idx] := p;
+                                    JKEY[idx] := ''; JVAL[idx] := '';
+                                    JNEXT[idx] := 0;
+                                    IF JLAST[p] = 0 THEN
+                                        JFIRST[p] := idx;
+                                    ELSE
+                                        JNEXT[JLAST[p]] := idx;
+                                    END_IF;
+                                    JLAST[p] := idx;
+                                    IF FIND(c, '{') = 1 THEN
+                                        JTYPE[idx] := 1; pos := pos + 1;
+                                        JSTP[sp] := 3;
+                                        sp := sp + 1;
+                                        JSTK[sp] := idx; JSTP[sp] := 0;
+                                    ELSIF FIND(c, '[') = 1 THEN
+                                        JTYPE[idx] := 2; pos := pos + 1;
+                                        JSTP[sp] := 3;
+                                        sp := sp + 1;
+                                        JSTK[sp] := idx; JSTP[sp] := 0;
+                                    ELSIF FIND(c, '"') = 1 THEN
+                                        JTYPE[idx] := 3;
+                                        j := pos + 1; closed := FALSE;
+                                        esc := FALSE;
+                                        WHILE j <= LEN(sIn)
+                                              AND NOT closed DO
+                                            cc := MID(sIn, 1, j);
+                                            IF esc THEN esc := FALSE;
+                                            ELSIF FIND(cc, '\') = 1 THEN
+                                                esc := TRUE;
+                                            ELSIF FIND(cc, '"') = 1 THEN
+                                                closed := TRUE;
+                                            END_IF;
+                                            j := j + 1;
+                                        END_WHILE;
+                                        IF NOT closed THEN bad := TRUE;
+                                        ELSE
+                                            l := j - pos - 2;
+                                            IF l > 127 THEN l := 127;
+                                            END_IF;
+                                            JVAL[idx] := MID(sIn, l, pos + 1);
+                                            pos := j; JSTP[sp] := 3;
+                                        END_IF;
+                                    ELSIF FIND(c, 't') = 1
+                                          AND FIND(MID(sIn, 4, pos),
+                                                   'true') = 1 THEN
+                                        k := pos + 4; okdel := TRUE;
+                                        IF k <= LEN(sIn) THEN
+                                            del := MID(sIn, 1, k);
+                                            IF FIND(del, ' ') <> 1
+                                               AND FIND(del, ',') <> 1
+                                               AND FIND(del, '}') <> 1
+                                               AND FIND(del, ']') <> 1 THEN
+                                                okdel := FALSE;
+                                            END_IF;
+                                        END_IF;
+                                        IF NOT okdel THEN bad := TRUE;
+                                        ELSE
+                                            JTYPE[idx] := 5;
+                                            JVAL[idx] := 'true';
+                                            pos := k; JSTP[sp] := 3;
+                                        END_IF;
+                                    ELSIF FIND(c, 'f') = 1
+                                          AND FIND(MID(sIn, 5, pos),
+                                                   'false') = 1 THEN
+                                        k := pos + 5; okdel := TRUE;
+                                        IF k <= LEN(sIn) THEN
+                                            del := MID(sIn, 1, k);
+                                            IF FIND(del, ' ') <> 1
+                                               AND FIND(del, ',') <> 1
+                                               AND FIND(del, '}') <> 1
+                                               AND FIND(del, ']') <> 1 THEN
+                                                okdel := FALSE;
+                                            END_IF;
+                                        END_IF;
+                                        IF NOT okdel THEN bad := TRUE;
+                                        ELSE
+                                            JTYPE[idx] := 5;
+                                            JVAL[idx] := 'false';
+                                            pos := k; JSTP[sp] := 3;
+                                        END_IF;
+                                    ELSIF FIND(c, 'n') = 1
+                                          AND FIND(MID(sIn, 4, pos),
+                                                   'null') = 1 THEN
+                                        k := pos + 4; okdel := TRUE;
+                                        IF k <= LEN(sIn) THEN
+                                            del := MID(sIn, 1, k);
+                                            IF FIND(del, ' ') <> 1
+                                               AND FIND(del, ',') <> 1
+                                               AND FIND(del, '}') <> 1
+                                               AND FIND(del, ']') <> 1 THEN
+                                                okdel := FALSE;
+                                            END_IF;
+                                        END_IF;
+                                        IF NOT okdel THEN bad := TRUE;
+                                        ELSE
+                                            JTYPE[idx] := 6;
+                                            JVAL[idx] := 'null';
+                                            pos := k; JSTP[sp] := 3;
+                                        END_IF;
+                                    ELSIF FIND('-+0123456789.', c) > 0 THEN
+                                        JTYPE[idx] := 4;
+                                        j := pos;
+                                        closed := FALSE;
+                                        WHILE NOT closed DO
+                                            IF j > LEN(sIn) THEN
+                                                closed := TRUE;
+                                            ELSE
+                                                cc := MID(sIn, 1, j);
+                                                IF FIND('-+0123456789.eE',
+                                                         cc) > 0 THEN
+                                                    j := j + 1;
+                                                ELSE
+                                                    closed := TRUE;
+                                                END_IF;
+                                            END_IF;
+                                        END_WHILE;
+                                        l := j - pos;
+                                        JVAL[idx] := MID(sIn, l, pos);
+                                        pos := j; JSTP[sp] := 3;
+                                    ELSE
+                                        bad := TRUE;
+                                    END_IF;
+                                END_IF;
+                            END_IF;
+                        END_IF;
+                    ELSIF JSTP[sp] = 2 THEN
+                        // object member value (key in ktmp)
+                        IF nn >= 48 THEN bad := TRUE;
+                        ELSE
+                            idx := nn; nn := nn + 1;
+                            p := top; JPAR[idx] := p;
+                            JKEY[idx] := ktmp; JVAL[idx] := '';
+                            JNEXT[idx] := 0;
+                            IF JLAST[p] = 0 THEN JFIRST[p] := idx;
+                            ELSE JNEXT[JLAST[p]] := idx; END_IF;
+                            JLAST[p] := idx;
+                            IF FIND(c, '{') = 1 THEN
+                                JTYPE[idx] := 1; pos := pos + 1;
+                                JSTP[sp] := 3;
+                                sp := sp + 1;
+                                JSTK[sp] := idx; JSTP[sp] := 0;
+                            ELSIF FIND(c, '[') = 1 THEN
+                                JTYPE[idx] := 2; pos := pos + 1;
+                                JSTP[sp] := 3;
+                                sp := sp + 1;
+                                JSTK[sp] := idx; JSTP[sp] := 0;
+                            ELSIF FIND(c, '"') = 1 THEN
+                                JTYPE[idx] := 3;
+                                j := pos + 1; closed := FALSE;
+                                esc := FALSE;
+                                WHILE j <= LEN(sIn) AND NOT closed DO
+                                    cc := MID(sIn, 1, j);
+                                    IF esc THEN esc := FALSE;
+                                    ELSIF FIND(cc, '\') = 1 THEN
+                                        esc := TRUE;
+                                    ELSIF FIND(cc, '"') = 1 THEN
+                                        closed := TRUE;
+                                    END_IF;
+                                    j := j + 1;
+                                END_WHILE;
+                                IF NOT closed THEN bad := TRUE;
+                                ELSE
+                                    l := j - pos - 2;
+                                    IF l > 127 THEN l := 127; END_IF;
+                                    JVAL[idx] := MID(sIn, l, pos + 1);
+                                    pos := j; JSTP[sp] := 3;
+                                END_IF;
+                            ELSIF FIND(c, 't') = 1
+                                  AND FIND(MID(sIn, 4, pos), 'true') = 1
+                            THEN
+                                k := pos + 4; okdel := TRUE;
+                                IF k <= LEN(sIn) THEN
+                                    del := MID(sIn, 1, k);
+                                    IF FIND(del, ' ') <> 1
+                                       AND FIND(del, ',') <> 1
+                                       AND FIND(del, '}') <> 1
+                                       AND FIND(del, ']') <> 1 THEN
+                                        okdel := FALSE;
+                                    END_IF;
+                                END_IF;
+                                IF NOT okdel THEN bad := TRUE;
+                                ELSE
+                                    JTYPE[idx] := 5; JVAL[idx] := 'true';
+                                    pos := k; JSTP[sp] := 3;
+                                END_IF;
+                            ELSIF FIND(c, 'f') = 1
+                                  AND FIND(MID(sIn, 5, pos), 'false') = 1
+                            THEN
+                                k := pos + 5; okdel := TRUE;
+                                IF k <= LEN(sIn) THEN
+                                    del := MID(sIn, 1, k);
+                                    IF FIND(del, ' ') <> 1
+                                       AND FIND(del, ',') <> 1
+                                       AND FIND(del, '}') <> 1
+                                       AND FIND(del, ']') <> 1 THEN
+                                        okdel := FALSE;
+                                    END_IF;
+                                END_IF;
+                                IF NOT okdel THEN bad := TRUE;
+                                ELSE
+                                    JTYPE[idx] := 5; JVAL[idx] := 'false';
+                                    pos := k; JSTP[sp] := 3;
+                                END_IF;
+                            ELSIF FIND(c, 'n') = 1
+                                  AND FIND(MID(sIn, 4, pos), 'null') = 1
+                            THEN
+                                k := pos + 4; okdel := TRUE;
+                                IF k <= LEN(sIn) THEN
+                                    del := MID(sIn, 1, k);
+                                    IF FIND(del, ' ') <> 1
+                                       AND FIND(del, ',') <> 1
+                                       AND FIND(del, '}') <> 1
+                                       AND FIND(del, ']') <> 1 THEN
+                                        okdel := FALSE;
+                                    END_IF;
+                                END_IF;
+                                IF NOT okdel THEN bad := TRUE;
+                                ELSE
+                                    JTYPE[idx] := 6; JVAL[idx] := 'null';
+                                    pos := k; JSTP[sp] := 3;
+                                END_IF;
+                            ELSIF FIND('-+0123456789.', c) > 0 THEN
+                                JTYPE[idx] := 4;
+                                j := pos;
+                                closed := FALSE;
+                                WHILE NOT closed DO
+                                    IF j > LEN(sIn) THEN
+                                        closed := TRUE;
+                                    ELSE
+                                        cc := MID(sIn, 1, j);
+                                        IF FIND('-+0123456789.eE', cc) > 0 THEN
+                                            j := j + 1;
+                                        ELSE
+                                            closed := TRUE;
+                                        END_IF;
+                                    END_IF;
+                                END_WHILE;
+                                l := j - pos;
+                                JVAL[idx] := MID(sIn, l, pos);
+                                pos := j; JSTP[sp] := 3;
+                            ELSE
+                                bad := TRUE;
+                            END_IF;
+                        END_IF;
+                    ELSE
+                        // phase 3: ',' or matching close
+                        IF FIND(c, ',') = 1 THEN
+                            pos := pos + 1; JSTP[sp] := 0;
+                        ELSIF (JTYPE[top] = 1 AND FIND(c, '}') = 1)
+                              OR (JTYPE[top] = 2 AND FIND(c, ']') = 1)
+                        THEN
+                            pos := pos + 1; sp := sp - 1;
+                            IF sp > 0 THEN JSTP[sp] := 3;
+                            ELSE done := TRUE; END_IF;
+                        ELSE
+                            bad := TRUE;
+                        END_IF;
+                    END_IF;
+                END_IF;
+                pos := F_JSkipWs(sIn, pos);
+            END_WHILE;
+            IF bad OR NOT done THEN
+                bError := TRUE; nErrId := 2;
+            ELSE
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 3 THEN
+            // ---- Root ----
+            hOut := JFIRST[0]; bDone := TRUE;
+        ELSIF nCmd = 4 THEN
+            // ---- Child: nIdx-th child of hNode (0-based) ----
+            IF hNode >= nn THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                ch := JFIRST[hNode]; cnt := 0; hOut := 0;
+                WHILE ch <> 0 DO
+                    IF cnt = nIdx THEN
+                        hOut := ch; ch := 0;
+                    ELSE
+                        cnt := cnt + 1; ch := JNEXT[ch];
+                    END_IF;
+                END_WHILE;
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 5 THEN
+            // ---- ChildByName ----
+            IF hNode >= nn THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                ch := JFIRST[hNode]; hOut := 0;
+                WHILE ch <> 0 AND hOut = 0 DO
+                    IF LEN(JKEY[ch]) = LEN(sKey)
+                       AND FIND(JKEY[ch], sKey) = 1 THEN
+                        hOut := ch;
+                    ELSE
+                        ch := JNEXT[ch];
+                    END_IF;
+                END_WHILE;
+                bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 6 THEN
+            // ---- ChildCount ----
+            IF hNode >= nn THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                ch := JFIRST[hNode]; cnt := 0;
+                WHILE ch <> 0 DO cnt := cnt + 1; ch := JNEXT[ch]; END_WHILE;
+                nOut := cnt; bDone := TRUE;
+            END_IF;
+        ELSIF nCmd = 7 THEN
+            // ---- NodeType ----
+            IF hNode < nn THEN
+                nOut := JTYPE[hNode]; bDone := TRUE;
+            ELSE bError := TRUE; nErrId := 3; END_IF;
+        ELSIF nCmd = 8 THEN
+            // ---- NodeKey ----
+            IF hNode < nn THEN
+                sOut := JKEY[hNode]; bDone := TRUE;
+            ELSE bError := TRUE; nErrId := 3; END_IF;
+        ELSIF nCmd = 9 THEN
+            // ---- NodeText (scalar values only) ----
+            IF hNode < nn THEN
+                IF JTYPE[hNode] >= 3 THEN
+                    sOut := JVAL[hNode];
+                ELSE
+                    sOut := '';
+                END_IF;
+                bDone := TRUE;
+            ELSE bError := TRUE; nErrId := 3; END_IF;
+        ELSIF nCmd = 10 THEN
+            // ---- ToJson: iterative serializer ----
+            sOut := ''; ssp := 0;
+            IF hNode = 0 THEN
+                ssp := 1; XSX[1] := 0; XSK[1] := 2;
+                XSA[1] := JFIRST[0];
+            ELSE
+                IF hNode >= nn THEN
+                    bError := TRUE; nErrId := 3;
+                ELSE
+                    ssp := 1; XSX[1] := hNode; XSK[1] := 1;
+                    XSA[1] := 0;
+                END_IF;
+            END_IF;
+            WHILE ssp > 0 AND NOT bError DO
+                sn := XSX[ssp]; ssp := ssp - 1;
+                IF XSK[ssp + 1] = 1 THEN
+                    // visit node sn
+                    spar := JPAR[sn];
+                    IF spar > 0 THEN
+                        IF sn <> JFIRST[spar] THEN
+                            sOut := CONCAT(sOut, ',');
+                        END_IF;
+                        IF JTYPE[spar] = 1 THEN
+                            sOut := CONCAT(sOut, CONCAT('"',
+                                CONCAT(JKEY[sn], '":')));
+                        END_IF;
+                    END_IF;
+                    IF JTYPE[sn] = 1 THEN
+                        sOut := CONCAT(sOut, '{');
+                    ELSIF JTYPE[sn] = 2 THEN
+                        sOut := CONCAT(sOut, '[');
+                    ELSIF JTYPE[sn] = 3 THEN
+                        sOut := CONCAT(sOut, CONCAT('"',
+                            CONCAT(F_JsonEsc(JVAL[sn]), '"')));
+                    ELSE
+                        sOut := CONCAT(sOut, JVAL[sn]);
+                    END_IF;
+                    IF JFIRST[sn] <> 0 THEN
+                        ssp := ssp + 1;
+                        XSX[ssp] := sn; XSK[ssp] := 3; XSA[ssp] := 0;
+                        ssp := ssp + 1;
+                        XSX[ssp] := sn; XSK[ssp] := 2;
+                        XSA[ssp] := JFIRST[sn];
+                    ELSIF JTYPE[sn] = 1 THEN
+                        sOut := CONCAT(sOut, '}');
+                    ELSIF JTYPE[sn] = 2 THEN
+                        sOut := CONCAT(sOut, ']');
+                    END_IF;
+                ELSIF XSK[ssp + 1] = 2 THEN
+                    // advance: XSA = next unprocessed child of sn
+                    snx := XSA[ssp + 1];
+                    IF snx <> 0 THEN
+                        ssp := ssp + 1;
+                        XSX[ssp] := sn; XSK[ssp] := 2;
+                        XSA[ssp] := JNEXT[snx];
+                        ssp := ssp + 1;
+                        XSX[ssp] := snx; XSK[ssp] := 1; XSA[ssp] := 0;
+                    ELSE
+                        ssp := ssp + 1;
+                        XSX[ssp] := sn; XSK[ssp] := 3; XSA[ssp] := 0;
+                    END_IF;
+                ELSE
+                    // close node sn (node 0 = #doc emits nothing)
+                    IF sn > 0 THEN
+                        IF JTYPE[sn] = 1 THEN
+                            sOut := CONCAT(sOut, '}');
+                        ELSE
+                            sOut := CONCAT(sOut, ']');
+                        END_IF;
+                    END_IF;
+                END_IF;
+            END_WHILE;
+            bDone := TRUE;
+        ELSIF nCmd >= 11 AND nCmd <= 17 THEN
+            // ---- Append*: new node under hNode ----
+            IF hNode >= nn OR nn >= 48 THEN
+                bError := TRUE; nErrId := 3;
+            ELSE
+                idx := nn; nn := nn + 1;
+                JPAR[idx] := hNode; JKEY[idx] := sKey;
+                JVAL[idx] := ''; JNEXT[idx] := 0;
+                IF nCmd = 11 THEN JTYPE[idx] := 1;
+                ELSIF nCmd = 12 THEN JTYPE[idx] := 2;
+                ELSIF nCmd = 13 THEN JTYPE[idx] := 3;
+                ELSIF nCmd = 14 OR nCmd = 15 THEN JTYPE[idx] := 4;
+                ELSIF nCmd = 16 THEN JTYPE[idx] := 5;
+                ELSE JTYPE[idx] := 6; END_IF;
+                IF nCmd = 13 THEN JVAL[idx] := sVal;
+                ELSIF nCmd = 14 THEN JVAL[idx] := F_JsonIntStr(nInt);
+                ELSIF nCmd = 15 THEN JVAL[idx] := F_JsonRealStr(fReal);
+                ELSIF nCmd = 16 THEN
+                    IF bBool THEN JVAL[idx] := 'true';
+                    ELSE JVAL[idx] := 'false'; END_IF;
+                ELSIF nCmd = 17 THEN JVAL[idx] := 'null';
+                END_IF;
+                IF JLAST[hNode] = 0 THEN JFIRST[hNode] := idx;
+                ELSE JNEXT[JLAST[hNode]] := idx; END_IF;
+                JLAST[hNode] := idx;
+                hOut := idx; bDone := TRUE;
+            END_IF;
+        ELSE
+            bError := TRUE; nErrId := 1;
+        END_IF;
+    END_IF;
+    prev := nCmd;
+END_FUNCTION_BLOCK
+
+// TwinCAT-shaped alias
+FUNCTION_BLOCK FB_JsonDom
+VAR_INPUT
+    nCmd : UDINT;
+    hNode : UDINT;
+    nIdx : UDINT;
+    sKey : STRING[31];
+    sVal : STRING[127];
+    nInt : DINT;
+    fReal : LREAL;
+    bBool : BOOL;
+    sIn : STRING[1023];
+END_VAR
+VAR_OUTPUT
+    hOut : UDINT;
+    sOut : STRING[511];
+    nOut : UDINT;
+    bDone : BOOL;
+    bError : BOOL;
+    nErrId : UDINT;
+END_VAR
+VAR
+    d : FB_JsonDomParser;
+END_VAR
+    d.nCmd := nCmd; d.hNode := hNode; d.nIdx := nIdx;
+    d.sKey := sKey; d.sVal := sVal; d.nInt := nInt;
+    d.fReal := fReal; d.bBool := bBool; d.sIn := sIn;
+    d();
+    hOut := d.hOut; sOut := d.sOut; nOut := d.nOut;
+    bDone := d.bDone; bError := d.bError; nErrId := d.nErrId;
 END_FUNCTION_BLOCK
