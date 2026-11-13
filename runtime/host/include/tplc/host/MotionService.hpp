@@ -48,6 +48,11 @@ private:
         uint32_t follow_window = 0;
         int32_t home_offset = 0;
         int32_t probe_abort = 0;
+        int32_t pos_offset = 0;
+        int32_t brake_cmd = 0;
+        int32_t park_cmd = 0;
+        int32_t coe_cmd = 0;
+        int32_t saw_char[4] = {1000, 2000, 3000, 4000};
         /* simulated dynamics (double for deterministic profile
            math; reported to the object dictionary as int32) */
         double pos = 0.0;

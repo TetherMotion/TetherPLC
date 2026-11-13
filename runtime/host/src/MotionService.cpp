@@ -403,6 +403,24 @@ int32_t MotionService::objRead(void*, uint32_t axis, uint32_t index,
     case TPLC_MOTION_OBJ_PROBE_ABORT:
         *out = a->probe_abort;
         break;
+    case TPLC_MOTION_OBJ_POS_OFFSET:
+        *out = a->pos_offset;
+        break;
+    case TPLC_MOTION_OBJ_BRAKE_CMD:
+        *out = a->brake_cmd;
+        break;
+    case TPLC_MOTION_OBJ_PARK_CMD:
+        *out = a->park_cmd;
+        break;
+    case TPLC_MOTION_OBJ_COE_CMD:
+        *out = a->coe_cmd;
+        break;
+    case TPLC_MOTION_OBJ_SAW_CHAR0:
+    case TPLC_MOTION_OBJ_SAW_CHAR0 + 1:
+    case TPLC_MOTION_OBJ_SAW_CHAR0 + 2:
+    case TPLC_MOTION_OBJ_SAW_CHAR0 + 3:
+        *out = a->saw_char[index - TPLC_MOTION_OBJ_SAW_CHAR0];
+        break;
     default:
         return TPLC_MOTION_E_STATE;
     }
@@ -460,6 +478,24 @@ int32_t MotionService::objWrite(void*, uint32_t axis, uint32_t index,
         break;
     case TPLC_MOTION_OBJ_PROBE_ABORT:
         a->probe_abort = value;
+        break;
+    case TPLC_MOTION_OBJ_POS_OFFSET:
+        a->pos_offset = value;
+        break;
+    case TPLC_MOTION_OBJ_BRAKE_CMD:
+        a->brake_cmd = value;
+        break;
+    case TPLC_MOTION_OBJ_PARK_CMD:
+        a->park_cmd = value;
+        break;
+    case TPLC_MOTION_OBJ_COE_CMD:
+        a->coe_cmd = value;
+        break;
+    case TPLC_MOTION_OBJ_SAW_CHAR0:
+    case TPLC_MOTION_OBJ_SAW_CHAR0 + 1:
+    case TPLC_MOTION_OBJ_SAW_CHAR0 + 2:
+    case TPLC_MOTION_OBJ_SAW_CHAR0 + 3:
+        a->saw_char[index - TPLC_MOTION_OBJ_SAW_CHAR0] = value;
         break;
     default:
         /* controlword/statusword/mode-display/actuals are not

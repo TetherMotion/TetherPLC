@@ -14455,7 +14455,25 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc2_MC2_Drive_EN.pdf` · **API entries:** 41
-- **Status:** core MC blocks in `compat/tc2/tc2_mc2.st` — ctest tc2_mc2_*_io
+- **Status: IMPLEMENTED** — `compat/tc2/tc2_mc2_drive.st` provides all
+  41 APIs (e2e `tc2_mc2_drive_io`, mask `0xfffffff`, 28 checks over
+  `tether_io_motion_server --clock sim`; the OD objects are also
+  served by the in-process `MotionService`).
+  Beckhoff-general and CoE blocks drive `FB_MotionAxis` OP4/OP5; the
+  SoE set drives `FB_Soe` with `slave = Axis - 1`. State with no
+  DS402 object uses manufacturer-specific sim objects `0x2002`
+  (position offset), `0x2003` (brake command), `0x2004` (park
+  command), `0x2005` (CoE command) and `0x2006..0x2009` (flying-saw
+  characteristics), exposed as `mc.<slave>.<idx>` params on Tether
+  IO and as `MotionService` axis fields in-process. `AXIS_REF` is
+  the UDINT handle. Documented simplifications: the sim objects
+  record commands/values only (no physical brake/park/offset/saw
+  behavior); `FB_SoERead`/`FB_SoEWrite` cover only the S-0-0135
+  status word and S-0-0267 password elements (arbitrary P-0-xxxx
+  access reports Error); `MC_FlyingSawCharacValues` flattens to
+  `Value0..Value3`; `FB_CoEAX8000BrakeTest.Succeeded` reports
+  command acceptance (no torque verification); positions stay int32
+  user units (no LREAL engineering-unit model).
 - **Integration:** MC function blocks for drives: axis backend + drive profile handling.
 
 #### (top level)

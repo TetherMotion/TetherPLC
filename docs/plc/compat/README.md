@@ -70,6 +70,25 @@ compat/tc2/           TwinCAT 2/3-era library sources
                       signature-compatible but the axis applies its
                       configured limits. Gearing/phasing/camming/
                       touch-probe land in a later tranche.
+  tc2_mc2_drive.st   Tc2_MC2_Drive wrappers (41 APIs): Beckhoff-
+                      general OD blocks over FB_MotionAxis
+                      (FB_Read/WriteDriveParameter, FB_Set/
+                      DeletePositionOffset, FB_BrakeControl,
+                      FB_ParkAxis, FB_ReadDriveInfo), the SoE set
+                      over FB_Soe (FB_SoERead/Write, SetDataAccess-
+                      Mode, Reset, WritePassword, ExecuteCommand,
+                      WriteCommandControl, ReadCommandState/Diag-
+                      Message/DiagNumber(List)/ClassXDiag, the five
+                      temperature/bus readers), CoE blocks
+                      (FB_CoERead/Write/ExecuteCommand), AX5000/
+                      AX8000/EL72xx variants, and MC_GearInVelo/
+                      MC_GearInPos/MC_ReadFlyingSawCharacteristics.
+                      Drive-specific state lives in manufacturer-
+                      specific sim objects 0x2002..0x2009 (position
+                      offset, brake/park/CoE command, four saw
+                      characteristics) exposed as mc.<slave>.<idx>
+                      params; AXIS_REF is the UDINT handle and
+                      Axis selects slave = handle - 1.
 compat/tc3/
   tc3_rtmon.st        Tc3_RealtimeMonitoring wrappers over the
                       builtin FB_RtMon (tplc-rtmon service):
@@ -353,6 +372,24 @@ tests/compat/
                       protocol against tether_io_motion_server
                       (--clock sim, --axes 4) via TPLC_MOTION_IO; skips
                       when the Tether server binary is unavailable
+  tc2_mc2_drive_case.st
+                     Tc2_MC2_Drive program (28 packed checks:
+                      two axes, power, FB_ReadDriveInfo, CoE
+                      write/read/command, position offset set/read/
+                      delete, brake control, AX8000 brake/brake-
+                      test/park, EL72xx brake/offset, flying-saw
+                      characteristics, SoE status/password/exec/
+                      cmd-state/error/reset, AX5000 mains+firmware,
+                      MC_GearInVelo 2:1 + MC_GearInPos 1:1, power
+                      off)
+  tc2_mc2_drive_io.sh
+                     ctest tc2_mc2_drive_io: builds tc2_mc2.st +
+                      tc2_mc2_drive.st as libraries, consumes via
+                      --lib, 400-step replay over the Tether IO
+                      protocol against tether_io_motion_server
+                      (--clock sim, --axes 2) expecting mask
+                      0xfffffff; skips when the Tether server
+                      binary is unavailable
   tc2_nci_case.st    Tc2_NCI program (8 packed checks: 3-axis group,
                       powered, FB_NciLine move to (1000,600,300),
                       endpoints hit, path length, return move, origin,
@@ -1306,6 +1343,25 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   loaded, master velocity move with slave tracking 2x through the
   table, periodic wrap past the last master point, table clear,
   `WritePt` edge write.
+- **Tc2_MC2_Drive wrappers**: `compat/tc2/tc2_mc2_drive.st`
+  implements all 41 documented APIs. Beckhoff-general and CoE
+  blocks go through `FB_MotionAxis` OP4/OP5; the SoE set goes
+  through `FB_Soe` with `slave = Axis - 1`. Drive-specific state
+  that has no DS402 object uses manufacturer-specific sim objects:
+  `0x2002` position offset, `0x2003` brake command, `0x2004` park
+  command, `0x2005` CoE command, `0x2006..0x2009` flying-saw
+  characteristics (default 1000/2000/3000/4000). These objects
+  record commands/values only — no physical brake, park, offset,
+  or saw behavior is modeled. `FB_SoERead`/`FB_SoEWrite` cover the
+  S-0-0135 status word and S-0-0267 password elements; arbitrary
+  P-0-xxxx element access reports Error. `MC_GearInVelo` is
+  velocity-ratio coupling (PV mode, 0x606C -> 0x60FF);
+  `MC_GearInPos` is position coupling (CSP, 0x6064 -> 0x607A);
+  both report `StartSync`/`InGear` once the slave tracks.
+  `MC_ReadFlyingSawCharacteristics` flattens the four sim values
+  into `Value0..Value3` (the `MC_FlyingSawCharacValues` STRUCT is
+  not representable). `FB_CoEAX8000BrakeTest` reports `Succeeded`
+  on command acceptance — the sim has no torque verification.
 - **Honest gaps**: `MC_TouchProbe` is a cycle-level software latch —
   TwinCAT's hardware touch-probe latches sub-cycle against an encoder
   event, but neither the in-process axis nor `SimulatedCiA402Drive`
