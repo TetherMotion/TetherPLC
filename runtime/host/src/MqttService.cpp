@@ -269,6 +269,11 @@ MqttService::MqttService() {
     svc_.mqtt_backoff = [](void* s, uint32_t h, uint32_t mn,
                            uint32_t mx, uint32_t e)
         { return self(s)->backoff(s, h, mn, mx, e); };
+    svc_.mqtt_publish5 = [](void* s, uint32_t h, const char* t,
+                            const uint8_t* p, uint32_t n,
+                            uint32_t q, uint32_t r,
+                            const TplcMqtt5PubProps* pr)
+        { return self(s)->publish5(s, h, t, p, n, q, r, pr); };
 }
 
 MqttService::~MqttService() {
@@ -474,6 +479,84 @@ int32_t MqttService::publish(void*, uint32_t h, const char* topic,
         return TPLC_MQTT_E_PROTO;
     }
     c.last_msg_id = uint32_t(mid);
+    return TPLC_MQTT_OK;
+#else
+    return TPLC_MQTT_E_CONN;
+#endif
+}
+
+int32_t MqttService::publish5(void*, uint32_t h, const char* topic,
+                              const uint8_t* payload, uint32_t len,
+                              uint32_t qos, uint32_t retain,
+                              const TplcMqtt5PubProps* props) {
+    if (h == 0 || h > TPLC_MQTT_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_MQTT_E_HANDLE;
+    if (!topic || !*topic || (!payload && len)) return TPLC_MQTT_E_PARAM;
+#ifdef TPLC_HAVE_MQTT
+    Conn& c = impl_->conns[h - 1];
+    if (c.version != 5) return TPLC_MQTT_E_PARAM;
+    MQTTProperties p = MQTTProperties_initializer;
+    MQTTProperty prop;
+    memset(&prop, 0, sizeof(prop));
+    auto add_str = [&](enum MQTTPropertyCodes id, const char* v) {
+        if (!v || !*v) return;
+        prop.identifier = id;
+        prop.value.data.len = int(std::strlen(v));
+        prop.value.data.data = const_cast<char*>(v);
+        MQTTProperties_add(&p, &prop);
+    };
+    if (props) {
+        if (props->payload_format) {
+            prop.identifier = MQTTPROPERTY_CODE_PAYLOAD_FORMAT_INDICATOR;
+            prop.value.byte = 1;
+            MQTTProperties_add(&p, &prop);
+        }
+        if (props->message_expiry_s) {
+            prop.identifier = MQTTPROPERTY_CODE_MESSAGE_EXPIRY_INTERVAL;
+            prop.value.integer4 = props->message_expiry_s;
+            MQTTProperties_add(&p, &prop);
+        }
+        add_str(MQTTPROPERTY_CODE_CONTENT_TYPE, props->content_type);
+        add_str(MQTTPROPERTY_CODE_RESPONSE_TOPIC, props->response_topic);
+        if (props->correlation_data && props->correlation_len) {
+            prop.identifier = MQTTPROPERTY_CODE_CORRELATION_DATA;
+            prop.value.data.len = int(props->correlation_len);
+            prop.value.data.data =
+                const_cast<char*>(reinterpret_cast<const char*>(
+                    props->correlation_data));
+            MQTTProperties_add(&p, &prop);
+        }
+        /* user properties: "k1=v1;k2=v2" pairs */
+        if (props->user_properties && props->user_properties[0]) {
+            char buf[512];
+            std::strncpy(buf, props->user_properties, sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = 0;
+            for (char* pair = std::strtok(buf, ";"); pair;
+                 pair = std::strtok(nullptr, ";")) {
+                char* eq = std::strchr(pair, '=');
+                if (!eq) continue;
+                *eq = 0;
+                prop.identifier = MQTTPROPERTY_CODE_USER_PROPERTY;
+                prop.value.data.len = int(std::strlen(pair));
+                prop.value.data.data = pair;
+                prop.value.value.len = int(std::strlen(eq + 1));
+                prop.value.value.data = eq + 1;
+                MQTTProperties_add(&p, &prop);
+            }
+        }
+    }
+    MQTTClient_deliveryToken dt = 0;
+    MQTTResponse r = MQTTClient_publish5(c.conn, topic, int(len),
+                      payload, int(qos), int(retain), &p, &dt);
+    MQTTProperties_free(&p);
+    int rc = (r.reasonCode == MQTTREASONCODE_SUCCESS)
+                 ? MQTTCLIENT_SUCCESS : MQTTCLIENT_FAILURE;
+    MQTTResponse_free(r);
+    if (rc != MQTTCLIENT_SUCCESS) {
+        c.last_error = rc;
+        return TPLC_MQTT_E_PROTO;
+    }
+    c.last_msg_id = uint32_t(dt);
     return TPLC_MQTT_OK;
 #else
     return TPLC_MQTT_E_CONN;

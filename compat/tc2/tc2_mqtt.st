@@ -644,3 +644,59 @@ END_VAR
     exPrev := Execute;
     Busy := FALSE;
 END_FUNCTION_BLOCK
+
+// ---- FB_IotMqtt5Publish: MQTT5 PUBLISH with properties ----
+// v5 connections only.  Property inputs map to
+// TplcMqtt5PubProps; empty inputs leave the property absent.
+// UserProperties is a "k1=v1;k2=v2" list.
+FUNCTION_BLOCK FB_IotMqtt5Publish
+VAR_INPUT
+    Execute : BOOL;
+    ConnectionHdl : UDINT;
+    Topic : STRING[127];
+    Payload : STRING[255];
+    QoS : UDINT;
+    RetainOn : BOOL;
+    PayloadFormatUtf8 : BOOL;
+    MessageExpiryS : UDINT;
+    ContentType : STRING[127];
+    ResponseTopic : STRING[127];
+    CorrelationData : STRING[127];
+    UserProperties : STRING[255];
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Error : BOOL;
+    ErrorID : UDINT;
+END_VAR
+VAR
+    ch : FB_Mqtt;
+    exPrev : BOOL;
+END_VAR
+    Done := FALSE;
+    Error := FALSE;
+    ErrorID := 0;
+    IF Execute AND NOT exPrev THEN
+        ch.OP := 11;
+        ch.HANDLE := ConnectionHdl;
+        ch.TOPIC := Topic;
+        ch.PAYLOAD := Payload;
+        ch.QOS := QoS;
+        IF RetainOn THEN ch.FLG_RETAIN := 1; ELSE ch.FLG_RETAIN := 0; END_IF;
+        IF PayloadFormatUtf8 THEN ch.M5PUBFMT := 1; ELSE ch.M5PUBFMT := 0; END_IF;
+        ch.M5PUBEXPIRY := MessageExpiryS;
+        ch.M5PUBCTYPE := ContentType;
+        ch.M5PUBRTOPIC := ResponseTopic;
+        ch.M5PUBCORR := CorrelationData;
+        ch.M5PUBCORR_LEN := LEN(CorrelationData);
+        ch.M5PUBUPROPS := UserProperties;
+        ch();
+        IF ch.STATUS = 0 THEN
+            Done := TRUE;
+        ELSE
+            Error := TRUE;
+            ErrorID := ch.ERRID;
+        END_IF;
+    END_IF;
+    exPrev := Execute;
+END_FUNCTION_BLOCK

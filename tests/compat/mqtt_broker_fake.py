@@ -123,6 +123,46 @@ def parse_will(body):
     except Exception:
         return {'will': None, 'version': 4}
 
+def parse_publish_props(body, pos):
+    """parse MQTT5 PUBLISH properties at body[pos]; returns
+    (props_dict, payload_start).  Only the fields the e2e checks
+    are decoded; unknown ids stop the walk."""
+    # properties = varint length + bytes
+    q = pos
+    plen = 0
+    mult = 1
+    while q < len(body):
+        b = body[q]; q += 1
+        plen += (b & 0x7F) * mult
+        if not (b & 0x80):
+            break
+        mult *= 128
+    p = q
+    end = p + plen
+    props = {}
+    def take(n):
+        nonlocal p
+        v = body[p:p+n]; p += n; return v
+    def u16(): return struct.unpack('>H', take(2))[0]
+    def u32(): return struct.unpack('>I', take(4))[0]
+    def u8(): return take(1)[0]
+    def s():
+        n = u16(); return take(n).decode('utf-8', 'replace')
+    while p < end:
+        pid = u8()
+        if pid == 0x01: props['fmt'] = u8()
+        elif pid == 0x02: props['expiry'] = u32()
+        elif pid == 0x03: props['ctype'] = s()
+        elif pid == 0x08: props['rtopic'] = s()
+        elif pid == 0x09:
+            n = u16(); props['corr'] = take(n).hex()
+        elif pid == 0x26:
+            k = s(); v = s()
+            props.setdefault('uprops', []).append(f'{k}={v}')
+        else:
+            break
+    return props, end
+
 def handle(conn):
     will = None
     clean = False
@@ -186,7 +226,9 @@ def handle(conn):
                 if v5:
                     # v5 inserts a properties field before the payload
                     pos = 2 + tl + (2 if qos else 0)
-                    pos = skip_props(body, pos)
+                    pprops, pos = parse_publish_props(body, pos)
+                    if pprops:
+                        print('PUBPROPS', topic, pprops, flush=True)
                     payload = body[pos:]
                 else:
                     payload = rest

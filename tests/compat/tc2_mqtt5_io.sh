@@ -43,7 +43,7 @@ kill -0 "$SRV_PID" 2>/dev/null || { bad "broker fake start"; \
     for i in $(seq 0 800); do
         t=$((i * 10000000))
         if [ "$i" -eq 790 ]; then
-            echo "step $i time=$t in 0=00 expect 0=3f"
+            echo "step $i time=$t in 0=00 expect 0=ff"
         else
             echo "step $i time=$t in 0=00"
         fi
@@ -55,11 +55,14 @@ IMG=/tplc_tc2mqtt5_$$; CTL="$WORK/mqtt5.ctl"
     --steps "$WORK/mqtt5.steps" --plc "$BUILD/tether-plc" \
     --ctl "$CTL" --settle-ms 1500 >"$WORK/sim.log" 2>&1
 rc=$?
-if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log"; then
-    ok "sim replay: MQTT5 connect/props/sub/pub/echo/unsub/disconnect"
+if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log" \
+    && grep -q "PUBPROPS tplc/v5/props" "$SRV_LOG" \
+    && grep -q "application/json" "$SRV_LOG" \
+    && grep -q "k1=v1" "$SRV_LOG"; then
+    ok "sim replay: MQTT5 connect/props/sub/pub+props/echo/unsub/disconnect"
 else
-    bad "sim replay: MQTT5 connect/props/sub/pub/echo/unsub/disconnect"
-    tail -20 "$WORK/sim.log"
+    bad "sim replay: MQTT5 connect/props/sub/pub+props/echo/unsub/disconnect"
+    tail -20 "$WORK/sim.log"; tail -10 "$SRV_LOG"
 fi
 
 echo "== $pass pass, $fail fail"

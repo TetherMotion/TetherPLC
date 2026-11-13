@@ -8,13 +8,14 @@ VAR
     sub : FB_IotMqttSubscribe;
     unsub : FB_IotMqttUnsubscribe;
     pub : FB_IotMqttPublish;
+    pub5 : FB_IotMqtt5Publish;
     rx  : FB_IotMqttReceive;
     st : INT;
     waitN : INT;
     mask AT %QD0 : UDINT;
     hdl : UDINT;
 END_VAR
-    con(); dis(); sub(); unsub(); pub(); rx();
+    con(); dis(); sub(); unsub(); pub(); pub5(); rx();
     IF st = 0 THEN
         mask := 0;
         con.Execute := TRUE;
@@ -75,10 +76,18 @@ END_VAR
             rx.Execute := FALSE;
             IF rx.Topic = 'tplc/v5/one' AND rx.Payload = 'm5' THEN
                 mask := mask + 8;     // bit3: echo received (v5)
-                unsub.Execute := TRUE;
-                unsub.ConnectionHdl := hdl;
-                unsub.TopicFilter := 'tplc/v5/#';
-                st := 5;
+                pub5.Execute := TRUE;
+                pub5.ConnectionHdl := hdl;
+                pub5.Topic := 'tplc/v5/props';
+                pub5.Payload := 'withprops';
+                pub5.QoS := 0;
+                pub5.PayloadFormatUtf8 := TRUE;
+                pub5.MessageExpiryS := 30;
+                pub5.ContentType := 'application/json';
+                pub5.ResponseTopic := 'tplc/v5/reply';
+                pub5.CorrelationData := 'corr-1';
+                pub5.UserProperties := 'k1=v1;k2=v2';
+                st := 55;
             END_IF;
         END_IF;
         IF rx.Error THEN mask := 16#DEAD; st := 99; END_IF;
@@ -95,6 +104,35 @@ END_VAR
             st := 6;
         END_IF;
         IF unsub.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    IF st = 55 THEN
+        IF pub5.Done THEN
+            pub5.Execute := FALSE;
+            mask := mask + 64;        // bit6: v5 publish w/ props
+            waitN := 0;
+            st := 56;
+        END_IF;
+        IF pub5.Error THEN mask := 16#DEAD; st := 99; END_IF;
+    END_IF;
+
+    IF st = 56 THEN
+        // pump the echo so the broker forwards the message; the
+        // props themselves are verified broker-side via the log
+        rx.Execute := TRUE;
+        rx.ConnectionHdl := hdl;
+        IF rx.Done AND rx.Message THEN
+            rx.Execute := FALSE;
+            IF rx.Topic = 'tplc/v5/props' THEN
+                mask := mask + 128; // bit7: props publish echoed
+                unsub.Execute := TRUE;
+                unsub.ConnectionHdl := hdl;
+                unsub.TopicFilter := 'tplc/v5/#';
+                st := 5;
+            END_IF;
+        END_IF;
+        waitN := waitN + 1;
+        IF waitN > 300 THEN mask := 16#DEAD; st := 99; END_IF;
     END_IF;
 
     IF st = 6 THEN

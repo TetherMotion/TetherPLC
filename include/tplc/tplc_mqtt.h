@@ -65,6 +65,20 @@ typedef struct TplcMqttConnectCfg {
     uint32_t req_prob_info;     /* Request Problem Information */
 } TplcMqttConnectCfg;
 
+/* ---- MQTT5 publish properties ----
+ * All fields optional: 0/NULL = property absent.  user_properties is
+ * a NUL-terminated "k1=v1;k2=v2" list (';' and '=' may not appear
+ * inside keys/values — the wire format is UTF-8 string pairs). */
+typedef struct TplcMqtt5PubProps {
+    uint32_t       payload_format;    /* 0 absent, 1 = UTF-8 payload */
+    uint32_t       message_expiry_s;  /* Message Expiry Interval */
+    const char*    content_type;      /* Content Type, NUL-term/NULL */
+    const char*    response_topic;    /* Response Topic, NUL-term/NULL */
+    const uint8_t* correlation_data;  /* Correlation Data bytes/NULL */
+    uint32_t       correlation_len;
+    const char*    user_properties;   /* "k=v;k=v" list/NULL */
+} TplcMqtt5PubProps;
+
 /* ---- received-message struct ---- */
 typedef struct TplcMqttRx {
     /* in: buffer capacity; out: actual sizes */
@@ -124,7 +138,14 @@ typedef struct TplcMqttService {
     int32_t (*mqtt_backoff)(void*, uint32_t h, uint32_t min_ms,
                             uint32_t max_ms, uint32_t enable);
 
-    void* reserved[6];
+    /* MQTT5 publish with properties (v5 connections only; props may
+       be NULL for a bare v5 publish). */
+    int32_t (*mqtt_publish5)(void*, uint32_t h, const char* topic,
+                             const uint8_t* payload, uint32_t len,
+                             uint32_t qos, uint32_t retain,
+                             const TplcMqtt5PubProps* props);
+
+    void* reserved[5];
 } TplcMqttService;
 
 /* status / error codes */

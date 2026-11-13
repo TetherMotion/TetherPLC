@@ -1324,6 +1324,15 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "M5TOPICALIAS", udint());
             push(&mut off, "M5REQRESP", udint());
             push(&mut off, "M5REQPROB", udint());
+            /* MQTT5 publish properties (appended): OP11 reads these
+               into TplcMqtt5PubProps for mqtt_publish5. */
+            push(&mut off, "M5PUBFMT", udint());
+            push(&mut off, "M5PUBEXPIRY", udint());
+            push(&mut off, "M5PUBCTYPE", Type::Str { cap: 127 });
+            push(&mut off, "M5PUBRTOPIC", Type::Str { cap: 127 });
+            push(&mut off, "M5PUBCORR", Type::Str { cap: 127 });
+            push(&mut off, "M5PUBCORR_LEN", udint());
+            push(&mut off, "M5PUBUPROPS", Type::Str { cap: 255 });
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:

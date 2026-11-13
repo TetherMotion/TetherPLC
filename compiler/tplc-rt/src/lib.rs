@@ -5099,6 +5099,20 @@ const MQ_M5RECVMAX: usize = 1708;
 const MQ_M5TOPICALIAS: usize = 1712;
 const MQ_M5REQRESP: usize = 1716;
 const MQ_M5REQPROB: usize = 1720;
+// MQTT5 publish-prop members (appended): M5PUBFMT@1724,
+// M5PUBEXPIRY@1728, M5PUBCTYPE Str[127]@1732, M5PUBRTOPIC@1860,
+// M5PUBCORR@1988, M5PUBCORR_LEN@2116, M5PUBUPROPS Str[255]@2120.
+const MQ_M5PUBFMT: usize = 1724;
+const MQ_M5PUBEXPIRY: usize = 1728;
+const MQ_M5PUBCTYPE_LEN: usize = 1732;
+const MQ_M5PUBCTYPE: usize = 1733;
+const MQ_M5PUBRTOPIC_LEN: usize = 1860;
+const MQ_M5PUBRTOPIC: usize = 1861;
+const MQ_M5PUBCORR_LEN: usize = 1988;
+const MQ_M5PUBCORR: usize = 1989;
+const MQ_M5PUBCORRDLEN: usize = 2116;
+const MQ_M5PUBUPROPS_LEN: usize = 2120;
+const MQ_M5PUBUPROPS: usize = 2121;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5112,6 +5126,7 @@ const MQ_SVC_RECEIVE: usize = 64;
 const MQ_SVC_IS_CONNECTED: usize = 72;
 const MQ_SVC_ABORT: usize = 80;
 const MQ_SVC_BACKOFF: usize = 88;
+const MQ_SVC_PUBLISH5: usize = 96;
 
 /// service lookup for "tplc-mqtt" (9 chars)
 unsafe fn mqtt_service(ctx: *const u8) -> *const u8 {
@@ -5358,6 +5373,60 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
                      ru32(this.add(MQ_BACKOFFMIN)),
                      ru32(this.add(MQ_BACKOFFMAX)),
                      ru32(this.add(MQ_BACKOFFEN))));
+        }
+        11 => {
+            // MQTT5 publish with properties -> TplcMqtt5PubProps
+            // (48B): fmt@0 expiry@4 ctype@8 rtopic@16 corr@24
+            // corrlen@32 uprops@40
+            let mut tbuf = [0u8; 128];
+            uacstr(this, MQ_TOPIC_LEN, MQ_TOPIC, 127, tbuf.as_mut_ptr());
+            let n = (*this.add(MQ_PAYLOAD_LEN) as usize).min(255);
+            let mut pr = [0u8; 48];
+            let pp = pr.as_mut_ptr();
+            let pw = |off: usize, v: i32| {
+                let b = v.to_le_bytes();
+                core::ptr::copy_nonoverlapping(b.as_ptr(), pp.add(off), 4);
+            };
+            let pptr = |off: usize, p: *const u8| {
+                core::ptr::copy_nonoverlapping(
+                    (p as usize).to_le_bytes().as_ptr(), pp.add(off), 8);
+            };
+            pw(0, ru32(this.add(MQ_M5PUBFMT)) as i32);
+            pw(4, ru32(this.add(MQ_M5PUBEXPIRY)) as i32);
+            let mut cbuf = [0u8; 128];
+            let mut rbuf = [0u8; 128];
+            let mut xbuf = [0u8; 128];
+            let mut ubuf = [0u8; 256];
+            if *this.add(MQ_M5PUBCTYPE_LEN) > 0 {
+                uacstr(this, MQ_M5PUBCTYPE_LEN, MQ_M5PUBCTYPE, 127,
+                       cbuf.as_mut_ptr());
+                pptr(8, cbuf.as_ptr());
+            }
+            if *this.add(MQ_M5PUBRTOPIC_LEN) > 0 {
+                uacstr(this, MQ_M5PUBRTOPIC_LEN, MQ_M5PUBRTOPIC, 127,
+                       rbuf.as_mut_ptr());
+                pptr(16, rbuf.as_ptr());
+            }
+            if *this.add(MQ_M5PUBCORR_LEN) > 0 {
+                let cn = uacstr(this, MQ_M5PUBCORR_LEN, MQ_M5PUBCORR,
+                                127, xbuf.as_mut_ptr());
+                pptr(24, xbuf.as_ptr());
+                pw(32, cn as i32);
+            }
+            if *this.add(MQ_M5PUBUPROPS_LEN) > 0 {
+                uacstr(this, MQ_M5PUBUPROPS_LEN, MQ_M5PUBUPROPS, 255,
+                       ubuf.as_mut_ptr());
+                pptr(40, ubuf.as_ptr());
+            }
+            type FMqttPublish5 = unsafe extern "C" fn(
+                *const u8, u32, *const u8, *const u8, u32, u32, u32,
+                *const u8) -> i32;
+            let f: FMqttPublish5 =
+                core::mem::transmute(mqfn(svc, MQ_SVC_PUBLISH5));
+            set_rc(f(svc, ru32(this.add(MQ_HANDLE)),
+                     tbuf.as_ptr(), this.add(MQ_PAYLOAD), n as u32,
+                     ru32(this.add(MQ_QOS)), ru32(this.add(MQ_FLG_RETAIN)),
+                     pr.as_ptr()));
         }
         _ => {
             wi32(this.add(MQ_STATUS), -1);

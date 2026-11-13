@@ -50,6 +50,10 @@ private:
     int32_t abort(void*, uint32_t h);
     int32_t backoff(void*, uint32_t h, uint32_t min_ms,
                     uint32_t max_ms, uint32_t enable);
+    int32_t publish5(void*, uint32_t h, const char* topic,
+                     const uint8_t* payload, uint32_t len,
+                     uint32_t qos, uint32_t retain,
+                     const TplcMqtt5PubProps* props);
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
