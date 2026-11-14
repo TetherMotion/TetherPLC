@@ -1299,6 +1299,46 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "MCS", u32arr(8));
             push(&mut off, "ROT", f64arr(3));
         }
+        /* FB_McGroup — tplc-mcgroup service bridge
+           (Tc3_McCoordinatedMotion group admin). OP dispatch:
+           1=ensure, 2=add axis, 3=remove axis, 4=ungroup,
+           5=set state (ENABLE: 1 enable/0 disable/2 reset),
+           6=status, 7=set override, 8=set source,
+           9=set transform, 10=get axes. STATUS carries the
+           service return code; STATE/NAXES/ENABLED/ERRID hold
+           the group snapshot for OP 6/10. */
+        "FB_McGroup" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let lreal = || Type::Real { bits: 64 };
+            let u32arr = |n: u64| Type::Array {
+                elem: Box::new(udint()),
+                lo: 0,
+                hi: n as i64 - 1,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "GRP", udint());
+            push(&mut off, "AXIS", udint());
+            push(&mut off, "IDENT", udint());
+            push(&mut off, "ENABLE", dint());
+            push(&mut off, "SOURCE", dint());
+            push(&mut off, "COORD", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "STATE", dint());
+            push(&mut off, "NAXES", dint());
+            push(&mut off, "ENABLED", dint());
+            push(&mut off, "SRC", dint());
+            push(&mut off, "OVR", lreal());
+            push(&mut off, "OVRACT", lreal());
+            push(&mut off, "AXES", u32arr(16));
+        }
         /* FB_UaClient — tplc-opcua service bridge (OPC UA client via
         libopen62541). Synchronous op dispatch like FB_NciChan: set
         OP + fields and call. OP 1=connect (URL string → HANDLE),

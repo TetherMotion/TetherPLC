@@ -19,6 +19,7 @@
 #include <tplc/host/FifoService.hpp>
 #include <tplc/host/KinIoService.hpp>
 #include <tplc/host/KinService.hpp>
+#include <tplc/host/McGroupService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
 #include <tplc/host/Iec870Service.hpp>
@@ -130,6 +131,9 @@ private:
        kinematics engine (backend-independent, always valid). */
     KinIoService  kin_io_;
     KinService    kin_;
+    /* Coordinated-motion group bookkeeping; in-process only (groups
+       are PLC-side state, consumed by the trajectory engine later). */
+    McGroupService mcgroup_;
     /* OPC UA client; active() only when built with libopen62541. */
     OpcUaService  opcua_;
     /* EtherNet/IP explicit-messaging client; always available. */

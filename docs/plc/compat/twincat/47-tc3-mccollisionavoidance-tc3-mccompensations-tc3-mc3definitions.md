@@ -8,6 +8,26 @@
 
 **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
+**Status:** PARTIAL — the 12 group-administration APIs are implemented in
+`compat/tc3/tc3_mcgroup.st` over the in-process `tplc-mcgroup` service +
+`FB_McGroup` builtin (ctest `tc3_mcgroup`, mask `0xfff`):
+`MC_AddAxisToGroup`, `MC_RemoveAxisFromGroup`, `MC_UngroupAllAxes`,
+`MC_GroupEnable`, `MC_GroupDisable`, `MC_GroupReset`,
+`MC_GroupReadStatus`, `MC_GroupReadError`, `MC_GroupSetOverride`,
+`MC_GroupSetSetpointSource`, `MC_SetCoordinateTransform` and
+`UDINT_TO_IDENTINGROUP`. `AXES_GROUP_REF`/`AXIS_REF`/
+`IDENT_IN_GROUP_REF`/`MC_COORD_REF` flatten to UDINT handles;
+`ECmSetpointSource` maps 1/2/3 -> Group/MCS/ACS. Group states
+approximate mcGroupState; the service is synchronous so `Busy` stays
+FALSE. The remaining 24 APIs — collision-avoidance moves
+(`MC_MoveAbsoluteCA`, `MC_MoveRelativeCA`, `MC_HaltCA`,
+`MC_GearInPosCA`), track following (`MC_ReadTrackPositions`,
+`MC_ActivateTrack`, `MC_TrackConveyorBelt`), compensation
+(`MC_RegisterCompensation`, `MC_TransformPosition`), all
+`MC_MovePath`/preparation/blocker/dwell FBs and
+`MC_GroupReadTrajectoryInformation` — require the coordinated-motion
+trajectory engine and are deferred.
+
 ---
 
 #### If "bIsControlLoopClosed" is TRUE for all axes and the group is not empty. › Tc3_McCollisionAvoidance › Function Blocks › Motion

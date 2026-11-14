@@ -17524,7 +17524,7 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5410_TC3_Motion_Collision_Avoidance_EN.pdf` · **API entries:** 36
-- **Status:** advanced Mc3 features are Tether motion-domain; PLC surface on request
+- **Status:** PARTIAL — group-admin subset (12/36 APIs) implemented: `compat/tc3/tc3_mcgroup.st` over `tplc-mcgroup` + `FB_McGroup` (ctest `tc3_mcgroup`); CA moves, track, compensation and trajectory/preparation FBs deferred to the motion-planning tranche
 - **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
 #### If "bIsControlLoopClosed" is TRUE for all axes and the group is not empty. › Tc3_McCollisionAvoidance › Function Blocks › Motion

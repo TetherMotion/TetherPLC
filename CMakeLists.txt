@@ -55,6 +55,7 @@ add_library(tplc_host STATIC
   runtime/host/src/FifoIoService.cpp
   runtime/host/src/KinService.cpp
   runtime/host/src/KinIoService.cpp
+  runtime/host/src/McGroupService.cpp
   runtime/host/src/EcSyncService.cpp
   runtime/host/src/EcDiagService.cpp
   runtime/host/src/SoeService.cpp
@@ -373,6 +374,7 @@ if(TARGET tplc_tether_io)
                               runtime/host/src/FifoIoService.cpp
                               runtime/host/src/KinIoService.cpp
                               runtime/host/src/KinService.cpp
+                              runtime/host/src/McGroupService.cpp
                               runtime/host/src/EcSyncService.cpp
                               runtime/host/src/EcDiagService.cpp
                               runtime/host/src/SoeService.cpp
@@ -961,6 +963,16 @@ if(NOT CMAKE_CROSSCOMPILING)
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc2_ah.sh)
   set_tests_properties(tc3_mc2_ah PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 300 RESOURCE_LOCK plc_scan)
+
+  # Tc3_McCoordinatedMotion group-admin e2e: add/remove/ungroup,
+  # enable/disable/reset, status/error readback, override,
+  # setpoint source, coordinate transform, membership readback and
+  # the empty-group enable error on the in-process tplc-mcgroup
+  # service; motion execution is deferred to the trajectory engine
+  add_test(NAME tc3_mcgroup
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mcgroup.sh)
+  set_tests_properties(tc3_mcgroup PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
   # Tc3_NC_Camming e2e: two simulated axes, 3-point cam table
   # (master -> 2x slave), coupling while the master runs a velocity
