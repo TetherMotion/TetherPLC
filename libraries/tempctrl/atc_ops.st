@@ -1984,3 +1984,121 @@ END_VAR
     END_IF;
     Total := FlowA + FlowB;
 END_FUNCTION_BLOCK
+
+// ---- FB_AtcEdge: edge detector ---------------------------------------
+// Q = rising edge of I, QN = falling edge — the R_TRIG/FD_TRIG pair
+// every counter/latch needs. Level I is tracked even while disabled so
+// re-enable does not re-fire on a held input.
+FUNCTION_BLOCK FB_AtcEdge
+VAR_INPUT
+    I : BOOL;
+    Enable : BOOL;
+END_VAR
+VAR_OUTPUT
+    Q : BOOL;    // rising edge pulse (one scan)
+    QN : BOOL;   // falling edge pulse (one scan)
+END_VAR
+VAR
+    iL : BOOL;
+END_VAR
+    Q := FALSE; QN := FALSE;
+    IF Enable THEN
+        IF I AND NOT iL THEN Q := TRUE; END_IF;
+        IF NOT I AND iL THEN QN := TRUE; END_IF;
+    END_IF;
+    iL := I;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcWindow: time-of-day enable window --------------------------
+// Q = In AND inside [StartT,EndT) in caller TOD units. Overnight
+// windows (StartT > EndT) wrap midnight; equal bounds never open.
+// Purely combinational — feed a TOD source (FB_AtcShift domain,
+// wall-clock, or a counter scaled to the day).
+FUNCTION_BLOCK FB_AtcWindow
+VAR_INPUT
+    In : BOOL;
+    TOD : LREAL;       // current time-of-day, same units as bounds
+    StartT : LREAL;
+    EndT : LREAL;
+END_VAR
+VAR_OUTPUT
+    Q : BOOL;
+    Active : BOOL;     // inside the window regardless of In
+END_VAR
+VAR
+    s : LREAL;
+    e : LREAL;
+END_VAR
+    s := StartT; e := EndT;
+    IF s = e THEN
+        Active := FALSE;
+    ELSIF s < e THEN
+        Active := TOD >= s AND TOD < e;
+    ELSE
+        Active := TOD >= s OR TOD < e;
+    END_IF;
+    Q := In AND Active;
+END_FUNCTION_BLOCK
+
+// ---- ST_AtcCamPt: one cam/curve breakpoint ---------------------------
+TYPE ST_AtcCamPt : STRUCT
+    X : LREAL;   // input abscissa (e.g. position, temperature)
+    Y : LREAL;   // output ordinate (e.g. follower position, gain)
+END_STRUCT
+END_TYPE
+
+// ---- FB_AtcCam: piecewise-linear cam / characteristic curve ---------
+// NPTS sorted breakpoints (ascending X); Y linearly interpolated
+// between neighbours, clamped to the end values outside the table.
+// Sat flags inputs outside [X1,XN]. Write cam.PTS[i].X/.Y members
+// before calling (aggregate inputs are member-bound, like SEG tables).
+FUNCTION_BLOCK FB_AtcCam
+VAR_INPUT
+    X : LREAL;
+    NPTS : INT;                 // active points, 2..8
+    Enable : BOOL;
+END_VAR
+VAR_OUTPUT
+    Y : LREAL;
+    Sat : BOOL;                 // X outside table range
+END_VAR
+VAR_INPUT
+    PTS : ARRAY[1..8] OF ST_AtcCamPt;
+END_VAR
+VAR
+    i : INT;
+    np : INT;
+    x0 : LREAL;
+    x1 : LREAL;
+    y0 : LREAL;
+    y1 : LREAL;
+    f : LREAL;
+END_VAR
+    np := NPTS;
+    IF np < 2 THEN np := 2; END_IF;
+    IF np > 8 THEN np := 8; END_IF;
+    IF NOT Enable THEN
+        Y := 0.0; Sat := FALSE;
+        RETURN;
+    END_IF;
+    Sat := X < PTS[1].X OR X > PTS[np].X;
+    IF X <= PTS[1].X THEN
+        Y := PTS[1].Y;
+    ELSIF X >= PTS[np].X THEN
+        Y := PTS[np].Y;
+    ELSE
+        // find segment i with PTS[i].X <= X < PTS[i+1].X
+        i := 1;
+        WHILE i < np - 1 AND X >= PTS[i + 1].X DO
+            i := i + 1;
+        END_WHILE;
+        x0 := PTS[i].X; x1 := PTS[i + 1].X;
+        y0 := PTS[i].Y; y1 := PTS[i + 1].Y;
+        IF x1 > x0 THEN
+            f := (X - x0) / (x1 - x0);
+        ELSE
+            f := 0.0;
+        END_IF;
+        Y := y0 + f * (y1 - y0);
+    END_IF;
+END_FUNCTION_BLOCK

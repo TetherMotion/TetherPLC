@@ -71,6 +71,9 @@ the caller for pulses.
 | `FB_AtcDelay` | Transport delay line: `Out` follows `In` by `Delay` s via a 512-sample ring (`Filled` when the ring covers the delay; shorter history outputs the oldest sample). Pipeline/conveyor lag compensation. |
 | `FB_AtcRamp` | Trapezoidal move: `Pos`→`Target` at `MaxVel`/`MaxAcc` with latched braking (v²/2a curve), overshoot clamp, `Done` at rest on target. Latched `brk` prevents accel/brake limit-cycling. |
 | `FB_AtcRatio` | Ratio/blend feedforward: `FlowA = FlowB*Ratio + Bias`, `Total` = sum. Two-component dosing/mixing. |
+| `FB_AtcEdge` | Edge detector: `Q` rising / `QN` falling one-scan pulses on `I`; `iL` tracks `I` even while disabled so re-enable never re-fires a held input. |
+| `FB_AtcWindow` | Time-of-day enable window: `Q = In AND inside [StartT,EndT)` in caller TOD units; `StartT > EndT` wraps midnight, equal bounds never open. `Active` exposes the window itself. |
+| `FB_AtcCam` | Piecewise-linear cam/characteristic curve over `PTS[1..8]` (`ST_AtcCamPt` X/Y, member-write like `SEG` tables): interpolates between sorted breakpoints, clamps ends, `Sat` outside range. Follower/cam/lookup curves. |
 
 ## Machine control
 
@@ -95,8 +98,8 @@ the caller for pulses.
 
 ## Tests
 
-`tests/ops/e2e.sh` — library check/build/verify plus a 37-program
-self-checking vector suite (`tests/ops/cases/o01..o37`) covering
+`tests/ops/e2e.sh` — library check/build/verify plus a 40-program
+self-checking vector suite (`tests/ops/cases/o01..o40`) covering
 every block: debounce timing, alarm ack/shelve/first-out, hour-meter
 preset alarm + reset, OEE counters + reset, sensor range/rate/stuck
 priority, sequencer timed/condition steps + done, andon priority
@@ -110,4 +113,5 @@ lead/lag staging with rotation + stage delay, tool-life warn/due/reset,
 soft-limit window + homing gate, PV-SP deviation on/off delay,
 dual-channel safety agreement, safety muting, valve feedback verify,
 median-of-3 analog voting, LOTO permit, preset counter, rate-of-change
-alarm, transport delay line, trapezoidal ramp, ratio/blend feedforward.
+alarm, transport delay line, trapezoidal ramp, ratio/blend feedforward,
+edge detect, TOD window gate, 8-point cam interpolation.
