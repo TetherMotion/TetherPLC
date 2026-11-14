@@ -40,6 +40,16 @@
      "type": "BOOL"
     },
     {
+     "name": "TuneApply",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "TuneReset",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
      "name": "kal_l1",
      "kind": "var_output",
      "type": "LREAL"
@@ -193,9 +203,7 @@
         "y": 14
        },
        "params": {
-        "CODE": "kal_l1 := KAL.L1;\nkal_l2 := KAL.L2;\nkal_iter := KAL.Iter;\nkal_conv := KAL.Conv;\nkal_done := KAL.Done;\nkal_err := KAL.Err;\nlqr_k1 := LQR.K1;\nlqr_k2 := LQR.K2;\nlqr_ki := LQR.Ki;\nlqr_iter := LQR.Iter;\nlqr_conv := LQR.Conv;\nlqr_done := LQR.Done;\nlqr_err := LQR.Err;\nIF APPLY AND NOT applied THEN\n    CTL.L1 := KAL.L1;\n    CTL.L2 := KAL.L2;\n    CTL.K1 := LQR.K1;\n    CTL.K2 := LQR.K2;\n    CTL.Ki := LQR.Ki;\n    applied := TRUE;\nEND_IF;\nIF RESET THEN applied := FALSE; END_IF;\n",
-        "APPLY": "TRUE",
-        "RESET": "FALSE"
+        "CODE": "kal_l1 := KAL.L1;\nkal_l2 := KAL.L2;\nkal_iter := KAL.Iter;\nkal_conv := KAL.Conv;\nkal_done := KAL.Done;\nkal_err := KAL.Err;\nlqr_k1 := LQR.K1;\nlqr_k2 := LQR.K2;\nlqr_ki := LQR.Ki;\nlqr_iter := LQR.Iter;\nlqr_conv := LQR.Conv;\nlqr_done := LQR.Done;\nlqr_err := LQR.Err;\nIF APPLY AND NOT applied THEN\n    CTL.L1 := KAL.L1;\n    CTL.L2 := KAL.L2;\n    CTL.K1 := LQR.K1;\n    CTL.K2 := LQR.K2;\n    CTL.Ki := LQR.Ki;\n    applied := TRUE;\nEND_IF;\nIF RESET THEN applied := FALSE; END_IF;\n"
        },
        "exec_order": 0,
        "negated": [],
@@ -348,30 +356,30 @@
        "kind": "variable",
        "type_ref": "",
        "pos": {
-        "x": 30,
+        "x": 0,
         "y": 10
        },
        "params": {},
        "exec_order": 0,
        "negated": [],
        "comment": "",
-       "role": "out",
-       "name": "kal_l1"
+       "role": "in",
+       "name": "TuneApply"
       },
       {
        "id": 102,
        "kind": "variable",
        "type_ref": "",
        "pos": {
-        "x": 30,
+        "x": 0,
         "y": 10
        },
        "params": {},
        "exec_order": 0,
        "negated": [],
        "comment": "",
-       "role": "out",
-       "name": "kal_l2"
+       "role": "in",
+       "name": "TuneReset"
       },
       {
        "id": 104,
@@ -386,7 +394,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "kal_iter"
+       "name": "kal_l1"
       },
       {
        "id": 106,
@@ -401,7 +409,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "kal_conv"
+       "name": "kal_l2"
       },
       {
        "id": 108,
@@ -416,7 +424,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "kal_done"
+       "name": "kal_iter"
       },
       {
        "id": 110,
@@ -431,14 +439,14 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "kal_err"
+       "name": "kal_conv"
       },
       {
        "id": 112,
        "kind": "variable",
        "type_ref": "",
        "pos": {
-        "x": 36,
+        "x": 30,
         "y": 10
        },
        "params": {},
@@ -446,14 +454,14 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "lqr_k1"
+       "name": "kal_done"
       },
       {
        "id": 114,
        "kind": "variable",
        "type_ref": "",
        "pos": {
-        "x": 36,
+        "x": 30,
         "y": 10
        },
        "params": {},
@@ -461,7 +469,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "lqr_k2"
+       "name": "kal_err"
       },
       {
        "id": 116,
@@ -476,7 +484,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "lqr_ki"
+       "name": "lqr_k1"
       },
       {
        "id": 118,
@@ -491,7 +499,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "lqr_iter"
+       "name": "lqr_k2"
       },
       {
        "id": 120,
@@ -506,7 +514,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "lqr_conv"
+       "name": "lqr_ki"
       },
       {
        "id": 122,
@@ -521,7 +529,7 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "lqr_done"
+       "name": "lqr_iter"
       },
       {
        "id": 124,
@@ -536,10 +544,40 @@
        "negated": [],
        "comment": "",
        "role": "out",
-       "name": "lqr_err"
+       "name": "lqr_conv"
       },
       {
        "id": 126,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_done"
+      },
+      {
+       "id": 128,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_err"
+      },
+      {
+       "id": 130,
        "kind": "variable",
        "type_ref": "",
        "pos": {
@@ -597,26 +635,26 @@
       {
        "id": 101,
        "src": {
-        "block": 93,
-        "port": "kal_l1"
+        "block": 100,
+        "port": 0
        },
        "dsts": [
         {
-         "block": 100,
-         "port": 0
+         "block": 93,
+         "port": "APPLY"
         }
        ]
       },
       {
        "id": 103,
        "src": {
-        "block": 93,
-        "port": "kal_l2"
+        "block": 102,
+        "port": 0
        },
        "dsts": [
         {
-         "block": 102,
-         "port": 0
+         "block": 93,
+         "port": "RESET"
         }
        ]
       },
@@ -624,7 +662,7 @@
        "id": 105,
        "src": {
         "block": 93,
-        "port": "kal_iter"
+        "port": "kal_l1"
        },
        "dsts": [
         {
@@ -637,7 +675,7 @@
        "id": 107,
        "src": {
         "block": 93,
-        "port": "kal_conv"
+        "port": "kal_l2"
        },
        "dsts": [
         {
@@ -650,7 +688,7 @@
        "id": 109,
        "src": {
         "block": 93,
-        "port": "kal_done"
+        "port": "kal_iter"
        },
        "dsts": [
         {
@@ -663,7 +701,7 @@
        "id": 111,
        "src": {
         "block": 93,
-        "port": "kal_err"
+        "port": "kal_conv"
        },
        "dsts": [
         {
@@ -676,7 +714,7 @@
        "id": 113,
        "src": {
         "block": 93,
-        "port": "lqr_k1"
+        "port": "kal_done"
        },
        "dsts": [
         {
@@ -689,7 +727,7 @@
        "id": 115,
        "src": {
         "block": 93,
-        "port": "lqr_k2"
+        "port": "kal_err"
        },
        "dsts": [
         {
@@ -702,7 +740,7 @@
        "id": 117,
        "src": {
         "block": 93,
-        "port": "lqr_ki"
+        "port": "lqr_k1"
        },
        "dsts": [
         {
@@ -715,7 +753,7 @@
        "id": 119,
        "src": {
         "block": 93,
-        "port": "lqr_iter"
+        "port": "lqr_k2"
        },
        "dsts": [
         {
@@ -728,7 +766,7 @@
        "id": 121,
        "src": {
         "block": 93,
-        "port": "lqr_conv"
+        "port": "lqr_ki"
        },
        "dsts": [
         {
@@ -741,7 +779,7 @@
        "id": 123,
        "src": {
         "block": 93,
-        "port": "lqr_done"
+        "port": "lqr_iter"
        },
        "dsts": [
         {
@@ -754,7 +792,7 @@
        "id": 125,
        "src": {
         "block": 93,
-        "port": "lqr_err"
+        "port": "lqr_conv"
        },
        "dsts": [
         {
@@ -766,7 +804,33 @@
       {
        "id": 127,
        "src": {
-        "block": 126,
+        "block": 93,
+        "port": "lqr_done"
+       },
+       "dsts": [
+        {
+         "block": 126,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 129,
+       "src": {
+        "block": 93,
+        "port": "lqr_err"
+       },
+       "dsts": [
+        {
+         "block": 128,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 131,
+       "src": {
+        "block": 130,
         "port": 0
        },
        "dsts": [
@@ -777,9 +841,9 @@
        ]
       },
       {
-       "id": 128,
+       "id": 132,
        "src": {
-        "block": 126,
+        "block": 130,
         "port": 0
        },
        "dsts": [

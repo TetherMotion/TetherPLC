@@ -2994,4 +2994,108 @@ END_PROGRAM
         assert!(do_early, "DO0 should be high during the PWM on-window");
         assert!(!do_late, "DO0 should be low after Ton elapsed");
     }
+
+    /// The TetherWebUI autotune editor emits
+    /// tests/mixed/ui_tune_lqg.fbd.json: FB_AtcKalmanTune +
+    /// FB_AtcLqrTune feeding an inline `st` handoff whose VAR_IN_OUT pins
+    /// alias both tuners and the FB_AtcLqg controller. The handoff
+    /// mirrors tuner outputs to live vars and copies the computed gains
+    /// into the controller's input members on the APPLY strobe. Runs
+    /// the exact document against the shipped library.
+    #[test]
+    fn ui_autotune_lqg_runs() {
+        let srcs = vec![
+            (
+                "project.fbd.json".to_string(),
+                include_str!("../../../tests/mixed/ui_tune_lqg.fbd.json").to_string(),
+            ),
+            (
+                "Atc_TempCtrl.st".to_string(),
+                include_str!("../../../libraries/tempctrl/atc_tempctrl.st").to_string(),
+            ),
+        ];
+        let out = compile_all(&srcs);
+        assert_eq!(errs(&out), Vec::<String>::new());
+
+        let layout = tplc_mir::layout::layout_module(&out.module);
+        let mut blob = vec![0u8; layout.total_size as usize];
+        let prog = out
+            .module
+            .pous
+            .iter()
+            .find(|p| p.name == "Main")
+            .expect("Main program");
+        let ctx = tplc_mir::interp::pou_scope(&layout, "Main");
+        let stmts = match &prog.body {
+            tplc_mir::ir::Body::Stmts(s) => s.clone(),
+            _ => panic!("body not stmts"),
+        };
+        let mut rt = Rt::new(&mut blob, &layout, &out.module, 0);
+        rt.run_inits(&ctx);
+        let q = |n: &str| {
+            if layout.fields.contains_key(&format!("Main.{n}")) {
+                format!("Main.{n}")
+            } else {
+                n.to_string()
+            }
+        };
+        let member = |rt: &mut Rt, inst: &str, name: &str| {
+            rt.read_ref(
+                &ctx,
+                &tplc_mir::ir::Ref::Field(
+                    Box::new(tplc_mir::ir::Ref::Var(inst.to_string())),
+                    name.to_string(),
+                ),
+            )
+        };
+        let f = |v: Value| match v {
+            Value::F(x) => x,
+            v => panic!("not float: {v:?}"),
+        };
+        let b = |v: Value| matches!(v, Value::Bool(true));
+
+        // tuners run (Execute ← TuneRun), apply strobe held low
+        rt.write_field(&q("TuneRun"), &Value::Bool(true));
+        rt.write_field(&q("TuneApply"), &Value::Bool(false));
+        rt.write_field(&q("TuneReset"), &Value::Bool(false));
+        rt.write_field(&q("Pv"), &Value::F(50.0));
+
+        // DARE solves within a few scans (t06 converges by cycle 2)
+        for _ in 0..8 {
+            rt.exec_all(&ctx, &stmts);
+        }
+        // live mirrors track the tuner instances
+        assert!(b(read(&rt, &layout, "Main", "lqr_done")), "lqr_done mirror");
+        assert!(b(read(&rt, &layout, "Main", "kal_done")), "kal_done mirror");
+        let k1 = f(read(&rt, &layout, "Main", "lqr_k1"));
+        assert!(k1 > 0.0, "lqr_k1 mirror {k1} should be a computed gain");
+        // gains not yet applied — controller inputs still zero
+        assert_eq!(f(member(&mut rt, "pid", "K1")), 0.0);
+
+        // APPLY strobe: handoff copies KAL.L*/LQR.K* into pid's inputs
+        rt.write_field(&q("TuneApply"), &Value::Bool(true));
+        for _ in 0..3 {
+            rt.exec_all(&ctx, &stmts);
+        }
+        let eps = 1e-9;
+        assert!(
+            (f(member(&mut rt, "pid", "K1")) - k1).abs() < eps,
+            "pid.K1 {} != tuned K1 {k1}",
+            f(member(&mut rt, "pid", "K1"))
+        );
+        assert!(
+            (f(member(&mut rt, "pid", "L1")) - f(read(&rt, &layout, "Main", "kal_l1"))).abs() < eps,
+            "pid.L1 != kal_l1 mirror"
+        );
+        assert!(
+            (f(member(&mut rt, "pid", "L2")) - f(read(&rt, &layout, "Main", "kal_l2"))).abs() < eps,
+            "pid.L2 != kal_l2 mirror"
+        );
+        assert!(
+            f(member(&mut rt, "pid", "K2")) != 0.0 || f(member(&mut rt, "pid", "Ki")) != 0.0,
+            "pid K2/Ki should carry tuned gains"
+        );
+        // apply latch semantics (applied flag, RESET unlatch) are
+        // covered pure-ST by tests/tempctrl/cases/t13_handoff.st
+    }
 }
