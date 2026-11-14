@@ -38,12 +38,17 @@ extern "C" {
 #define TPLC_PATH_SEG_LINEAR 1u
 #define TPLC_PATH_SEG_DWELL  3u
 #define TPLC_PATH_SEG_CIRC   2u
+#define TPLC_PATH_SEG_BLEND  4u
 
 /* Circular segment modes (TwinCAT MC_CIRC_MODE subset):
    TPLC_PATH_CIRC_CENTER — aux[] holds the circle center; it must
      be (nearly) equidistant from the segment start and end.
    TPLC_PATH_CIRC_BORDER — aux[] holds a point on the circle; the
      center is the circumcenter of start/aux/end.
+   TPLC_PATH_SEG_BLEND — junction transition segment (TwinCAT
+     MC_MoveBlendingPreparation): holds the path end position for
+     dwell_ms milliseconds. Real velocity blending/lookahead is
+     not modeled; TransitionParameter[0] supplies the time.
    The circle is evaluated in the plane of position entries 0 and
    1; entries >= 2 interpolate linearly. path_choice: 1 =
    counter-clockwise, 2 = clockwise (TwinCAT

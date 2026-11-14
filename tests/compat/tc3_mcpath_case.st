@@ -25,6 +25,7 @@ VAR
     addB   : MC_AddAxisToGroup;
     prep1  : MC_MoveLinearAbsolutePreparation;
     prepD  : MC_DwellTimePreparation;
+    prepB  : MC_MoveBlendingPreparation;
     prepC  : MC_MoveCircularAbsolutePreparation;
     prep2  : MC_MoveDirectPreparation;
     mvPath : MC_MovePath;
@@ -32,6 +33,7 @@ VAR
     pos2   : ARRAY[0..15] OF LREAL;
     auxC   : ARRAY[0..15] OF LREAL;
     endC   : ARRAY[0..15] OF LREAL;
+    transP : ARRAY[0..15] OF LREAL;
     dAddA  : BOOL;
     dAddB  : BOOL;
     dPrep1 : BOOL;
@@ -124,11 +126,18 @@ ELSIF st = 5 THEN
     IF NOT prepC.Error THEN dPrepD := TRUE; END_IF;
     IF dPrepD THEN st := 6; END_IF;
 ELSIF st = 6 THEN
-    // segment 3: dwell 200 ms
+    // segment 3: dwell 200 ms, then a 150 ms blend junction
     prepD(Execute := pulse, DwellTime := 200, BufferMode := 1,
           PathData := pathH);
-    IF prepD.Error THEN mask := mask + 256; END_IF;
-    IF NOT prepD.Error THEN st := 7; END_IF;
+    transP[0] := 150.0;
+    prepB(Execute := pulse, Velocity := 20000.0,
+          Acceleration := 50000.0, Deceleration := 50000.0,
+          Jerk := 0.0, BufferMode := 1, TransitionMode := 0,
+          TransitionParameter := transP,
+          TransitionParameterCount := 1, InvokeId := 0,
+          PathData := pathH);
+    IF prepD.Error OR prepB.Error THEN mask := mask + 256; END_IF;
+    IF NOT prepD.Error AND NOT prepB.Error THEN st := 7; END_IF;
 ELSIF st = 7 THEN
     // segment 4: linear to (2000, 2000)
     pos2[0] := 2000.0; pos2[1] := 2000.0;
@@ -139,7 +148,7 @@ ELSIF st = 7 THEN
     IF prep2.Error THEN mask := mask + 256; END_IF;
     IF NOT prep2.Error THEN dPrep2 := TRUE; END_IF;
     IF dPrep2 THEN
-        // 4 segments prepared on a live path handle
+        // 5 segments prepared on a live path handle
         IF pathH <> 0 THEN mask := mask + 8; END_IF;   // bit3
         st := 8;
     END_IF;

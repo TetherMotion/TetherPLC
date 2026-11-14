@@ -98,7 +98,8 @@ double PathService::segDuration(uint32_t type, uint32_t n,
                                 const double* to, const double* from,
                                 double vel, double acc,
                                 double dwellMs) {
-    if (type == TPLC_PATH_SEG_DWELL) return dwellMs / 1000.0;
+    if (type == TPLC_PATH_SEG_DWELL || type == TPLC_PATH_SEG_BLEND)
+        return dwellMs / 1000.0;
     double dmax = 0.0;
     for (uint32_t i = 0; i < n && i < TPLC_PATH_MAX_AXES; ++i) {
         const double d = std::fabs(to[i] - from[i]);
@@ -231,7 +232,8 @@ int32_t PathService::add(void*, uint32_t path, uint32_t type,
     if (p == nullptr) return TPLC_PATH_E_STATE;
     if (p->nseg >= TPLC_PATH_MAX_SEGS) return TPLC_PATH_E_FULL;
     if (n > TPLC_PATH_MAX_AXES) return TPLC_PATH_E_PARAM;
-    if (type != TPLC_PATH_SEG_LINEAR && type != TPLC_PATH_SEG_DWELL)
+    if (type != TPLC_PATH_SEG_LINEAR && type != TPLC_PATH_SEG_DWELL &&
+        type != TPLC_PATH_SEG_BLEND)
         return TPLC_PATH_E_PARAM;
     if (type == TPLC_PATH_SEG_LINEAR && (pos == nullptr || n == 0))
         return TPLC_PATH_E_PARAM;
@@ -245,6 +247,7 @@ int32_t PathService::add(void*, uint32_t path, uint32_t type,
     if (type == TPLC_PATH_SEG_LINEAR) {
         for (uint32_t i = 0; i < n; ++i) s.to[i] = pos[i];
     } else {
+        /* DWELL and BLEND hold the previous segment target */
         s.n = p->nseg > 0 ? p->segs[p->nseg - 1].n : n;
         if (s.n > TPLC_PATH_MAX_AXES) s.n = TPLC_PATH_MAX_AXES;
         for (uint32_t i = 0; i < s.n; ++i)

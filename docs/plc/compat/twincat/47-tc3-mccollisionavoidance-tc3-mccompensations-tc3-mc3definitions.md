@@ -8,7 +8,7 @@
 
 **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
-**Status:** PARTIAL — 19 of the 36 APIs are implemented.
+**Status:** PARTIAL — 20 of the 36 APIs are implemented.
 
 Group administration in `compat/tc3/tc3_mcgroup.st` over the
 in-process `tplc-mcgroup` service + `FB_McGroup` builtin (ctest
@@ -29,7 +29,10 @@ Coordinated paths in `compat/tc3/tc3_mcpath.st` over the in-process
 mask `0x3f`): `MC_MoveLinearAbsolutePreparation`,
 `MC_MoveCircularAbsolutePreparation`,
 `MC_MoveDirectPreparation` (flattened alias of the linear absolute
-segment), `MC_DwellTimePreparation` and `MC_MovePath`.
+segment), `MC_MoveBlendingPreparation`, `MC_DwellTimePreparation`
+and `MC_MovePath`. `MC_MoveBlendingPreparation` appends a junction
+hold segment for `TransitionParameter[0]` ms; real velocity
+blending/lookahead is not modeled.
 `MC_MoveCircularAbsolutePreparation` supports `mcCircModeCenter`
 (AuxPoint = circle center, equidistant check) and
 `mcCircModeBorder` (AuxPoint on the circle, circumcenter solved);
@@ -50,8 +53,7 @@ service ramps with `Acceleration`, `BufferMode` accepted but every
 Execute edge appends immediately, segment-0 start resolves at
 execute time.
 
-The remaining 17 APIs — blending preparation
-(`MC_MoveBlendingPreparation`), blocker control
+The remaining 16 APIs — blocker control
 (`MC_BlockerPreparation`, `MC_ReleaseBlocker`,
 `MC_GroupReadBlockerStatus`), `MC_CalcTrafo`,
 `MC_SetCoordinateTransformPreparation`,

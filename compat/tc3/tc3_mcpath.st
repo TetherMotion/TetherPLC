@@ -343,3 +343,61 @@ IF edge THEN
     END_IF;
 END_IF;
 END_FUNCTION_BLOCK
+
+// MC_MoveBlendingPreparation: appends a junction transition segment.
+// TwinCAT uses it to program velocity blending between segments;
+// this implementation holds the path end position for
+// TransitionParameter[0] milliseconds (real corner-cutting/lookahead
+// blending is not modeled — documented deviation). Velocity/
+// Acceleration/Deceleration/Jerk are accepted for signature parity.
+FUNCTION_BLOCK MC_MoveBlendingPreparation
+VAR_INPUT
+    Execute : BOOL;
+    Velocity : LREAL;
+    Acceleration : LREAL;
+    Deceleration : LREAL := 0.0;
+    Jerk : LREAL := 0.0;
+    BufferMode : UDINT := 1;
+    TransitionMode : UDINT := 0;
+    TransitionParameter : ARRAY[0..15] OF LREAL;
+    TransitionParameterCount : UDINT := 0;
+    InvokeId : UDINT := 0;
+END_VAR
+VAR_IN_OUT
+    PathData : UDINT;
+END_VAR
+VAR_OUTPUT
+    Error : BOOL;
+    ErrorId : UDINT;
+END_VAR
+VAR
+    p : FB_Path;
+    exPrev : BOOL;
+    edge : BOOL;
+END_VAR
+edge := Execute AND NOT exPrev; exPrev := Execute;
+Error := FALSE; ErrorId := 0;
+IF edge THEN
+    p.HANDLE := PathData;
+    IF PathData = 0 THEN
+        p.OP := 0; p();
+        IF p.STATUS = 0 THEN PathData := p.HANDLE; END_IF;
+    END_IF;
+    IF PathData <> 0 THEN
+        p.OP := 2; p.AUX := 4; p.AUX2 := 0;
+        p.F1 := 0.0; p.F2 := 0.0;
+        IF TransitionParameterCount >= 1 THEN
+            p.F3 := TransitionParameter[0];
+        ELSE
+            p.F3 := 0.0;
+        END_IF;
+        p.HANDLE := PathData; p();
+        IF p.STATUS <> 0 THEN
+            Error := TRUE;
+            IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
+        END_IF;
+    ELSE
+        Error := TRUE; ErrorId := 16#4D01;
+    END_IF;
+END_IF;
+END_FUNCTION_BLOCK
