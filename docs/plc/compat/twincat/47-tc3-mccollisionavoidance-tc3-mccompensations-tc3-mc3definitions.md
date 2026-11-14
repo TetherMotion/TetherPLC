@@ -8,7 +8,7 @@
 
 **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
-**Status:** PARTIAL — 20 of the 36 APIs are implemented.
+**Status:** PARTIAL — 23 of the 36 APIs are implemented.
 
 Group administration in `compat/tc3/tc3_mcgroup.st` over the
 in-process `tplc-mcgroup` service + `FB_McGroup` builtin (ctest
@@ -32,7 +32,14 @@ mask `0x3f`): `MC_MoveLinearAbsolutePreparation`,
 segment), `MC_MoveBlendingPreparation`, `MC_DwellTimePreparation`
 and `MC_MovePath`. `MC_MoveBlendingPreparation` appends a junction
 hold segment for `TransitionParameter[0]` ms; real velocity
-blending/lookahead is not modeled.
+blending/lookahead is not modeled. Blocker control:
+`MC_BlockerPreparation` appends a zero-duration gate segment
+(`dwell_ms` carries the BlockerId) that holds the junction position
+during `MC_MovePath`; `MC_MovePath` freezes path time while the gate
+is closed (queried via `FB_Path` OP7). `MC_ReleaseBlocker` opens
+every gate with the id across all path objects;
+`MC_GroupReadBlockerStatus` reports the last-evaluated gate state
+(group-to-path linkage is approximated).
 `MC_MoveCircularAbsolutePreparation` supports `mcCircModeCenter`
 (AuxPoint = circle center, equidistant check) and
 `mcCircModeBorder` (AuxPoint on the circle, circumcenter solved);
@@ -53,9 +60,7 @@ service ramps with `Acceleration`, `BufferMode` accepted but every
 Execute edge appends immediately, segment-0 start resolves at
 execute time.
 
-The remaining 16 APIs — blocker control
-(`MC_BlockerPreparation`, `MC_ReleaseBlocker`,
-`MC_GroupReadBlockerStatus`), `MC_CalcTrafo`,
+The remaining 13 APIs — `MC_CalcTrafo`,
 `MC_SetCoordinateTransformPreparation`,
 `MC_GroupReadTrajectoryInformation`,
 collision-avoidance moves (`MC_MoveAbsoluteCA`,

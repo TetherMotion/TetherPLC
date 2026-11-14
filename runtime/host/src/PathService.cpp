@@ -40,6 +40,12 @@ PathService::PathService() {
         return self(h)->addCirc(h, p, mode, aux, na, end, ne, v, a,
                                 ch);
     };
+    svc_.path_release = [](void* h, double id) {
+        return self(h)->release(h, id);
+    };
+    svc_.path_blocker = [](void* h, double* id, int32_t* w) {
+        return self(h)->blocker(h, id, w);
+    };
 }
 
 PathService::Path* PathService::find(uint32_t path) {
@@ -100,6 +106,7 @@ double PathService::segDuration(uint32_t type, uint32_t n,
                                 double dwellMs) {
     if (type == TPLC_PATH_SEG_DWELL || type == TPLC_PATH_SEG_BLEND)
         return dwellMs / 1000.0;
+    if (type == TPLC_PATH_SEG_BLOCKER) return 0.0;
     double dmax = 0.0;
     for (uint32_t i = 0; i < n && i < TPLC_PATH_MAX_AXES; ++i) {
         const double d = std::fabs(to[i] - from[i]);
@@ -233,7 +240,7 @@ int32_t PathService::add(void*, uint32_t path, uint32_t type,
     if (p->nseg >= TPLC_PATH_MAX_SEGS) return TPLC_PATH_E_FULL;
     if (n > TPLC_PATH_MAX_AXES) return TPLC_PATH_E_PARAM;
     if (type != TPLC_PATH_SEG_LINEAR && type != TPLC_PATH_SEG_DWELL &&
-        type != TPLC_PATH_SEG_BLEND)
+        type != TPLC_PATH_SEG_BLEND && type != TPLC_PATH_SEG_BLOCKER)
         return TPLC_PATH_E_PARAM;
     if (type == TPLC_PATH_SEG_LINEAR && (pos == nullptr || n == 0))
         return TPLC_PATH_E_PARAM;
@@ -286,6 +293,30 @@ int32_t PathService::eval(void*, uint32_t path, double t, double* pos,
         return TPLC_PATH_E_PARAM;
     if (p->nseg == 0) return TPLC_PATH_E_EMPTY;
     if (t < 0.0) t = 0.0;
+    /* an unreleased BLOCKER at or before t holds the path at its
+       junction position until path_release opens the gate */
+    uint32_t gate = p->nseg;
+    for (uint32_t i = 0; i < p->nseg; ++i) {
+        const Segment& g = p->segs[i];
+        if (g.type == TPLC_PATH_SEG_BLOCKER && !g.released &&
+            t >= g.t0) {
+            gate = i;
+            break;
+        }
+    }
+    blkId_ = 0.0;
+    blkWait_ = (gate < p->nseg) ? 1 : 0;
+    if (gate < p->nseg) {
+        const Segment& g = p->segs[gate];
+        blkId_ = g.dwellMs;
+        const uint32_t gn = g.n < cap ? g.n : cap;
+        for (uint32_t i = 0; i < gn; ++i) pos[i] = g.to[i];
+        for (uint32_t i = gn; i < cap; ++i) pos[i] = 0.0;
+        *seg = gate;
+        *done = 0;
+        *n_out = g.n;
+        return TPLC_PATH_OK;
+    }
     uint32_t idx = p->nseg - 1;
     for (uint32_t i = 0; i < p->nseg; ++i) {
         if (t < p->segs[i].t0 + p->segs[i].dur || i == p->nseg - 1) {
@@ -369,6 +400,27 @@ int32_t PathService::addCirc(void*, uint32_t path, uint32_t mode,
     p->segs[p->nseg] = s;
     p->nseg += 1;
     recompute(*p);
+    return TPLC_PATH_OK;
+}
+
+int32_t PathService::release(void*, double id) {
+    uint32_t n = 0;
+    for (auto& p : paths_) {
+        if (!p.used) continue;
+        for (auto& s : p.segs) {
+            if (s.type == TPLC_PATH_SEG_BLOCKER && !s.released &&
+                s.dwellMs == id) {
+                s.released = true;
+                ++n;
+            }
+        }
+    }
+    return n > 0 ? TPLC_PATH_OK : TPLC_PATH_E_PARAM;
+}
+
+int32_t PathService::blocker(void*, double* id, int32_t* waiting) {
+    if (id != nullptr) *id = blkId_;
+    if (waiting != nullptr) *waiting = blkWait_;
     return TPLC_PATH_OK;
 }
 

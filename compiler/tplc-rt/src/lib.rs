@@ -5407,6 +5407,8 @@ const PT_SVC_SET_START: usize = 40;
 const PT_SVC_EVAL: usize = 48;
 const PT_SVC_INFO: usize = 56;
 const PT_SVC_ADDCIRC: usize = 64;
+const PT_SVC_RELEASE: usize = 72;
+const PT_SVC_BLOCKER: usize = 80;
 
 /// service lookup for "tplc-path" (9 chars)
 unsafe fn path_service(ctx: *const u8) -> *const u8 {
@@ -5443,6 +5445,9 @@ type FNptAddCirc = unsafe extern "C" fn(
     *const u8, u32, u32, *const f64, u32, *const f64, u32, f64,
     f64, f64,
 ) -> i32;
+type FNptRelease = unsafe extern "C" fn(*const u8, f64) -> i32;
+type FNptBlocker =
+    unsafe extern "C" fn(*const u8, *mut f64, *mut i32) -> i32;
 
 /// `__tplc_rt_FB_Path` — synchronous op dispatch over the tplc-path
 /// path-object table. OP: 0=create, 1=clear, 2=add segment,
@@ -5545,6 +5550,25 @@ pub unsafe extern "C" fn __tplc_rt_FB_Path(this: *mut u8, ctx: *mut u8) -> i32 {
                          f64::from_bits(ru64(this.add(PT_F1))),
                          f64::from_bits(ru64(this.add(PT_F2))),
                          f64::from_bits(ru64(this.add(PT_F3)))));
+        }
+        7 => {
+            /* blocker wait query: AUX=waiting, F1=blocker id */
+            let mut id = 0.0f64;
+            let mut w = 0i32;
+            let f: FNptBlocker =
+                core::mem::transmute(ptfn(svc, PT_SVC_BLOCKER));
+            let rc = f(svc, &mut id, &mut w);
+            fail(this, rc);
+            if rc == 0 {
+                wu32(this.add(PT_AUX), w.max(0) as u32);
+                wu64(this.add(PT_F1), id.to_bits());
+            }
+        }
+        8 => {
+            /* release blocker id carried in F1 */
+            let f: FNptRelease =
+                core::mem::transmute(ptfn(svc, PT_SVC_RELEASE));
+            fail(this, f(svc, f64::from_bits(ru64(this.add(PT_F1)))));
         }
         _ => {
             wi32(this.add(PT_STATUS), -1);

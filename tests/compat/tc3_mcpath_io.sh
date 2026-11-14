@@ -54,10 +54,10 @@ kill -0 "$SRV_PID" 2>/dev/null || { bad "motion server start"; \
     cat "$WORK/server.log"; echo "== $pass pass, $fail fail"; exit 1; }
 
 {
-    for i in $(seq 0 400); do
+    for i in $(seq 0 500); do
         t=$((i * 10000000))
         if [ "$i" -eq 200 ]; then
-            echo "step $i time=$t in 0=00 expect 0=3f000000"
+            echo "step $i time=$t in 0=00 expect 0=7f000000"
         else
             echo "step $i time=$t in 0=00"
         fi

@@ -245,7 +245,11 @@ compat/tc3/
                       border circle in the axis0/1 plane),
                       MC_MoveDirectPreparation (linear-alias),
                       MC_MoveBlendingPreparation (junction hold),
-                      MC_DwellTimePreparation and MC_MovePath over
+                      MC_DwellTimePreparation, blocker control
+                      (MC_BlockerPreparation/MC_ReleaseBlocker/
+                      MC_GroupReadBlockerStatus: zero-duration gates
+                      that hold path time until released) and
+                      MC_MovePath over
                       the in-process tplc-path service + FB_Path
                       builtin. MC_PATH_DATA_REF flattens to a UDINT
                       handle; the POINTER TO LREAL position vector
@@ -595,9 +599,10 @@ tests/compat/
                      expecting mask 0xfff
   tc3_mcpath_case.st  Tc3_McCoordinatedMotion path program (6 packed
                      checks: 2 axes create+power, group membership,
-                     5-segment path prepare (linear/circular/dwell/
-                     blend/linear), MC_MovePath Busy+Done, final
-                     positions near (2000,2000))
+                     6-segment path prepare (linear/circular/dwell/
+                     blend/blocker/linear), MC_MovePath Busy+Done
+                     with blocker wait + release, final positions
+                     near (2000,2000))
   tc3_mcpath.sh      ctest tc3_mcpath: builds tc2_mc2 + tc3_mcgroup
                      + tc3_mcpath as libraries, in-process replay
                      expecting mask 0x3f

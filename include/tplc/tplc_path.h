@@ -39,6 +39,7 @@ extern "C" {
 #define TPLC_PATH_SEG_DWELL  3u
 #define TPLC_PATH_SEG_CIRC   2u
 #define TPLC_PATH_SEG_BLEND  4u
+#define TPLC_PATH_SEG_BLOCKER 5u
 
 /* Circular segment modes (TwinCAT MC_CIRC_MODE subset):
    TPLC_PATH_CIRC_CENTER — aux[] holds the circle center; it must
@@ -49,6 +50,11 @@ extern "C" {
      MC_MoveBlendingPreparation): holds the path end position for
      dwell_ms milliseconds. Real velocity blending/lookahead is
      not modeled; TransitionParameter[0] supplies the time.
+   TPLC_PATH_SEG_BLOCKER — path gate (TwinCAT MC_BlockerPreparation):
+     dwell_ms carries the BlockerId; the segment has zero duration
+     and eval holds the junction position until path_release marks
+     the blocker released. Released flags persist until the path is
+     cleared.
    The circle is evaluated in the plane of position entries 0 and
    1; entries >= 2 interpolate linearly. path_choice: 1 =
    counter-clockwise, 2 = clockwise (TwinCAT
@@ -102,6 +108,14 @@ typedef struct TplcPathService {
                              uint32_t naux, const double* end,
                              uint32_t nend, double vel, double acc,
                              double path_choice);
+    /* release every BLOCKER segment whose dwell_ms equals id
+       (TwinCAT MC_ReleaseBlocker); returns OK */
+    int32_t (*path_release)(void* host, double id);
+    /* blocker wait state of the most recent path_eval: *id gets the
+       blocker id, *waiting = 1 while the path is held at an
+       unreleased blocker (TwinCAT MC_GroupReadBlockerStatus) */
+    int32_t (*path_blocker)(void* host, double* id,
+                            int32_t* waiting);
 } TplcPathService;
 
 #ifdef __cplusplus

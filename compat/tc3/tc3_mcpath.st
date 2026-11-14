@@ -205,6 +205,10 @@ VAR
     active : BOOL;
     issued : BOOL;
     t0 : LREAL;
+    pathT : LREAL;
+    lastNow : LREAL;
+    blkWait : BOOL;
+    dn : LREAL;
     i : UDINT;
     n : UDINT;
     axh : UDINT;
@@ -240,6 +244,7 @@ IF active THEN
         ELSE
             PathData := p.HANDLE;
             t0 := p.NOW;
+            pathT := 0.0; lastNow := p.NOW;
             /* switch members to CSP mode for 0x607A streaming */
             FOR i := 0 TO 15 DO
                 IF i < n THEN
@@ -252,7 +257,13 @@ IF active THEN
         END_IF;
     END_IF;
     IF issued THEN
-        p.OP := 4; p.F1 := p.NOW - t0; p.HANDLE := PathData; p();
+        /* blocker query freezes path time while the path is held
+           at an unreleased blocker gate */
+        p.OP := 7; p.HANDLE := PathData; p();
+        blkWait := p.AUX = 1;
+        dn := p.NOW - lastNow; lastNow := p.NOW;
+        IF NOT blkWait THEN pathT := pathT + dn; END_IF;
+        p.OP := 4; p.F1 := pathT; p.HANDLE := PathData; p();
         IF p.STATUS <> 0 THEN
             Error := TRUE;
             IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
@@ -398,6 +409,128 @@ IF edge THEN
         END_IF;
     ELSE
         Error := TRUE; ErrorId := 16#4D01;
+    END_IF;
+END_IF;
+END_FUNCTION_BLOCK
+
+// MC_BlockerPreparation: appends a blocker gate at the current path
+// junction. The path holds position there during MC_MovePath until
+// MC_ReleaseBlocker opens the gate. BufferMode is accepted for
+// signature parity.
+FUNCTION_BLOCK MC_BlockerPreparation
+VAR_INPUT
+    Execute : BOOL;
+    BlockerId : UDINT;
+    BufferMode : UDINT := 1;
+END_VAR
+VAR_IN_OUT
+    PathData : UDINT;
+END_VAR
+VAR_OUTPUT
+    Error : BOOL;
+    ErrorId : UDINT;
+END_VAR
+VAR
+    p : FB_Path;
+    exPrev : BOOL;
+    edge : BOOL;
+END_VAR
+edge := Execute AND NOT exPrev; exPrev := Execute;
+Error := FALSE; ErrorId := 0;
+IF edge THEN
+    p.HANDLE := PathData;
+    IF PathData = 0 THEN
+        p.OP := 0; p();
+        IF p.STATUS = 0 THEN PathData := p.HANDLE; END_IF;
+    END_IF;
+    IF PathData <> 0 AND BlockerId > 0 THEN
+        p.OP := 2; p.AUX := 5; p.AUX2 := 0;
+        p.F1 := 0.0; p.F2 := 0.0; p.F3 := BlockerId;
+        p.HANDLE := PathData; p();
+        IF p.STATUS <> 0 THEN
+            Error := TRUE;
+            IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
+        END_IF;
+    ELSE
+        Error := TRUE; ErrorId := 16#4D01;
+    END_IF;
+END_IF;
+END_FUNCTION_BLOCK
+
+// MC_ReleaseBlocker: opens every blocker gate with the given id on
+// the next eval. The TwinCAT signature carries only AxesGroup; the
+// flattened implementation releases by BlockerId across all path
+// objects (blocker ids are user-unique per machine).
+FUNCTION_BLOCK MC_ReleaseBlocker
+VAR_INPUT
+    Execute : BOOL;
+    BlockerId : UDINT;
+END_VAR
+VAR_IN_OUT
+    AxesGroup : UDINT;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorId : UDINT;
+END_VAR
+VAR
+    p : FB_Path;
+    mg : FB_McGroup;
+    exPrev : BOOL;
+    edge : BOOL;
+    ok : BOOL;
+END_VAR
+ok := FALSE;
+edge := Execute AND NOT exPrev;
+mg.GRP := AxesGroup; mg.OP := 1; mg();
+AxesGroup := mg.GRP;
+IF edge THEN
+    p.OP := 8; p.F1 := BlockerId; p();
+    IF p.STATUS = 0 THEN ok := TRUE; END_IF;
+END_IF;
+exPrev := Execute;
+Done := ok; Busy := FALSE;
+Error := edge AND NOT ok;
+IF edge AND p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
+END_FUNCTION_BLOCK
+
+// MC_GroupReadBlockerStatus: reports whether the most recent path
+// eval is held at an unreleased blocker. The group linkage is
+// approximated — the service reports the last-evaluated path's gate
+// state.
+FUNCTION_BLOCK MC_GroupReadBlockerStatus
+VAR_INPUT
+    Enable : BOOL;
+END_VAR
+VAR_IN_OUT
+    AxesGroup : UDINT;
+END_VAR
+VAR_OUTPUT
+    Valid : BOOL;
+    Busy : BOOL;
+    Blocked : BOOL;
+    BlockerId : UDINT;
+    Error : BOOL;
+    ErrorId : UDINT;
+END_VAR
+VAR
+    p : FB_Path;
+    mg : FB_McGroup;
+END_VAR
+Valid := FALSE; Busy := FALSE; Blocked := FALSE;
+BlockerId := 0; Error := FALSE; ErrorId := 0;
+mg.GRP := AxesGroup; mg.OP := 6; mg();
+IF Enable AND mg.STATUS = 0 THEN
+    Valid := TRUE;
+    p.OP := 7; p();
+    IF p.STATUS = 0 THEN
+        Blocked := p.AUX = 1;
+        BlockerId := LREAL_TO_DINT(p.F1);
+    ELSE
+        Error := TRUE;
+        IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
     END_IF;
 END_IF;
 END_FUNCTION_BLOCK

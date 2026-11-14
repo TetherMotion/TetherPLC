@@ -26,6 +26,9 @@ VAR
     prep1  : MC_MoveLinearAbsolutePreparation;
     prepD  : MC_DwellTimePreparation;
     prepB  : MC_MoveBlendingPreparation;
+    prepK  : MC_BlockerPreparation;
+    relBlk : MC_ReleaseBlocker;
+    blkSt  : MC_GroupReadBlockerStatus;
     prepC  : MC_MoveCircularAbsolutePreparation;
     prep2  : MC_MoveDirectPreparation;
     mvPath : MC_MovePath;
@@ -43,6 +46,9 @@ VAR
     busySeen : BOOL;
     gotBusy : BOOL;
     gotPos  : BOOL;
+    sawBlocked : BOOL;
+    mCnt   : INT;
+    dRel   : BOOL;
     pA     : DINT;
     pB     : DINT;
 END_VAR
@@ -139,22 +145,35 @@ ELSIF st = 6 THEN
     IF prepD.Error OR prepB.Error THEN mask := mask + 256; END_IF;
     IF NOT prepD.Error AND NOT prepB.Error THEN st := 7; END_IF;
 ELSIF st = 7 THEN
-    // segment 4: linear to (2000, 2000)
+    // blocker gate id 7 at the junction, then segment 5 linear
+    prepK(Execute := pulse, BlockerId := 7, BufferMode := 1,
+          PathData := pathH);
     pos2[0] := 2000.0; pos2[1] := 2000.0;
     prep2(Execute := pulse, Position := pos2, PositionCount := 2,
           Velocity := 20000.0, Acceleration := 50000.0,
           Deceleration := 50000.0, Jerk := 0.0, BufferMode := 1,
           PathData := pathH);
-    IF prep2.Error THEN mask := mask + 256; END_IF;
-    IF NOT prep2.Error THEN dPrep2 := TRUE; END_IF;
+    IF prepK.Error OR prep2.Error THEN mask := mask + 256; END_IF;
+    IF NOT prepK.Error AND NOT prep2.Error THEN dPrep2 := TRUE; END_IF;
     IF dPrep2 THEN
-        // 5 segments prepared on a live path handle
+        // 6 segments prepared on a live path handle
         IF pathH <> 0 THEN mask := mask + 8; END_IF;   // bit3
         st := 8;
     END_IF;
 ELSIF st = 8 THEN
-    // path running; wait for Done
+    // path running; blocker status polled, release after ~1.2 s
+    blkSt(Enable := TRUE, AxesGroup := grp);
+    IF blkSt.Blocked THEN sawBlocked := TRUE; END_IF;
     IF busySeen THEN gotBusy := TRUE; END_IF;
+    mCnt := mCnt + 1;
+    IF mCnt >= 120 THEN st := 9; END_IF;
+ELSIF st = 9 THEN
+    // release the blocker gate
+    relBlk(Execute := pulse, BlockerId := 7, AxesGroup := grp);
+    IF relBlk.Done THEN dRel := TRUE; END_IF;
+    IF dRel THEN st := 10; END_IF;
+ELSIF st = 10 THEN
+    // path resumes and finishes
     IF dPath THEN
         // final positions near (2000, 2000), tolerance 300
         IF ABS(pA - 2000) < 300 AND ABS(pB - 2000) < 300 THEN
@@ -162,9 +181,10 @@ ELSIF st = 8 THEN
         END_IF;
         IF gotBusy THEN mask := mask + 16; END_IF;   // bit4
         IF gotPos THEN mask := mask + 32; END_IF;    // bit5
-        st := 9;
+        IF sawBlocked THEN mask := mask + 64; END_IF; // bit6
+        st := 11;
     END_IF;
-ELSIF st = 9 THEN
+ELSIF st = 11 THEN
     // hold; expect written at final step
 END_IF;
 END_PROGRAM

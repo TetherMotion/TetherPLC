@@ -29,6 +29,7 @@ private:
         double   t0 = 0.0;     // cumulative start time
         uint32_t circMode = 0; // TPLC_PATH_CIRC_* for CIRC segs
         double   circChoice = 1.0; // 1=CCW, 2=CW
+        bool     released = false; // BLOCKER gate opened
         std::array<double, TPLC_PATH_MAX_AXES> to{};
         std::array<double, TPLC_PATH_MAX_AXES> aux{};
     };
@@ -73,9 +74,14 @@ private:
     int32_t addCirc(void*, uint32_t, uint32_t, const double*,
                     uint32_t, const double*, uint32_t, double,
                     double, double);
+    int32_t release(void*, double);
+    int32_t blocker(void*, double*, int32_t*);
 
     TplcPathService svc_{};
     std::array<Path, TPLC_PATH_MAX_PATHS> paths_{};
+    /* blocker wait state mirrored from the most recent eval */
+    double   blkId_ = 0.0;
+    int32_t  blkWait_ = 0;
 };
 
 } // namespace tplc
