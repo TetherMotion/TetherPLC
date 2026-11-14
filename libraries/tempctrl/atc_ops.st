@@ -1329,3 +1329,220 @@ END_VAR
         ValveCmd := TRUE; Testing := FALSE;
     END_IF;
 END_FUNCTION_BLOCK
+
+// ---- FB_AtcLeadLag: pump/compressor staging --------------------------
+// Duty or level demand stages identical units lead/lag with runtime
+// rotation: the least-used unit leads, lag units start as demand
+// rises and stop in reverse order as it falls. StageDelay seconds
+// must elapse between stage changes (motor start settle, inrush).
+// Demand is in whole capacity units per stage (TRUNC). Hours
+// accumulate per stage so rotation stays fair over weeks.
+FUNCTION_BLOCK FB_AtcLeadLag
+VAR_INPUT
+    Demand : LREAL;      // required capacity, units of one stage
+    NumUnits : INT;      // identical staged units, 1..8
+    StageDelay : LREAL;  // s between stage changes
+    Enable : BOOL;
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Stage : ARRAY[1..8] OF BOOL; // stage i commanded on
+    NumOn : INT;                 // stages currently on
+    LeadIdx : INT;               // 1-based index of lead stage
+END_VAR
+VAR
+    req : INT;
+    onT : INT;
+    onTLast : INT;
+    pendT : LREAL;
+    hrs : ARRAY[1..8] OF LREAL;
+    sel : ARRAY[1..8] OF BOOL;
+    nu : INT;
+    i : INT;
+    k : INT;
+    best : INT;
+    bestH : LREAL;
+END_VAR
+    nu := NumUnits;
+    IF nu < 1 THEN nu := 1; END_IF;
+    IF nu > 8 THEN nu := 8; END_IF;
+    IF Reset OR NOT Enable THEN
+        FOR i := 1 TO 8 DO
+            Stage[i] := FALSE; hrs[i] := 0.0;
+        END_FOR;
+        onT := 0; onTLast := -1; pendT := 0.0; LeadIdx := 1; NumOn := 0;
+        FOR i := 1 TO 8 DO sel[i] := FALSE; END_FOR;
+        IF NOT Enable THEN RETURN; END_IF;
+    END_IF;
+    req := DINT_TO_INT(TRUNC(Demand));
+    IF req < 0 THEN req := 0; END_IF;
+    IF req > nu THEN req := nu; END_IF;
+    pendT := pendT + CycleTime;
+    IF pendT >= StageDelay THEN
+        IF onT < req THEN
+            onT := onT + 1; pendT := 0.0;
+        ELSIF onT > req THEN
+            onT := onT - 1; pendT := 0.0;
+        END_IF;
+    END_IF;
+    // re-select only when the stage count changes: pick the onT
+    // units with the least accumulated hours (ties -> low index).
+    // Selection then holds until the next change so units do not
+    // swap every scan — rotation equalizes across demand changes.
+    IF onT <> onTLast THEN
+        FOR i := 1 TO 8 DO sel[i] := FALSE; END_FOR;
+        FOR k := 1 TO onT DO
+            bestH := 1.0e30; best := 0;
+            FOR i := 1 TO nu DO
+                IF NOT sel[i] AND hrs[i] < bestH THEN
+                    bestH := hrs[i]; best := i;
+                END_IF;
+            END_FOR;
+            IF best > 0 THEN sel[best] := TRUE; END_IF;
+        END_FOR;
+        onTLast := onT;
+    END_IF;
+    FOR i := 1 TO 8 DO
+        IF i <= nu THEN Stage[i] := sel[i]; ELSE Stage[i] := FALSE; END_IF;
+    END_FOR;
+    NumOn := onT;
+    LeadIdx := 0;
+    FOR i := 1 TO nu DO
+        IF Stage[i] AND LeadIdx = 0 THEN LeadIdx := i; END_IF;
+    END_FOR;
+    IF LeadIdx = 0 THEN LeadIdx := 1; END_IF;
+    FOR i := 1 TO nu DO
+        IF Stage[i] THEN hrs[i] := hrs[i] + CycleTime / 3600.0; END_IF;
+    END_FOR;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcToolLife: tool/cycle life tracking ------------------------
+// Counts machine cycles (Cycle rising edge) and run hours while
+// Enable. PctUsed = Cycles/LifeLimit*100 for HMI bars; Warn asserts
+// at WarnPct % used; Due latches at the limit until Reset (tool
+// change). Pair with FB_AtcHourMeter for calendar-based service.
+FUNCTION_BLOCK FB_AtcToolLife
+VAR_INPUT
+    Cycle : BOOL;       // cycle-complete signal (edge detected)
+    Enable : BOOL;      // machine running (hours accumulate)
+    LifeLimit : DINT;   // rated cycles before change due (<=0 = off)
+    WarnPct : LREAL;    // % used where Warn asserts (e.g. 80)
+    CycleTime : LREAL;
+    Reset : BOOL;       // tool changed -> clear counters
+END_VAR
+VAR_OUTPUT
+    Cycles : DINT;
+    Hours : LREAL;
+    PctUsed : LREAL;    // 0..100+, -1 when LifeLimit<=0
+    Warn : BOOL;
+    Due : BOOL;
+END_VAR
+VAR
+    cycLast : BOOL;
+END_VAR
+    IF Reset THEN
+        Cycles := 0; Hours := 0.0; Due := FALSE;
+    END_IF;
+    IF Enable THEN
+        Hours := Hours + CycleTime / 3600.0;
+        IF Cycle AND NOT cycLast THEN Cycles := Cycles + 1; END_IF;
+    END_IF;
+    cycLast := Cycle;
+    IF LifeLimit > 0 THEN
+        PctUsed := DINT_TO_LREAL(Cycles) * 100.0 / DINT_TO_LREAL(LifeLimit);
+        Warn := PctUsed >= WarnPct;
+        IF Cycles >= LifeLimit THEN Due := TRUE; END_IF;
+    ELSE
+        PctUsed := -1.0; Warn := FALSE; Due := FALSE;
+    END_IF;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcSoftLimit: position window + homing supervision -----------
+// Software limit monitoring for servo/stepper axes: PosValid only
+// after Homed (position meaningless before homing); InWindow /
+// OverPos / UnderPos classify Pos against [MinPos,MaxPos]; Fault
+// latches the first violation while Enable; NeedHome prompts the
+// operator/HMI to home after power-up or fault.
+FUNCTION_BLOCK FB_AtcSoftLimit
+VAR_INPUT
+    Pos : LREAL;
+    MinPos : LREAL;
+    MaxPos : LREAL;
+    Homed : BOOL;       // homing complete (from drive/PLC logic)
+    Enable : BOOL;      // axis enabled / motion permitted
+    Reset : BOOL;       // clear latched Fault
+END_VAR
+VAR_OUTPUT
+    PosValid : BOOL;    // position trusted (Homed)
+    InWindow : BOOL;
+    OverPos : BOOL;
+    UnderPos : BOOL;
+    Fault : BOOL;       // latched window violation
+    NeedHome : BOOL;    // enabled but not homed
+END_VAR
+VAR
+    lo : LREAL;
+    hi : LREAL;
+    tmp : LREAL;
+END_VAR
+    lo := MinPos; hi := MaxPos;
+    IF hi < lo THEN
+        tmp := lo; lo := hi; hi := tmp;
+    END_IF;
+    PosValid := Homed;
+    OverPos := Homed AND Pos > hi;
+    UnderPos := Homed AND Pos < lo;
+    InWindow := Homed AND Pos >= lo AND Pos <= hi;
+    NeedHome := Enable AND NOT Homed;
+    IF Reset THEN Fault := FALSE; END_IF;
+    IF Enable AND (OverPos OR UnderPos) THEN Fault := TRUE; END_IF;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcDeviation: PV-SP band alarm with on/off delay -------------
+// Dev = |PV - SP| > Band (instantaneous, for HMI). Alarm latches
+// after the deviation persists OnDelay s and clears only after the
+// loop is back inside Band for OffDelay s (OffDelay<=0 clears
+// immediately) — the standard temp-deviation alarm for batch records.
+FUNCTION_BLOCK FB_AtcDeviation
+VAR_INPUT
+    PV : LREAL;
+    SP : LREAL;
+    Band : LREAL;       // allowed |PV-SP|, EU
+    OnDelay : LREAL;    // s in deviation before Alarm
+    OffDelay : LREAL;   // s in band before clear (<=0 immediate)
+    Enable : BOOL;
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Dev : BOOL;         // instantaneous out-of-band
+    Alarm : BOOL;       // latched deviation alarm
+    ET : LREAL;         // s continuously out of band
+END_VAR
+VAR
+    inT : LREAL;
+    outT : LREAL;
+    bnd : LREAL;
+END_VAR
+    bnd := Band;
+    IF bnd < 0.0 THEN bnd := 0.0; END_IF;
+    IF Reset THEN Alarm := FALSE; ET := 0.0; inT := 0.0; outT := 0.0; END_IF;
+    IF NOT Enable THEN
+        Dev := FALSE; ET := 0.0; inT := 0.0; outT := 0.0;
+        RETURN;
+    END_IF;
+    IF PV - SP > bnd OR SP - PV > bnd THEN
+        Dev := TRUE;
+        ET := ET + CycleTime;
+        inT := 0.0;
+        outT := outT + CycleTime;
+        IF ET >= OnDelay THEN Alarm := TRUE; END_IF;
+    ELSE
+        Dev := FALSE;
+        ET := 0.0;
+        outT := 0.0;
+        inT := inT + CycleTime;
+        IF Alarm AND inT >= OffDelay THEN Alarm := FALSE; END_IF;
+    END_IF;
+END_FUNCTION_BLOCK

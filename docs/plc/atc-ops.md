@@ -57,6 +57,10 @@ the caller for pulses.
 | `FB_AtcDefrost` | Cooler defrost sequencer: refrigeration runs until `coolT >= DefrostEvery`, then heater on for `DefrostTime`, compressor off for `MinOff` (anti-short-cycle), resume. `DoorOpen` blocks defrost start and aborts it mid-cycle; `DoorAlarm` latches after `DoorAlarmTime` s ajar *while the compressor is actually running*; `TempAlarm` after `WarmTime` s of `Warm`; `Ack` clears both; `DefrostCount` totals cycles. |
 | `FB_AtcZoneBalance` | Master/slave zone trim: `TrimOut = sat(rate-limit(Gain * MasterErr))`, bounded by `TrimMax`, `Sat` flags windup, `Enable` rising starts bumpless at 0. Add `TrimOut` to slave-zone setpoints. |
 | `FB_AtcEndpoint` | Freeze-dryer endpoint (pressure-rise test): `Execute` rising edge closes the isolation valve (`ValveCmd` FALSE) for `SettleTime`, samples chamber `Pressure` for `SampleTime`, then classifies `Result` — 1 dry when `RiseRate <= MaxRise`, 2 wet otherwise. `Testing` while running, `Reset` re-arms. |
+| `FB_AtcLeadLag` | Pump/compressor/chiller staging: `Demand` in whole stage units → `NumOn` steps up/down ONE stage per `StageDelay` s. On each stage-count change the `NumOn` least-runtime units are selected (`hrs` per stage, ties → low index) and held until the next change — true lead/lag rotation. `Stage[1..8]`, `LeadIdx`. |
+| `FB_AtcToolLife` | Tool/cycle life: `Cycles` on `Cycle` rising edge, `Hours` while `Enable`; `PctUsed` for HMI, `Warn` at `WarnPct` %, `Due` latches at `LifeLimit` until `Reset` (tool change). |
+| `FB_AtcSoftLimit` | Axis software limits: `PosValid` only after `Homed`; `InWindow`/`OverPos`/`UnderPos` vs `[MinPos,MaxPos]` (auto-swapped); `Fault` latches first violation while `Enable`; `NeedHome` = enabled but unhomed; `Reset` clears `Fault`. |
+| `FB_AtcDeviation` | PV-SP band alarm: `Dev` instantaneous, `Alarm` after `OnDelay` s out-of-band, clears after `OffDelay` s back in band (`<=0` immediate); `ET` = continuous deviation time. Batch-record temperature deviation alarm. |
 
 ## Machine control
 
@@ -81,8 +85,8 @@ the caller for pulses.
 
 ## Tests
 
-`tests/ops/e2e.sh` — library check/build/verify plus a 23-program
-self-checking vector suite (`tests/ops/cases/o01..o23`) covering
+`tests/ops/e2e.sh` — library check/build/verify plus a 27-program
+self-checking vector suite (`tests/ops/cases/o01..o27`) covering
 every block: debounce timing, alarm ack/shelve/first-out, hour-meter
 preset alarm + reset, OEE counters + reset, sensor range/rate/stuck
 priority, sequencer timed/condition steps + done, andon priority
@@ -91,4 +95,6 @@ permissive deny mask, mode arbitration, jog timeout, watchdog
 heartbeat, blinker phase, totalizer reset, moving average, windowed
 demand, override release track, two-hand gap/anti-tie-down, three-shift
 schedule incl. overnight wrap, cooler defrost with door/warm alarms,
-zone-balance trim saturation, freeze-dryer endpoint dry/wet classify.
+zone-balance trim saturation, freeze-dryer endpoint dry/wet classify,
+lead/lag staging with rotation + stage delay, tool-life warn/due/reset,
+soft-limit window + homing gate, PV-SP deviation on/off delay.
