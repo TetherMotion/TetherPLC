@@ -43,6 +43,9 @@ struct ProfinetService::Port {
     char name[32] = {};
     uint32_t vendor = 0, device = 0, role = 0, instance = 0, oem = 0;
     bool haveIdent = false;
+    /* IOCR cyclic state */
+    uint16_t frameId = 0x8000;
+    uint16_t cycle = 0;
 };
 
 namespace {
@@ -207,6 +210,12 @@ ProfinetService::ProfinetService() {
                              uint32_t ol, uint8_t* ir, uint32_t ic,
                              uint32_t* il) {
         return self(s)->ioExchange(s, p, orr, ol, ir, ic, il);
+    };
+    svc_.pn_io_cr = [](void* s, uint32_t p, uint32_t fid,
+                       const uint8_t* orr, uint32_t ol, uint8_t* ir,
+                       uint32_t ic, uint32_t* il, uint32_t* co,
+                       uint32_t* so) {
+        return self(s)->ioCr(s, p, fid, orr, ol, ir, ic, il, co, so);
     };
     svc_.pn_port_info = [](void* s, uint32_t p, uint32_t* st,
                            uint32_t* e, uint32_t* f) {
@@ -466,6 +475,78 @@ int32_t ProfinetService::ioExchange(void*, uint32_t port,
     const uint32_t ilen = uint8_t(buf[2]);
     if (ilen > in_cap) { ++p->errors; return TPLC_PN_E_PROTO; }
     if (in_rec && ilen) memcpy(in_rec, buf + 3, ilen);
+    if (in_len) *in_len = ilen;
+    ++p->frames;
+    return TPLC_PN_OK;
+}
+
+/* IOCR cyclic exchange: IEC 61158-6-10 APDU over the port transport.
+   DataRequest/DataResponse PDU =
+     [FrameID u16 BE][C-SDU >=40B][cycle u16 BE][dataStatus u8]
+     [transferStatus u8]
+   The C-SDU carries one provider/consumer record pair in the 'PN'
+   tag format used by io_exchange: request C-SDU = 'PN'+len+out_rec,
+   reply C-SDU = 'PN'+len+in_rec.  Full multi-object C-SDU layout
+   (per-submodule IOPS/IOCS) is staged with AR negotiation. */
+int32_t ProfinetService::ioCr(void*, uint32_t port, uint32_t frame_id,
+                              const uint8_t* out_rec, uint32_t out_len,
+                              uint8_t* in_rec, uint32_t in_cap,
+                              uint32_t* in_len, uint32_t* cyc_out,
+                              uint32_t* stat_out) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_PN_E_PARAM;
+    if (p->fd < 0 || p->pst < TPLC_PN_ST_OPEN)
+        return TPLC_PN_E_STATE;
+    if (out_len > TPLC_PN_MAX_IO || in_cap > TPLC_PN_MAX_IO)
+        return TPLC_PN_E_PARAM;
+    if (frame_id) p->frameId = uint16_t(frame_id & 0xFFFF);
+
+    /* C-SDU: 'PN' record + zero pad to the 40-octet minimum */
+    uint8_t csdu[48];
+    memset(csdu, 0, sizeof csdu);
+    csdu[0] = 0x50; csdu[1] = 0x4E;
+    csdu[2] = uint8_t(out_len & 0xFF);
+    if (out_len) memcpy(csdu + 3, out_rec, out_len);
+    const uint32_t csduLen = (3 + out_len + 39) / 40 * 40;
+    if (csduLen > sizeof csdu) return TPLC_PN_E_PARAM;
+
+    /* PDU: FrameID + C-SDU + APDU trailer (cycle, dataStatus,
+       transferStatus); request status = RUN/primary/valid/OK */
+    uint8_t tx[80];
+    wr16(tx, p->frameId);
+    memcpy(tx + 2, csdu, csduLen);
+    const size_t apdu = 2 + csduLen;
+    wr16(tx + apdu, p->cycle);
+    tx[apdu + 2] = 0x35;   /* DataStatus: primary|RUN|valid|OK */
+    tx[apdu + 3] = 0x00;   /* TransferStatus: usable */
+    if (send(p->fd, tx, apdu + 4, 0) != ssize_t(apdu + 4)) {
+        ++p->errors; return TPLC_PN_E_IO;
+    }
+    p->cycle = uint16_t(p->cycle + 1);
+
+    uint8_t buf[128];
+    ssize_t r = recv(p->fd, buf, sizeof buf, 0);
+    if (r < 2 + 40 + 4 || buf[0] != uint8_t(p->frameId >> 8) ||
+        buf[1] != uint8_t(p->frameId & 0xFF)) {
+        ++p->errors; return TPLC_PN_E_IO;
+    }
+    /* trailer sits at the tail: cycle(2) + dataStatus + transfer */
+    const uint8_t* tr = buf + r - 4;
+    if (cyc_out) *cyc_out = rd16(tr);
+    if (stat_out) *stat_out = tr[2];
+    if (tr[3] != 0) { ++p->errors; return TPLC_PN_E_DEV; }
+    /* C-SDU record at offset 2, minimum 40 octets */
+    const size_t csduOff = 2;
+    const size_t csduAvail = size_t(r) - csduOff - 4;
+    if (csduAvail < 40 || buf[csduOff] != 0x50 ||
+        buf[csduOff + 1] != 0x4E) {
+        ++p->errors; return TPLC_PN_E_PROTO;
+    }
+    const uint32_t ilen = buf[csduOff + 2];
+    if (ilen > in_cap || csduOff + 3 + ilen > size_t(r) - 4) {
+        ++p->errors; return TPLC_PN_E_PROTO;
+    }
+    if (in_rec && ilen) memcpy(in_rec, buf + csduOff + 3, ilen);
     if (in_len) *in_len = ilen;
     ++p->frames;
     return TPLC_PN_OK;

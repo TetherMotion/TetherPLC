@@ -23,6 +23,9 @@
 //   5 = DCP Get  (PORT/XID/OPTION/SUB -> OD/DLEN)
 //   6 = DCP Set  (PORT/XID/OPTION/SUB/OD[0..DLEN))
 //   7 = cyclic IO record exchange (IOOUT[0..DLEN) -> IOIN/DLEN)
+//   8 = IOCR cyclic exchange (XID=frame_id, 0=keep default 0x8000;
+//       IOOUT[0..DLEN) -> IOIN/DLEN, PNCYC=device cycle counter,
+//       PNSTAT=DataStatus byte e.g. 16#35)
 // DCP option/suboption constants: OPT_IP=1 (SUB_MAC=1, SUB_IPPARM=2,
 // SUB_FULLIP=3), OPT_PROP=2 (SUB_VENDOR=1, SUB_NAME=2, SUB_DEVID=3,
 // SUB_ROLE=4, SUB_OPTIONS=5, SUB_ALIAS=6, SUB_INSTANCE=7,
@@ -55,6 +58,8 @@ VAR_OUTPUT
     OEM : UDINT;
     ODDATA : ARRAY[0..63] OF BYTE;
     IOIN : ARRAY[0..63] OF BYTE;
+    PNCYC : UDINT;
+    PNSTAT : UDINT;
 END_VAR
 VAR
     raw : FB_Profinet;
@@ -90,6 +95,8 @@ END_VAR
             ODDATA[i] := raw.OD[i];
             IOIN[i] := raw.IOIN[i];
         END_FOR;
+        PNCYC := raw.PNCYC;
+        PNSTAT := raw.PNSTAT;
         DONE := TRUE;
     END_IF;
     prevExec := EXEC;

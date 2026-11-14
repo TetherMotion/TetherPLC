@@ -94,6 +94,22 @@ typedef struct TplcProfinetService {
                               const uint8_t* out_rec, uint32_t out_len,
                               uint8_t* in_rec, uint32_t in_cap,
                               uint32_t* in_len);
+    /* IOCR cyclic exchange (IEC 61158-6-10 APDU over the port
+       transport): DataRequest/DataResponse PDU =
+       [FrameID u16][C-SDU >=40B][cycle u16][dataStatus u8]
+       [transferStatus u8]. The C-SDU carries a single
+       provider/consumer record pair in the 'PN' tag format; the
+       service keeps a per-port cycle counter (increments each
+       exchange, wraps u16) and validates the reply FrameID,
+       minimum C-SDU length, and record tag. frame_id 0 keeps the
+       port's configured id (default 0x8000). On return cyc_out
+       receives the device's cycle counter and stat_out its
+       DataStatus byte (0x35 = primary/RUN/data-valid/station-ok). */
+    int32_t (*pn_io_cr)(void* svc, uint32_t port, uint32_t frame_id,
+                        const uint8_t* out_rec, uint32_t out_len,
+                        uint8_t* in_rec, uint32_t in_cap,
+                        uint32_t* in_len, uint32_t* cyc_out,
+                        uint32_t* stat_out);
     int32_t (*pn_port_info)(void* svc, uint32_t port,
                             uint32_t* state, uint32_t* errors,
                             uint32_t* frames);

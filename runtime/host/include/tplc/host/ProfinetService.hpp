@@ -50,6 +50,10 @@ private:
                        const uint8_t* out_rec, uint32_t out_len,
                        uint8_t* in_rec, uint32_t in_cap,
                        uint32_t* in_len);
+    int32_t ioCr(void*, uint32_t port, uint32_t frame_id,
+                 const uint8_t* out_rec, uint32_t out_len,
+                 uint8_t* in_rec, uint32_t in_cap, uint32_t* in_len,
+                 uint32_t* cyc_out, uint32_t* stat_out);
     int32_t portInfo(void*, uint32_t port, uint32_t* st,
                      uint32_t* errors, uint32_t* frames);
 

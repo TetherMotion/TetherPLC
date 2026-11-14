@@ -7639,11 +7639,14 @@ const PN_NAME: usize = 52; // Str{31}: u8 len + chars
 const PN_OD: usize = 84; // u8[64]
 const PN_IOOUT: usize = 148; // u8[64]
 const PN_IOIN: usize = 212; // u8[64]
+const PN_PNCYC: usize = 276; // u32 device cycle counter (OP8)
+const PN_PNSTAT: usize = 280; // u32 DataStatus byte (OP8)
 
 // tplc-profinet service vtable offsets (TplcProfinetService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B),
 // pn_state@16, pn_open@24, pn_close@32, pn_identify@40,
-// pn_dcp_get@48, pn_dcp_set@56, pn_io_exchange@64, pn_port_info@72.
+// pn_dcp_get@48, pn_dcp_set@56, pn_io_exchange@64, pn_io_cr@72,
+// pn_port_info@80.
 const PN_SVC_STATE: usize = 16;
 const PN_SVC_OPEN: usize = 24;
 const PN_SVC_CLOSE: usize = 32;
@@ -7651,6 +7654,7 @@ const PN_SVC_IDENT: usize = 40;
 const PN_SVC_DCPGET: usize = 48;
 const PN_SVC_DCPSET: usize = 56;
 const PN_SVC_IOEX: usize = 64;
+const PN_SVC_IOCR: usize = 72;
 
 /// service lookup for "tplc-profinet" (14 chars)
 unsafe fn profinet_service(ctx: *const u8) -> *const u8 {
@@ -7795,6 +7799,29 @@ pub unsafe extern "C" fn __tplc_rt_FB_Profinet(this: *mut u8, ctx: *mut u8) -> i
                 svc, port,
                 this.add(PN_IOOUT), out_len,
                 this.add(PN_IOIN), 64, &mut in_len,
+            );
+            wu32(this.add(PN_DLEN), in_len);
+            set_rc(rc);
+        }
+        8 => {
+            /* pn_io_cr(svc, port, frame_id, out*, out_len, in*,
+               in_cap, in_len*, cyc*, stat*) -> i32: IOCR APDU
+               exchange — XID=frame_id (0=keep), DLEN=out len,
+               PNCYC/PNSTAT receive the device trailer. */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u32, *const u8, u32, *mut u8, u32,
+                *mut u32, *mut u32, *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(PN_SVC_IOCR) as *const usize).read(),
+            );
+            let out_len = ru32(this.add(PN_DLEN)).min(64);
+            let mut in_len: u32 = 0;
+            let rc = f(
+                svc, port, ru32(this.add(PN_XID)),
+                this.add(PN_IOOUT), out_len,
+                this.add(PN_IOIN), 64, &mut in_len,
+                this.add(PN_PNCYC) as *mut u32,
+                this.add(PN_PNSTAT) as *mut u32,
             );
             wu32(this.add(PN_DLEN), in_len);
             set_rc(rc);

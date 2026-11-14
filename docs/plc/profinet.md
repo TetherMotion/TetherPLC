@@ -51,18 +51,43 @@ ST/FBD  FB_ProfinetMaster (libraries/profinet/profinet.st)
 | 5  | dcp_get   | OPTION/SUB → OD/DLEN |
 | 6  | dcp_set   | OPTION/SUB/OD/DLEN |
 | 7  | io_exchange | IOOUT/DLEN → IOIN/DLEN |
+| 8  | io_cr      | IOCR cyclic APDU exchange (see below) |
 
 `STATUS` carries the service return code; `ERRID` its magnitude.
 
+### OP 8 — IOCR cyclic exchange
+
+`io_cr` frames cyclic data as an IEC 61158-6-10 IOCR APDU:
+
+```
+[FrameID u16 BE][C-SDU ≥40B]['PN'+len+record][cycle u16 BE]
+[dataStatus u8][transferStatus u8]
+```
+
+- `XID` selects the FrameID; `0` keeps the configured value
+  (default `0x8000`). A nonzero value updates the port's FrameID.
+- The C-SDU carries one provider/consumer record in the same
+  `'PN'`-tagged format as OP 7, zero-padded to the 40-octet minimum.
+- The request trailer uses DataStatus `0x35`
+  (primary-provider / RUN / data-valid / station-OK); the reply's
+  `transferStatus` must be `0` (usable) or the call fails with
+  `TPLC_PN_E_DEV`.
+- Replies are validated: FrameID echo, ≥40-octet C-SDU, `'PN'` tag.
+- `PNCYC` receives the device's cycle counter; `PNSTAT` the reply
+  DataStatus byte. The controller keeps its own per-port cycle
+  counter in the request trailer.
+
 ## Scope and honest limits
 
-- **Transport**: UDP carrying the DCP PDU (post-Ethernet-header).
-  Real PROFINET DCP is Ethertype-0x8892 Layer-2 — a raw-socket
-  transport is the hardware path (staged).
-- **Cyclic IO**: `io_exchange` is a provider/consumer record
-  primitive ('PN'-tagged). PROFINET RT/IRT cyclic IO — AR (Application
-  Relationship) setup via DCE/RPC, IOCR framing, VLAN priority,
-  sync domains — is staged, not yet implemented.
+- **Transport**: UDP carrying the DCP PDU / IOCR APDU
+  (post-Ethernet-header). Real PROFINET is Ethertype-0x8892
+  Layer-2 — a raw-socket transport is the hardware path (staged).
+- **Cyclic IO**: OP 8 implements IOCR APDU framing, but AR
+  (Application Relationship) negotiation via DCE/RPC —
+  Connect/Parameterization/PrmEnd/ApplicationReady, IOCR object
+  dictionary layout, watchdogs, RT-class negotiation — is staged.
+  The 'PN' single-record C-SDU is the seam that AR mapping builds
+  on; real devices expect per-submodule IOPS/IOCS records.
 - **DCP coverage**: Identify/Get/Set for the property/IP/DHCP/
   control options; DHCP option subfields and control transactions
   (start/end/signal) are partially mapped.
@@ -71,6 +96,9 @@ ST/FBD  FB_ProfinetMaster (libraries/profinet/profinet.st)
 
 `tests/profinet/e2e.sh` runs `tests/profinet/profinet_case.st`
 against `tests/profinet/fake_profinet_device.py` — an in-process
-UDP device answering DCP Identify/Get/Set and the IO record
-primitive. 9/9 checks: open, state, identify (all properties),
-get name, set+get alias, cyclic exchange, close, invalid op.
+UDP device answering DCP Identify/Get/Set, the legacy IO record
+primitive, and IOCR APDU exchanges with a device cycle counter.
+11/11 checks: open, state, identify (all properties),
+get name, set+get alias, record exchange, two IOCR exchanges
+(record transform + cycle counter 1→2 + DataStatus 0x35),
+close, invalid op.

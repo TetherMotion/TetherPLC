@@ -1863,6 +1863,8 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "OD", arr(63));
             push(&mut off, "IOOUT", arr(63));
             push(&mut off, "IOIN", arr(63));
+            push(&mut off, "PNCYC", udint());  /* OP8: device cycle counter */
+            push(&mut off, "PNSTAT", udint()); /* OP8: DataStatus byte */
         }
         /* FB_Soe — tplc-soe service bridge (EtherCAT SoE mailbox over
         Tether IO ec.soe.* params). Synchronous op dispatch: OP 1=

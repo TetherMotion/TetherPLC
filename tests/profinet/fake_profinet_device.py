@@ -107,6 +107,9 @@ def get_data(opt, sub):
     return None
 
 
+IOCR_CYCLE = [0]
+
+
 def handle(data):
     # cyclic IO record primitive: 'PN' + len + payload -> transform
     if data[:2] == b"PN" and len(data) >= 3:
@@ -114,6 +117,26 @@ def handle(data):
         payload = data[3:3 + n]
         reply = bytes([(b + 1) & 0xFF for b in payload])
         return b"PN" + bytes([len(reply)]) + reply
+    # IOCR APDU: [frame_id u16][C-SDU >=40]['PN' rec][pad]
+    #             [cycle u16][dataStatus][transferStatus]
+    # DCP FIDs are 0xFExx; the test frame_id is 0x8000.
+    if len(data) >= 46 and data[0] != 0xFE:
+        fid = rd16(data, 0)
+        csdu = data[2:-4]
+        tr = data[-4:]
+        if csdu[:2] == b"PN" and len(csdu) >= 40:
+            n = csdu[2]
+            payload = csdu[3:3 + n]
+            reply = bytes([(b + 1) & 0xFF for b in payload])
+            rcsdu = bytearray(40)
+            rcsdu[0:2] = b"PN"
+            rcsdu[2] = len(reply)
+            rcsdu[3:3 + len(reply)] = reply
+            IOCR_CYCLE[0] = (IOCR_CYCLE[0] + 1) & 0xFFFF
+            return (fid.to_bytes(2, "big") + bytes(rcsdu) +
+                    IOCR_CYCLE[0].to_bytes(2, "big") +
+                    bytes([0x35, 0x00]))
+        return None
     if len(data) < 12:
         return None
     fid = rd16(data, 0)

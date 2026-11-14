@@ -18,6 +18,8 @@ VAR
     ok7 : BOOL;
     ok8 : BOOL;
     ok9 : BOOL;
+    ok10 : BOOL;
+    ok11 : BOOL;
 END_VAR
     IF st = 0 THEN
         mask := 0;
@@ -109,22 +111,53 @@ END_VAR
                pn.IOIN[0] = 2 AND pn.IOIN[1] = 3 AND
                pn.IOIN[2] = 4 AND pn.IOIN[3] = 5;
         IF ok7 THEN mask := mask + 64; END_IF;
-        pn.OP := 2;
+        // OP 8: IOCR cyclic exchange (frame_id via XID=0 -> default
+        // 0x8000); IOOUT/IOIN carry the 'PN' record
+        pn.OP := 8;
         pn.PORT := 0;
+        pn.XID := 0;
+        pn.IOOUT[0] := 10;
+        pn.IOOUT[1] := 20;
+        pn.IOOUT[2] := 30;
+        pn.DLEN := 3;
         st := 8;
     ELSIF st = 8 THEN
         pn();
-        ok8 := pn.STATUS = 0;
+        // device replies bytes +1, cycle counter = 1, status 0x35
+        ok8 := pn.STATUS = 0 AND pn.DLEN = 3 AND
+               pn.IOIN[0] = 11 AND pn.IOIN[1] = 21 AND
+               pn.IOIN[2] = 31 AND pn.PNCYC = 1 AND
+               pn.PNSTAT = 16#35;
         IF ok8 THEN mask := mask + 128; END_IF;
-        // invalid op -> rejection
-        pn.OP := 99;
+        // second IOCR exchange: device cycle counter must advance
+        pn.OP := 8;
         pn.PORT := 0;
+        pn.XID := 0;
+        pn.IOOUT[0] := 7;
+        pn.DLEN := 1;
         st := 9;
     ELSIF st = 9 THEN
         pn();
-        ok9 := pn.STATUS = -1 AND pn.ERRID = 1;
+        ok9 := pn.STATUS = 0 AND pn.DLEN = 1 AND
+               pn.IOIN[0] = 8 AND pn.PNCYC = 2 AND
+               pn.PNSTAT = 16#35;
         IF ok9 THEN mask := mask + 256; END_IF;
-        pn.OP := 0;
+        pn.OP := 2;
+        pn.PORT := 0;
         st := 10;
+    ELSIF st = 10 THEN
+        pn();
+        ok10 := pn.STATUS = 0;
+        IF ok10 THEN mask := mask + 512; END_IF;
+        // invalid op -> rejection
+        pn.OP := 99;
+        pn.PORT := 0;
+        st := 11;
+    ELSIF st = 11 THEN
+        pn();
+        ok11 := pn.STATUS = -1 AND pn.ERRID = 1;
+        IF ok11 THEN mask := mask + 1024; END_IF;
+        pn.OP := 0;
+        st := 12;
     END_IF
 END_PROGRAM
