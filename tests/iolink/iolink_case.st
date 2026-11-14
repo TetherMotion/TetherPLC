@@ -25,6 +25,8 @@ VAR
     ok10 : BOOL;
     ok11 : BOOL;
     ok12 : BOOL;
+    ok13 : BOOL;
+    ok14 : BOOL;
 END_VAR
     IF st = 0 THEN
         mask := 0;
@@ -76,7 +78,7 @@ END_VAR
         // device PD-in: [0x42, pdo0+1, 0x99, exchange-count]
         ok4 := il.STATUS = 0 AND il.DLEN = 4 AND
                il.PDIN[0] = 16#42 AND il.PDIN[1] = 16#11 AND
-               il.PDIN[2] = 16#99 AND il.CKSFLAGS = 0;
+               il.PDIN[2] = 16#99 AND il.CKSFLAGS = 128;
         IF ok4 THEN mask := mask + 8; END_IF;
         // arm ISDU write: addr 5 <- 0x77
         il.OP := 7;
@@ -148,23 +150,51 @@ END_VAR
         // AdditionalCode 0x11 (index not available)
         ok10 := il.STATUS = -7 AND il.ISDUERR = 16#8011;
         IF ok10 THEN mask := mask + 512; END_IF;
-        // close the port
-        il.OP := 2;
+        // arm diagnosis event-memory read (OP 11): the device froze
+        // two startup events (error 0x7710 + warning 0x5110) plus a
+        // notification queued by the legacy ISDU write
+        il.OP := 11;
         il.PORT := 0;
         st := 11;
     ELSIF st = 11 THEN
         il();
-        ok11 := il.STATUS = 0;
+        // snapshot 1: StatusCode 0x83 (bit7 + slots 0,1), records
+        // sorted by severity — error first, then warning
+        ok11 := il.STATUS = 0 AND il.DLEN = 7 AND
+                il.DIAG[0] = 16#83 AND il.DIAG[1] = 16#F4 AND
+                il.DIAG[2] = 16#77 AND il.DIAG[3] = 16#10 AND
+                il.DIAG[4] = 16#E4 AND il.DIAG[5] = 16#51 AND
+                il.DIAG[6] = 16#10;
         IF ok11 THEN mask := mask + 1024; END_IF;
-        // invalid op -> rejection
-        il.OP := 99;
+        // ack released the frozen pair; the queued notification
+        // re-published — read it
+        il.OP := 11;
         il.PORT := 0;
         st := 12;
     ELSIF st = 12 THEN
         il();
-        ok12 := il.STATUS = -1 AND il.ERRID = 1;
+        // snapshot 2: single notification 0x2001, single-shot mode
+        ok12 := il.STATUS = 0 AND il.DLEN = 4 AND
+                il.DIAG[0] = 16#81 AND il.DIAG[1] = 16#54 AND
+                il.DIAG[2] = 16#20 AND il.DIAG[3] = 16#01;
         IF ok12 THEN mask := mask + 2048; END_IF;
-        il.OP := 0;
+        // close the port
+        il.OP := 2;
+        il.PORT := 0;
         st := 13;
+    ELSIF st = 13 THEN
+        il();
+        ok13 := il.STATUS = 0;
+        IF ok13 THEN mask := mask + 4096; END_IF;
+        // invalid op -> rejection
+        il.OP := 99;
+        il.PORT := 0;
+        st := 14;
+    ELSIF st = 14 THEN
+        il();
+        ok14 := il.STATUS = -1 AND il.ERRID = 1;
+        IF ok14 THEN mask := mask + 8192; END_IF;
+        il.OP := 0;
+        st := 15;
     END_IF
 END_PROGRAM

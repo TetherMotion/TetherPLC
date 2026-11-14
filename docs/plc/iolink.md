@@ -52,6 +52,15 @@ selects it. `TPLC_IOLINK_IO` takes a comma-separated list of
 - **MasterCommand**: type-0 write to DPP address 0 (Table B.2) —
   `0x5A` fallback→SIO, `0x95`–`0x9A` identification/startup/operate
   transitions.
+- **Diagnosis events**: the Table-58 event memory is read over the
+  diagnosis channel on the negotiated type-2_V profile (read reply
+  carries two OD octets ahead of PD-in) and confirmed with a
+  StatusCode write to address 0 (Table 59 T8). Octet 0 =
+  StatusCode (bit7 + active-slot mask), then up to 6 contiguous
+  `{EventQualifier, codeHi, codeLo}` records; qualifiers decode
+  MODE (appears/single-shot/disappears) and type
+  (notification/warning/error) per A.6.4. The CKS event-pending
+  flag (bit7) is surfaced via `CKSFLAGS` on every exchange.
 
 ## FB_IoLink ops
 
@@ -67,6 +76,7 @@ selects it. `TPLC_IOLINK_IO` takes a comma-separated list of
 | 8  | master_cmd| `ADDR`=command → `STATUS` |
 | 9  | isdu_read_ex | `MSEQ`=index, `ADDR`=subindex → `ISDU`/`DLEN`/`ISDUERR` |
 | 10 | isdu_write_ex| `MSEQ`=index, `ADDR`=subindex, `ISDU`/`DLEN` payload → `ISDUERR` |
+| 11 | diag_read   | → `DIAG[0..18]` event memory, `DLEN`=octets (needs OP 4 first) |
 
 `STATUS` carries the service return code (0 ok, -2 transport,
 -5 checksum, -6 malformed, -7 device error); `ERRID` its magnitude.
@@ -88,8 +98,10 @@ On `STATUS=-7` from ops 9/10, `ISDUERR` holds the device ErrorType
   negotiation (cycle-time/M-seq/PD-length handshake during
   PREOPERATE) is still staged, so interop with devices requiring
   PD-multiplexed ISDU frames is not yet claimed.
-- **SIO mode**, diagnosis-channel decoding, and event-driven
-  wakeup are staged.
+- **SIO mode** (MasterCommand `0x5A` fallback path) and
+  event-driven wakeup are staged. Diagnosis covers the event
+  memory read/ack cycle; per-device diagnosis-record decoding
+  (channel-specific qualifier tables) is left to the application.
 
 ## Test
 
@@ -97,8 +109,10 @@ On `STATUS=-7` from ops 9/10, `ISDUERR` holds the device ErrorType
 `tests/iolink/fake_iolink_device.py` — an in-process device speaking
 the device side of the protocol (page record, deterministic PD-in
 pattern, legacy + segmented ISDU object store with the A.5/FlowCTRL
-state machine, MasterCommand handling, A.1.6 checksums). 12/12
-checks: open, service state, DPP1 ident, cyclic PD exchange, legacy
-ISDU write+readback, MasterCommand, segmented ISDU write+readback
-(20-octet ExtLength), negative ISDU response (`ISDUERR=16#8011`),
-close, invalid-op rejection.
+state machine, MasterCommand handling, diagnosis-channel event
+memory with severity ordering + ack/re-publish, A.1.6 checksums).
+14/14 checks: open, service state, DPP1 ident, cyclic PD exchange
+(CKS event flag), legacy ISDU write+readback, MasterCommand,
+segmented ISDU write+readback (20-octet ExtLength), negative ISDU
+response (`ISDUERR=16#8011`), two diagnosis snapshots (severity
+sort + ack re-publish), close, invalid-op rejection.

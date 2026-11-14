@@ -37,7 +37,7 @@ kill -0 "$DEV_PID" 2>/dev/null || { bad "fake device start"; \
         # 20 ms/step: image clock must advance for the 10 ms task
         t=$((i * 20000000))
         if [ "$i" -eq 200 ]; then
-            echo "step $i time=$t in 0=00 expect 0=ff0f0000"
+            echo "step $i time=$t in 0=00 expect 0=ff3f0000"
         else
             echo "step $i time=$t in 0=00"
         fi

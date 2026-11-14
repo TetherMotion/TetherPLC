@@ -39,6 +39,16 @@
 //       ADDR=subindex -> ISDU/DLEN_OUT, ISDUERR=device ErrorType)
 //   10 = ISDU write, spec-segmented (PORT/MSEQ=index, ADDR=subindex,
 //       ISDU[0..DLEN) payload -> ISDUERR)
+//   11 = diagnosis event-memory read (PORT -> DIAG[0..18], DLEN=octet
+//       count). Reads the Table-58 snapshot over the diagnosis
+//       channel on the negotiated type-2_V profile and confirms the
+//       readout (Table 59 T8). Requires OP 4 ident first (the
+//       negotiated PD sizes frame the exchange). DIAG[0] =
+//       StatusCode (bit7 set, bits0-5 active-slot mask); each active
+//       slot is 3 octets at 1+3i: {EventQualifier, codeHi, codeLo}.
+//       EventQualifier: bits7-6 MODE (16#C0 appears, 16#40
+//       single-shot, 16#80 disappears), bits5-4 type (16#10
+//       notification, 16#20 warning, 16#30 error), bit2 instance.
 // ISDU indices follow Table B.8: 16#0010 VendorName, 16#0012
 // ProductName, 16#0015 SerialNumber, 16#0024 DeviceStatus,
 // 16#0028/16#0029 last PDin/PDout, vendor range 16#0040+.
@@ -71,6 +81,7 @@ VAR_OUTPUT
     IDENT : ARRAY[0..15] OF BYTE;
     PDIN : ARRAY[0..39] OF BYTE;
     ODDATA : ARRAY[0..7] OF BYTE;
+    DIAG : ARRAY[0..18] OF BYTE;    // OP11 event memory snapshot
 END_VAR
 VAR
     raw : FB_IoLink;
@@ -115,6 +126,9 @@ END_VAR
         END_FOR;
         FOR i := 0 TO 239 DO
             ISDU[i] := raw.ISDU[i];
+        END_FOR;
+        FOR i := 0 TO 18 DO
+            DIAG[i] := raw.DIAG[i];
         END_FOR;
         DONE := TRUE;
     END_IF;

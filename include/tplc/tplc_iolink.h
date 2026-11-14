@@ -109,6 +109,20 @@ typedef struct TplcIoLinkService {
        0x97 DeviceStartup, 0x98 PDOutOperate, 0x99 DeviceOperate,
        0x9A DevicePreoperate. Type-0 write frame; reply is CKS-only. */
     int32_t (*il_master_cmd)(void* svc, uint32_t port, uint8_t cmd);
+    /* Diagnosis-channel event memory read + acknowledge (7.3.8
+       Tables 58/59): reads the 19-octet event memory over type-0
+       frames — octet 0 = StatusCode type 2 (bit7 set, bits0-5 =
+       active-slot mask), then up to 6 contiguous
+       {EventQualifier, codeHi, codeLo} records — and confirms the
+       readout with a write to address 0. mem receives the octets
+       actually read (1 when no events are pending); *len their
+       count. EventQualifier bits: 7-6 MODE (11 appears, 01
+       single-shot, 10 disappears), 5-4 type (01 notification,
+       10 warning, 11 error), bit2 = instance. Returns
+       TPLC_IL_E_PARAM when cap cannot hold the presented record
+       set (the port is left unacknowledged so no event is lost). */
+    int32_t (*il_diag_read)(void* svc, uint32_t port, uint8_t* mem,
+                            uint32_t cap, uint32_t* len);
 } TplcIoLinkService;
 
 #ifdef __cplusplus

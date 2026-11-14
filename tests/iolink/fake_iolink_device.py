@@ -45,6 +45,73 @@ FLOW_IDLE = 0x11
 FLOW_IDLE2 = 0x12
 FLOW_ABORT = 0x1F
 
+# --- Diagnosis event memory (Table 58/59, A.6.4) -------------------
+# QUEUE holds pending events as (id, severity, qualifier, code);
+# FROZEN ids form the snapshot served on the diagnosis channel.
+# ack (write to addr 0) releases the frozen entries; remaining
+# queued events re-publish immediately, like the reference stack.
+EVENT_MEM_LEN = 19
+SEV_RANK = {"error": 0, "warning": 1, "notification": 2}
+NEXT_EV_ID = [1]
+QUEUE = []          # (id, sev, qualifier, code)
+FROZEN = []         # ids presented in EVENT_MEM
+EVENT_MEM = bytearray(EVENT_MEM_LEN)
+
+
+def ev_qualifier(typ, mode):
+    """A.6.4 EventQualifier: MODE in bits 7-6, type in bits 5-4,
+    bit2 = instance (application)."""
+    q = {"appears": 0xC0, "single": 0x40, "disappears": 0x80}[mode]
+    q |= {"notification": 0x10, "warning": 0x20,
+          "error": 0x30}[typ]
+    return q | 0x04
+
+
+def events_pending():
+    return bool(FROZEN)
+
+
+def freeze_events():
+    """Snapshot the queue (most severe first) into the 19-octet
+    memory: octet 0 = 0x80 | active-slot mask, then contiguous
+    {qualifier, codeHi, codeLo} records (max 6 slots)."""
+    global EVENT_MEM
+    mem = bytearray(EVENT_MEM_LEN)
+    ordered = sorted(QUEUE, key=lambda e: SEV_RANK[e[1]])
+    active = 0
+    FROZEN.clear()
+    for i, (eid, sev, qual, code) in enumerate(ordered[:6]):
+        mem[1 + 3 * i] = qual
+        mem[2 + 3 * i] = (code >> 8) & 0xFF
+        mem[3 + 3 * i] = code & 0xFF
+        FROZEN.append(eid)
+        active |= 1 << i
+    mem[0] = 0x80 | active
+    EVENT_MEM = mem
+
+
+def trigger_event(typ, mode, code):
+    QUEUE.append((NEXT_EV_ID[0], typ, ev_qualifier(typ, mode), code))
+    NEXT_EV_ID[0] += 1
+    if not FROZEN:
+        freeze_events()
+
+
+def ack_events():
+    """Table 59 T8: any write to diagnosis address 0 confirms the
+    readout — release the frozen entries, keep the rest queued."""
+    frozen = set(FROZEN)
+    QUEUE[:] = [e for e in QUEUE if e[0] not in frozen]
+    FROZEN.clear()
+    EVENT_MEM = bytearray(EVENT_MEM_LEN)
+    if QUEUE:
+        freeze_events()
+
+
+def reply(data):
+    """Device reply with CKS bit7 (Event flag) while events pend."""
+    return cks_frame(data, 0x80 if events_pending() else 0)
+
 
 def cksum6(data):
     """A.1.6 checksum: XOR seed 0x52, fold 8->6 bits."""
@@ -246,9 +313,21 @@ class IsduDevice:
 
 
 def handle(conn):
-    global PARAMS
+    global PARAMS, EVENT_MEM
     isdu = IsduDevice()
     pd_count = 0
+    # fresh event state: two startup events frozen into one snapshot
+    # (error sorts ahead of warning, like the reference queue)
+    QUEUE.clear()
+    FROZEN.clear()
+    EVENT_MEM = bytearray(EVENT_MEM_LEN)
+    NEXT_EV_ID[0] = 1
+    QUEUE.append((1, "warning", ev_qualifier("warning", "appears"),
+                  0x5110))
+    QUEUE.append((2, "error", ev_qualifier("error", "appears"),
+                  0x7710))
+    NEXT_EV_ID[0] = 3
+    freeze_events()
     while True:
         # frame start: skip wakeup bytes
         mc = recvn(conn, 1)[0]
@@ -266,30 +345,56 @@ def handle(conn):
             else:
                 body = recvn(conn, 1)   # MasterCommand octet
             if is_read:
-                conn.sendall(cks_frame(bytes([DPP1[addr & 0x0F]])))
+                conn.sendall(reply(bytes([DPP1[addr & 0x0F]])))
             else:
                 # MasterCommand accepted; DeviceOperate (0x99) moves
                 # the port to OPERATE — tracked implicitly.
-                conn.sendall(cks_frame(b""))
+                conn.sendall(reply(b""))
         elif channel == 0x03 and mseq == 0:
             # legacy single-octet ISDU (OP 6/7 profile)
             body = b"" if is_read else recvn(conn, 1)
             a = mc & 0x0F
             if is_read:
-                conn.sendall(cks_frame(bytes([PARAMS[a]])))
+                conn.sendall(reply(bytes([PARAMS[a]])))
             else:
                 PARAMS[a] = body[0]
-                conn.sendall(cks_frame(body))
+                # parameter write -> notification event queued
+                trigger_event("notification", "single", 0x2001)
+                conn.sendall(reply(body))
         elif channel == 0x03 and mseq == 2:
             # segmented ISDU on the type-2 profile: two OD octets
             fc = addr & 0x1F
             if is_read:
                 od = isdu.read_od(fc)
-                conn.sendall(cks_frame(bytes(od)))
+                conn.sendall(reply(bytes(od)))
             else:
                 od = recvn(conn, ISDU_OD)
                 isdu.write_od(fc, od)
-                conn.sendall(cks_frame(b""))  # write reply: CKS only
+                conn.sendall(reply(b""))  # write reply: CKS only
+        elif channel == 0x02 and mseq == 2:
+            # DIAGNOSIS channel, negotiated type-2_V: Table 58 event
+            # memory. Read reply = [OD0,OD1][PD-in][CKS] (OD first,
+            # two consecutive memory octets); write reply =
+            # [PD-in][CKS]; a write to address 0 acknowledges.
+            pdi = bytes([
+                0x42,
+                (0x10 + pd_count) & 0xFF,
+                0x99,
+                pd_count & 0xFF,
+            ])
+            pd_count += 1
+            # read requests still carry PD-out octets (OD absent);
+            # writes carry PD-out + the 2-octet OD pair
+            recvn(conn, PDOUT_LEN + (0 if is_read else ISDU_OD))
+            if is_read:
+                a = addr & 0x1F
+                m0 = EVENT_MEM[a] if a < EVENT_MEM_LEN else 0
+                m1 = EVENT_MEM[a + 1] if a + 1 < EVENT_MEM_LEN else 0
+                conn.sendall(reply(bytes([m0, m1]) + pdi))
+            else:
+                if (addr & 0x1F) == 0:
+                    ack_events()
+                conn.sendall(reply(pdi))
         elif channel == 0x00:          # PROCESS, type 2_V
             body = recvn(conn, PDOUT_LEN)
             pd_count += 1
@@ -299,9 +404,9 @@ def handle(conn):
                 0x99,
                 pd_count & 0xFF,
             ])
-            conn.sendall(cks_frame(pdi))
-        else:                          # DIAGNOSIS: unsupported
-            conn.sendall(cks_frame(b"\x00"))
+            conn.sendall(reply(pdi))
+        else:                          # unsupported channel/type
+            conn.sendall(reply(b"\x00"))
 
 
 def main():

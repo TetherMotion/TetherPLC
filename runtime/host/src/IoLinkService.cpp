@@ -228,6 +228,10 @@ IoLinkService::IoLinkService() {
     svc_.il_master_cmd = [](void* s, uint32_t p, uint8_t c) {
         return self(s)->masterCmd(s, p, c);
     };
+    svc_.il_diag_read = [](void* s, uint32_t p, uint8_t* m,
+                           uint32_t c, uint32_t* l) {
+        return self(s)->diagRead(s, p, m, c, l);
+    };
 }
 
 IoLinkService::~IoLinkService() = default;
@@ -401,6 +405,87 @@ int32_t IoLinkService::isduWrite(void*, uint32_t port, uint8_t addr,
     /* write expects an OD echo + CKS reply */
     uint8_t rx[2];
     return exchange(p, tx, 3, rx, 1, nullptr, nullptr);
+}
+
+/* PD length in octets from a DPP1 descriptor octet (same decode
+   as pdExchange: bit7 = byte-count flag, else bit-count). */
+static uint32_t pdOctets(uint8_t desc) {
+    const uint32_t v = desc & 0x1F;
+    return (desc & 0x80) ? v : (v + 7) / 8;
+}
+
+/* Diagnosis-channel read on the negotiated type-2_V profile:
+   request [MC=read|DIAG|addr][CKT][PD-out]; reply
+   [OD0,OD1][PD-in][CKS] — OD octets come FIRST on read replies
+   (A.2.4), carrying event-memory octets addr and addr+1. */
+int32_t IoLinkService::diagFetch2(Port* p, uint8_t addr,
+                                  uint8_t* m) {
+    uint8_t pdo[TPLC_IOLINK_MAX_PD] = {};
+    const uint32_t pdo_len = pdOctets(p->dpp1[6]);
+    const uint32_t pdi_len = pdOctets(p->dpp1[5]);
+    uint8_t tx[80];
+    buildCkt(uint8_t(MC_READ | CH_DIAG | (addr & 0x1F)), MSEQ_T2V,
+             pdo, pdo_len, tx);
+    uint8_t rx[80];
+    int32_t rc = exchange(p, tx, 2 + pdo_len, rx,
+                          2 + pdi_len, nullptr, nullptr);
+    if (rc != TPLC_IL_OK) return rc;
+    m[0] = rx[0];
+    m[1] = rx[1];
+    return TPLC_IL_OK;
+}
+
+/* event memory read + acknowledge (7.3.8 Tables 58/59): octet 0
+   StatusCode carries the active-slot mask; slots are contiguous
+   3-octet records so the highest set bit bounds the readout. The
+   confirmation is a write M-sequence to address 0 (Table 59 T8;
+   the device ignores the OD value). */
+int32_t IoLinkService::diagRead(void*, uint32_t port, uint8_t* mem,
+                                uint32_t cap, uint32_t* len) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_IL_E_PARAM;
+    if (p->fd < 0 || !p->haveIdent)
+        return TPLC_IL_E_STATE;   /* negotiated PD sizes required */
+    if (!mem || cap == 0) return TPLC_IL_E_PARAM;
+    const uint32_t pdi_len = pdOctets(p->dpp1[5]);
+    uint8_t pair[2];
+    int32_t rc = diagFetch2(p, 0, pair);
+    if (rc != TPLC_IL_OK) return rc;
+    mem[0] = pair[0];
+    if (cap > 1) mem[1] = pair[1];
+    const uint8_t active = uint8_t(mem[0] & 0x3F);
+    if ((mem[0] & 0x80) == 0 || active == 0) {
+        if (len) *len = 1;      /* no frozen snapshot: nothing pending */
+        return TPLC_IL_OK;
+    }
+    uint32_t highest = 0;
+    for (uint32_t i = 0; i < 6; ++i)
+        if (active & (1u << i)) highest = i;
+    const uint32_t needed = 1 + 3 * (highest + 1); /* <= 19 */
+    if (cap < needed) return TPLC_IL_E_PARAM; /* no ack -> no loss */
+    uint32_t a = 2;
+    while (a < needed) {
+        rc = diagFetch2(p, uint8_t(a), pair);
+        if (rc != TPLC_IL_OK) return rc;
+        mem[a] = pair[0];
+        if (a + 1 < needed) mem[a + 1] = pair[1];
+        a += 2;
+    }
+    /* confirm the readout: type-2_V write, addr 0, OD = {0,0};
+       PD-out content is don't-care on the diagnosis channel */
+    const uint32_t pdo_len = pdOctets(p->dpp1[6]);
+    uint8_t tx[80];
+    uint8_t* rest = tx + 2;
+    memset(rest, 0, pdo_len);
+    rest[pdo_len] = 0;
+    rest[pdo_len + 1] = 0;
+    buildCkt(uint8_t(CH_DIAG | 0), MSEQ_T2V, rest, pdo_len + 2, tx);
+    uint8_t rx[80];
+    rc = exchange(p, tx, 2 + pdo_len + 2, rx, pdi_len,
+                  nullptr, nullptr);
+    if (rc != TPLC_IL_OK) return rc;
+    if (len) *len = needed;
+    return TPLC_IL_OK;
 }
 
 int32_t IoLinkService::portInfo(void*, uint32_t port, uint32_t* st,
