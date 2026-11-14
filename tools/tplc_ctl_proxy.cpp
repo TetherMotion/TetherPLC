@@ -28,6 +28,7 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -161,6 +162,90 @@ static std::string b64_encode(const uint8_t* p, size_t n) {
         o += i + 2 < n ? T[v & 63] : '=';
     }
     return o;
+}
+
+static std::vector<uint8_t> b64_decode(const std::string& s) {
+    static int8_t T[256];
+    static bool init = false;
+    if (!init) {
+        memset(T, -1, sizeof T);
+        const char* A =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; i++) T[(uint8_t)A[i]] = (int8_t)i;
+        init = true;
+    }
+    std::vector<uint8_t> out;
+    uint32_t acc = 0;
+    int nbits = 0;
+    for (char c : s) {
+        if (c == '=') break;
+        int8_t v = T[(uint8_t)c];
+        if (v < 0) continue;         /* whitespace etc. */
+        acc = (acc << 6) | (uint32_t)v;
+        nbits += 6;
+        if (nbits >= 8) {
+            nbits -= 8;
+            out.push_back((uint8_t)(acc >> nbits));
+        }
+    }
+    return out;
+}
+
+/* extract a JSON string field's decoded value; handles \" \\ \n \t
+   \r \/ and \uXXXX (BMP only — sufficient for map text)          */
+static bool json_str_field(const std::string& js, const char* key,
+                           std::string& out) {
+    std::string pat = std::string("\"") + key + "\"";
+    size_t k = js.find(pat);
+    if (k == std::string::npos) return false;
+    k = js.find(':', k + pat.size());
+    if (k == std::string::npos) return false;
+    k++;
+    while (k < js.size() && isspace((unsigned char)js[k])) k++;
+    if (k >= js.size() || js[k] != '"') return false;
+    k++;
+    out.clear();
+    while (k < js.size() && js[k] != '"') {
+        char c = js[k++];
+        if (c == '\\' && k < js.size()) {
+            char e = js[k++];
+            switch (e) {
+            case 'n': out += '\n'; break;
+            case 't': out += '\t'; break;
+            case 'r': out += '\r'; break;
+            case 'b': out += '\b'; break;
+            case 'f': out += '\f'; break;
+            case 'u': {
+                if (k + 4 <= js.size()) {
+                    unsigned cp = 0;
+                    for (int i = 0; i < 4; i++) {
+                        char h = js[k++];
+                        cp <<= 4;
+                        if (h >= '0' && h <= '9') cp += h - '0';
+                        else if (h >= 'a' && h <= 'f') cp += h - 'a' + 10;
+                        else if (h >= 'A' && h <= 'F') cp += h - 'A' + 10;
+                    }
+                    /* BMP → UTF-8 (no surrogate pairing needed for
+                       map text) */
+                    if (cp < 0x80) out += (char)cp;
+                    else if (cp < 0x800) {
+                        out += (char)(0xC0 | (cp >> 6));
+                        out += (char)(0x80 | (cp & 0x3F));
+                    } else {
+                        out += (char)(0xE0 | (cp >> 12));
+                        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+                        out += (char)(0x80 | (cp & 0x3F));
+                    }
+                }
+                break;
+            }
+            default: out += e; break;
+            }
+        } else {
+            out += c;
+        }
+    }
+    return k < js.size();
 }
 
 static bool read_file(const std::string& path, std::vector<uint8_t>& out) {
@@ -457,6 +542,85 @@ static void handle_compile(int cfd, const std::vector<uint8_t>& body, bool build
     for (auto& [name, _] : files) unlink((dir + "/" + name).c_str());
     unlink((dir + "/err.log").c_str());
     unlink((dir + "/out.tplc").c_str());
+    rmdir(dir.c_str());
+}
+
+/* POST /pkgmap: inject a package section into a compiled .tplc.
+ *   request:  {"package":"<base64 .tplc>","map":"<deploy-map text>"}
+ *   response: {"package":"<base64 .tplc>"}  or  {"error":"..."}
+ * Runs `tplcc pkg add-section --type 0x31` so the package format stays
+ * owned by the Rust writer (header/content hashes included).       */
+static void handle_pkgmap(int cfd, const std::vector<uint8_t>& body) {
+    std::string js(body.begin(), body.end());
+    std::string pkg_b64, map_text;
+    auto reply_err = [&](const std::string& m) {
+        std::string r = "{\"error\":\"" + json_escape(m) + "\"}";
+        http_reply(cfd, 200, "OK", (const uint8_t*)r.data(), r.size(),
+                   "application/json");
+    };
+    if (!json_str_field(js, "package", pkg_b64) ||
+        !json_str_field(js, "map", map_text)) {
+        reply_err("pkgmap needs {\"package\":\"<b64>\",\"map\":\"<text>\"}");
+        return;
+    }
+    std::vector<uint8_t> pkg = b64_decode(pkg_b64);
+    if (pkg.empty() || pkg.size() > 64u * 1024 * 1024) {
+        reply_err("bad package payload");
+        return;
+    }
+    char dir_t[] = "/tmp/tplc_pkgmap_XXXXXX";
+    if (!mkdtemp(dir_t)) { reply_err("mkdtemp failed"); return; }
+    std::string dir = dir_t;
+    auto wr = [&](const char* name, const void* data, size_t n) {
+        std::string p = dir + "/" + name;
+        FILE* f = fopen(p.c_str(), "wb");
+        if (!f) return false;
+        bool ok = fwrite(data, 1, n, f) == n;
+        fclose(f);
+        return ok;
+    };
+    bool ok = wr("in.tplc", pkg.data(), pkg.size()) &&
+              wr("map.txt", map_text.data(), map_text.size());
+    std::string out_b64;
+    if (ok) {
+        std::string cmd = "cd " + shq(dir) + " && " + shq(g_tplcc) +
+            " pkg add-section in.tplc --type 0x31 --file map.txt"
+            " -o out.tplc 2>err.log";
+        FILE* pipe = popen(cmd.c_str(), "r");
+        std::string out;
+        if (pipe) {
+            char b[4096];
+            while (size_t n = fread(b, 1, sizeof b, pipe))
+                out.append(b, n);
+        }
+        int rc = pipe ? pclose(pipe) : -1;
+        (void)rc;
+        std::vector<uint8_t> res;
+        /* out.tplc only exists when add-section succeeded — its
+           presence is the verdict (pclose can report ECHILD under
+           SIG_IGN auto-reap, same as /compile)                    */
+        if (read_file(dir + "/out.tplc", res) && !res.empty())
+            out_b64 = b64_encode(res.data(), res.size());
+        else {
+            std::vector<uint8_t> elog;
+            std::string msg = "tplcc pkg add-section failed";
+            if (read_file(dir + "/err.log", elog) && !elog.empty())
+                msg = std::string((const char*)elog.data(),
+                                  elog.size());
+            reply_err(msg);
+        }
+    } else {
+        reply_err("pkgmap temp write failed");
+    }
+    if (!out_b64.empty()) {
+        std::string r = "{\"package\":\"" + out_b64 + "\"}";
+        http_reply(cfd, 200, "OK", (const uint8_t*)r.data(), r.size(),
+                   "application/json");
+    }
+    unlink((dir + "/in.tplc").c_str());
+    unlink((dir + "/map.txt").c_str());
+    unlink((dir + "/out.tplc").c_str());
+    unlink((dir + "/err.log").c_str());
     rmdir(dir.c_str());
 }
 
@@ -886,6 +1050,8 @@ static void serve(int cfd) {
             handle_tetherio(cfd, head); /* parent closes; child owns */
         }
         return;
+    } else if (method == "POST" && path == "/pkgmap") {
+        handle_pkgmap(cfd, body);
     } else if (method == "POST" && path == "/ctl") {
         std::vector<uint8_t> rep;
         if (ctl_roundtrip(body, rep))

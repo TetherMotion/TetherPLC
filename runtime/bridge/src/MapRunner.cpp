@@ -117,7 +117,11 @@ static uint32_t type_size(const std::string& t) {
 
 static bool at_offset(const std::string& at, char& space,
                       uint64_t& off) {
-    /* %IX0.0 %IB4 %QW8 %MD2 … — return byte offset; X is bit-grain */
+    /* %IX0.0 %IB4 %QW8 %MD2 … — return byte offset.
+       The AT number is a raw byte offset into the image region for
+       every width code (the compiler stores it unnormalized in
+       TplcIoBinding.image_offset); the fraction on X/B forms is the
+       bit index and floors away here. */
     if (at.size() < 4 || at[0] != '%' ||
         (at[1] != 'I' && at[1] != 'Q' && at[1] != 'M'))
         return false;
@@ -127,11 +131,9 @@ static bool at_offset(const std::string& at, char& space,
     char* end;
     double v = strtod(p, &end);
     if (end == p) return false;
-    if (w == 'X' || w == 'B') off = (uint64_t)v;
-    else if (w == 'W')        off = (uint64_t)v * 2;
-    else if (w == 'D')        off = (uint64_t)v * 4;
-    else if (w == 'L')        off = (uint64_t)v * 8;
-    else return false;
+    if (w != 'X' && w != 'B' && w != 'W' && w != 'D' && w != 'L')
+        return false;
+    off = (uint64_t)v;
     return true;
 }
 
@@ -330,6 +332,17 @@ std::vector<MapViolation> validate_map(const IoMap& m,
                     o.image_off < c.image_off + c.size)
                     add(TPLC_E_MAP_OWNER, "MAP_OWNER",
                         "%Q range of " + c.key +
+                        " overlaps another writer");
+        /* %I channels are also writers into the image (transport →
+           image pump): two overlapping input channels fight over the
+           same bytes, last pump wins — same corruption class as %Q. */
+        if (c.is_input)
+            for (auto& o : m.channels)
+                if (o.is_input && &o != &c &&
+                    c.image_off < o.image_off + o.size &&
+                    o.image_off < c.image_off + c.size)
+                    add(TPLC_E_MAP_OWNER, "MAP_OWNER",
+                        "%I range of " + c.key +
                         " overlaps another writer");
         /* pdo= channels must name an endpoint that exists on the live
            bus with the matching direction and payload size — the pump's

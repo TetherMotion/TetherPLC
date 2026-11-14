@@ -120,6 +120,26 @@ same logic; see `web-ide.md` §4b. `tests/mixed/ui_profile.fbd.json` is
 that editor's output and is executed by `tplcc`'s
 `ui_curve_profile_runs` test.
 
+The editor also wires the operational signals a machine cell expects:
+`busy`/`done` interface vars are driven by `FB_AtcProfile.Busy`
+(process running) and `.Done` (profile finished) — the pair a
+downstream system watches. The **heater pwm** option inserts an
+`FB_AtcPwm` stage after the controller: `ctl.Out` (0–100 %) becomes
+`Duty`, `Q` drives a BOOL output var for an EL2004-class digital
+channel. `Period = 1.0` s gives the 1 Hz base frequency; `Execute`
+mirrors the controller's enable. **Duty resolution**: the pulse width
+is quantized to `CycleTime / Period` — at the usual 0.1 s task and
+1 s period the quantum is 10 %, so 5 % duty steps are impossible;
+shorten the task period (e.g. 0.02 s → 2 %) or the PWM period for
+finer control, and keep `MinOn` above one scan to avoid dropped
+pulses.
+
+Analog I/O: `FB_AtcAiScale` (`Raw * Scale + Offset`, optional PT1
+`FiltT`) linearises EL3104-style int16 channel counts to engineering
+units; `FB_AtcAoScale` does the inverse for EL4104-style outputs and
+reports int16 saturation on `OutBad`. Terminal range/oversampling
+configuration itself is master-side (SDO), not program data.
+
 ## Math helpers (internal, exported for reuse)
 
 `F_AtcExp` (range-reduced, 10th-order Taylor), `F_AtcLn` (2^k

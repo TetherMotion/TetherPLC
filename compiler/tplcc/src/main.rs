@@ -1606,12 +1606,24 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 AtRegion::Q => "Q",
                 AtRegion::M => "M",
             };
+            /* canonical AT text — the deploy-map generator re-emits
+               these verbatim in `bind` lines */
+            let at = format!(
+                "%{}{}{}{}",
+                r,
+                b.at.width,
+                b.at.byte,
+                b.at.bit.map(|x| format!(".{x}")).unwrap_or_default()
+            );
             format!(
-                "{{\"name\":\"{}\",\"region\":\"{}\",\"byte\":{},\"bit\":{}}}",
+                "{{\"name\":\"{}\",\"at\":\"{}\",\"region\":\"{}\",\"byte\":{},\"bit\":{},\"width\":\"{}\",\"size\":{}}}",
                 b.name,
+                at,
                 r,
                 b.at.byte,
-                b.at.bit.map(|x| x.to_string()).unwrap_or("null".into())
+                b.at.bit.map(|x| x.to_string()).unwrap_or("null".into()),
+                b.at.width,
+                b.ty.size()
             )
         })
         .collect::<Vec<_>>()

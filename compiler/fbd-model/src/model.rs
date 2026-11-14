@@ -248,6 +248,11 @@ pub struct Block {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<String>,
+    /// device blocks: bus PDO endpoint key (e.g. `el1014.c1`) the
+    /// deploy map binds `pdo=` channels to. Transport metadata — the
+    /// compiler ignores it; the WebUI deploy-map generator consumes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
 }
 
 /// grid units — positions in the model are integers; canvas floats

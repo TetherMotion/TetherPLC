@@ -1,5 +1,9 @@
 # Missing pieces for the "temperature profile on Beckhoff I/O" user story
 
+> **Status: all items implemented.** M1–M8 landed across TetherPLC +
+> TetherWebUI + Tether — see the per-item notes below for what shipped
+> and where it is verified. Kept as the design record for the feature.
+
 Scope: TetherPLC + TetherWebUI (+ the Tether EtherCAT side where the
 story physically depends on it).
 

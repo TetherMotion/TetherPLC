@@ -74,6 +74,13 @@
         "comment": {
           "type": "string"
         },
+        "endpoint": {
+          "description": "device blocks: bus PDO endpoint key (e.g. `el1014.c1`) the deploy map binds `pdo=` channels to. Transport metadata — the compiler ignores it; the WebUI deploy-map generator consumes it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "exec_order": {
           "description": "explicit order override; 0 = auto topo (doc 06 §4.1).",
           "default": 0,

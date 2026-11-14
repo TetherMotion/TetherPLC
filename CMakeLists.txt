@@ -412,6 +412,7 @@ if(_ec_pump_ok AND TARGET tplc_tether_io)
     ${TETHER_DIR}/include/tether
     ${TETHER_DIR}/build/include
     ${TETHER_DIR}/examples
+    ${TETHER_DIR}/dependencies/magic_enum/include
     ${TETHER_DIR}/dependencies/blake3/c
     ${TETHER_DIR}/dependencies/libSLIPspeed/include
     ${TETHER_DIR}/dependencies/atomic_queue/include

@@ -88,6 +88,15 @@ else
     bad "build: ui curve editor profile"; cat "$W/ui.log"
 fi
 
+# 7b. Same editor output plus the status taps (Busy/Done) and the
+# FB_AtcPwm heater stage (1 Hz period, duty from the controller).
+if "$TPLCC" build "$D/ui_profile_pwm.fbd.json" libraries/tempctrl/atc_tempctrl.st \
+        -o "$W/ui_profile_pwm.tplc" >"$W/ui_pwm.log" 2>&1 && [ -s "$W/ui_profile_pwm.tplc" ]; then
+    ok "build: ui curve profile+pwm"
+else
+    bad "build: ui curve profile+pwm"; cat "$W/ui_pwm.log"
+fi
+
 # 8. TetherWebUI autotune-editor output: tuner FBs + inline `st`
 # handoff (VAR_IN_OUT FB pins, live mirrors, APPLY gain copy) for all
 # three tuner shapes — relay, step-identification pair, LQG pair.

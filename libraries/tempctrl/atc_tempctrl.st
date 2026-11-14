@@ -1911,3 +1911,102 @@ END_VAR
         END_IF;
     END_IF;
 END_FUNCTION_BLOCK
+
+// ------------------------------------------------------------------
+// Fieldbus analog scaling — raw int16 channel counts <-> engineering
+// units. EL3104/EL3114 analog inputs deliver signed 16-bit counts
+// (-32768..32767 for ±10 V / 0..20 mA ranges); EL4104/EL4114 outputs
+// take the same counts back. Scale these in logic — terminal range
+// selection itself is master/SDO configuration, not program data.
+//
+// FB_AtcAiScale:  EU = Raw * Scale + Offset   (in, optional PT1 filter)
+// FB_AtcAoScale:  counts = (EU - Offset) / Scale, clamped to int16
+// ------------------------------------------------------------------
+
+// FB_AtcAiScale — analog input lineariser. Raw is the signed channel
+// count (DINT so INT16 sign-extends cleanly); Out is engineering
+// units. FiltT > 0 applies a PT1 low-pass to the raw counts before
+// scaling (transmitter noise); 0 = passthrough.
+FUNCTION_BLOCK FB_AtcAiScale
+VAR_INPUT
+    Execute : BOOL;
+    Raw : DINT;           // channel counts, e.g. EL3104 AI pin (INT)
+    Scale : LREAL;        // EU per count
+    Offset : LREAL;       // EU at Raw = 0
+    FiltT : LREAL;        // PT1 filter time constant (s); <=0 = off
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Out : LREAL;          // engineering units
+    RawF : LREAL;         // filtered counts (diagnostic)
+END_VAR
+VAR
+    xf : LREAL;
+    rflt : LREAL;
+    have : BOOL;
+END_VAR
+    Done := FALSE;
+    IF Reset THEN
+        xf := 0.0;
+        rflt := 0.0;
+        have := FALSE;
+    END_IF;
+    IF Execute AND CycleTime > 0.0 THEN
+        IF FiltT > 0.0 THEN
+            IF NOT have THEN
+                rflt := DINT_TO_LREAL(Raw);
+                have := TRUE;
+            ELSE
+                rflt := rflt + (DINT_TO_LREAL(Raw) - rflt) *
+                        (CycleTime / (FiltT + CycleTime));
+            END_IF;
+        ELSE
+            rflt := DINT_TO_LREAL(Raw);
+        END_IF;
+        xf := rflt;
+        Out := xf * Scale + Offset;
+        RawF := xf;
+        Done := TRUE;
+    END_IF;
+END_FUNCTION_BLOCK
+
+// FB_AtcAoScale — analog output scaler: engineering units -> int16
+// channel counts for EL4104/EL4114 AO pins. Result is clamped to the
+// signed 16-bit range; OutBad flags saturation.
+FUNCTION_BLOCK FB_AtcAoScale
+VAR_INPUT
+    Execute : BOOL;
+    In : LREAL;           // engineering units
+    Scale : LREAL;        // EU per count
+    Offset : LREAL;       // EU at counts = 0
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Counts : INT;         // channel counts for the AO pin (int16)
+    OutBad : BOOL;        // saturated at int16 rail
+END_VAR
+VAR
+    v : LREAL;
+END_VAR
+    Done := FALSE;
+    OutBad := FALSE;
+    IF Reset THEN
+        Counts := 0;
+    END_IF;
+    IF Execute AND CycleTime > 0.0 AND Scale <> 0.0 THEN
+        v := (In - Offset) / Scale;
+        IF v > 32767.0 THEN
+            v := 32767.0;
+            OutBad := TRUE;
+        ELSIF v < -32768.0 THEN
+            v := -32768.0;
+            OutBad := TRUE;
+        END_IF;
+        Counts := LREAL_TO_INT(v);
+        Done := TRUE;
+    END_IF;
+END_FUNCTION_BLOCK

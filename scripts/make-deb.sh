@@ -2,12 +2,17 @@
 # make-deb.sh — build a .deb of the TetherPLC toolchain.
 #
 # Packages: tplcc/tplc-pkg (Rust compiler), tether-plc + tether-plc-sim
-# + tplc-* (C++ runtime/control), the Atc_TempCtrl + Tc2/Tc3 compat
+# + tplc-* (C++ runtime/control), tether-plc-bridge (deploy-map I/O
+# bridge), tplc-ec-pump (EtherCAT fleet pump, with its Tether shared
+# libs under /usr/lib/tetherplc), the Atc_TempCtrl + Tc2/Tc3 compat
 # library sources, and a prebuilt atc_tempctrl.tplc package.
 #
 # Prerequisites:
 #   cmake --build build -j8          # C++ binaries (RelWithDebInfo ok)
 #   cargo build --release -p tplcc -p tplc-pkg --manifest-path compiler/Cargo.toml
+#   ../Tether built (lib/*.so)       # for tplc-ec-pump; set
+#                                    # TETHER_BUILD_LIB=/path/to/lib to override,
+#                                    # or SKIP_ECPUMP=1 to omit it
 #   dpkg-deb                          # Debian/Ubuntu packaging tool
 #
 # Usage: scripts/make-deb.sh [output-dir] [version]
@@ -22,14 +27,23 @@ ARCH=amd64
 ROOT=$OUT/${PKG}_${VER}_${ARCH}
 BIN=build
 RUST=compiler/target/release
+TETHER_LIB=${TETHER_BUILD_LIB:-../Tether/build/lib}
 
 for b in tplcc tplc-pkg; do
     [ -x "$RUST/$b" ] || { echo "missing $RUST/$b — cargo build --release first" >&2; exit 1; }
 done
 for b in tether-plc tether-plc-sim tplc-io tplc-ctl tplc-ctl-proxy tplc-image \
-         tplc-io-probe tplc-io-cli; do
+         tplc-io-probe tplc-io-cli tether-plc-bridge; do
     [ -x "$BIN/$b" ] || { echo "missing $BIN/$b — cmake --build build first" >&2; exit 1; }
 done
+ECPUMP=0
+if [ "${SKIP_ECPUMP:-0}" != "1" ]; then
+    if [ -x "$BIN/tplc-ec-pump" ] && [ -f "$TETHER_LIB/libtether_ethercat_master_shared.so" ]; then
+        ECPUMP=1
+    else
+        echo "warn: tplc-ec-pump or Tether libs missing — skipping (set TETHER_BUILD_LIB or SKIP_ECPUMP=1)" >&2
+    fi
+fi
 command -v dpkg-deb >/dev/null || { echo "dpkg-deb not found" >&2; exit 1; }
 
 rm -rf "$ROOT"
@@ -41,9 +55,30 @@ for b in tplcc tplc-pkg; do
     strip -o "$ROOT/usr/bin/$b" "$RUST/$b"
 done
 for b in tether-plc tether-plc-sim tplc-io tplc-ctl tplc-ctl-proxy \
-         tplc-image tplc-io-probe tplc-io-cli; do
+         tplc-image tplc-io-probe tplc-io-cli tether-plc-bridge; do
     strip -o "$ROOT/usr/bin/$b" "$BIN/$b"
 done
+
+# --- EtherCAT pump + its Tether shared-lib closure ------------------------
+# tplc-ec-pump links against the Tether EtherCAT master libraries; ship
+# the four .so files and a wrapper that points LD_LIBRARY_PATH at them.
+if [ "$ECPUMP" = "1" ]; then
+    mkdir -p "$ROOT/usr/lib/tetherplc"
+    for l in libtether_ethercat_master_shared libtether_ethercat_common_shared \
+             libtether_hal_shared libtether_common_shared; do
+        cp "$TETHER_LIB/$l.so" "$ROOT/usr/lib/tetherplc/"
+        strip "$ROOT/usr/lib/tetherplc/$l.so" || true
+    done
+    strip -o "$ROOT/usr/bin/tplc-ec-pump.real" "$BIN/tplc-ec-pump"
+    cat > "$ROOT/usr/bin/tplc-ec-pump" <<'WRAP'
+#!/bin/sh
+# EtherCAT fleet pump with bundled Tether libraries.
+export LD_LIBRARY_PATH="/usr/lib/tetherplc${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$(dirname "$0")/tplc-ec-pump.real" "$@"
+WRAP
+    chmod 755 "$ROOT/usr/bin/tplc-ec-pump" "$ROOT/usr/bin/tplc-ec-pump.real"
+    echo "packaged tplc-ec-pump + Tether libs"
+fi
 
 # --- IDE proxy wrapper: sane defaults for the installed layout -----------
 cat > "$ROOT/usr/bin/tplc-proxy" <<'WRAP'
@@ -85,6 +120,8 @@ TetherPLC — IEC 61131-3 toolchain + EtherCAT temperature-control runtime
 Binaries:  tplcc (compiler), tplc-pkg (package verify/sign),
            tether-plc (runtime), tether-plc-sim (simulator),
            tplc-io / tplc-ctl / tplc-ctl-proxy / tplc-image (services),
+           tether-plc-bridge (deploy-map EtherCAT I/O bridge),
+           tplc-ec-pump (EtherCAT fleet pump, bundled Tether libs),
            tplc-proxy (WebUI proxy wrapper with installed libdirs)
 
 Libraries: /usr/share/tetherplc/libraries/tempctrl/atc_tempctrl.st

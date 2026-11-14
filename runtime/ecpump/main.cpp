@@ -134,6 +134,7 @@ struct PendingSignal {
 
 int main(int argc, char** argv) {
     std::string peer = "127.0.0.1", simdir, ioBind = "127.0.0.1", iface;
+    std::string fleetPath;
     uint16_t port = 47820, ioPort = 0;
     uint32_t hz = 500;
     double runSecs = 0;
@@ -150,6 +151,7 @@ int main(int argc, char** argv) {
         else if (a == "--port")    port    = (uint16_t)std::stoul(need("--port"));
         else if (a == "--iface")   iface   = need("--iface");
         else if (a == "--simdir")  simdir  = need("--simdir");
+        else if (a == "--fleet")   fleetPath = need("--fleet");
         else if (a == "--io-port") ioPort  = (uint16_t)std::stoul(need("--io-port"));
         else if (a == "--io-bind") ioBind  = need("--io-bind");
         else if (a == "--hz")      hz      = (uint32_t)std::stoul(need("--hz"));
@@ -157,7 +159,7 @@ int main(int argc, char** argv) {
         else if (a == "--help" || a == "-h") {
             std::fprintf(stderr,
                 "usage: %s (--peer HOST --port PORT | --iface NAME) "
-                "--simdir DIR "
+                "--simdir DIR [--fleet FILE] "
                 "[--io-port N] [--io-bind ADDR] [--hz N] [--time S]\n",
                 argv[0]);
             return 0;
@@ -184,7 +186,22 @@ int main(int argc, char** argv) {
     signal(SIGINT, onSigint);
     signal(SIGTERM, onSigint);
 
-    const auto infos = fleetInfos();
+    /* fleet topology: default two-coupler fleet, or a line-based
+       description via --fleet (EK1100 / ELxxxx per line, chain order)
+       so "a bunch of EL1014" fleets are expressible              */
+    std::vector<tether::examples::FleetSlaveInfo> infos;
+    if (fleetPath.empty()) {
+        infos = tether::examples::fleetInfos();
+    } else {
+        std::string ferr;
+        infos = tether::examples::detail::fleetInfosFromFile(
+            fleetPath, &ferr);
+        if (infos.empty()) {
+            std::fprintf(stderr, "tplc-ec-pump: %s\n",
+                         ferr.c_str());
+            return 1;
+        }
+    }
 
     FleetMaster fm;
     const bool linkOk = iface.empty() ? fm.open(peer, port)
