@@ -14,6 +14,10 @@ compiler/target/debug/tplcc build my_program.st \
     --lib atc_tempctrl.tplc -o my_program.tplc
 ```
 
+With the `.deb` installed (`toolchain.md` §6) the library package is
+already on disk — skip the `--library` build and use
+`--lib /usr/share/tetherplc/lib/atc_tempctrl.tplc`.
+
 Conventions: `Execute` enables work for one scan; `Done`/`Err` report
 status (latched on the "finishing" blocks until re-armed or `Reset`);
 `CycleTime`/`Ts` inputs are seconds and must equal the task interval;

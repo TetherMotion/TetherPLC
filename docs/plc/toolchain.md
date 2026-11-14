@@ -147,3 +147,38 @@ IDE sources ──/compile?build──► {compile,package:b64}
                                  │
               EV_PROG_TRANSITION ──/events──► IDE status refresh
 ```
+
+## 6. Debian package (`apt install`)
+
+`scripts/make-deb.sh` stages a self-contained `.deb` — stripped
+binaries, library sources, a prebuilt `atc_tempctrl.tplc`, and a
+`tplc-proxy` wrapper with the installed libdirs:
+
+```bash
+cmake --build build -j8
+(cd compiler && cargo build --release -p tplcc -p tplc-pkg -j8)
+scripts/make-deb.sh                      # → build/deb/tetherplc_0.1.0-1_amd64.deb
+sudo apt install ./build/deb/tetherplc_*.deb
+```
+
+The package installs to `/usr/bin` (`tplcc`, `tplc-pkg`, `tether-plc`,
+`tether-plc-sim`, `tplc-io`, `tplc-ctl`, `tplc-ctl-proxy`, `tplc-image`,
+`tplc-io-*`, `tplc-proxy`) and `/usr/share/tetherplc`
+(`libraries/tempctrl`, `compat/{tc2,tc3}`, `lib/atc_tempctrl.tplc`).
+`Depends:` covers only runtime libs (libc6, libstdc++6, libssl3, zlib1g,
+libffi8, libzstd1) — LLVM is statically linked into `tplcc`.
+
+After install:
+
+```bash
+tplcc build my_program.st \
+    --lib /usr/share/tetherplc/lib/atc_tempctrl.tplc -o my_program.tplc
+tplcc build --library --name Atc_TempCtrl \
+    /usr/share/tetherplc/libraries/tempctrl/atc_tempctrl.st \
+    -o ~/atc_tempctrl.tplc        # rebuild the library package locally
+tplc-proxy --port 8080            # IDE backend with libdirs preconfigured
+```
+
+To serve the deb from an apt repository, drop it into a `reprepro` (or
+`apt-ftparchive`) pool as `tetherplc_<ver>_amd64.deb` — the control file
+already carries `Package/Version/Architecture/Depends`.
