@@ -116,6 +116,21 @@ typedef struct TplcPathService {
        unreleased blocker (TwinCAT MC_GroupReadBlockerStatus) */
     int32_t (*path_blocker)(void* host, double* id,
                             int32_t* waiting);
+    /* bind a path object to a group handle (0 unbinds); used by
+       path_traj to resolve group -> executing path */
+    int32_t (*path_bind_group)(void* host, uint32_t path,
+                               uint32_t group);
+    /* trajectory readback for the path bound to `group` (TwinCAT
+       MC_GroupReadTrajectoryInformation / MC_TRAJECTORY_ENTRY):
+       fills up to cap entries starting at the last-evaluated
+       segment; rem_dur/rem_len are seconds and dominant-axis user
+       units; ids are 1-based segment indices (InvokeId
+       approximation); active marks blend-type segments. State is
+       as of the most recent path_eval. */
+    int32_t (*path_traj)(void* host, uint32_t group,
+                         double* rem_dur, double* rem_len,
+                         uint32_t* ids, uint32_t* active,
+                         uint32_t cap, uint32_t* count);
 } TplcPathService;
 
 #ifdef __cplusplus

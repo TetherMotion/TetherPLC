@@ -46,6 +46,14 @@ PathService::PathService() {
     svc_.path_blocker = [](void* h, double* id, int32_t* w) {
         return self(h)->blocker(h, id, w);
     };
+    svc_.path_bind_group = [](void* h, uint32_t p, uint32_t g) {
+        return self(h)->bindGroup(h, p, g);
+    };
+    svc_.path_traj = [](void* h, uint32_t g, double* rd,
+                        double* rl, uint32_t* ids, uint32_t* act,
+                        uint32_t cap, uint32_t* cnt) {
+        return self(h)->traj(h, g, rd, rl, ids, act, cap, cnt);
+    };
 }
 
 PathService::Path* PathService::find(uint32_t path) {
@@ -189,6 +197,7 @@ void PathService::recompute(Path& p) {
                          from[1], q.to[0], q.to[1], q.circChoice,
                          &cx, &cy, &rr, &sw)) {
                 const double arc = rr * std::fabs(sw);
+                q.len = arc;
                 const double v = q.vel > 0.0 ? q.vel : 1.0;
                 const double a = q.acc > 0.0 ? q.acc : v;
                 const double dAcc = v * v / (2.0 * a);
@@ -204,6 +213,16 @@ void PathService::recompute(Path& p) {
         } else {
             q.dur = segDuration(q.type, q.n, q.to.data(), from, q.vel,
                                 q.acc, q.dwellMs);
+            double dmax = 0.0;
+            if (q.type == TPLC_PATH_SEG_LINEAR) {
+                for (uint32_t i = 0; i < q.n &&
+                     i < TPLC_PATH_MAX_AXES; ++i) {
+                    const double d =
+                        std::fabs(q.to[i] - from[i]);
+                    if (d > dmax) dmax = d;
+                }
+            }
+            q.len = dmax;
         }
         q.t0 = acc_t;
         acc_t += q.dur;
@@ -306,6 +325,8 @@ int32_t PathService::eval(void*, uint32_t path, double t, double* pos,
     }
     blkId_ = 0.0;
     blkWait_ = (gate < p->nseg) ? 1 : 0;
+    p->lastT = t;
+    p->lastSeg = (gate < p->nseg) ? gate : 0;
     if (gate < p->nseg) {
         const Segment& g = p->segs[gate];
         blkId_ = g.dwellMs;
@@ -367,6 +388,8 @@ int32_t PathService::eval(void*, uint32_t path, double t, double* pos,
     *seg = idx;
     *done = (t >= p->duration) ? 1 : 0;
     *n_out = s.n;
+    p->lastT = t;
+    p->lastSeg = idx;
     return TPLC_PATH_OK;
 }
 
@@ -421,6 +444,52 @@ int32_t PathService::release(void*, double id) {
 int32_t PathService::blocker(void*, double* id, int32_t* waiting) {
     if (id != nullptr) *id = blkId_;
     if (waiting != nullptr) *waiting = blkWait_;
+    return TPLC_PATH_OK;
+}
+
+int32_t PathService::bindGroup(void*, uint32_t path, uint32_t group) {
+    Path* p = find(path);
+    if (p == nullptr) return TPLC_PATH_E_STATE;
+    p->group = group;
+    return TPLC_PATH_OK;
+}
+
+int32_t PathService::traj(void*, uint32_t group, double* remDur,
+                          double* remLen, uint32_t* ids,
+                          uint32_t* active, uint32_t cap,
+                          uint32_t* count) {
+    if (remDur == nullptr || remLen == nullptr || ids == nullptr ||
+        active == nullptr || count == nullptr)
+        return TPLC_PATH_E_PARAM;
+    Path* p = nullptr;
+    for (auto& q : paths_) {
+        if (q.used && q.group == group && group != 0) {
+            p = &q;
+            break;
+        }
+    }
+    if (p == nullptr || p->nseg == 0) {
+        *count = 0;
+        return TPLC_PATH_OK;
+    }
+    /* entries start at the last-evaluated segment */
+    uint32_t idx = p->lastSeg < p->nseg ? p->lastSeg : 0;
+    uint32_t n = 0;
+    for (uint32_t i = idx; i < p->nseg && n < cap; ++i, ++n) {
+        const Segment& s = p->segs[i];
+        const double end = s.t0 + s.dur;
+        double rd = end - p->lastT;
+        if (rd < 0.0) rd = 0.0;
+        /* remaining fraction of the segment applied to its length */
+        double frac = (s.dur > 0.0) ? rd / s.dur : 0.0;
+        if (frac > 1.0) frac = 1.0;
+        remDur[n] = rd;
+        remLen[n] = s.len * frac;
+        ids[n] = i + 1; /* InvokeId approximation: 1-based index */
+        active[n] = (s.type == TPLC_PATH_SEG_BLEND ||
+                     s.type == TPLC_PATH_SEG_BLOCKER) ? 1u : 0u;
+    }
+    *count = n;
     return TPLC_PATH_OK;
 }
 

@@ -5397,6 +5397,8 @@ const PT_F2: usize = 56;   // f64
 const PT_F3: usize = 64;   // f64
 const PT_POS: usize = 72;  // f64[16]
 const PT_AUXP: usize = 200; // f64[16]
+const PT_TRID: usize = 328; // u32[10]
+const PT_TACT: usize = 368; // u32[10]
 
 // tplc-path service vtable offsets (TplcPathService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5409,6 +5411,8 @@ const PT_SVC_INFO: usize = 56;
 const PT_SVC_ADDCIRC: usize = 64;
 const PT_SVC_RELEASE: usize = 72;
 const PT_SVC_BLOCKER: usize = 80;
+const PT_SVC_BINDGROUP: usize = 88;
+const PT_SVC_TRAJ: usize = 96;
 
 /// service lookup for "tplc-path" (9 chars)
 unsafe fn path_service(ctx: *const u8) -> *const u8 {
@@ -5448,6 +5452,11 @@ type FNptAddCirc = unsafe extern "C" fn(
 type FNptRelease = unsafe extern "C" fn(*const u8, f64) -> i32;
 type FNptBlocker =
     unsafe extern "C" fn(*const u8, *mut f64, *mut i32) -> i32;
+type FNptBindGroup = unsafe extern "C" fn(*const u8, u32, u32) -> i32;
+type FNptTraj = unsafe extern "C" fn(
+    *const u8, u32, *mut f64, *mut f64, *mut u32, *mut u32, u32,
+    *mut u32,
+) -> i32;
 
 /// `__tplc_rt_FB_Path` — synchronous op dispatch over the tplc-path
 /// path-object table. OP: 0=create, 1=clear, 2=add segment,
@@ -5569,6 +5578,30 @@ pub unsafe extern "C" fn __tplc_rt_FB_Path(this: *mut u8, ctx: *mut u8) -> i32 {
             let f: FNptRelease =
                 core::mem::transmute(ptfn(svc, PT_SVC_RELEASE));
             fail(this, f(svc, f64::from_bits(ru64(this.add(PT_F1)))));
+        }
+        9 => {
+            /* bind path handle to group AUX */
+            let f: FNptBindGroup =
+                core::mem::transmute(ptfn(svc, PT_SVC_BINDGROUP));
+            fail(this, f(svc, ru32(this.add(PT_HANDLE)),
+                         ru32(this.add(PT_AUX))));
+        }
+        10 => {
+            /* trajectory readback for group AUX: POS=remLen f64[16],
+               AUXP=remDur f64[16], TRID=u32[10] ids, TACT=u32[10]
+               active, NSEG=count */
+            let mut cnt = 0u32;
+            let f: FNptTraj =
+                core::mem::transmute(ptfn(svc, PT_SVC_TRAJ));
+            let rc = f(svc, ru32(this.add(PT_AUX)),
+                       this.add(PT_POS) as *mut f64,
+                       this.add(PT_AUXP) as *mut f64,
+                       this.add(PT_TRID) as *mut u32,
+                       this.add(PT_TACT) as *mut u32, 10, &mut cnt);
+            fail(this, rc);
+            if rc == 0 {
+                wu32(this.add(PT_NSEG), cnt);
+            }
         }
         _ => {
             wi32(this.add(PT_STATUS), -1);

@@ -8,7 +8,7 @@
 
 **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
-**Status:** PARTIAL — 23 of the 36 APIs are implemented.
+**Status:** PARTIAL — 24 of the 36 APIs are implemented.
 
 Group administration in `compat/tc3/tc3_mcgroup.st` over the
 in-process `tplc-mcgroup` service + `FB_McGroup` builtin (ctest
@@ -40,6 +40,12 @@ is closed (queried via `FB_Path` OP7). `MC_ReleaseBlocker` opens
 every gate with the id across all path objects;
 `MC_GroupReadBlockerStatus` reports the last-evaluated gate state
 (group-to-path linkage is approximated).
+`MC_GroupReadTrajectoryInformation` reads the bound path's
+segment table through `FB_Path` OP10: `MC_MovePath` binds its path
+to the group at execute (OP9); entries carry the 1-based segment
+index as InvokeId, Active for blend/blocker segments,
+RemainingDuration in seconds and RemainingCartesianLength in
+dominant-axis units, all as of the last eval.
 `MC_MoveCircularAbsolutePreparation` supports `mcCircModeCenter`
 (AuxPoint = circle center, equidistant check) and
 `mcCircModeBorder` (AuxPoint on the circle, circumcenter solved);
@@ -60,9 +66,8 @@ service ramps with `Acceleration`, `BufferMode` accepted but every
 Execute edge appends immediately, segment-0 start resolves at
 execute time.
 
-The remaining 13 APIs — `MC_CalcTrafo`,
+The remaining 12 APIs — `MC_CalcTrafo`,
 `MC_SetCoordinateTransformPreparation`,
-`MC_GroupReadTrajectoryInformation`,
 collision-avoidance moves (`MC_MoveAbsoluteCA`,
 `MC_MoveRelativeCA`, `MC_HaltCA`, `MC_GearInPosCA`), track
 following (`MC_ReadTrackPositions`, `MC_ActivateTrack`,

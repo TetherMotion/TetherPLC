@@ -57,7 +57,7 @@ kill -0 "$SRV_PID" 2>/dev/null || { bad "motion server start"; \
     for i in $(seq 0 500); do
         t=$((i * 10000000))
         if [ "$i" -eq 200 ]; then
-            echo "step $i time=$t in 0=00 expect 0=7f000000"
+            echo "step $i time=$t in 0=00 expect 0=ff000000"
         else
             echo "step $i time=$t in 0=00"
         fi

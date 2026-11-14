@@ -29,6 +29,7 @@ VAR
     prepK  : MC_BlockerPreparation;
     relBlk : MC_ReleaseBlocker;
     blkSt  : MC_GroupReadBlockerStatus;
+    trajRd : MC_GroupReadTrajectoryInformation;
     prepC  : MC_MoveCircularAbsolutePreparation;
     prep2  : MC_MoveDirectPreparation;
     mvPath : MC_MovePath;
@@ -47,6 +48,7 @@ VAR
     gotBusy : BOOL;
     gotPos  : BOOL;
     sawBlocked : BOOL;
+    sawTraj : BOOL;
     mCnt   : INT;
     dRel   : BOOL;
     pA     : DINT;
@@ -164,6 +166,10 @@ ELSIF st = 8 THEN
     // path running; blocker status polled, release after ~1.2 s
     blkSt(Enable := TRUE, AxesGroup := grp);
     IF blkSt.Blocked THEN sawBlocked := TRUE; END_IF;
+    trajRd(Enable := TRUE, AxesGroup := grp);
+    IF trajRd.Valid AND trajRd.EntryCount >= 3 THEN
+        sawTraj := TRUE;
+    END_IF;
     IF busySeen THEN gotBusy := TRUE; END_IF;
     mCnt := mCnt + 1;
     IF mCnt >= 120 THEN st := 9; END_IF;
@@ -182,6 +188,7 @@ ELSIF st = 10 THEN
         IF gotBusy THEN mask := mask + 16; END_IF;   // bit4
         IF gotPos THEN mask := mask + 32; END_IF;    // bit5
         IF sawBlocked THEN mask := mask + 64; END_IF; // bit6
+        IF sawTraj THEN mask := mask + 128; END_IF;  // bit7
         st := 11;
     END_IF;
 ELSIF st = 11 THEN

@@ -243,6 +243,8 @@ IF active THEN
             active := FALSE;
         ELSE
             PathData := p.HANDLE;
+            /* bind the path to the group for trajectory readback */
+            p.OP := 9; p.AUX := AxesGroup; p.HANDLE := PathData; p();
             t0 := p.NOW;
             pathT := 0.0; lastNow := p.NOW;
             /* switch members to CSP mode for 0x607A streaming */
@@ -528,6 +530,57 @@ IF Enable AND mg.STATUS = 0 THEN
     IF p.STATUS = 0 THEN
         Blocked := p.AUX = 1;
         BlockerId := LREAL_TO_DINT(p.F1);
+    ELSE
+        Error := TRUE;
+        IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
+    END_IF;
+END_IF;
+END_FUNCTION_BLOCK
+
+// MC_GroupReadTrajectoryInformation: reads the current and next
+// path segments for the group the executing MC_MovePath is bound
+// to. Entries flatten MC_TRAJECTORY_ENTRY: InvokeId is approximated
+// by the 1-based segment index, Active marks blend/blocker
+// segments, RemainingDuration is seconds and
+// RemainingCartesianLength is dominant-axis user units, all as of
+// the most recent path eval.
+FUNCTION_BLOCK MC_GroupReadTrajectoryInformation
+VAR_INPUT
+    Enable : BOOL;
+END_VAR
+VAR_IN_OUT
+    AxesGroup : UDINT;
+END_VAR
+VAR_OUTPUT
+    Valid : BOOL;
+    Busy : BOOL;
+    Error : BOOL;
+    ErrorId : UDINT;
+    EntryCount : UDINT;
+    TrajInvokeId : ARRAY[0..9] OF UDINT;
+    TrajActive : ARRAY[0..9] OF BOOL;
+    TrajRemLen : ARRAY[0..9] OF LREAL;
+    TrajRemDur : ARRAY[0..9] OF LREAL;
+END_VAR
+VAR
+    p : FB_Path;
+    mg : FB_McGroup;
+    i : UDINT;
+END_VAR
+Valid := FALSE; Busy := FALSE; Error := FALSE; ErrorId := 0;
+EntryCount := 0;
+mg.GRP := AxesGroup; mg.OP := 6; mg();
+IF Enable AND mg.STATUS = 0 THEN
+    Valid := TRUE;
+    p.OP := 10; p.AUX := AxesGroup; p();
+    IF p.STATUS = 0 THEN
+        EntryCount := p.NSEG;
+        FOR i := 0 TO 9 DO
+            TrajInvokeId[i] := p.TRID[i];
+            TrajActive[i] := p.TACT[i] = 1;
+            TrajRemLen[i] := p.AUXP[i];
+            TrajRemDur[i] := p.POS[i];
+        END_FOR;
     ELSE
         Error := TRUE;
         IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;

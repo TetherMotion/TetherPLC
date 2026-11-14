@@ -27,6 +27,7 @@ private:
         double   dwellMs = 0.0;
         double   dur = 0.0;    // seconds, computed at add
         double   t0 = 0.0;     // cumulative start time
+        double   len = 0.0;    // dominant-axis length (arc for CIRC)
         uint32_t circMode = 0; // TPLC_PATH_CIRC_* for CIRC segs
         double   circChoice = 1.0; // 1=CCW, 2=CW
         bool     released = false; // BLOCKER gate opened
@@ -36,6 +37,9 @@ private:
     struct Path {
         bool     used = false;
         bool     started = false;
+        uint32_t group = 0;    // bound group handle (0 = none)
+        double   lastT = 0.0;  // t of most recent eval
+        uint32_t lastSeg = 0;  // segment of most recent eval
         uint32_t nseg = 0;
         double   duration = 0.0;
         std::array<double, TPLC_PATH_MAX_AXES> start{};
@@ -76,6 +80,9 @@ private:
                     double, double);
     int32_t release(void*, double);
     int32_t blocker(void*, double*, int32_t*);
+    int32_t bindGroup(void*, uint32_t, uint32_t);
+    int32_t traj(void*, uint32_t, double*, double*, uint32_t*,
+                 uint32_t*, uint32_t, uint32_t*);
 
     TplcPathService svc_{};
     std::array<Path, TPLC_PATH_MAX_PATHS> paths_{};
