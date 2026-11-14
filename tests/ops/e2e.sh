@@ -41,7 +41,7 @@ for t in tests/ops/cases/o??_*.st; do
 done
 cp tests/ops/vectors.jsonl "$WORK/vectors.jsonl"
 if "$TPLCC" vectors run "$WORK/vectors.jsonl" > "$WORK/vec.log" 2>&1; then
-    ok "tplcc vectors: ops suite (8 programs)"
+    ok "tplcc vectors: ops suite (19 programs)"
 else
     bad "tplcc vectors: ops suite"
     cat "$WORK/vec.log"
