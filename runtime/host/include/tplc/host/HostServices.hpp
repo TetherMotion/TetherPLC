@@ -68,6 +68,8 @@ public:
     /* by-name symbol access: the loaded program attaches its
        variable table + live blob here */
     SymService& symbols() { return sym_; }
+    /* event journal for ctl-side query/ack + notify wiring */
+    EventlogService& eventlog() { return eventlog_; }
     uint32_t      caps()  const { return svc_.caps; }
 
     void onLog(LogFn fn) { log_fn_ = std::move(fn); }

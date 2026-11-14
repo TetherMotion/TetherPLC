@@ -114,10 +114,14 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_SHADOW_COMPARE: case TPLC_OP_SHADOW_IMAGE:
     case TPLC_OP_OD_READ:
     case TPLC_OP_OD_LIST:
+    case TPLC_OP_EVTLOG_LIST:    case TPLC_OP_EVTLOG_QUERY:
+    case TPLC_OP_EVTLOG_STATS:   case TPLC_OP_EVTLOG_HISTORY:
         return tplc::TPLC_ROLE_OBSERVER;
     case TPLC_OP_DBG_WATCH_ADD:
     case TPLC_OP_DBG_WATCH_STREAM:
     case TPLC_OP_DBG_WATCH_REMOVE:
+    /* eventlog confirm = HMI alarm acknowledge: engineer floor   */
+    case TPLC_OP_EVTLOG_CONFIRM:
     /* OD_WRITE is a generic write channel: each object declares its
        own floor, enforced in the handler (MGMT_AUTHZ)             */
     case TPLC_OP_OD_WRITE:
@@ -992,6 +996,11 @@ int main(int argc, char** argv) {
         adopt_suspended.clear();
     };
 
+    /* armed once the ctl server exists (below): wires the active
+       program's event journal to EV_USER broadcast + audit, and
+       migrates transition history out of the quarantined program   */
+    std::function<void()> arm_eventlog;
+
     auto unload_program = [&] {
         /* monitor thread skips non-RUNNING states, so clearing state
            first makes destruction race-free */
@@ -1036,6 +1045,7 @@ int main(int argc, char** argv) {
         auto pres = tplc::Program::create(*mod, pcfg);
         if (!pres.ok()) { unload_program(); return pres.st; }
         prog.emplace(std::move(pres.value));
+        if (arm_eventlog) arm_eventlog();
         d = mod->descriptor();
         /* retain store (doc 04 §5): mirror retain_region to
            <dir>/<uuid>.bin; uuid+layout-hash match restores bytes */
@@ -1094,6 +1104,7 @@ int main(int argc, char** argv) {
         prog.reset();
         quar.prog.emplace(std::move(newp));
         prog.emplace(std::move(oldp));
+        if (arm_eventlog) arm_eventlog();
         std::swap(mod, quar.mod);
         std::swap(pkg_layd, quar.layd);
         std::swap(pkg_smap, quar.smap);
@@ -1390,6 +1401,53 @@ int main(int argc, char** argv) {
         snprintf(op, sizeof op, "op.0x%04x.denied", type);
         audit(fd, op, "gate", code);
     });
+
+    /* event journal wiring: every eventlog transition broadcasts
+       TPLC_EV_USER to notify subscribers and lands in the durable
+       audit journal; on program adoption the outgoing program's
+       transition history is imported so alarm history survives
+       online swaps/updates                                     */
+    arm_eventlog = [&] {
+        if (!prog) return;
+        auto& el = prog->services().eventlog();
+        if (quar.prog) {
+            auto& old = quar.prog->services().eventlog();
+            std::vector<TplcEventlogRecord> recs(512);
+            uint32_t n = 0;
+            auto& ot = old.tableMut();
+            if (ot.ev_history &&
+                ot.ev_history(&ot, recs.data(),
+                              (uint32_t)recs.size(), &n) == 0 && n) {
+                auto& nt = el.tableMut();
+                if (nt.ev_import)
+                    nt.ev_import(&nt, recs.data(), n);
+            }
+        }
+        el.setNotify([&](uint32_t id, uint32_t state,
+                         const TplcEventlogInfo* info) {
+            uint32_t payload[5] = {id, state,
+                                   info ? info->event_class : 0,
+                                   info ? info->event_id : 0,
+                                   info ? info->severity : 0};
+            ctl.event(TPLC_EV_USER,
+                      1u << (TPLC_EV_USER & 0xFF),
+                      payload, sizeof payload);
+            char det[160];
+            snprintf(det, sizeof det, "id=%u state=%u sev=%u %.*s",
+                     id, state, info ? info->severity : 0,
+                     info ? (int)info->text_len : 0,
+                     info ? (const char*)info->text : "");
+            audit_log.record((uint32_t)getpid(),
+                             (uint32_t)getuid(), (uint32_t)getgid(),
+                             0, "eventlog",
+                             state == TPLC_EVENTLOG_ST_RAISED
+                                 ? "event.raise"
+                             : state == TPLC_EVENTLOG_ST_CLEARED
+                                 ? "event.clear" : "event.confirm",
+                             det, 0);
+        });
+    };
+    arm_eventlog();   /* boot package (loaded before ctl existed) */
 
     /* ---- trigger expressions (doc 12 §M) ------------------------
        Compiler + evaluator for the bounded stack machine; paths
@@ -2333,6 +2391,7 @@ int main(int argc, char** argv) {
            program's mod_ to the heap Module before it ticks        */
         prog.emplace(std::move(nprog));
         prog->rebindModule(*mod);
+        if (arm_eventlog) arm_eventlog();
         sched.addProgram(*prog);
         apply_suspension(*prog, susp);
         adopt_end();
@@ -2810,6 +2869,7 @@ int main(int argc, char** argv) {
         mod = std::move(csel.mod);
         prog.emplace(std::move(*csel.prog));
         prog->rebindModule(*mod);
+        if (arm_eventlog) arm_eventlog();
         sched.addProgram(*prog);
         apply_suspension(*prog, susp);
         adopt_end();
@@ -2880,6 +2940,139 @@ int main(int argc, char** argv) {
         w.u32((uint32_t)lines.size());
         for (auto& l : lines) w.str(l.c_str(), (uint32_t)l.size());
         ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    /* eventlog ops (0x0F00): live alarm journal + transition
+       history. Reads are observer-level; CONFIRM is the HMI
+       acknowledge path (engineer floor via op_min_role).         */
+    auto evlog_svc = [&]() -> TplcEventlogService* {
+        if (!prog) return nullptr;
+        return &prog->services().eventlog().tableMut();
+    };
+    /* wire form of TplcEventlogInfo + leading journal id so HMI
+       clients can ack without a second round-trip               */
+    auto ev_write_info = [&](tplc::CtlServer::W& w, uint32_t id,
+                             const TplcEventlogInfo& e) {
+        w.u32(id);
+        w.u32(e.event_class); w.u32(e.event_id);
+        w.u32(e.severity);    w.u32(e.state); w.u32(e.args);
+        w.u64(e.raised_ns);   w.u64(e.cleared_ns);
+        w.u64(e.confirmed_ns);
+        w.u8(e.text_len);
+        w.bytes(e.text, e.text_len);
+    };
+    ctl.on(TPLC_OP_EVTLOG_LIST, [&](int fd, uint16_t t,
+                                    const uint8_t* payload,
+                                    uint32_t len, uint64_t req) {
+        auto* svc = evlog_svc();
+        if (!svc || !svc->ev_query) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no program",
+                           req);
+            return;
+        }
+        uint32_t cap = 128;
+        if (len >= 4) memcpy(&cap, payload, 4);
+        if (cap > TPLC_EVENTLOG_MAX_EVENTS) cap = TPLC_EVENTLOG_MAX_EVENTS;
+        /* per-id query keeps journal ids on the wire; ev_list
+           snapshots lack them                                          */
+        std::vector<std::pair<uint32_t, TplcEventlogInfo>> live;
+        for (uint32_t id = 1; id <= TPLC_EVENTLOG_MAX_EVENTS &&
+                            live.size() < cap; id++) {
+            TplcEventlogInfo e{};
+            if (svc->ev_query(svc, id, &e) == 0)
+                live.emplace_back(id, e);
+        }
+        tplc::CtlServer::W w;
+        w.u32((uint32_t)live.size());
+        w.u32((uint32_t)live.size());
+        for (auto& [id, e] : live) ev_write_info(w, id, e);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_EVTLOG_QUERY, [&](int fd, uint16_t t,
+                                     const uint8_t* payload,
+                                     uint32_t len, uint64_t req) {
+        auto* svc = evlog_svc();
+        if (!svc || !svc->ev_query || len < 4) {
+            ctl.errorReply(fd, t, len < 4 ? TPLC_E_CTL_PAYLOAD
+                                          : TPLC_E_MGMT_STATE,
+                           len < 4 ? "short query" : "no program",
+                           req);
+            return;
+        }
+        uint32_t id; memcpy(&id, payload, 4);
+        TplcEventlogInfo e{};
+        int32_t rc = svc->ev_query(svc, id, &e);
+        if (rc != 0) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no such event",
+                           req);
+            return;
+        }
+        tplc::CtlServer::W w;
+        ev_write_info(w, id, e);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_EVTLOG_STATS, [&](int fd, uint16_t t,
+                                     const uint8_t*, uint32_t,
+                                     uint64_t req) {
+        auto* svc = evlog_svc();
+        if (!svc || !svc->ev_stats) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no program",
+                           req);
+            return;
+        }
+        TplcEventlogStats st{};
+        svc->ev_stats(svc, &st);
+        ctl.reply(fd, t, &st, sizeof st, req);
+    });
+    ctl.on(TPLC_OP_EVTLOG_HISTORY, [&](int fd, uint16_t t,
+                                       const uint8_t* payload,
+                                       uint32_t len, uint64_t req) {
+        auto* svc = evlog_svc();
+        if (!svc || !svc->ev_history) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "no program",
+                           req);
+            return;
+        }
+        uint32_t cap = 64;
+        if (len >= 4) memcpy(&cap, payload, 4);
+        if (cap > TPLC_EVENTLOG_HIST_CAP) cap = TPLC_EVENTLOG_HIST_CAP;
+        std::vector<TplcEventlogRecord> buf(cap ? cap : 1);
+        uint32_t n = 0;
+        svc->ev_history(svc, buf.data(), cap, &n);
+        tplc::CtlServer::W w;
+        w.u32(n);
+        for (uint32_t i = 0; i < n; i++) {
+            const TplcEventlogRecord& r = buf[i];
+            w.u64(r.ts_ns); w.u32(r.journal_id);
+            w.u32(r.event_class); w.u32(r.event_id);
+            w.u32(r.severity); w.u32(r.state);
+            w.u8(r.text_len);
+            w.bytes(r.text, r.text_len);
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_EVTLOG_CONFIRM, [&](int fd, uint16_t t,
+                                       const uint8_t* payload,
+                                       uint32_t len, uint64_t req) {
+        auto* svc = evlog_svc();
+        if (!svc || !svc->ev_confirm || len < 4) {
+            ctl.errorReply(fd, t, len < 4 ? TPLC_E_CTL_PAYLOAD
+                                          : TPLC_E_MGMT_STATE,
+                           len < 4 ? "short confirm" : "no program",
+                           req);
+            return;
+        }
+        uint32_t id; memcpy(&id, payload, 4);
+        int32_t rc = svc->ev_confirm(svc, id);
+        if (rc != 0) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE, "ack failed",
+                           req);
+            return;
+        }
+        char det[32];
+        snprintf(det, sizeof det, "id=%u", id);
+        audit(fd, "eventlog.confirm", det);
+        ctl.replyEmpty(fd, t, req);
     });
 
     ctl.on(TPLC_OP_IMAGE_STATS, [&](int fd, uint16_t t,

@@ -191,12 +191,27 @@ enum TplcCtlOp {
     TPLC_OP_MAP_GET        = 0x0C01,  /* → deploy-map section bytes   */
     /* journal 0x0D00 */
     TPLC_OP_JOURNAL_TAIL   = 0x0D01,  /* {u32 n} → u32 n, str lines[] */
+    /* eventlog 0x0F00: live alarm journal + transition history.
+       LIST {u32 cap} → {u32 live, u32 n, TplcEventlogInfo[n]};
+       QUERY {u32 id} → TplcEventlogInfo;
+       STATS ∅ → TplcEventlogStats;
+       HISTORY {u32 cap} → {u32 n, TplcEventlogRecord[n]} oldest→newest;
+       CONFIRM {u32 id} → ack (engineer+).                          */
+    TPLC_OP_EVTLOG_LIST    = 0x0F01,
+    TPLC_OP_EVTLOG_QUERY   = 0x0F02,
+    TPLC_OP_EVTLOG_STATS   = 0x0F03,
+    TPLC_OP_EVTLOG_HISTORY = 0x0F04,
+    TPLC_OP_EVTLOG_CONFIRM = 0x0F05,
     /* events 0x0E00 */
     TPLC_EV_PROG_TRANSITION = 0x0E01,
     TPLC_EV_FAULT           = 0x0E02,
     TPLC_EV_DBG_BREAK       = 0x0E03, /* {u32 handle, u32 task, u64 v}*/
     /* {u32 handle, u64 seq, u32 n, {u32 len, u8 data[len]}*}        */
     TPLC_EV_DBG_WATCH       = 0x0E04,
+    /* user event: {u32 journal_id, u32 state, u32 class,
+       u32 event_id, u32 severity} — pushed on every eventlog
+       transition to notify-masked subscribers (category bit 5).   */
+    TPLC_EV_USER            = 0x0E05,
     /* error frame — response with F_EVENT? No: same msg_type as the
        request, payload = TplcCtlError, flags bit15 marks error        */
     TPLC_CTL_F_ERROR       = 1u << 15

@@ -152,6 +152,9 @@ VAR_OUTPUT
     nCleared : UDINT;
     nConfirmed : UDINT;
     nDropped : UDINT;
+    tRaised : ULINT;            // realtime ns at raise (0 = n/a)
+    tCleared : ULINT;           // realtime ns at clear
+    tConfirmed : ULINT;         // realtime ns at confirm
     bDone : BOOL;
     bError : BOOL;
     nErrId : UDINT;
@@ -173,6 +176,9 @@ END_VAR
                     nEventClass := ev.CLSO;
                     nEventId := ev.EVTIDO;
                     sText := ev.TXTO;
+                    tRaised := ev.TSTAMP;
+                    tCleared := ev.CSTAMP;
+                    tConfirmed := ev.FSTAMP;
                 ELSE
                     nLive := ev.LIVE;
                     nRaised := ev.RAISED;

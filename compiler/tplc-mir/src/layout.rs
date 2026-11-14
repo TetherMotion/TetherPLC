@@ -2056,6 +2056,15 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ERRID", udint());
             push(&mut off, "TEXT", Type::Str { cap: 80 });
             push(&mut off, "TXTO", Type::Str { cap: 80 });
+            /* transition timestamps (appended): query fills
+               TSTAMP/CSTAMP/FSTAMP with raised/cleared/confirmed
+               realtime ns (0 = not yet transitioned)              */
+            push(&mut off, "TSTAMP", Type::Int {
+                signed: false, bits: 64 });
+            push(&mut off, "CSTAMP", Type::Int {
+                signed: false, bits: 64 });
+            push(&mut off, "FSTAMP", Type::Int {
+                signed: false, bits: 64 });
         }
         /* FB_Db — tplc-db SQLite bridge (Tc2/Tc3_Database).
         OP 1=open (PATH -> HANDLE), 2=exec (SQL -> CHANGES),

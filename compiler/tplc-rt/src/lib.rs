@@ -8633,6 +8633,9 @@ const EV_TEXT_LEN: usize = 68;
 const EV_TEXT: usize = 69;
 const EV_TXTO_LEN: usize = 150;
 const EV_TXTO: usize = 151;
+const EV_TSTAMP: usize = 232;
+const EV_CSTAMP: usize = 240;
+const EV_FSTAMP: usize = 248;
 
 // TplcEventlogService vtable: size@0 abi@4 host@8
 const EV_SVC_RAISE: usize = 16;
@@ -8700,7 +8703,9 @@ pub unsafe extern "C" fn __tplc_rt_FB_EventLog(this: *mut u8, ctx: *mut u8) -> i
             set_rc(f(svc, ru32(this.add(EV_ID))));
         }
         4 => {
-            let mut info = [0u8; 112];
+            /* TplcEventlogInfo is 136B — the old 112B buffer
+               overflowed the stack on every query                 */
+            let mut info = [0u8; 160];
             let f: FEvQuery = core::mem::transmute(mbusfn(svc, EV_SVC_QUERY));
             let rc = f(svc, ru32(this.add(EV_ID)), info.as_mut_ptr());
             wi32(this.add(EV_STATUS), rc);
@@ -8710,12 +8715,21 @@ pub unsafe extern "C" fn __tplc_rt_FB_EventLog(this: *mut u8, ctx: *mut u8) -> i
                     core::ptr::copy_nonoverlapping(info.as_ptr().add(off), b.as_mut_ptr(), 4);
                     u32::from_le_bytes(b)
                 };
+                let rd64 = |off: usize| -> u64 {
+                    let mut b = [0u8; 8];
+                    core::ptr::copy_nonoverlapping(info.as_ptr().add(off), b.as_mut_ptr(), 8);
+                    u64::from_le_bytes(b)
+                };
                 // TplcEventlogInfo: class@0 id@4 sev@8 state@12
-                //   args@16 text@20 len@100
+                //   args@16 text@20 len@100 raised@104 cleared@112
+                //   confirmed@120
                 wu32(this.add(EV_CLSO), rd(0));
                 wu32(this.add(EV_EVTIDO), rd(4));
                 wu32(this.add(EV_SEVO), rd(8));
                 wu32(this.add(EV_STATE), rd(12));
+                wu64(this.add(EV_TSTAMP), rd64(104));
+                wu64(this.add(EV_CSTAMP), rd64(112));
+                wu64(this.add(EV_FSTAMP), rd64(120));
                 let n = info[100].min(80) as usize;
                 core::ptr::copy_nonoverlapping(info.as_ptr().add(20), this.add(EV_TXTO), n);
                 *this.add(EV_TXTO_LEN) = n as u8;

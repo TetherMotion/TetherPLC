@@ -746,6 +746,33 @@ int main(int argc, char** argv) {
         memcpy(pre, &n, 4);
         pre_len = 4;
     }
+    else if (!strcmp(cmd, "evlog-list")) {
+        op = TPLC_OP_EVTLOG_LIST;
+        uint32_t cap = arg ? (uint32_t)strtoul(arg, NULL, 0) : 128;
+        memcpy(pre, &cap, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "evlog-query")) {
+        if (!arg) { fprintf(stderr, "evlog-query ID\n"); return 2; }
+        op = TPLC_OP_EVTLOG_QUERY;
+        uint32_t id = (uint32_t)strtoul(arg, NULL, 0);
+        memcpy(pre, &id, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "evlog-stats")) op = TPLC_OP_EVTLOG_STATS;
+    else if (!strcmp(cmd, "evlog-history")) {
+        op = TPLC_OP_EVTLOG_HISTORY;
+        uint32_t cap = arg ? (uint32_t)strtoul(arg, NULL, 0) : 64;
+        memcpy(pre, &cap, 4);
+        pre_len = 4;
+    }
+    else if (!strcmp(cmd, "evlog-confirm")) {
+        if (!arg) { fprintf(stderr, "evlog-confirm ID\n"); return 2; }
+        op = TPLC_OP_EVTLOG_CONFIRM;
+        uint32_t id = (uint32_t)strtoul(arg, NULL, 0);
+        memcpy(pre, &id, 4);
+        pre_len = 4;
+    }
     else if (!strcmp(cmd, "events")) {
         /* events [SEC]: subscribe to all event cats and dump frames
            for N seconds (default 5) — doc 16 §4 state-machine feed  */
@@ -774,7 +801,8 @@ int main(int argc, char** argv) {
         int secs = arg ? atoi(arg) : 5;
         time_t end_s = time(NULL) + secs;
         static const char* evnames[] = {"?", "TRANSITION", "FAULT",
-                                        "DBG_BREAK", "DBG_WATCH"};
+                                        "DBG_BREAK", "DBG_WATCH",
+                                        "USER"};
         for (;;) {
             struct pollfd pfd = {fd, POLLIN, 0};
             if (poll(&pfd, 1, 500) <= 0) {
@@ -786,10 +814,18 @@ int main(int argc, char** argv) {
             if (t < 0) break;
             const char* nm =
                 (t >= TPLC_EV_PROG_TRANSITION &&
-                 t <= TPLC_EV_DBG_WATCH)
+                 t <= TPLC_EV_USER)
                     ? evnames[t - TPLC_EV_PROG_TRANSITION + 1]
                     : "?";
             printf("ev 0x%04x %-11s len=%u", t, nm, len);
+            if (t == TPLC_EV_USER && len >= 20) {
+                uint32_t jid, st8, ec, ei, sv;
+                memcpy(&jid, pl, 4); memcpy(&st8, pl + 4, 4);
+                memcpy(&ec, pl + 8, 4); memcpy(&ei, pl + 12, 4);
+                memcpy(&sv, pl + 16, 4);
+                printf(" id=%u state=%u cls=%u evt=%u sev=%u",
+                       jid, st8, ec, ei, sv);
+            }
             if (t == TPLC_EV_PROG_TRANSITION &&
                 len >= sizeof(TplcCtlEvTransition)) {
                 const TplcCtlEvTransition* ev =
@@ -1337,6 +1373,88 @@ int main(int argc, char** argv) {
                 q += sl;
             }
         }
+    }
+    else if (op == TPLC_OP_EVTLOG_LIST ||
+             op == TPLC_OP_EVTLOG_QUERY ||
+             op == TPLC_OP_EVTLOG_HISTORY ||
+             op == TPLC_OP_EVTLOG_STATS) {
+        static const char* sevnames[] = {"verbose", "info",
+                                         "warning", "error",
+                                         "critical"};
+        static const char* stnames[] = {"?", "raised", "cleared",
+                                        "confirmed"};
+        const uint8_t* q = pl;
+        const uint8_t* end = pl + len;
+        uint32_t live = 0, base = 0;
+        if (op == TPLC_OP_EVTLOG_LIST) {
+            if (len < 8) { puts("(short payload)"); goto evdone; }
+            memcpy(&live, q, 4); q += 4;
+            memcpy(&base, q, 4); q += 4;
+            printf("live %u  shown %u\n", live, base);
+        } else if (op == TPLC_OP_EVTLOG_HISTORY) {
+            if (len < 4) { puts("(short payload)"); goto evdone; }
+            memcpy(&base, q, 4); q += 4;
+        } else if (op == TPLC_OP_EVTLOG_QUERY) {
+            base = 1;   /* bare TplcEventlogInfo, no count prefix */
+        } else if (op == TPLC_OP_EVTLOG_STATS) {
+            if (len < 24) { puts("(short payload)"); goto evdone; }
+            uint32_t lv, ra, cl, cf, dr;
+            memcpy(&lv, q, 4); memcpy(&ra, q + 4, 4);
+            memcpy(&cl, q + 8, 4); memcpy(&cf, q + 12, 4);
+            memcpy(&dr, q + 16, 4);
+            printf("live %u  raised %u  cleared %u  confirmed %u  "
+                   "dropped %u\n", lv, ra, cl, cf, dr);
+            goto evdone;
+        }
+        /* records: LIST/QUERY carry TplcEventlogInfo, HISTORY
+           carries TplcEventlogRecord — different layouts         */
+        for (uint32_t i = 0; i < base; i++) {
+            if (op == TPLC_OP_EVTLOG_HISTORY) {
+                if (end - q < 33) break;
+                uint64_t ts; uint32_t jid, ec, ei, sv, st;
+                memcpy(&ts, q, 8); memcpy(&jid, q + 8, 4);
+                memcpy(&ec, q + 12, 4); memcpy(&ei, q + 16, 4);
+                memcpy(&sv, q + 20, 4); memcpy(&st, q + 24, 4);
+                uint8_t tl = q[28];
+                q += 29;
+                if (end - q < tl) break;
+                char tb[81];
+                memcpy(tb, q, tl); tb[tl] = 0; q += tl;
+                printf("  #%lu  %-9s sev=%-8s id=%u cls=%u evt=%u  "
+                       "%s\n",
+                       (unsigned long)(ts / 1000000000ull),
+                       st < 4 ? stnames[st] : "?",
+                       sv < 5 ? sevnames[sv] : "?",
+                       jid, ec, ei, tb);
+            } else {
+                /* info: u32 id + 5xu32 + 3xu64 + u8 len + text
+                   = 49+len                                          */
+                if (end - q < 49) break;
+                uint32_t jid, ec, ei, sv, st, ar;
+                uint64_t rn, cn, fn;
+                memcpy(&jid, q, 4);
+                memcpy(&ec, q + 4, 4); memcpy(&ei, q + 8, 4);
+                memcpy(&sv, q + 12, 4); memcpy(&st, q + 16, 4);
+                memcpy(&ar, q + 20, 4);
+                memcpy(&rn, q + 28, 8); memcpy(&cn, q + 36, 8);
+                memcpy(&fn, q + 44, 8);
+                uint8_t tl = q[48];
+                q += 49;
+                if (end - q < tl) break;
+                char tb[81];
+                memcpy(tb, q, tl); tb[tl] = 0; q += tl;
+                printf("  #%-3u %-9s sev=%-8s cls=%u evt=%u args=%u  "
+                       "raised=%lu cleared=%lu confirmed=%lu  %s\n",
+                       jid,
+                       st < 4 ? stnames[st] : "?",
+                       sv < 5 ? sevnames[sv] : "?",
+                       ec, ei, ar,
+                       (unsigned long)(rn / 1000000000ull),
+                       (unsigned long)(cn / 1000000000ull),
+                       (unsigned long)(fn / 1000000000ull), tb);
+            }
+        }
+    evdone:;
     }
     else if (op == TPLC_OP_PING && len >= 8) {
         uint64_t ns; memcpy(&ns, pl, 8);
