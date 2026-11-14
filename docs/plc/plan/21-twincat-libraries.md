@@ -20076,7 +20076,7 @@ per-parameter prose.
 
 - **Category:** Motion/MC3 · **Tier:** T3
 - **Manual:** `tf5430_tc3_planar_motion_EN.pdf` · **API entries:** 87
-- **Status:** planar motion is Tether motion-domain; PLC surface on request
+- **Status:** BLOCKED — API is TcCOM object/METHOD-based (MC_PlanarEnvironment, planar movers/tracks/groups, ~80 METHODs); the ST dialect cannot express METHODs/REFERENCE objects, and the 4 MC_PlanarFeedback* FBs only mirror command state. Needs the planar-motion engine + an object-model surface first
 - **Integration:** Planar motion (XY/Gantry): multi-axis interpolation on the axis backend.
 
 #### PLC Libraries › Tc3_Mc3PlanarMotion API › Function Blocks › MC_PlanarEnvironment
@@ -21204,7 +21204,7 @@ per-parameter prose.
 
 - **Category:** Motion/MC3 · **Tier:** T0
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_Physics_EN.pdf` · **API entries:** 38
-- **Status:** physics-engine integration is Tether-domain; PLC surface on request
+- **Status:** BLOCKED — API is TcCOM object/METHOD-based (CoordinateType/transform objects, physics constraint objects, ~35 METHODs); the ST dialect cannot express METHODs/REFERENCE objects. Needs an object-model surface first
 - **Integration:** Physics helpers (kinematics/dynamics math for simulation): pure math; useful for a TetherPLC motion simulator.
 
 #### Functions › Coordinates
