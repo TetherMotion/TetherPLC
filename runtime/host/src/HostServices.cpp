@@ -250,6 +250,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcIoLinkService*>(&iolink_.table());
         return nullptr;
     }
+    if (len == 14 && memcmp(name, "tplc-profinet", 14) == 0) {
+        /* PROFINET DCP + IO records: only when ports configured. */
+        if (profinet_.active())
+            return const_cast<TplcProfinetService*>(&profinet_.table());
+        return nullptr;
+    }
     if (len == 8 && memcmp(name, "tplc-soe", 8) == 0) {
         /* EtherCAT SoE mailbox: only when ec.soe.* live. */
         if (soe_.active())

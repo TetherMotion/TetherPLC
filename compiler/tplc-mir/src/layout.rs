@@ -1811,6 +1811,49 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "PDOUT", arr(31));
             push(&mut off, "OD", arr(7));
         }
+        /* FB_Profinet — tplc-profinet service bridge (PROFINET DCP
+        discovery/configuration + cyclic IO record exchange over
+        per-port UDP transports). Synchronous op dispatch: OP 1=open,
+        2=close, 3=state, 4=identify (PORT/XID -> NAME/VENDOR/DEVID/
+        ROLE/DEVINST/OEM), 5=dcp_get and 6=dcp_set (PORT/XID/OPTION/
+        SUB[/OD/DLEN]), 7=io_exchange (IOOUT/DLEN -> IOIN/DLEN).
+        STATUS carries the service return code, ERRID its magnitude. */
+        "FB_Profinet" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            let arr = |hi: i64| Type::Array {
+                elem: Box::new(byte()),
+                lo: 0,
+                hi,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "PORT", udint());
+            push(&mut off, "XID", udint());
+            push(&mut off, "OPTION", udint());
+            push(&mut off, "SUB", udint());
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "ROLE", udint());
+            push(&mut off, "VENDOR", udint());
+            push(&mut off, "DEVID", udint());
+            push(&mut off, "DEVINST", udint());
+            push(&mut off, "OEM", udint());
+            push(&mut off, "NAME", Type::Str { cap: 31 });
+            push(&mut off, "OD", arr(63));
+            push(&mut off, "IOOUT", arr(63));
+            push(&mut off, "IOIN", arr(63));
+        }
         /* FB_Soe — tplc-soe service bridge (EtherCAT SoE mailbox over
         Tether IO ec.soe.* params). Synchronous op dispatch: OP 1=
         read_state (SLAVE -> STATUSW/CMDSTATE/PASSWD/DIAG fields/temps/

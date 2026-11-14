@@ -7517,6 +7517,196 @@ pub unsafe extern "C" fn __tplc_rt_FB_IoLink(this: *mut u8, ctx: *mut u8) -> i32
     0
 }
 
+// FB_Profinet — PROFINET DCP + cyclic IO records over tplc-profinet
+// (per-port UDP transports; real L2 Ethertype-0x8892 path staged).
+// ---------------------------------------------------------------------------
+
+// FB_Profinet member offsets (see builtin_fb_layout("FB_Profinet")).
+const PN_OP: usize = 0;
+const PN_PORT: usize = 4;
+const PN_XID: usize = 8;
+const PN_OPTION: usize = 12;
+const PN_SUB: usize = 16;
+const PN_DLEN: usize = 20;
+const PN_STATUS: usize = 24;
+const PN_ERRID: usize = 28;
+const PN_ROLE: usize = 32;
+const PN_VENDOR: usize = 36;
+const PN_DEVID: usize = 40;
+const PN_DEVINST: usize = 44;
+const PN_OEM: usize = 48;
+const PN_NAME: usize = 52; // Str{31}: u8 len + chars
+const PN_OD: usize = 84; // u8[64]
+const PN_IOOUT: usize = 148; // u8[64]
+const PN_IOIN: usize = 212; // u8[64]
+
+// tplc-profinet service vtable offsets (TplcProfinetService):
+// struct_size@0 u32, abi@4 u32, host@8 ptr(8B),
+// pn_state@16, pn_open@24, pn_close@32, pn_identify@40,
+// pn_dcp_get@48, pn_dcp_set@56, pn_io_exchange@64, pn_port_info@72.
+const PN_SVC_STATE: usize = 16;
+const PN_SVC_OPEN: usize = 24;
+const PN_SVC_CLOSE: usize = 32;
+const PN_SVC_IDENT: usize = 40;
+const PN_SVC_DCPGET: usize = 48;
+const PN_SVC_DCPSET: usize = 56;
+const PN_SVC_IOEX: usize = 64;
+
+/// service lookup for "tplc-profinet" (14 chars)
+unsafe fn profinet_service(ctx: *const u8) -> *const u8 {
+    let svcs = (ctx.add(CTX_SVC) as *const *const u8).read();
+    if svcs.is_null() {
+        return core::ptr::null();
+    }
+    let host = (svcs.add(SVC_HOST) as *const *mut u8).read();
+    let gs = core::mem::transmute::<usize, unsafe extern "C" fn(*mut u8, *const u8, u32) -> *mut u8>(
+        (svcs.add(SVC_GET_SERVICE) as *const usize).read(),
+    );
+    gs(host, c"tplc-profinet".as_ptr() as *const u8, 14) as *const u8
+}
+
+/// `__tplc_rt_FB_Profinet` — OP 1=open, 2=close, 3=state,
+/// 4=identify, 5=dcp_get, 6=dcp_set, 7=io_exchange.
+/// # Safety
+/// `this` must point at a valid instance block of the documented
+/// layout; `ctx` at a live `TplcCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn __tplc_rt_FB_Profinet(this: *mut u8, ctx: *mut u8) -> i32 {
+    let op = ru32(this.add(PN_OP));
+    wi32(this.add(PN_STATUS), 0);
+    wu32(this.add(PN_ERRID), 0);
+    let svc = profinet_service(ctx);
+    if svc.is_null() {
+        wi32(this.add(PN_STATUS), -3);
+        wu32(this.add(PN_ERRID), 99);
+        return 0;
+    }
+    let set_rc = |rc: i32| {
+        wi32(this.add(PN_STATUS), rc);
+        wu32(this.add(PN_ERRID), (-rc).max(0) as u32);
+    };
+    let port = ru32(this.add(PN_PORT));
+    let xid = ru32(this.add(PN_XID));
+    match op {
+        1 => {
+            let f: unsafe extern "C" fn(*const u8, u32) -> i32 =
+                core::mem::transmute(
+                    (svc.add(PN_SVC_OPEN) as *const usize).read(),
+                );
+            set_rc(f(svc, port));
+        }
+        2 => {
+            let f: unsafe extern "C" fn(*const u8, u32) -> i32 =
+                core::mem::transmute(
+                    (svc.add(PN_SVC_CLOSE) as *const usize).read(),
+                );
+            set_rc(f(svc, port));
+        }
+        3 => {
+            let f: unsafe extern "C" fn(*const u8) -> i32 =
+                core::mem::transmute(
+                    (svc.add(PN_SVC_STATE) as *const usize).read(),
+                );
+            set_rc(f(svc));
+        }
+        4 => {
+            /* pn_identify(svc, port, xid, name*, cap, vendor*, device*,
+               role*, instance*, oem*, raw*, raw_cap, raw_len*) */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u32, *mut u8, u32, *mut u32, *mut u32,
+                *mut u32, *mut u32, *mut u32, *mut u8, u32,
+                *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(PN_SVC_IDENT) as *const usize).read(),
+            );
+            let mut nbuf = [0u8; 40];
+            let mut vendor: u32 = 0;
+            let mut device: u32 = 0;
+            let mut role: u32 = 0;
+            let mut inst: u32 = 0;
+            let mut oem: u32 = 0;
+            let rc = f(
+                svc, port, xid, nbuf.as_mut_ptr(), 32,
+                &mut vendor, &mut device, &mut role, &mut inst,
+                &mut oem, core::ptr::null_mut(), 0,
+                core::ptr::null_mut(),
+            );
+            /* Str{31}: u8 len + chars */
+            let mut nl = 0usize;
+            while nl < 31 && nbuf[nl] != 0 {
+                nl += 1;
+            }
+            let nm = this.add(PN_NAME);
+            *nm = nl as u8;
+            core::ptr::copy_nonoverlapping(nbuf.as_ptr(), nm.add(1), nl);
+            wu32(this.add(PN_VENDOR), vendor);
+            wu32(this.add(PN_DEVID), device);
+            wu32(this.add(PN_ROLE), role);
+            wu32(this.add(PN_DEVINST), inst);
+            wu32(this.add(PN_OEM), oem);
+            set_rc(rc);
+        }
+        5 => {
+            /* pn_dcp_get(svc, port, xid, option u8, sub u8, data*,
+               cap, out_len*) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u32, u8, u8, *mut u8, u32, *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(PN_SVC_DCPGET) as *const usize).read(),
+            );
+            let mut out_len: u32 = 0;
+            let rc = f(
+                svc, port, xid,
+                ru32(this.add(PN_OPTION)) as u8,
+                ru32(this.add(PN_SUB)) as u8,
+                this.add(PN_OD), 64, &mut out_len,
+            );
+            wu32(this.add(PN_DLEN), out_len);
+            set_rc(rc);
+        }
+        6 => {
+            /* pn_dcp_set(svc, port, xid, option u8, sub u8, data*,
+               len) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u32, u8, u8, *const u8, u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(PN_SVC_DCPSET) as *const usize).read(),
+            );
+            let len = ru32(this.add(PN_DLEN)).min(64);
+            set_rc(f(
+                svc, port, xid,
+                ru32(this.add(PN_OPTION)) as u8,
+                ru32(this.add(PN_SUB)) as u8,
+                this.add(PN_OD), len,
+            ));
+        }
+        7 => {
+            /* pn_io_exchange(svc, port, out*, out_len, in*, in_cap,
+               in_len*) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, *const u8, u32, *mut u8, u32,
+                *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(PN_SVC_IOEX) as *const usize).read(),
+            );
+            let out_len = ru32(this.add(PN_DLEN)).min(64);
+            let mut in_len: u32 = 0;
+            let rc = f(
+                svc, port,
+                this.add(PN_IOOUT), out_len,
+                this.add(PN_IOIN), 64, &mut in_len,
+            );
+            wu32(this.add(PN_DLEN), in_len);
+            set_rc(rc);
+        }
+        _ => {
+            wi32(this.add(PN_STATUS), -1);
+            wu32(this.add(PN_ERRID), 1);
+        }
+    }
+    0
+}
+
 // FB_Soe — EtherCAT SoE mailbox over tplc-soe (Tether IO ec.soe.*
 // params).
 // ---------------------------------------------------------------------------
