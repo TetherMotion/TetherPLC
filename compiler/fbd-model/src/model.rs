@@ -196,6 +196,18 @@ pub enum VarRole {
     InOut,
 }
 
+/// How a variable block participates in ladder-rung wires.
+/// Absent = power flow (IEC `<contact>`/`<coil>`): the block gates
+/// BOOL rung flow. `Data` = PLCopen `inVariable`/`outVariable`/
+/// `inOutVariable` element: a typed data tap lowered exactly like an
+/// FBD variable block — no gating, wires carry values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum VarFlow {
+    Data,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Block {
@@ -229,6 +241,9 @@ pub struct Block {
     /* variable-block fields */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<VarRole>,
+    /// ladder-only flow class — see `VarFlow`. Ignored in FBD nets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<VarFlow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

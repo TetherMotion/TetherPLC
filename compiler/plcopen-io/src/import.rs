@@ -214,7 +214,14 @@ impl P {
     fn start(&mut self, e: &quick_xml::events::BytesStart) {
         let tag = Self::local(e.name().as_ref()).to_string();
         let in_fbdish = self.depth_tag("FBD");
-        let in_ld = self.depth_tag("LD");
+        // LD context: a literal <LD> body, or a tether:network
+        // roundtrip wrapper whose kind is ladder (export emits
+        // ladder nets inside <FBD> as tether:network elements)
+        let in_ld = self.depth_tag("LD")
+            || self
+                .cur_net
+                .as_ref()
+                .is_some_and(|n| n.kind == NetworkKind::Ladder);
         match tag.as_str() {
             "contentHeader" => {
                 if let Some(n) = Self::attr(e, "name") {
@@ -284,6 +291,7 @@ impl P {
                     negated: vec![],
                     comment: String::new(),
                     role: None,
+                    flow: None,
                     name: None,
                     at: None,
                 });
@@ -303,13 +311,18 @@ impl P {
                     params: BTreeMap::new(),
                     pins: vec![],
                     exec_order: 0,
-                    negated: if Self::attr(e, "negated").as_deref() == Some("true") {
-                        vec![0]
-                    } else {
-                        vec![]
-                    },
+                    negated: ["negated", "negatedIn"]
+                        .iter()
+                        .any(|a| Self::attr(e, a).as_deref() == Some("true"))
+                        .then_some(0)
+                        .into_iter()
+                        .collect(),
                     comment: String::new(),
                     role: Some(role),
+                    // in/out/inOutVariable elements are data taps —
+                    // in ladder bodies wires carry values, not gated
+                    // power flow (contacts/coils below stay power)
+                    flow: Some(VarFlow::Data),
                     name: Self::attr(e, "name"),
                     at: None,
                 });
@@ -333,6 +346,7 @@ impl P {
                     } else {
                         VarRole::Out
                     }),
+                    flow: None,
                     name: None,
                     at: None,
                 };

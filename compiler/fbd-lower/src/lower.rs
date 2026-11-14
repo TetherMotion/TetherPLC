@@ -53,6 +53,14 @@ pub struct LowerOutput {
     pub diags: Vec<Diag>,
 }
 
+/// Variable block carrying PLCopen data-tap semantics
+/// (`inVariable`/`outVariable`/`inOutVariable` → `flow: data`)
+/// rather than power-flow contact/coil semantics. Data taps lower
+/// through the FBD variable-block path — no rung gating.
+fn is_data_var(b: &Block) -> bool {
+    b.kind == BlockKind::Variable && b.flow == Some(VarFlow::Data)
+}
+
 /// Natural type of a literal (used when the pin type is unknown —
 /// generic operator pins carry no signature type).
 fn lit_ty(l: &Lit) -> Type {
@@ -274,6 +282,11 @@ struct Cx<'a> {
     sheet: u32,
     /// blocks currently being folded (algebraic-cycle guard)
     expanding: BTreeSet<NodeId>,
+    /// ladder wire-topology: variable block id → gated flow expr.
+    /// src_expr consults this for ladder nets so contacts feed gated
+    /// (not raw) values into data pins; populated per network by
+    /// lower_ladder_wired in topo order.
+    ld_gated: HashMap<NodeId, Expr>,
 }
 
 impl<'a> Cx<'a> {
@@ -302,6 +315,7 @@ impl<'a> Cx<'a> {
             dev_vars: BTreeMap::new(),
             sheet: 0,
             expanding: BTreeSet::new(),
+            ld_gated: HashMap::new(),
         }
     }
 
@@ -418,7 +432,6 @@ impl<'a> Cx<'a> {
     /// First network pass: fb instance decls, sig resolution, located
     /// variable shadows, probe fields, exec_order collisions.
     fn precollect(&mut self, net: &Network) {
-        let ladder = net.kind == NetworkKind::Ladder;
         let mut orders: BTreeMap<u32, NodeId> = BTreeMap::new();
         for b in &net.blocks {
             if b.exec_order != 0 {
@@ -431,13 +444,10 @@ impl<'a> Cx<'a> {
                 }
             }
             match b.kind {
-                // LD rungs only declare storage for contacts/coils —
-                // rung topology is positional (lower_ladder), so fb/fn/
-                // device sigs are neither needed nor meaningful.
-                BlockKind::Fb if !ladder => self.fb_decl(b),
-                BlockKind::Function if !ladder => self.fn_sig(b),
+                BlockKind::Fb => self.fb_decl(b),
+                BlockKind::Function => self.fn_sig(b),
                 BlockKind::Variable => self.var_decl(b),
-                BlockKind::Device if !ladder => self.device_decl(b),
+                BlockKind::Device => self.device_decl(b),
                 _ => {}
             }
         }
@@ -830,9 +840,13 @@ impl<'a> Cx<'a> {
     /// (variable role `in`, NC when `negated`) AND into the rung
     /// flow; coils (role `out`) latch the flow — every coil on a rung
     /// sees the same power, matching parallel-output semantics.
-    /// Non-contact/coil elements are rejected: FB/function pins need
-    /// wire topology, which positional rungs do not carry.
+    /// Wire topology drives rung semantics when present: bands linked
+    /// by wires union into one rung evaluated as a signal graph —
+    /// variable blocks are flow gates, fb/function/operator/device
+    /// blocks lower through the FBD machinery. Wire-free bands keep
+    /// positional series semantics for backwards compatibility.
     fn lower_ladder(&mut self, net: &Network, stmts: &mut Vec<Stmt>) {
+        self.ld_gated.clear();
         // rung bands: sort by y, split where the gap exceeds half the
         // smallest inter-band spacing (adaptive to editor/import scale)
         let mut ys: Vec<u32> = net.blocks.iter().map(|b| b.pos.y).collect();
@@ -914,6 +928,17 @@ impl<'a> Cx<'a> {
             };
             for &b in band {
                 match (b.kind, b.role) {
+                    (BlockKind::Variable, _) if is_data_var(b) => {
+                        self.err(
+                            codes::UNSUPPORTED,
+                            format!(
+                                "ladder data tap {} needs wire topology — \
+                                 positional rungs carry power flow only",
+                                b.id
+                            ),
+                            b.id,
+                        );
+                    }
                     (BlockKind::Variable, Some(VarRole::In)) => {
                         // NO/NC contact: flow AND (var [NOT])
                         let Some(r) = self.var_ref(b) else { continue };
@@ -984,12 +1009,15 @@ impl<'a> Cx<'a> {
         })
     }
 
-    /// Wire-topology rung: contacts gate flow (value ∧ flow-in, NC
-    /// inverts the value), merges OR incoming flows, fan-out splits
-    /// them, coils latch their merged flow-in. A contact with no
-    /// incoming wire is rail-powered (flow-in = TRUE); a coil with
-    /// none latches FALSE. Wire ports are ignored — LD variable
-    /// blocks carry a single implicit flow port.
+    /// Wired rung evaluation. Variable blocks (contacts/coils/
+    /// in-outs) are power-flow gates: contacts publish
+    /// `var [NOT] AND flow-in` (rail-powered when unwired), coils and
+    /// in-outs latch their OR-merged flow-in. Fb/function/operator/
+    /// device blocks are dataflow elements whose pins resolve through
+    /// the same `dst_input`/`src_expr` machinery as FBD — a contact's
+    /// gated signal is what flows onto data wires. Everything is
+    /// evaluated in wire-graph topo order so producers emit before
+    /// consumers; wire cycles are diagnosed.
     fn lower_ladder_wired(
         &mut self,
         net: &Network,
@@ -998,8 +1026,12 @@ impl<'a> Cx<'a> {
     ) {
         let ids: HashMap<NodeId, &Block> =
             band.iter().map(|b| (b.id, *b)).collect();
-        // wires touching this band; cross-rung endpoints are an error
-        let mut incoming: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        let blocks_map: BTreeMap<NodeId, &Block> =
+            band.iter().map(|b| (b.id, *b)).collect();
+        // wires touching this band; cross-rung endpoints are an error.
+        // `incoming` tracks flow dsts (variable blocks) with full src
+        // PortRefs — data-pin dsts resolve through dst_input instead.
+        let mut incoming: HashMap<NodeId, Vec<PortRef>> = HashMap::new();
         let mut wired: HashSet<NodeId> = HashSet::new();
         for w in &net.wires {
             let touches = ids.contains_key(&w.src.block)
@@ -1018,43 +1050,45 @@ impl<'a> Cx<'a> {
                 continue;
             }
             let src = ids[&w.src.block];
-            if !(src.kind == BlockKind::Variable
-                && src.role == Some(VarRole::In))
-            {
+            if matches!(src.kind, BlockKind::St | BlockKind::JumpTarget) {
                 self.err(
                     codes::UNSUPPORTED,
-                    format!(
-                        "ladder wire source block {} is not a contact",
-                        w.src.block
-                    ),
+                    format!("ladder wire source block {} cannot source", w.src.block),
                     w.src.block,
                 );
                 continue;
             }
             for d in &w.dsts {
                 let dst = ids[&d.block];
-                let ok = dst.kind == BlockKind::Variable
-                    && matches!(dst.role, Some(VarRole::In) | Some(VarRole::Out));
-                if !ok {
+                if matches!(dst.kind, BlockKind::St | BlockKind::JumpTarget) {
                     self.err(
                         codes::UNSUPPORTED,
                         format!(
-                            "ladder wire destination block {} is not a contact/coil",
+                            "ladder wire destination block {} cannot sink",
                             d.block
                         ),
                         d.block,
                     );
                     continue;
                 }
-                incoming.entry(d.block).or_default().push(w.src.block);
+                // power-flow dsts merge into `incoming`; data taps
+                // (flow=data) resolve their pins via dst_input like
+                // any FBD variable block
+                if dst.kind == BlockKind::Variable && !is_data_var(dst) {
+                    incoming.entry(d.block).or_default().push(w.src.clone());
+                }
                 wired.insert(w.src.block);
                 wired.insert(d.block);
             }
         }
-        // unwired elements in a wired rung: warn — they contribute
-        // nothing to the flow graph
+        // unwired power elements in a wired rung: warn — they
+        // contribute nothing to the flow graph. Dataflow blocks
+        // (incl. data taps) still emit — params/assocs may drive them.
         for b in band {
-            if !wired.contains(&b.id) {
+            if b.kind == BlockKind::Variable
+                && !is_data_var(b)
+                && !wired.contains(&b.id)
+            {
                 self.warn(
                     codes::ORPHAN,
                     format!("ladder element {} not in wire graph", b.id),
@@ -1062,15 +1096,29 @@ impl<'a> Cx<'a> {
                 );
             }
         }
-        // topo-order the contacts: flow_out[c] feeds flow_in of its
-        // dsts, so evaluate sources before consumers (Kahn)
+        // unwired dataflow blocks emit unconditionally — their inputs
+        // may come from params/assocs rather than wires
+        for b in band {
+            if (b.kind != BlockKind::Variable || is_data_var(b))
+                && !wired.contains(&b.id)
+            {
+                self.emit_block(net, b, &blocks_map, stmts);
+            }
+        }
+        // topo-order every wired block: producers before consumers.
+        // deps count distinct src blocks per dst; Kahn's algorithm.
         let mut deps: HashMap<NodeId, usize> = HashMap::new();
         let mut consumers: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-        for (&dst, srcs) in &incoming {
-            for &s in srcs {
-                if ids[&s].role == Some(VarRole::In) {
-                    *deps.entry(dst).or_insert(0) += 1;
-                    consumers.entry(s).or_default().push(dst);
+        let mut edge_seen: HashSet<(NodeId, NodeId)> = HashSet::new();
+        for w in &net.wires {
+            for d in &w.dsts {
+                if wired.contains(&w.src.block)
+                    && wired.contains(&d.block)
+                    && w.src.block != d.block
+                    && edge_seen.insert((w.src.block, d.block))
+                {
+                    *deps.entry(d.block).or_insert(0) += 1;
+                    consumers.entry(w.src.block).or_default().push(d.block);
                 }
             }
         }
@@ -1079,69 +1127,42 @@ impl<'a> Cx<'a> {
             .filter(|(_, &d)| d == 0)
             .map(|(&id, _)| id)
             .chain(
-                wired.iter()
-                    .filter(|id| ids[id].role == Some(VarRole::In) && !deps.contains_key(*id))
+                wired
+                    .iter()
+                    .filter(|id| !deps.contains_key(*id))
                     .copied(),
             )
             .collect();
-        let mut out_expr: HashMap<NodeId, Expr> = HashMap::new();
         let mut seen: HashSet<NodeId> = HashSet::new();
         while let Some(id) = queue.pop_front() {
             if !seen.insert(id) {
                 continue;
             }
             let b = ids[&id];
-            if b.role != Some(VarRole::In) {
-                continue; // coils are sinks, handled below
+            if b.kind != BlockKind::Variable || is_data_var(b) {
+                // dataflow element — emit_block resolves its pins
+                // through dst_input/src_expr (gated contacts and
+                // data taps both included)
+                self.emit_block(net, b, &blocks_map, stmts);
+            } else {
+                self.lower_ld_var(net, b, &incoming, &ids, stmts);
             }
-            // flow-in: OR of source flow-outs, TRUE when rail-powered
-            let mut fin = Expr {
-                kind: ExprKind::Lit(Lit::Bool(false)),
-                ty: Type::Bool,
-                prov: self.prov(id, 0),
-            };
-            let mut any = false;
-            if let Some(srcs) = incoming.get(&id) {
-                for &s in srcs {
-                    if let Some(e) = out_expr.get(&s) {
-                        fin = Expr {
-                            kind: ExprKind::Bin(BinOp::Or, Box::new(fin), Box::new(e.clone())),
-                            ty: Type::Bool,
-                            prov: self.prov(id, 0),
-                        };
-                        any = true;
+            // probe stores for wires sourced at this block
+            for w in &net.wires {
+                if w.src.block == id && self.probes.contains_key(&w.id) {
+                    if let Some(e) = self.src_expr(&w.src, net, &blocks_map) {
+                        let pname = self.probes[&w.id].clone();
+                        self.fix_probe_ty(&pname, &e.ty.clone());
+                        stmts.push(Stmt {
+                            kind: StmtKind::Assign {
+                                lhs: Ref::Var(pname),
+                                rhs: e,
+                            },
+                            prov: self.prov(w.id, 0),
+                        });
                     }
                 }
             }
-            if !any {
-                fin = Expr {
-                    kind: ExprKind::Lit(Lit::Bool(true)),
-                    ty: Type::Bool,
-                    prov: self.prov(id, 0),
-                };
-            }
-            // gated value: var [NOT] AND flow-in
-            let Some(r) = self.var_ref(b) else { continue };
-            let mut val = Expr {
-                kind: ExprKind::Ref(r),
-                ty: Type::Bool,
-                prov: self.prov(id, 0),
-            };
-            if !b.negated.is_empty() {
-                val = Expr {
-                    kind: ExprKind::Un(UnOp::Not, Box::new(val)),
-                    ty: Type::Bool,
-                    prov: self.prov(id, 0),
-                };
-            }
-            out_expr.insert(
-                id,
-                Expr {
-                    kind: ExprKind::Bin(BinOp::And, Box::new(val), Box::new(fin)),
-                    ty: Type::Bool,
-                    prov: self.prov(id, 0),
-                },
-            );
             if let Some(cs) = consumers.get(&id) {
                 for &c in cs {
                     if let Some(d) = deps.get_mut(&c) {
@@ -1153,7 +1174,7 @@ impl<'a> Cx<'a> {
                 }
             }
         }
-        // cycle check: contacts still holding deps never evaluated
+        // cycle check: wired blocks still holding deps never evaluated
         for (&id, &d) in &deps {
             if d > 0 && !seen.contains(&id) {
                 self.err(
@@ -1163,48 +1184,96 @@ impl<'a> Cx<'a> {
                 );
             }
         }
-        // coils: latch OR of incoming source flow-outs (FALSE if none)
-        for &b in band {
-            if b.role != Some(VarRole::Out) {
-                continue;
-            }
-            let Some(lhs) = self.var_ref(b) else { continue };
-            let mut rhs = Expr {
-                kind: ExprKind::Lit(Lit::Bool(false)),
-                ty: Type::Bool,
-                prov: self.prov(b.id, 0),
-            };
-            let mut any = false;
-            if let Some(srcs) = incoming.get(&b.id) {
-                for &s in srcs {
-                    if let Some(e) = out_expr.get(&s) {
-                        rhs = Expr {
-                            kind: ExprKind::Bin(BinOp::Or, Box::new(rhs), Box::new(e.clone())),
-                            ty: Type::Bool,
-                            prov: self.prov(b.id, 0),
-                        };
-                        any = true;
-                    }
+    }
+
+    /// One variable block in a wired rung: merged incoming flow
+    /// (OR, FALSE when none) gates the variable value. Contacts
+    /// publish `var [NOT] AND flow` to ld_gated; coils/in-outs latch
+    /// the merged flow (in-outs also publish it downstream).
+    fn lower_ld_var(
+        &mut self,
+        net: &Network,
+        b: &Block,
+        incoming: &HashMap<NodeId, Vec<PortRef>>,
+        ids: &HashMap<NodeId, &Block>,
+        stmts: &mut Vec<Stmt>,
+    ) {
+        let blocks_map: BTreeMap<NodeId, &Block> =
+            ids.iter().map(|(&k, &v)| (k, v)).collect();
+        // merged flow-in: OR of source signals, FALSE when unwired
+        let mut fin = Expr {
+            kind: ExprKind::Lit(Lit::Bool(false)),
+            ty: Type::Bool,
+            prov: self.prov(b.id, 0),
+        };
+        let mut any = false;
+        if let Some(srcs) = incoming.get(&b.id) {
+            for p in srcs {
+                if let Some(e) = self.src_expr(p, net, &blocks_map) {
+                    fin = Expr {
+                        kind: ExprKind::Bin(BinOp::Or, Box::new(fin), Box::new(e)),
+                        ty: Type::Bool,
+                        prov: self.prov(b.id, 0),
+                    };
+                    any = true;
                 }
             }
-            if !any {
-                self.warn(
-                    codes::ORPHAN,
-                    format!("ladder coil {} has no incoming flow", b.id),
-                    b.id,
-                );
-            }
-            if !b.negated.is_empty() {
-                rhs = Expr {
-                    kind: ExprKind::Un(UnOp::Not, Box::new(rhs)),
+        }
+        match b.role {
+            Some(VarRole::In) => {
+                // contact: rail-powered (no inputs) → flow TRUE
+                if !any {
+                    fin = Expr {
+                        kind: ExprKind::Lit(Lit::Bool(true)),
+                        ty: Type::Bool,
+                        prov: self.prov(b.id, 0),
+                    };
+                }
+                let Some(r) = self.var_ref(b) else { return };
+                let mut val = Expr {
+                    kind: ExprKind::Ref(r),
                     ty: Type::Bool,
                     prov: self.prov(b.id, 0),
                 };
+                if !b.negated.is_empty() {
+                    val = Expr {
+                        kind: ExprKind::Un(UnOp::Not, Box::new(val)),
+                        ty: Type::Bool,
+                        prov: self.prov(b.id, 0),
+                    };
+                }
+                let gated = Expr {
+                    kind: ExprKind::Bin(BinOp::And, Box::new(val), Box::new(fin)),
+                    ty: Type::Bool,
+                    prov: self.prov(b.id, 0),
+                };
+                self.ld_gated.insert(b.id, gated);
             }
-            stmts.push(Stmt {
-                kind: StmtKind::Assign { lhs, rhs },
-                prov: self.prov(b.id, 0),
-            });
+            Some(VarRole::Out) | Some(VarRole::InOut) => {
+                if !any {
+                    self.warn(
+                        codes::ORPHAN,
+                        format!("ladder coil {} has no incoming flow", b.id),
+                        b.id,
+                    );
+                }
+                if !b.negated.is_empty() {
+                    fin = Expr {
+                        kind: ExprKind::Un(UnOp::Not, Box::new(fin)),
+                        ty: Type::Bool,
+                        prov: self.prov(b.id, 0),
+                    };
+                }
+                if let Some(lhs) = self.var_ref(b) {
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign { lhs, rhs: fin.clone() },
+                        prov: self.prov(b.id, 0),
+                    });
+                }
+                // downstream readers see the written value
+                self.ld_gated.insert(b.id, fin);
+            }
+            _ => {}
         }
     }
 
@@ -1740,6 +1809,15 @@ impl<'a> Cx<'a> {
         let b = blocks.get(&pref.block).copied()?;
         match b.kind {
             BlockKind::Variable => {
+                // ladder wire topology: contacts/coils carry gated
+                // flow, not the raw variable — lower_ladder_wired
+                // populates ld_gated in topo order before consumers
+                // resolve. Unwired blocks fall back to the raw ref.
+                if net.kind == NetworkKind::Ladder {
+                    if let Some(g) = self.ld_gated.get(&b.id) {
+                        return Some(g.clone());
+                    }
+                }
                 let r = self.var_ref(b)?;
                 let ty = self.ref_ty(&r);
                 Some(Expr {

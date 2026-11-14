@@ -20,10 +20,19 @@ Status: as-built for `compiler/fbd-model`.
   `kind` is `fbd|ladder`; ladder networks lower positionally —
   y-bands are rungs, x-order is the series chain, contacts (NO/NC)
   AND into the flow and coils latch it (see `lower_ladder`).
+  Wired bands instead evaluate as a signal graph: variable blocks
+  are power-flow gates (`var [NOT] AND flow-in`, OR-merged, coils
+  latch) while `fb`/`function`/`operator`/`device` blocks lower via
+  the FBD machinery (`dst_input`/`src_expr`/`emit_block`) in wire
+  topo order.
 - `Block` covers `fb | function | operator | variable | jump_target |
-  st | device`; variable blocks carry `role/name/at`, `st` blocks carry
-  `pins` + `params.CODE`, and `device` blocks carry `pins` channel
-  declarations. `PortSel` = index or pin name.
+  st | device`; variable blocks carry `role/name/at/flow`, `st`
+  blocks carry `pins` + `params.CODE`, and `device` blocks carry
+  `pins` channel declarations. `PortSel` = index or pin name.
+  `flow: data` marks PLCopen `inVariable`/`outVariable`/
+  `inOutVariable` elements inside ladder bodies — typed data taps
+  lowered exactly like FBD variable blocks (no rung gating);
+  absent `flow` keeps contact/coil power semantics.
   `pos` is integer grid units — canvas floats are render-layer only
   (§4.2 determinism).
 - `device` blocks model fieldbus terminals (e.g. Beckhoff EK modules):
@@ -72,13 +81,16 @@ this file.
   extras (AT/init/retain) keep the decl. Elements with no `localId`
   get allocator ids (foreign `localId`s also advance the allocator so
   auto ids can't collide). `<LD>` bodies import as `ladder` networks:
-  `<contact>`/`<coil>` become variable blocks (`negated` → NC,
-  `<variable>`/`<expression>` → name or `%addr`, `<position>` → row),
-  `connectionPointIn` links become wires, and power-rail sources are
-  dropped so rail-fed elements evaluate rail-powered. `storage`/`edge`
-  attributes (SET/RST coils, transition contacts) surface notes —
-  the flow model supports `none` only. Non-FBD bodies
-  (`<SFC>/<ST>`) report notes, not silent drops.
+  `<contact>`/`<coil>` become power-flow variable blocks (`negated`
+  → NC, `<variable>`/`<expression>` → name or `%addr`, `<position>` →
+  row), `inVariable`/`outVariable`/`inOutVariable` become `flow:data`
+  taps, `<block>` elements import like FBD blocks, `connectionPointIn`
+  links become wires, and power-rail sources are dropped so rail-fed
+  elements evaluate rail-powered. `storage`/`edge` attributes
+  (SET/RST coils, transition contacts) surface notes — the flow model
+  supports `none` only. Non-FBD bodies (`<SFC>/<ST>`) report notes,
+  not silent drops. Export is symmetric: ladder power elements emit
+  as `<contact>`/`<coil>`, data taps as `in/out/inOutVariable`.
 - `cargo run -p plcopen-io --example xml2json -- in.xml out.fbd.json`
   converts a TC6 project to the WebUI `.fbd.json` format (notes →
   stderr); `tests/ld/e2e.sh` uses it to prove imported `<LD>` bodies

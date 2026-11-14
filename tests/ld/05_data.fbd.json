@@ -1,0 +1,45 @@
+{
+  "schema": "fbd.v1",
+  "project": "ld05_data",
+  "data_types": [],
+  "global_vars": [],
+  "tasks": [{"name": "MainTask", "period_ns": 10000000, "programs": ["P05_LD_DATA"], "priority": 0}],
+  "pous": [
+    {
+      "id": "p1",
+      "name": "P05_LD_DATA",
+      "kind": "program",
+      "en_eno": "relaxed",
+      "interface": [],
+      "networks": [
+        {
+          "id": "n1",
+          "kind": "ladder",
+          "label": "data",
+          "comments": [],
+          "assocs": [],
+          "labels": [],
+          "jumps": [],
+          "returns": [],
+          "blocks": [
+            {"id": 1, "kind": "variable", "type_ref": "", "pos": {"x": 10, "y": 10}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "in", "flow": "data", "name": "a", "at": "%IX0.0"},
+            {"id": 2, "kind": "variable", "type_ref": "", "pos": {"x": 10, "y": 50}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "in", "flow": "data", "name": "b", "at": "%IX0.1"},
+            {"id": 3, "kind": "variable", "type_ref": "", "pos": {"x": 10, "y": 90}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "in", "flow": "data", "name": "c", "at": "%IX0.2"},
+            {"id": 4, "kind": "variable", "type_ref": "", "pos": {"x": 250, "y": 30}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "in_out", "flow": "data", "name": "t", "at": "%MX0.0"},
+            {"id": 5, "kind": "variable", "type_ref": "", "pos": {"x": 450, "y": 60}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "out", "flow": "data", "name": "y", "at": "%QX0.0"},
+            {"id": 6, "kind": "operator", "type_ref": "AND", "pos": {"x": 120, "y": 20}, "params": {}, "exec_order": 0, "negated": [], "comment": ""},
+            {"id": 7, "kind": "operator", "type_ref": "OR", "pos": {"x": 330, "y": 55}, "params": {}, "exec_order": 0, "negated": [], "comment": ""}
+          ],
+          "wires": [
+            {"id": 10, "src": {"block": 1, "port": 0}, "dsts": [{"block": 6, "port": 0}]},
+            {"id": 11, "src": {"block": 2, "port": 0}, "dsts": [{"block": 6, "port": 1}]},
+            {"id": 12, "src": {"block": 6, "port": 0}, "dsts": [{"block": 4, "port": 0}]},
+            {"id": 13, "src": {"block": 4, "port": 0}, "dsts": [{"block": 7, "port": 0}]},
+            {"id": 14, "src": {"block": 3, "port": 0}, "dsts": [{"block": 7, "port": 1}]},
+            {"id": 15, "src": {"block": 7, "port": 0}, "dsts": [{"block": 5, "port": 0}]}
+          ]
+        }
+      ]
+    }
+  ]
+}

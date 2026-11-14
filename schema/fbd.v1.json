@@ -81,6 +81,17 @@
           "format": "uint32",
           "minimum": 0.0
         },
+        "flow": {
+          "description": "ladder-only flow class — see `VarFlow`. Ignored in FBD nets.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VarFlow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "id": {
           "type": "integer",
           "format": "uint64",
@@ -112,10 +123,17 @@
           }
         },
         "params": {
-          "description": "literal/customized parameters keyed by pin name (\"PT\":\"T#200ms\").",
+          "description": "literal/customized parameters keyed by pin name (\"PT\":\"T#200ms\"). For `st` blocks, `params[\"CODE\"]` holds the ST statement body.",
           "type": "object",
           "additionalProperties": {
             "type": "string"
+          }
+        },
+        "pins": {
+          "description": "typed pin declarations for `st` blocks (VarInput/VarOutput entries become the generated FB's interface).",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IfaceVar"
           }
         },
         "pos": {
@@ -146,13 +164,31 @@
       }
     },
     "BlockKind": {
-      "type": "string",
-      "enum": [
-        "fb",
-        "function",
-        "operator",
-        "variable",
-        "jump_target"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "fb",
+            "function",
+            "operator",
+            "variable",
+            "jump_target"
+          ]
+        },
+        {
+          "description": "Inline Structured-Text block: `pins` declares typed VAR_INPUT/VAR_OUTPUT pins, `params[\"CODE\"]` holds the ST body. `tplcc` expands each ST block into a generated FUNCTION_BLOCK (`__fbd_st_*`) compiled with the project's ST sources; the FBD network then calls it like any other FB.",
+          "type": "string",
+          "enum": [
+            "st"
+          ]
+        },
+        {
+          "description": "I/O device block (fieldbus terminal, e.g. a Beckhoff EK remote I/O station). `type_ref` names the device, `pins` declares the channels: var_output pins are device→logic outputs (block out pins), var_input pins are logic→device inputs (block in pins). Every pin carries an `at` process-image binding (`%I`/`%Q`/`%M`) so each channel aliases a located var — wires on the pins read and write the image directly, no call is emitted.",
+          "type": "string",
+          "enum": [
+            "device"
+          ]
+        }
       ]
     },
     "Comment": {
@@ -470,6 +506,13 @@
           "items": {
             "$ref": "#/definitions/Network"
           }
+        },
+        "ret_ty": {
+          "description": "FUNCTION return type (IEC type expression, e.g. \"LREAL\"). Required for `kind == \"function\"` POUs to carry a value back to callers; ignored for program/function_block.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -534,6 +577,13 @@
           }
         }
       }
+    },
+    "VarFlow": {
+      "description": "How a variable block participates in ladder-rung wires. Absent = power flow (IEC `<contact>`/`<coil>`): the block gates BOOL rung flow. `Data` = PLCopen `inVariable`/`outVariable`/ `inOutVariable` element: a typed data tap lowered exactly like an FBD variable block — no gating, wires carry values.",
+      "type": "string",
+      "enum": [
+        "data"
+      ]
     },
     "VarRole": {
       "type": "string",

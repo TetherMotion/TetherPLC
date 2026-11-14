@@ -1,0 +1,41 @@
+{
+  "schema": "fbd.v1",
+  "project": "ld04_fb_op",
+  "data_types": [],
+  "global_vars": [],
+  "tasks": [{"name": "MainTask", "period_ns": 10000000, "programs": ["P04_LD_FB_OP"], "priority": 0}],
+  "pous": [
+    {
+      "id": "p1",
+      "name": "P04_LD_FB_OP",
+      "kind": "program",
+      "en_eno": "relaxed",
+      "interface": [],
+      "networks": [
+        {
+          "id": "n1",
+          "kind": "ladder",
+          "label": "main",
+          "comments": [],
+          "assocs": [],
+          "labels": [],
+          "jumps": [],
+          "returns": [],
+          "blocks": [
+            {"id": 1, "kind": "variable", "type_ref": "", "pos": {"x": 10, "y": 10}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "in", "name": "start_in", "at": "%IX0.0"},
+            {"id": 2, "kind": "fb", "type_ref": "TON", "instance": "ton1", "pos": {"x": 200, "y": 10}, "params": {"PT": "T#200ms"}, "exec_order": 0, "negated": [], "comment": ""},
+            {"id": 3, "kind": "variable", "type_ref": "", "pos": {"x": 10, "y": 70}, "params": {}, "exec_order": 0, "negated": [0], "comment": "", "role": "in", "name": "stop_in", "at": "%IX0.1"},
+            {"id": 4, "kind": "operator", "type_ref": "AND", "pos": {"x": 350, "y": 40}, "params": {}, "exec_order": 0, "negated": [], "comment": ""},
+            {"id": 5, "kind": "variable", "type_ref": "", "pos": {"x": 500, "y": 40}, "params": {}, "exec_order": 0, "negated": [], "comment": "", "role": "out", "name": "run", "at": "%QX0.0"}
+          ],
+          "wires": [
+            {"id": 10, "src": {"block": 1, "port": 0}, "dsts": [{"block": 2, "port": 0}]},
+            {"id": 11, "src": {"block": 2, "port": "Q"}, "dsts": [{"block": 4, "port": 0}]},
+            {"id": 12, "src": {"block": 3, "port": 0}, "dsts": [{"block": 4, "port": 1}]},
+            {"id": 13, "src": {"block": 4, "port": 0}, "dsts": [{"block": 5, "port": 0}]}
+          ]
+        }
+      ]
+    }
+  ]
+}

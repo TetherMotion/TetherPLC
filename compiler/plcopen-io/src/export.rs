@@ -329,7 +329,7 @@ fn export_block(
     losses: &mut Vec<LossNote>,
 ) {
     match b.kind {
-        BlockKind::Variable => export_var_block(x, b, by_dst, mode, losses),
+        BlockKind::Variable => export_var_block(x, net, b, by_dst, mode, losses),
         BlockKind::JumpTarget => {
             if let Some(n) = &b.name {
                 x.open(
@@ -349,16 +349,29 @@ fn export_block(
 
 fn export_var_block(
     x: &mut Xml,
+    net: &Network,
     b: &Block,
     by_dst: &WireIndex,
     mode: ExportMode,
     losses: &mut Vec<LossNote>,
 ) {
     let role = b.role.unwrap_or(VarRole::In);
-    let tag = match role {
-        VarRole::In => "inVariable",
-        VarRole::Out => "outVariable",
-        VarRole::InOut => "inOutVariable",
+    // ladder power elements (contacts/coils) export as IEC LD
+    // elements; data taps (flow=data) and all FBD vars keep the
+    // in/out/inOutVariable form
+    let power = net.kind == NetworkKind::Ladder
+        && b.flow != Some(VarFlow::Data);
+    let tag = if power {
+        match role {
+            VarRole::In => "contact",
+            _ => "coil",
+        }
+    } else {
+        match role {
+            VarRole::In => "inVariable",
+            VarRole::Out => "outVariable",
+            VarRole::InOut => "inOutVariable",
+        }
     };
     let name_expr =
         b.at.clone()
@@ -407,17 +420,30 @@ fn export_var_block(
         }
         x.close("connectionPointIn");
     }
-    if role != VarRole::Out {
-        x.open("connectionPointOut", &[]);
-        x.open("expression", &[]);
+    if power {
+        // IEC LD elements reference their variable in a <variable>
+        // child; contacts keep an (empty) out connection-point
+        // marker, coils have none
+        if role != VarRole::Out {
+            x.open("connectionPointOut", &[]);
+            x.close("connectionPointOut");
+        }
+        x.open("variable", &[]);
         x.text(&esc(&name_expr));
-        x.close("expression");
-        x.close("connectionPointOut");
-    }
-    if role == VarRole::Out {
-        x.open("expression", &[]);
-        x.text(&esc(&name_expr));
-        x.close("expression");
+        x.close("variable");
+    } else {
+        if role != VarRole::Out {
+            x.open("connectionPointOut", &[]);
+            x.open("expression", &[]);
+            x.text(&esc(&name_expr));
+            x.close("expression");
+            x.close("connectionPointOut");
+        }
+        if role == VarRole::Out {
+            x.open("expression", &[]);
+            x.text(&esc(&name_expr));
+            x.close("expression");
+        }
     }
     x.close(tag);
 }

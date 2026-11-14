@@ -21,6 +21,7 @@ fn var_block(id: u64, role: VarRole, name: &str, at: Option<&str>, x: u32, y: u3
         negated: vec![],
         comment: String::new(),
         role: Some(role),
+        flow: None,
         name: Some(name.into()),
         at: at.map(|s| s.into()),
     }
@@ -45,6 +46,7 @@ fn op_block(id: u64, op: &str, x: u32, y: u32) -> Block {
         negated: vec![],
         comment: String::new(),
         role: None,
+        flow: None,
         name: None,
         at: None,
     }
@@ -66,6 +68,7 @@ fn fb_block(id: u64, ty: &str, inst: &str, params: &[(&str, &str)], x: u32, y: u
         negated: vec![],
         comment: String::new(),
         role: None,
+        flow: None,
         name: None,
         at: None,
     }
