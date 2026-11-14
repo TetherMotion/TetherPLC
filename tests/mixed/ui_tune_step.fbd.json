@@ -156,7 +156,9 @@
         "y": 2
        },
        "params": {
-        "CycleTime": "0.1"
+        "CycleTime": "0.1",
+        "OutMin": "0.0",
+        "OutMax": "100.0"
        },
        "exec_order": 0,
        "negated": [],
@@ -689,6 +691,21 @@
        "comment": "",
        "role": "out",
        "name": "TuneOut"
+      },
+      {
+       "id": 149,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 8,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "Sp"
       }
      ],
      "wires": [
@@ -1066,6 +1083,45 @@
         {
          "block": 92,
          "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 147,
+       "src": {
+        "block": 139,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 148,
+       "src": {
+        "block": 141,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Actual"
+        }
+       ]
+      },
+      {
+       "id": 150,
+       "src": {
+        "block": 149,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Setpoint"
         }
        ]
       }

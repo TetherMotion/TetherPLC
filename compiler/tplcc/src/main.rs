@@ -3059,6 +3059,7 @@ END_PROGRAM
         rt.write_field(&q("TuneApply"), &Value::Bool(false));
         rt.write_field(&q("TuneReset"), &Value::Bool(false));
         rt.write_field(&q("Pv"), &Value::F(50.0));
+        rt.write_field(&q("Sp"), &Value::F(80.0));
 
         // DARE solves within a few scans (t06 converges by cycle 2)
         for _ in 0..8 {
@@ -3095,6 +3096,14 @@ END_PROGRAM
             f(member(&mut rt, "pid", "K2")) != 0.0 || f(member(&mut rt, "pid", "Ki")) != 0.0,
             "pid K2/Ki should carry tuned gains"
         );
+        // the wired controller runs: SP/PV error winds the loop and Out
+        // leaves zero — only possible because the editor propagated the
+        // plant A/B matrices + OutMin/OutMax onto the pid block
+        for _ in 0..40 {
+            rt.exec_all(&ctx, &stmts);
+        }
+        let out = f(read(&rt, &layout, "Main", "Out"));
+        assert!(out != 0.0, "pid.Out should be driven by the tuned loop");
         // apply latch semantics (applied flag, RESET unlatch) are
         // covered pure-ST by tests/tempctrl/cases/t13_handoff.st
     }

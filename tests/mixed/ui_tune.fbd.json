@@ -126,7 +126,9 @@
         "y": 2
        },
        "params": {
-        "CycleTime": "0.1"
+        "CycleTime": "0.1",
+        "OutMin": "0.0",
+        "OutMax": "100.0"
        },
        "exec_order": 0,
        "negated": [],
@@ -765,6 +767,45 @@
         {
          "block": 128,
          "port": 0
+        }
+       ]
+      },
+      {
+       "id": 130,
+       "src": {
+        "block": 121,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 131,
+       "src": {
+        "block": 123,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Actual"
+        }
+       ]
+      },
+      {
+       "id": 132,
+       "src": {
+        "block": 125,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Setpoint"
         }
        ]
       }

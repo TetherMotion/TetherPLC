@@ -136,7 +136,15 @@
         "y": 2
        },
        "params": {
-        "CycleTime": "0.1"
+        "CycleTime": "0.1",
+        "OutMin": "0.0",
+        "OutMax": "100.0",
+        "A11": "0.98",
+        "A12": "0.0",
+        "A21": "0.05",
+        "A22": "0.95",
+        "B1": "0.5",
+        "B2": "0.1"
        },
        "exec_order": 0,
        "negated": [],
@@ -590,6 +598,51 @@
        "comment": "",
        "role": "in",
        "name": "TuneRun"
+      },
+      {
+       "id": 134,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 4,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "Pv"
+      },
+      {
+       "id": 136,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 8,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "Sp"
+      },
+      {
+       "id": 138,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 40,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "Out"
       }
      ],
      "wires": [
@@ -850,6 +903,58 @@
         {
          "block": 92,
          "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 133,
+       "src": {
+        "block": 130,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 135,
+       "src": {
+        "block": 134,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Actual"
+        }
+       ]
+      },
+      {
+       "id": 137,
+       "src": {
+        "block": 136,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 90,
+         "port": "Setpoint"
+        }
+       ]
+      },
+      {
+       "id": 139,
+       "src": {
+        "block": 90,
+        "port": "Out"
+       },
+       "dsts": [
+        {
+         "block": 138,
+         "port": 0
         }
        ]
       }
