@@ -1029,3 +1029,94 @@ END_VAR
     b1Last := Btn1;
     b2Last := Btn2;
 END_FUNCTION_BLOCK
+
+// ---- FB_AtcShift: schedule-based shift timer --------------------------
+// Three shifts defined by start/end times-of-day in seconds [0,86400).
+// END <= START wraps midnight (night shift). TOD is supplied by the
+// caller (HMI, clock FB, or accumulated CycleTime) — the block is
+// wall-clock agnostic and fully deterministic.
+// Outputs: Shift (0=off,1..3), InShift, ShiftStart/ShiftEnd pulses,
+// Elapsed s into shift, Remaining s to shift end.
+// ShiftStart is the hook for per-shift counter resets / OEE rollovers.
+FUNCTION_BLOCK FB_AtcShift
+VAR_INPUT
+    TOD : LREAL;          // s since local midnight [0,86400)
+    Enable : BOOL;
+    S1Start : LREAL; S1End : LREAL;
+    S2Start : LREAL; S2End : LREAL;
+    S3Start : LREAL; S3End : LREAL;
+END_VAR
+VAR_OUTPUT
+    Shift : INT;          // 0 = between shifts, 1..3
+    InShift : BOOL;
+    ShiftStart : BOOL;    // pulse: entered a shift this scan
+    ShiftEnd : BOOL;      // pulse: left a shift this scan
+    Elapsed : LREAL;      // s since shift start (TOD domain)
+    Remaining : LREAL;    // s until shift end
+END_VAR
+VAR
+    lastShift : INT;
+    wrk : LREAL;
+    shStart : LREAL;
+    shEnd : LREAL;
+END_VAR
+    ShiftStart := FALSE;
+    ShiftEnd := FALSE;
+    IF NOT Enable THEN
+        Shift := 0; InShift := FALSE; Elapsed := 0.0; Remaining := 0.0;
+        lastShift := 0;
+        RETURN;
+    END_IF;
+    // normalize TOD into [0,86400)
+    wrk := TOD;
+    WHILE wrk < 0.0 DO wrk := wrk + 86400.0; END_WHILE
+    WHILE wrk >= 86400.0 DO wrk := wrk - 86400.0; END_WHILE
+    // find active shift: END < START wraps midnight; END = START disables
+    Shift := 0; shStart := 0.0; shEnd := 0.0;
+    // shift 1
+    IF S1End > S1Start THEN
+        IF wrk >= S1Start AND wrk < S1End THEN
+            Shift := 1; shStart := S1Start; shEnd := S1End;
+        END_IF;
+    ELSIF S1End < S1Start THEN
+        IF wrk >= S1Start OR wrk < S1End THEN
+            Shift := 1; shStart := S1Start; shEnd := S1End;
+        END_IF;
+    END_IF;
+    // shift 2
+    IF Shift = 0 AND S2End > S2Start THEN
+        IF wrk >= S2Start AND wrk < S2End THEN
+            Shift := 2; shStart := S2Start; shEnd := S2End;
+        END_IF;
+    ELSIF Shift = 0 AND S2End < S2Start THEN
+        IF wrk >= S2Start OR wrk < S2End THEN
+            Shift := 2; shStart := S2Start; shEnd := S2End;
+        END_IF;
+    END_IF;
+    // shift 3
+    IF Shift = 0 AND S3End > S3Start THEN
+        IF wrk >= S3Start AND wrk < S3End THEN
+            Shift := 3; shStart := S3Start; shEnd := S3End;
+        END_IF;
+    ELSIF Shift = 0 AND S3End < S3Start THEN
+        IF wrk >= S3Start OR wrk < S3End THEN
+            Shift := 3; shStart := S3Start; shEnd := S3End;
+        END_IF;
+    END_IF;
+    InShift := Shift > 0;
+    // elapsed/remaining in shift-local time (handles wrap)
+    IF InShift THEN
+        Elapsed := wrk - shStart;
+        IF Elapsed < 0.0 THEN Elapsed := Elapsed + 86400.0; END_IF;
+        Remaining := shEnd - wrk;
+        IF Remaining <= 0.0 THEN Remaining := Remaining + 86400.0; END_IF;
+    ELSE
+        Elapsed := 0.0; Remaining := 0.0;
+    END_IF;
+    // edge detect vs last scan — also fires on TOD jumps
+    IF Shift <> lastShift THEN
+        IF Shift > 0 THEN ShiftStart := TRUE;
+        ELSE ShiftEnd := TRUE; END_IF;
+    END_IF;
+    lastShift := Shift;
+END_FUNCTION_BLOCK

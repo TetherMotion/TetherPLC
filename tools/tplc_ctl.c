@@ -291,6 +291,7 @@ int main(int argc, char** argv) {
     const char* arg = argc > 3 ? argv[3] : NULL;
 
     uint16_t op = 0;
+    int csv_mode = 0;
     uint8_t pre[64 * 1024]; uint32_t pre_len = 0;
     if      (!strcmp(cmd, "ping"))     op = TPLC_OP_PING;
     else if (!strcmp(cmd, "status"))   op = TPLC_OP_RT_STATUS;
@@ -772,6 +773,44 @@ int main(int argc, char** argv) {
         uint32_t id = (uint32_t)strtoul(arg, NULL, 0);
         memcpy(pre, &id, 4);
         pre_len = 4;
+    }
+    else if (!strcmp(cmd, "hist")) {
+        /* hist NAME [NAME...]: arm flight-recorder channels by
+           symbol path (len 0 = natural width ≤8)                 */
+        int nch = argc - 3;
+        if (nch < 1 || nch > 8) {
+            fprintf(stderr, "hist needs 1..8 symbol names\n");
+            return 2;
+        }
+        op = TPLC_OP_HIST_CONF;
+        memset(pre, 0, 8 + 8 * (2 + 127 + 8));
+        uint32_t cnt = (uint32_t)nch;
+        memcpy(pre, &cnt, 4);
+        uint8_t* q = pre + 4;
+        for (int i = 0; i < nch; i++) {
+            const char* nm = argv[3 + i];
+            size_t nl = strlen(nm);
+            if (!nl || nl > 127) {
+                fprintf(stderr, "bad name %s\n", nm); return 2;
+            }
+            uint16_t n16 = (uint16_t)nl;
+            memcpy(q, &n16, 2); q += 2;
+            memcpy(q, nm, nl); q += nl;
+            memset(q, 0, 8); q += 8;   /* len=0 natural, pad */
+        }
+        pre_len = (uint32_t)(q - pre);
+    }
+    else if (!strcmp(cmd, "hist-list")) op = TPLC_OP_HIST_LIST;
+    else if (!strcmp(cmd, "trace-csv")) {
+        /* trace-csv [FROM] [MAX]: dump frames as CSV —
+           seq,ts_ns,ch0..chN hex bytes                          */
+        op = TPLC_OP_TRACE_READ;
+        csv_mode = 1;
+        uint64_t from = arg ? strtoull(arg, NULL, 0) : 0;
+        uint32_t mx = (argc > 4) ? (uint32_t)strtoul(argv[4], NULL, 0)
+                                 : 512;
+        memcpy(pre, &from, 8); memcpy(pre + 8, &mx, 4);
+        pre_len = 12;
     }
     else if (!strcmp(cmd, "events")) {
         /* events [SEC]: subscribe to all event cats and dump frames
@@ -1300,18 +1339,65 @@ int main(int argc, char** argv) {
             uint64_t first; uint32_t n, fl;
             memcpy(&first, q, 8); memcpy(&n, q + 8, 4);
             memcpy(&fl, q + 12, 4); q += 16;
-            printf("first seq %lu  frames %u  frame %u B\n",
-                   (unsigned long)first, n, fl);
+            if (csv_mode) {
+                printf("seq,ts_ns");
+                for (uint32_t c = 0; c < fl; c++)
+                    printf(",ch%u_b%u", c / 8, c % 8);
+                printf("\n");
+            } else {
+                printf("first seq %lu  frames %u  frame %u B\n",
+                       (unsigned long)first, n, fl);
+            }
             for (uint32_t i = 0; i < n; i++) {
                 uint64_t s, ts;
                 memcpy(&s, q, 8); memcpy(&ts, q + 8, 8);
                 q += 16;
-                printf("  #%lu t=%lu  ", (unsigned long)s,
-                       (unsigned long)ts);
-                for (uint32_t b = 0; b < fl; b++)
-                    printf("%02x", q[b]);
+                if (csv_mode) {
+                    printf("%lu,%lu", (unsigned long)s,
+                           (unsigned long)ts);
+                    for (uint32_t b = 0; b < fl; b++)
+                        printf(",%02x", q[b]);
+                    printf("\n");
+                } else {
+                    printf("  #%lu t=%lu  ", (unsigned long)s,
+                           (unsigned long)ts);
+                    for (uint32_t b = 0; b < fl; b++)
+                        printf("%02x", q[b]);
+                    printf("\n");
+                }
                 q += fl;
-                printf("\n");
+            }
+        }
+    }
+    else if (op == TPLC_OP_HIST_CONF) {
+        if (len >= 4) {
+            uint32_t tot; memcpy(&tot, pl, 4);
+            printf("hist armed: %u B frame\n", tot);
+        }
+    }
+    else if (op == TPLC_OP_HIST_LIST) {
+        if (len < 4) { puts("(short payload)"); }
+        else {
+            const uint8_t* q = pl;
+            uint32_t n; memcpy(&n, q, 4); q += 4;
+            printf("channels %u\n", n);
+            for (uint32_t i = 0; i < n; i++) {
+                if ((size_t)(pl + len - q) < 2) break;
+                uint16_t nl = q[0] | (q[1] << 8); q += 2;
+                if ((size_t)(pl + len - q) < nl + 12) break;
+                printf("  %-24.*s off=%llu len=%u\n", nl,
+                       (const char*)q,
+                       (unsigned long long)(q[nl] |
+                           ((unsigned long long)q[nl+1] << 8) |
+                           ((unsigned long long)q[nl+2] << 16) |
+                           ((unsigned long long)q[nl+3] << 24) |
+                           ((unsigned long long)q[nl+4] << 32) |
+                           ((unsigned long long)q[nl+5] << 40) |
+                           ((unsigned long long)q[nl+6] << 48) |
+                           ((unsigned long long)q[nl+7] << 56)),
+                       q[nl+8] | (q[nl+9] << 8) |
+                       (q[nl+10] << 16) | (q[nl+11] << 24));
+                q += nl + 12;
             }
         }
     }

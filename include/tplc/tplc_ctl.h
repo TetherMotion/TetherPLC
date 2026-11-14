@@ -202,6 +202,13 @@ enum TplcCtlOp {
     TPLC_OP_EVTLOG_STATS   = 0x0F03,
     TPLC_OP_EVTLOG_HISTORY = 0x0F04,
     TPLC_OP_EVTLOG_CONFIRM = 0x0F05,
+    /* historian 0x0F10: named trace channels. HIST_CONF arms the
+       flight-recorder ring with symbol paths resolved through the
+       symmap ({u32 n, {u16 nlen, name, u32 len, u32 pad}*}, len ≤8,
+       frame ≤64B total); HIST_LIST → {u32 n, {name, off, len}*};
+       frames themselves come back via TRACE_READ.               */
+    TPLC_OP_HIST_CONF      = 0x0F10,
+    TPLC_OP_HIST_LIST      = 0x0F11,
     /* events 0x0E00 */
     TPLC_EV_PROG_TRANSITION = 0x0E01,
     TPLC_EV_FAULT           = 0x0E02,

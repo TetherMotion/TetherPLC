@@ -116,12 +116,14 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_OD_LIST:
     case TPLC_OP_EVTLOG_LIST:    case TPLC_OP_EVTLOG_QUERY:
     case TPLC_OP_EVTLOG_STATS:   case TPLC_OP_EVTLOG_HISTORY:
+    case TPLC_OP_HIST_LIST:
         return tplc::TPLC_ROLE_OBSERVER;
     case TPLC_OP_DBG_WATCH_ADD:
     case TPLC_OP_DBG_WATCH_STREAM:
     case TPLC_OP_DBG_WATCH_REMOVE:
     /* eventlog confirm = HMI alarm acknowledge: engineer floor   */
     case TPLC_OP_EVTLOG_CONFIRM:
+    case TPLC_OP_HIST_CONF:
     /* OD_WRITE is a generic write channel: each object declares its
        own floor, enforced in the handler (MGMT_AUTHZ)             */
     case TPLC_OP_OD_WRITE:
@@ -811,6 +813,9 @@ int main(int argc, char** argv) {
     struct TraceCh { uint64_t off; uint32_t len; };
     struct TraceFrame { uint64_t seq; uint64_t ts; uint8_t data[64]; };
     std::vector<TraceCh>             trace_ch;
+    /* HIST_CONF channel names (parallel to trace_ch; empty for
+       offset-armed TRACE_CONF channels)                          */
+    std::vector<std::string>         hist_names;
     std::vector<TraceFrame>          trace_ring;
     uint64_t                         trace_wr = 0;  /* frames written */
     uint32_t                         trace_flags = 0;
@@ -1019,6 +1024,7 @@ int main(int argc, char** argv) {
         breaks.clear();
         next_break_h = 1;
         trace_ch.clear();
+        hist_names.clear();
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = 0;
@@ -1111,6 +1117,7 @@ int main(int argc, char** argv) {
         drop_all_shadows("rollback");  /* candidate is stale post-rollback */
         forces.clear();   /* blob identity changed — forces stale */
         trace_ch.clear();
+        hist_names.clear();
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = 0;
@@ -2381,6 +2388,7 @@ int main(int argc, char** argv) {
         drop_all_shadows("swap");   /* candidate is stale post-swap    */
         forces.clear();   /* new blob layout — overrides are stale */
         trace_ch.clear();
+        hist_names.clear();
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = 0;
@@ -2896,6 +2904,7 @@ int main(int argc, char** argv) {
         }
         forces.clear();   /* new program state — overrides stale */
         trace_ch.clear();
+        hist_names.clear();
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = 0;
@@ -4283,6 +4292,7 @@ int main(int argc, char** argv) {
             chs.push_back({off, len});
         }
         trace_ch = std::move(chs);
+        hist_names.clear();      /* offset channels carry no names */
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = flags;
@@ -4351,12 +4361,113 @@ int main(int argc, char** argv) {
             return;
         }
         trace_ch.clear();
+        hist_names.clear();
         trace_ring.clear();
         trace_wr = 0;
         trace_flags = 0;
         trace_frozen = false;
         audit(fd, "trace.clear", "");
         ctl.replyEmpty(fd, t, req);
+    });
+
+    /* historian (0x0F10): HIST_CONF arms the flight-recorder ring
+       with named symbol channels — same storage/sampling as
+       TRACE_CONF but resolved through the symmap so clients speak
+       `pv`/`temp.sp` instead of blob offsets. Payload:
+       {u32 n, {u16 nlen, name[nlen], u32 len, u32 pad}*} — len 0
+       takes the symbol's natural width (≤8 enforced).            */
+    ctl.on(TPLC_OP_HIST_CONF, [&](int fd, uint16_t t,
+                                  const uint8_t* p, uint32_t n,
+                                  uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n < 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 n, entries}", req);
+            return;
+        }
+        uint32_t cnt; memcpy(&cnt, p, 4);
+        if (cnt > MAX_TRACE_CH) {
+            ctl.errorReply(fd, t, TPLC_E_TRACE_CONFIG,
+                           "too many channels", req);
+            return;
+        }
+        const uint8_t* q = p + 4;
+        const uint8_t* end = p + n;
+        std::vector<TraceCh> chs;
+        std::vector<std::string> names;
+        uint32_t total = 0;
+        for (uint32_t i = 0; i < cnt; i++) {
+            if (end - q < 2) {
+                ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                               "truncated entry", req);
+                return;
+            }
+            uint16_t nl; memcpy(&nl, q, 2); q += 2;
+            if (nl == 0 || end - q < nl + 8) {
+                ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                               "bad name/len", req);
+                return;
+            }
+            std::string nm((const char*)q, nl); q += nl;
+            uint32_t want, pad;
+            memcpy(&want, q, 4); memcpy(&pad, q + 4, 4); q += 8;
+            uint64_t off; uint32_t slen;
+            if (!smap_find(nm, &off, &slen)) {
+                ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                               ("unknown symbol: " + nm).c_str(),
+                               req);
+                return;
+            }
+            uint32_t len = want ? want : slen;
+            if (len == 0 || len > 8 || len > slen ||
+                off > prog->blobSize() ||
+                len > prog->blobSize() - off) {
+                ctl.errorReply(fd, t, TPLC_E_TRACE_CONFIG,
+                               ("bad width for " + nm).c_str(), req);
+                return;
+            }
+            total += len;
+            if (total > 64) {
+                ctl.errorReply(fd, t, TPLC_E_TRACE_CONFIG,
+                               "frame > 64B", req);
+                return;
+            }
+            chs.push_back({off, len});
+            names.push_back(std::move(nm));
+        }
+        if (end - q != 0) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "trailing bytes", req);
+            return;
+        }
+        trace_ch = std::move(chs);
+        hist_names = std::move(names);
+        trace_ring.clear();
+        trace_wr = 0;
+        trace_flags = 0;
+        trace_frozen = false;
+        audit(fd, "hist.conf", "ch=" + std::to_string(cnt));
+        tplc::CtlServer::W w;
+        w.u32(total);
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+    ctl.on(TPLC_OP_HIST_LIST, [&](int fd, uint16_t t,
+                                  const uint8_t*, uint32_t,
+                                  uint64_t req) {
+        tplc::CtlServer::W w;
+        w.u32((uint32_t)hist_names.size());
+        for (size_t i = 0; i < hist_names.size() &&
+                            i < trace_ch.size(); i++) {
+            w.str(hist_names[i].c_str(),
+                  (uint32_t)hist_names[i].size());
+            w.u64(trace_ch[i].off);
+            w.u32(trace_ch[i].len);
+        }
+        ctl.reply(fd, t, w.data(), w.size(), req);
     });
 
     /* watch (doc 12 §3): ADD shares the TRACE_CONF channel list;
