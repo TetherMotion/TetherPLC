@@ -1778,8 +1778,13 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
         Synchronous op dispatch: OP 1=open, 2=close, 3=state,
         4=ident (PORT -> IDENT/DLEN), 5=pd_exchange (PORT/MSEQ/
         PDOUT/DLEN -> PDIN/DLEN/CKSFLAGS), 6=isdu_read and
-        7=isdu_write (PORT/ADDR/OD/DLEN). STATUS carries the service
-        return code, ERRID its positive form. */
+        7=isdu_write (PORT/ADDR/OD/DLEN — legacy single-octet
+        profile), 8=master_cmd (PORT/ADDR=command), 9=isdu_read_ex
+        and 10=isdu_write_ex (PORT/MSEQ=16-bit index, ADDR=subindex,
+        ISDU=232-octet payload -> ISDU/DLEN, ISDUERR=device
+        ErrorType).
+        STATUS carries the service return code, ERRID its positive
+        form. */
         "FB_IoLink" => {
             let udint = || Type::Int {
                 signed: false,
@@ -1810,6 +1815,8 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "PDIN", arr(39));
             push(&mut off, "PDOUT", arr(31));
             push(&mut off, "OD", arr(7));
+            push(&mut off, "ISDUERR", udint());
+            push(&mut off, "ISDU", arr(239));
         }
         /* FB_Profinet — tplc-profinet service bridge (PROFINET DCP
         discovery/configuration + cyclic IO record exchange over

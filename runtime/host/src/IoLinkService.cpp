@@ -50,11 +50,23 @@ namespace {
 constexpr uint8_t MC_READ = 0x80;
 constexpr uint8_t CH_PROCESS = 0x00;
 constexpr uint8_t CH_PAGE = 0x20;
+constexpr uint8_t CH_DIAG = 0x40;
 constexpr uint8_t CH_ISDU = 0x60;
-constexpr uint8_t FLOWCTRL_IDLE = 0x11;
 constexpr uint8_t MSEQ_T2V = 6;
 constexpr uint8_t WAKE_BYTE = 0x55;
 constexpr int IO_TIMEOUT_MS = 100;
+
+/* ISDU segmentation (A.5, Table 52): FlowCTRL values in the MC
+   address bits; COUNT wraps 0..15, START opens a service, IDLE
+   concludes it, ABORT drops it. Two OD octets per M-sequence on the
+   PD-free type-2 profile. */
+constexpr uint8_t FLOW_START = 0x10;
+constexpr uint8_t FLOW_IDLE = 0x11;
+constexpr uint8_t FLOW_ABORT = 0x1F;
+constexpr uint8_t ISDU_OD_LEN = 2;
+constexpr uint32_t ISDU_STREAM_MAX = 240;
+constexpr uint32_t ISDU_DATA_MAX = 232;
+constexpr int ISDU_MAX_POLLS = 600;
 
 uint8_t checksum6(const uint8_t* d, size_t n) {
     uint8_t ck = 0x52;
@@ -202,6 +214,19 @@ IoLinkService::IoLinkService() {
     svc_.il_port_info = [](void* s, uint32_t p, uint32_t* st,
                            uint32_t* e, uint32_t* f) {
         return self(s)->portInfo(s, p, st, e, f);
+    };
+    svc_.il_isdu_read_ex = [](void* s, uint32_t p, uint16_t i,
+                              uint8_t sub, uint8_t* d, uint32_t c,
+                              uint32_t* l, uint32_t* e) {
+        return self(s)->isduReadEx(s, p, i, sub, d, c, l, e);
+    };
+    svc_.il_isdu_write_ex = [](void* s, uint32_t p, uint16_t i,
+                               uint8_t sub, const uint8_t* d,
+                               uint32_t l, uint32_t* e) {
+        return self(s)->isduWriteEx(s, p, i, sub, d, l, e);
+    };
+    svc_.il_master_cmd = [](void* s, uint32_t p, uint8_t c) {
+        return self(s)->masterCmd(s, p, c);
     };
 }
 
@@ -386,6 +411,251 @@ int32_t IoLinkService::portInfo(void*, uint32_t port, uint32_t* st,
     if (errors) *errors = p->errors;
     if (frames) *frames = p->frames;
     return TPLC_IL_OK;
+}
+
+/* ---- segmented ISDU services (A.5) --------------------------------
+ * One ISDU M-sequence on the PD-free type-2 profile:
+ *   write segment: tx [MC|ISDU|fc][CKT t2][OD0][OD1] -> rx [CKS]
+ *   read segment:  tx [MC_READ|ISDU|fc][CKT t2]      -> rx [OD0][OD1][CKS]
+ * FlowCTRL lives in the MC address bits: START opens the request,
+ * COUNT 0..15 continues, IDLE concludes, ABORT drops. */
+
+int32_t IoLinkService::isduSeg(Port* p, bool wr, uint8_t fc,
+                               const uint8_t* od, uint8_t odlen,
+                               uint8_t* rod, uint8_t* rolen,
+                               uint32_t* cksFlags) {
+    if (p->fd < 0 || p->pst < TPLC_IL_ST_IDENT)
+        return TPLC_IL_E_STATE;
+    uint8_t tx[8];
+    if (wr) {
+        uint8_t odb[ISDU_OD_LEN] = {};
+        if (od && odlen) {
+            const uint8_t n = odlen > ISDU_OD_LEN ? ISDU_OD_LEN : odlen;
+            memcpy(odb, od, n);
+        }
+        buildCkt(uint8_t(CH_ISDU | (fc & 0x1F)), 2, odb, ISDU_OD_LEN, tx);
+        /* write M-sequence reply carries no OD: CKS only */
+        return exchange(p, tx, 2 + ISDU_OD_LEN, nullptr, 0,
+                        nullptr, cksFlags);
+    }
+    buildCkt(uint8_t(MC_READ | CH_ISDU | (fc & 0x1F)), 2,
+             nullptr, 0, tx);
+    uint8_t rx[ISDU_OD_LEN + 1];
+    uint8_t cks = 0;
+    int32_t rc = exchange(p, tx, 2, rx, ISDU_OD_LEN, &cks, cksFlags);
+    if (rc == TPLC_IL_OK && rod) {
+        rod[0] = rx[0];
+        rod[1] = rx[1];
+        if (rolen) *rolen = ISDU_OD_LEN;
+    }
+    return rc;
+}
+
+void IoLinkService::isduAbort(Port* p) {
+    uint8_t rod[ISDU_OD_LEN];
+    uint8_t rolen = 0;
+    (void)isduSeg(p, false, FLOW_ABORT, nullptr, 0, rod, &rolen,
+                  nullptr);
+}
+
+/* Drive one complete ISDU service to completion (blocking):
+ * request stream -> write M-seqs, response stream <- read M-seqs,
+ * IDLE terminator. Returns IL_OK and fills resp/err on success;
+ * TPLC_IL_E_DEV with *err = device ErrorType on a negative
+ * response; transport/protocol errors otherwise. */
+int32_t IoLinkService::isduService(Port* p, bool wr, uint16_t index,
+                                   uint8_t subindex,
+                                   const uint8_t* data, uint32_t dlen,
+                                   uint8_t* resp, uint32_t rcap,
+                                   uint32_t* rlen, uint32_t* err) {
+    if (!p) return TPLC_IL_E_PARAM;
+    if (p->fd < 0 || p->pst < TPLC_IL_ST_IDENT)
+        return TPLC_IL_E_STATE;
+    if (dlen > ISDU_DATA_MAX || (!data && dlen))
+        return TPLC_IL_E_PARAM;
+    if (err) *err = 0;
+    if (rlen) *rlen = 0;
+
+    /* index octet count (Table A.15): 8-bit idx alone = 1,
+       8-bit idx + subindex = 2, 16-bit idx + subindex = 3 */
+    uint8_t ilen;
+    if (index > 0xFF) ilen = 3;
+    else if (subindex != 0) ilen = 2;
+    else ilen = 1;
+
+    /* request stream {I-Service|Len[,ExtLen], Index[,Index],
+       [Subindex], Data*, CHKPDU} (Table A.13/A.15) */
+    uint8_t req[ISDU_STREAM_MAX];
+    uint32_t rpos = 0;
+    const uint8_t svc = wr ? ilen : uint8_t(0x8 + ilen);
+    const uint32_t total = 1 + ilen + (wr ? dlen : 0) + 1;
+    if (total <= 15) {
+        req[rpos++] = uint8_t((svc << 4) | total);
+    } else {
+        /* A.5.3: direct length 16 is reserved; extended range
+           17..238 via ExtLength (which counts itself) */
+        if (total == 16 || total + 1 > 238)
+            return TPLC_IL_E_PARAM;
+        req[rpos++] = uint8_t((svc << 4) | 0x01);
+        req[rpos++] = uint8_t(total + 1);
+    }
+    if (ilen == 3) {
+        req[rpos++] = uint8_t(index >> 8);
+        req[rpos++] = uint8_t(index & 0xFF);
+        req[rpos++] = subindex;
+    } else if (ilen == 2) {
+        req[rpos++] = uint8_t(index & 0xFF);
+        req[rpos++] = subindex;
+    } else {
+        req[rpos++] = uint8_t(index & 0xFF);
+    }
+    if (wr && dlen) {
+        memcpy(req + rpos, data, dlen);
+        rpos += dlen;
+    }
+    uint8_t chk = 0;
+    for (uint32_t i = 0; i < rpos; ++i) chk ^= req[i];
+    req[rpos++] = chk;
+    const uint32_t reqlen = rpos;
+
+    /* request phase: write M-seqs, START then COUNT 1,2,... */
+    uint32_t pos = 0;
+    uint8_t fc = FLOW_START;
+    uint32_t cksf = 0;
+    while (pos < reqlen) {
+        const uint32_t chunk =
+            (reqlen - pos) > ISDU_OD_LEN ? ISDU_OD_LEN : (reqlen - pos);
+        int32_t rc = isduSeg(p, true, fc, req + pos,
+                             uint8_t(chunk > 2 ? 2 : chunk),
+                             nullptr, nullptr, &cksf);
+        if (rc != TPLC_IL_OK) {
+            isduAbort(p);
+            return rc;
+        }
+        pos += chunk;
+        if (pos < reqlen)
+            fc = (fc == FLOW_START) ? 1 : uint8_t((fc + 1) & 0x0F);
+    }
+
+    /* response phase: read M-seqs; START polls until the device
+       starts the response stream (0x00/0x01 filler octets), then
+       COUNT 1,2,... collects it two octets per M-sequence */
+    uint8_t stream[ISDU_STREAM_MAX];
+    uint32_t slen = 0, expected = 0;
+    bool started = false;
+    fc = FLOW_START;
+    int polls = 0;
+    for (;;) {
+        uint8_t rod[ISDU_OD_LEN];
+        uint8_t rolen = 0;
+        int32_t rc = isduSeg(p, false, fc, nullptr, 0, rod, &rolen,
+                             &cksf);
+        if (rc != TPLC_IL_OK) {
+            isduAbort(p);
+            return rc;
+        }
+        for (uint8_t i = 0; i < rolen && i < ISDU_OD_LEN; ++i) {
+            const uint8_t b = rod[i];
+            if (!started) {
+                if (b == 0x00 || b == 0x01) continue; /* filler/busy */
+                started = true;
+            }
+            if (expected && slen >= expected) break; /* pad octets */
+            if (slen >= ISDU_STREAM_MAX) {
+                isduAbort(p);
+                return TPLC_IL_E_PROTO;
+            }
+            stream[slen++] = b;
+            if (expected == 0 && slen >= 1) {
+                const uint8_t nib = stream[0] & 0x0F;
+                if (nib >= 2) {
+                    expected = nib;
+                } else if (nib == 1) {
+                    if (slen >= 2) expected = stream[1];
+                } else {
+                    isduAbort(p);
+                    return TPLC_IL_E_PROTO;
+                }
+            }
+        }
+        if (started && expected && slen >= expected) break;
+        if (started) {
+            fc = (fc == FLOW_START || fc == FLOW_IDLE)
+                     ? 1
+                     : uint8_t((fc + 1) & 0x0F);
+        }
+        if (++polls > ISDU_MAX_POLLS) {
+            isduAbort(p);
+            return TPLC_IL_E_DEV;
+        }
+    }
+
+    /* T8: one last read with FlowCTRL IDLE concludes the service */
+    {
+        uint8_t rod[ISDU_OD_LEN];
+        uint8_t rolen = 0;
+        (void)isduSeg(p, false, FLOW_IDLE, nullptr, 0, rod, &rolen,
+                      &cksf);
+    }
+
+    if (slen == 0) return TPLC_IL_E_PROTO;
+    /* A.5.6: CHKPDU — XOR of the whole stream incl. CHKPDU is 0 */
+    uint8_t x = 0;
+    for (uint32_t i = 0; i < slen; ++i) x ^= stream[i];
+    if (x != 0) {
+        if (err) *err = 0x81; /* segmentation error */
+        return TPLC_IL_E_PROTO;
+    }
+    const uint8_t rs = stream[0] >> 4;
+    if (rs == 0x4 || rs == 0xC) {
+        /* negative response: ErrorType = ErrorCode, AdditionalCode */
+        if (err) *err = slen >= 3 ? uint32_t(stream[1]) << 8 | stream[2]
+                                : 0;
+        return TPLC_IL_E_DEV;
+    }
+    /* positive: [I-Service|Len[,ExtLen], Data*, CHKPDU] */
+    const uint32_t pstart = (stream[0] & 0x0F) == 1 ? 2 : 1;
+    if (slen < pstart + 1) return TPLC_IL_E_PROTO;
+    const uint32_t plen = slen - pstart - 1;
+    const uint32_t n = plen > rcap ? rcap : plen;
+    if (resp && n) memcpy(resp, stream + pstart, n);
+    if (rlen) *rlen = plen;
+    return TPLC_IL_OK;
+}
+
+int32_t IoLinkService::isduReadEx(void*, uint32_t port, uint16_t index,
+                                  uint8_t subindex, uint8_t* data,
+                                  uint32_t cap, uint32_t* len,
+                                  uint32_t* err) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_IL_E_PARAM;
+    return isduService(p, false, index, subindex, nullptr, 0, data,
+                       cap, len, err);
+}
+
+int32_t IoLinkService::isduWriteEx(void*, uint32_t port, uint16_t index,
+                                   uint8_t subindex, const uint8_t* data,
+                                   uint32_t len, uint32_t* err) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_IL_E_PARAM;
+    uint32_t rlen = 0;
+    return isduService(p, true, index, subindex, data, len, nullptr, 0,
+                       &rlen, err);
+}
+
+int32_t IoLinkService::masterCmd(void*, uint32_t port, uint8_t cmd) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_IL_E_PARAM;
+    if (p->fd < 0 || p->pst < TPLC_IL_ST_IDENT)
+        return TPLC_IL_E_STATE;
+    /* type-0 write to DPP addr 0: [MC=0x20][CKT][OD=cmd]; the reply
+       is CKS-only (Figure A.5) */
+    uint8_t tx[4];
+    buildCkt(uint8_t(CH_PAGE), 0, &cmd, 1, tx);
+    int32_t rc = exchange(p, tx, 3, nullptr, 0, nullptr, nullptr);
+    if (rc == TPLC_IL_OK && p->pst == TPLC_IL_ST_IDENT)
+        p->pst = TPLC_IL_ST_OPERATE;
+    return rc;
 }
 
 } // namespace tplc

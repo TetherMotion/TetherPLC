@@ -44,6 +44,22 @@ private:
                       const uint8_t* od, uint32_t od_len);
     int32_t portInfo(void*, uint32_t port, uint32_t* st,
                      uint32_t* errors, uint32_t* frames);
+    int32_t isduReadEx(void*, uint32_t port, uint16_t index,
+                       uint8_t subindex, uint8_t* data, uint32_t cap,
+                       uint32_t* len, uint32_t* err);
+    int32_t isduWriteEx(void*, uint32_t port, uint16_t index,
+                        uint8_t subindex, const uint8_t* data,
+                        uint32_t len, uint32_t* err);
+    int32_t masterCmd(void*, uint32_t port, uint8_t cmd);
+    int32_t isduService(Port* p, bool wr, uint16_t index,
+                        uint8_t subindex, const uint8_t* data,
+                        uint32_t dlen, uint8_t* resp, uint32_t rcap,
+                        uint32_t* rlen, uint32_t* err);
+    static int32_t isduSeg(Port* p, bool wr, uint8_t fc,
+                           const uint8_t* od, uint8_t odlen,
+                           uint8_t* rod, uint8_t* rolen,
+                           uint32_t* cksFlags);
+    static void isduAbort(Port* p);
     static int32_t exchange(Port* p, const uint8_t* tx, size_t txLen,
                             uint8_t* rx, size_t rxLen, uint8_t* cksOut,
                             uint32_t* cksFlags);

@@ -86,6 +86,29 @@ typedef struct TplcIoLinkService {
     int32_t (*il_port_info)(void* svc, uint32_t port,
                             uint32_t* state, uint32_t* errors,
                             uint32_t* frames);
+    /* Spec-conformant segmented ISDU services (IO-Link A.5): the
+       I-Service octet stream {I-Service|Len, Index[,Index],
+       [Subindex], Data*, CHKPDU} is transported over ISDU-channel
+       M-sequences (FlowCTRL START/COUNT/IDLE, 2 OD octets each,
+       PD-free type-2 profile). index is 16-bit; subindex is sent
+       for 8-bit indices when nonzero and always for 16-bit indices.
+       Data payloads up to 232 octets. A negative device response
+       (I-Service 0x4/0xC) returns TPLC_IL_E_DEV with *err =
+       ErrorType (ErrorCode<<8 | AdditionalCode). len receives the
+       response payload length; *err is 0 on success. */
+    int32_t (*il_isdu_read_ex)(void* svc, uint32_t port,
+                               uint16_t index, uint8_t subindex,
+                               uint8_t* data, uint32_t cap,
+                               uint32_t* len, uint32_t* err);
+    int32_t (*il_isdu_write_ex)(void* svc, uint32_t port,
+                                uint16_t index, uint8_t subindex,
+                                const uint8_t* data, uint32_t len,
+                                uint32_t* err);
+    /* MasterCommand write to DPP address 0 (Table B.2): 0x5A
+       fallback->SIO, 0x95 MasterIdent, 0x96 DeviceIdent,
+       0x97 DeviceStartup, 0x98 PDOutOperate, 0x99 DeviceOperate,
+       0x9A DevicePreoperate. Type-0 write frame; reply is CKS-only. */
+    int32_t (*il_master_cmd)(void* svc, uint32_t port, uint8_t cmd);
 } TplcIoLinkService;
 
 #ifdef __cplusplus

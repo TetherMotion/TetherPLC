@@ -28,11 +28,24 @@
 //   5 = cyclic process-data exchange (PORT/MSEQ/PDOUT[0..DLEN)
 //       -> PDIN/DLEN/CKSFLAGS; MSEQ selects the M-sequence type,
 //       6 = type 2_V is the general case)
-//   6 = ISDU/on-request read (PORT/ADDR -> OD/DLEN, single octet)
-//   7 = ISDU/on-request write (PORT/ADDR/OD[0..DLEN))
+//   6 = ISDU/on-request read (PORT/ADDR -> OD/DLEN, single octet;
+//       legacy profile — prefer OP 9)
+//   7 = ISDU/on-request write (PORT/ADDR/OD[0..DLEN); legacy)
+//   8 = MasterCommand (PORT/ADDR=command: 16#5A fallback->SIO,
+//       16#95 MasterIdent, 16#96 DeviceIdent, 16#97 DeviceStartup,
+//       16#98 PDOutOperate, 16#99 DeviceOperate, 16#9A
+//       DevicePreoperate)
+//   9 = ISDU read, spec-segmented (PORT/MSEQ=index low16,
+//       ADDR=subindex -> ISDU/DLEN_OUT, ISDUERR=device ErrorType)
+//   10 = ISDU write, spec-segmented (PORT/MSEQ=index, ADDR=subindex,
+//       ISDU[0..DLEN) payload -> ISDUERR)
+// ISDU indices follow Table B.8: 16#0010 VendorName, 16#0012
+// ProductName, 16#0015 SerialNumber, 16#0024 DeviceStatus,
+// 16#0028/16#0029 last PDin/PDout, vendor range 16#0040+.
 // STATUS mirrors the tplc-iolink return code (0 ok, -5 = device
-// checksum mismatch, -6 = malformed reply, -7 = device error);
-// ERRID is its magnitude.
+// checksum mismatch, -6 = malformed reply, -7 = device error —
+// ISDUERR then carries the ErrorType, e.g. 16#8011 index not
+// available); ERRID is its magnitude.
 
 FUNCTION_BLOCK FB_IoLinkMaster
 VAR_INPUT
@@ -45,12 +58,16 @@ VAR_INPUT
     PDOUT : ARRAY[0..31] OF BYTE;
     OD : ARRAY[0..7] OF BYTE;
 END_VAR
+VAR_IN_OUT
+    ISDU : ARRAY[0..239] OF BYTE;   // OP10 payload in / OP9 response out
+END_VAR
 VAR_OUTPUT
     DONE : BOOL;
     STATUS : DINT;
     ERRID : UDINT;
     CKSFLAGS : UDINT;
     DLEN_OUT : UDINT;
+    ISDUERR : UDINT;                // device ErrorType on STATUS=-7
     IDENT : ARRAY[0..15] OF BYTE;
     PDIN : ARRAY[0..39] OF BYTE;
     ODDATA : ARRAY[0..7] OF BYTE;
@@ -65,6 +82,7 @@ END_VAR
     ERRID := 0;
     CKSFLAGS := 0;
     DLEN_OUT := 0;
+    ISDUERR := 0;
     IF EXEC AND NOT prevExec THEN
         raw.OP := OP;
         raw.PORT := PORT;
@@ -77,11 +95,15 @@ END_VAR
         FOR i := 0 TO 7 DO
             raw.OD[i] := OD[i];
         END_FOR;
+        FOR i := 0 TO 239 DO
+            raw.ISDU[i] := ISDU[i];
+        END_FOR;
         raw();
         STATUS := raw.STATUS;
         ERRID := raw.ERRID;
         CKSFLAGS := raw.CKSFLAGS;
         DLEN_OUT := raw.DLEN;
+        ISDUERR := raw.ISDUERR;
         FOR i := 0 TO 15 DO
             IDENT[i] := raw.IDENT[i];
         END_FOR;
@@ -90,6 +112,9 @@ END_VAR
         END_FOR;
         FOR i := 0 TO 7 DO
             ODDATA[i] := raw.OD[i];
+        END_FOR;
+        FOR i := 0 TO 239 DO
+            ISDU[i] := raw.ISDU[i];
         END_FOR;
         DONE := TRUE;
     END_IF;

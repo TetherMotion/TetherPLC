@@ -7360,11 +7360,14 @@ const IL_IDENT: usize = 32; // u8[16]
 const IL_PDIN: usize = 48; // u8[40]
 const IL_PDOUT: usize = 88; // u8[32]
 const IL_OD: usize = 120; // u8[8]
+const IL_ISDUERR: usize = 128; // u32
+const IL_ISDU: usize = 132; // u8[240]
 
 // tplc-iolink service vtable offsets (TplcIoLinkService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B),
 // il_state@16, il_open@24, il_close@32, il_ident@40,
-// il_pd_exchange@48, il_isdu_read@56, il_isdu_write@64, il_port_info@72.
+// il_pd_exchange@48, il_isdu_read@56, il_isdu_write@64, il_port_info@72,
+// il_isdu_read_ex@80, il_isdu_write_ex@88, il_master_cmd@96.
 const IL_SVC_STATE: usize = 16;
 const IL_SVC_OPEN: usize = 24;
 const IL_SVC_CLOSE: usize = 32;
@@ -7372,6 +7375,9 @@ const IL_SVC_IDENT: usize = 40;
 const IL_SVC_PDEX: usize = 48;
 const IL_SVC_ISDU_R: usize = 56;
 const IL_SVC_ISDU_W: usize = 64;
+const IL_SVC_ISDU_RX: usize = 80;
+const IL_SVC_ISDU_WX: usize = 88;
+const IL_SVC_MCMD: usize = 96;
 
 /// service lookup for "tplc-iolink" (11 chars)
 unsafe fn iolink_service(ctx: *const u8) -> *const u8 {
@@ -7387,7 +7393,8 @@ unsafe fn iolink_service(ctx: *const u8) -> *const u8 {
 }
 
 /// `__tplc_rt_FB_IoLink` — OP 1=open, 2=close, 3=state, 4=ident,
-/// 5=pd_exchange, 6=isdu_read, 7=isdu_write.
+/// 5=pd_exchange, 6=isdu_read, 7=isdu_write, 8=master_cmd,
+/// 9=isdu_read_ex, 10=isdu_write_ex.
 /// # Safety
 /// `this` must point at a valid instance block of the documented
 /// layout; `ctx` at a live `TplcCtx`.
@@ -7508,6 +7515,60 @@ pub unsafe extern "C" fn __tplc_rt_FB_IoLink(this: *mut u8, ctx: *mut u8) -> i32
                 this.add(IL_OD),
                 od_len,
             ));
+        }
+        8 => {
+            /* il_master_cmd(svc, port, cmd u8) -> i32 */
+            let f: unsafe extern "C" fn(*const u8, u32, u8) -> i32 =
+                core::mem::transmute(
+                    (svc.add(IL_SVC_MCMD) as *const usize).read(),
+                );
+            set_rc(f(
+                svc,
+                port,
+                ru32(this.add(IL_ADDR)) as u8,
+            ));
+        }
+        9 | 10 => {
+            /* segmented ISDU (A.5):
+               il_isdu_read_ex(svc, port, index u16, sub u8, data,
+                 cap, len*, err*) / il_isdu_write_ex(svc, port,
+                 index, sub, data, len, err*) -> i32.
+               MSEQ carries the 16-bit index, ADDR the subindex,
+               ISDU the payload (write) / response (read), DLEN the
+               payload length, ISDUERR the device ErrorType. */
+            let index = (ru32(this.add(IL_MSEQ)) & 0xFFFF) as u16;
+            let sub = (ru32(this.add(IL_ADDR)) & 0xFF) as u8;
+            let mut err: u32 = 0;
+            let rc = if op == 9 {
+                let f: unsafe extern "C" fn(
+                    *const u8, u32, u16, u8, *mut u8, u32,
+                    *mut u32, *mut u32,
+                ) -> i32 = core::mem::transmute(
+                    (svc.add(IL_SVC_ISDU_RX) as *const usize).read(),
+                );
+                let mut len: u32 = 0;
+                let rc = f(
+                    svc, port, index, sub,
+                    this.add(IL_ISDU), 240, &mut len, &mut err,
+                );
+                wu32(this.add(IL_DLEN), len);
+                rc
+            } else {
+                let f: unsafe extern "C" fn(
+                    *const u8, u32, u16, u8, *const u8, u32,
+                    *mut u32,
+                ) -> i32 = core::mem::transmute(
+                    (svc.add(IL_SVC_ISDU_WX) as *const usize).read(),
+                );
+                f(
+                    svc, port, index, sub,
+                    this.add(IL_ISDU),
+                    ru32(this.add(IL_DLEN)).min(232),
+                    &mut err,
+                )
+            };
+            wu32(this.add(IL_ISDUERR), err);
+            set_rc(rc);
         }
         _ => {
             wi32(this.add(IL_STATUS), -1);

@@ -40,8 +40,18 @@ selects it. `TPLC_IOLINK_IO` takes a comma-separated list of
   (PD-in/out descriptors, vendor/device IDs, revision, M-seq caps).
 - **Cyclic PD**: type-2_V exchange — PD-out octets up, PD-in octets
   down, CKS flag bits surfaced via `CKSFLAGS`.
-- **ISDU**: single-octet on-request read/write per exchange
-  (segmented multi-octet ISDU is staged, not yet implemented).
+- **ISDU**: spec-segmented acyclic services (A.5) — the I-Service
+  octet stream `{I-Service|Len[,ExtLen], Index[,Index],
+  [Subindex], Data*, CHKPDU}` is transported over ISDU-channel
+  M-sequences with FlowCTRL START/COUNT/IDLE (2 OD octets each,
+  PD-free type-2 profile). Direct length ≤15, ExtLength for
+  17–238; payloads up to 232 octets. Negative responses decode to
+  `TPLC_IL_E_DEV` + `ISDUERR` = ErrorType (e.g. `16#8011` index not
+  available). Legacy single-octet ISDU (ops 6/7) is kept for
+  compatibility.
+- **MasterCommand**: type-0 write to DPP address 0 (Table B.2) —
+  `0x5A` fallback→SIO, `0x95`–`0x9A` identification/startup/operate
+  transitions.
 
 ## FB_IoLink ops
 
@@ -52,11 +62,16 @@ selects it. `TPLC_IOLINK_IO` takes a comma-separated list of
 | 3  | state     | `STATUS=1` when ports configured |
 | 4  | ident     | → `IDENT[0..15]` DPP1, `DLEN=16` |
 | 5  | pd_exchange | `MSEQ`/`PDOUT`/`DLEN` → `PDIN`/`DLEN`/`CKSFLAGS` |
-| 6  | isdu_read | `ADDR` → `OD`/`DLEN` |
-| 7  | isdu_write| `ADDR`/`OD`/`DLEN` |
+| 6  | isdu_read | `ADDR` → `OD`/`DLEN` (legacy single-octet) |
+| 7  | isdu_write| `ADDR`/`OD`/`DLEN` (legacy) |
+| 8  | master_cmd| `ADDR`=command → `STATUS` |
+| 9  | isdu_read_ex | `MSEQ`=index, `ADDR`=subindex → `ISDU`/`DLEN`/`ISDUERR` |
+| 10 | isdu_write_ex| `MSEQ`=index, `ADDR`=subindex, `ISDU`/`DLEN` payload → `ISDUERR` |
 
 `STATUS` carries the service return code (0 ok, -2 transport,
 -5 checksum, -6 malformed, -7 device error); `ERRID` its magnitude.
+On `STATUS=-7` from ops 9/10, `ISDUERR` holds the device ErrorType
+(`ErrorCode<<8 | AdditionalCode`).
 
 ## Scope and honest limits
 
@@ -67,8 +82,12 @@ selects it. `TPLC_IOLINK_IO` takes a comma-separated list of
   negotiated types are staged. AL negotiation (cycle-time/M-seq
   capability handshake during PREOPERATE) is not yet automated —
   the port operates with caller-supplied lengths.
-- **ISDU**: single-octet services only; segmentation/flow control
-  for multi-octet parameter access is staged.
+- **ISDU**: segmented services implemented over a PD-free type-2
+  profile (2 OD octets/M-sequence). ISDU M-sequences on a real
+  device in OPERATE carry negotiated PD-in/out octets — full AL
+  negotiation (cycle-time/M-seq/PD-length handshake during
+  PREOPERATE) is still staged, so interop with devices requiring
+  PD-multiplexed ISDU frames is not yet claimed.
 - **SIO mode**, diagnosis-channel decoding, and event-driven
   wakeup are staged.
 
@@ -77,6 +96,9 @@ selects it. `TPLC_IOLINK_IO` takes a comma-separated list of
 `tests/iolink/e2e.sh` runs `tests/iolink/iolink_case.st` against
 `tests/iolink/fake_iolink_device.py` — an in-process device speaking
 the device side of the protocol (page record, deterministic PD-in
-pattern, ISDU param table, A.1.6 checksums). 8/8 checks: open,
-service state, DPP1 ident, cyclic PD exchange, ISDU write+readback,
+pattern, legacy + segmented ISDU object store with the A.5/FlowCTRL
+state machine, MasterCommand handling, A.1.6 checksums). 12/12
+checks: open, service state, DPP1 ident, cyclic PD exchange, legacy
+ISDU write+readback, MasterCommand, segmented ISDU write+readback
+(20-octet ExtLength), negative ISDU response (`ISDUERR=16#8011`),
 close, invalid-op rejection.
