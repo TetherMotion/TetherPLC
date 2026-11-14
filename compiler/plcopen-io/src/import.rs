@@ -300,6 +300,7 @@ impl P {
                     flow: None,
                     name: None,
                     at: None,
+                    endpoint: None,
                 });
             }
             "inVariable" | "outVariable" | "inOutVariable" if in_fbdish || in_ld => {
@@ -331,6 +332,7 @@ impl P {
                     flow: Some(VarFlow::Data),
                     name: Self::attr(e, "name"),
                     at: None,
+                    endpoint: None,
                 });
             }
             // LD contacts read a variable and gate power flow; coils
@@ -355,6 +357,7 @@ impl P {
                     flow: None,
                     name: None,
                     at: None,
+                    endpoint: None,
                 };
                 if Self::attr(e, "negated").as_deref() == Some("true") {
                     b.negated.push(0);

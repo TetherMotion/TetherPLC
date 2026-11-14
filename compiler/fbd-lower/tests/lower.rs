@@ -24,6 +24,7 @@ fn var_block(id: u64, role: VarRole, name: &str, at: Option<&str>, x: u32, y: u3
         flow: None,
         name: Some(name.into()),
         at: at.map(|s| s.into()),
+        endpoint: None,
     }
 }
 
@@ -49,6 +50,7 @@ fn op_block(id: u64, op: &str, x: u32, y: u32) -> Block {
         flow: None,
         name: None,
         at: None,
+        endpoint: None,
     }
 }
 
@@ -71,6 +73,7 @@ fn fb_block(id: u64, ty: &str, inst: &str, params: &[(&str, &str)], x: u32, y: u
         flow: None,
         name: None,
         at: None,
+        endpoint: None,
     }
 }
 
