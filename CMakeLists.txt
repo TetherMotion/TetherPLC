@@ -953,6 +953,15 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc2_nckin PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc3_MC2_AdvancedHoming e2e: ref-pulse/absolute-switch/limit-
+  # switch/block/block-lag searches, detection variants, finish/
+  # abort/home-direct finalizers, flying reference and error paths
+  # on one simulated axis; in-process, no peer
+  add_test(NAME tc3_mc2_ah
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc2_ah.sh)
+  set_tests_properties(tc3_mc2_ah PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 300 RESOURCE_LOCK plc_scan)
+
   # Tc3_NC_Camming e2e: two simulated axes, 3-point cam table
   # (master -> 2x slave), coupling while the master runs a velocity
   # move, periodic wrap, table clear, WritePt edge; in-process
@@ -1227,6 +1236,17 @@ if(NOT CMAKE_CROSSCOMPILING)
       bash ${CMAKE_SOURCE_DIR}/tests/compat/tc2_nckin_io.sh)
   set_tests_properties(tc2_nckin_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
+  # Tc3_MC2_AdvancedHoming over Tether IO: same homing sequences
+  # against the remote CiA402 fleet; pos limits go through the
+  # 0x200A/0x200B/0x200C sim-ext objects since IO axis create does
+  # not carry the config struct
+  add_test(NAME tc3_mc2_ah_io
+    COMMAND ${CMAKE_COMMAND} -E env
+      "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+      bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc2_ah_io.sh)
+  set_tests_properties(tc3_mc2_ah_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 300 RESOURCE_LOCK plc_scan)
 
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real
   # WebSocket+JSON-RPC session against the python CSMS fake

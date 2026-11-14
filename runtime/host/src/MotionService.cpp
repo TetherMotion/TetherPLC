@@ -219,6 +219,18 @@ void MotionService::profileStep(Axis& a, double goal, double dt) {
     }
 }
 
+void MotionService::clampAxisPos(Axis& a) {
+    if (!(a.cfg.flags & 1u))
+        return;
+    if (a.pos < double(a.cfg.pos_min)) {
+        a.pos = double(a.cfg.pos_min);
+        if (a.vel < 0) a.vel = 0;
+    } else if (a.pos > double(a.cfg.pos_max)) {
+        a.pos = double(a.cfg.pos_max);
+        if (a.vel > 0) a.vel = 0;
+    }
+}
+
 void MotionService::step(Axis& a, double dt) {
     updateState(a);
 
@@ -272,6 +284,7 @@ void MotionService::step(Axis& a, double dt) {
         /* velocity mode: immediate velocity command */
         a.vel = double(a.target_vel);
         a.pos += a.vel * dt;
+        clampAxisPos(a);
         a.target_reached = (a.target_vel == 0);
         break;
     case TPLC_MOTION_MODE_PV:
@@ -286,6 +299,7 @@ void MotionService::step(Axis& a, double dt) {
             else if (dv < -max_dv) dv = -max_dv;
             a.vel += dv;
             a.pos += a.vel * dt;
+            clampAxisPos(a);
             a.target_reached =
                 (fabs(a.vel - double(a.target_vel)) < 1.0);
         }
@@ -299,6 +313,7 @@ void MotionService::step(Axis& a, double dt) {
             if (a.vel > vmax) a.vel = vmax;
             else if (a.vel < -vmax) a.vel = -vmax;
             a.pos += a.vel * dt;
+            clampAxisPos(a);
             a.target_reached = true;
         }
         break;
@@ -312,6 +327,7 @@ void MotionService::step(Axis& a, double dt) {
         /* cyclic sync velocity */
         a.vel = double(a.target_vel);
         a.pos += a.vel * dt;
+        clampAxisPos(a);
         a.target_reached = true;
         break;
     case TPLC_MOTION_MODE_CST:
@@ -323,6 +339,7 @@ void MotionService::step(Axis& a, double dt) {
             if (a.vel > vmax2) a.vel = vmax2;
             else if (a.vel < -vmax2) a.vel = -vmax2;
             a.pos += a.vel * dt;
+            clampAxisPos(a);
             a.target_reached = true;
         }
         break;
@@ -421,6 +438,15 @@ int32_t MotionService::objRead(void*, uint32_t axis, uint32_t index,
     case TPLC_MOTION_OBJ_SAW_CHAR0 + 3:
         *out = a->saw_char[index - TPLC_MOTION_OBJ_SAW_CHAR0];
         break;
+    case TPLC_MOTION_OBJ_POS_MIN:
+        *out = a->cfg.pos_min;
+        break;
+    case TPLC_MOTION_OBJ_POS_MAX:
+        *out = a->cfg.pos_max;
+        break;
+    case TPLC_MOTION_OBJ_AXIS_FLAGS:
+        *out = int32_t(a->cfg.flags);
+        break;
     default:
         return TPLC_MOTION_E_STATE;
     }
@@ -496,6 +522,15 @@ int32_t MotionService::objWrite(void*, uint32_t axis, uint32_t index,
     case TPLC_MOTION_OBJ_SAW_CHAR0 + 2:
     case TPLC_MOTION_OBJ_SAW_CHAR0 + 3:
         a->saw_char[index - TPLC_MOTION_OBJ_SAW_CHAR0] = value;
+        break;
+    case TPLC_MOTION_OBJ_POS_MIN:
+        a->cfg.pos_min = value;
+        break;
+    case TPLC_MOTION_OBJ_POS_MAX:
+        a->cfg.pos_max = value;
+        break;
+    case TPLC_MOTION_OBJ_AXIS_FLAGS:
+        a->cfg.flags = uint32_t(value);
         break;
     default:
         /* controlword/statusword/mode-display/actuals are not

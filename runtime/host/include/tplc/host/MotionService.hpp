@@ -86,6 +86,8 @@ private:
     uint16_t statusword(const Axis& a) const;
     /* trapezoidal PP/HM profile step toward `goal` */
     void profileStep(Axis& a, double goal, double dt);
+    /* software position limits for velocity-integrating modes */
+    static void clampAxisPos(Axis& a);
     Axis* find(uint32_t handle);
 
     /* svc_ must stay the first data member: the service-table

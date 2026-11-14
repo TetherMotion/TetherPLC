@@ -58,6 +58,9 @@ extern "C" {
 #define TPLC_MOTION_OBJ_PARK_CMD       0x2004u  /* i32  RW (sim ext) */
 #define TPLC_MOTION_OBJ_COE_CMD        0x2005u  /* i32  RW (sim ext) */
 #define TPLC_MOTION_OBJ_SAW_CHAR0      0x2006u  /* i32  RW (sim ext) */
+#define TPLC_MOTION_OBJ_POS_MIN        0x200Au  /* i32  RW (sim ext) */
+#define TPLC_MOTION_OBJ_POS_MAX        0x200Bu  /* i32  RW (sim ext) */
+#define TPLC_MOTION_OBJ_AXIS_FLAGS     0x200Cu  /* i32  RW (sim ext) */
 
 /* CiA402 operating-mode values (0x6060). */
 #define TPLC_MOTION_MODE_NONE   0

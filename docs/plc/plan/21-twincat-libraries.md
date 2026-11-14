@@ -17126,7 +17126,17 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TwinCAT_3_PLC_Lib_Tc3_MC2_AdvancedHoming_EN.pdf` · **API entries:** 16
-- **Status:** core MC_Home in `compat/tc2/tc2_mc2.st`; advanced homing modes on request
+- **Status:** IMPLEMENTED — `compat/tc3/tc3_mc2_ah.st` (all 16 APIs over a
+  shared `AH_Run` engine on `FB_MotionAxis`: PV-mode searches, switch-edge/
+  velocity-undershoot detection, position assign via 0x6064) — ctest
+  `tc3_mc2_ah` + `tc3_mc2_ah_io` (mask `0xffff`, 16 checks).
+  Deviations: `MC_HomingParameter`/`MC_Ref_Signal_Ref`/enums flatten to
+  scalar/BOOL/LREAL members; reference signals are caller-supplied BOOLs
+  (the sim has no physical switch/encoder input, tests derive them from
+  position); block/lag detection uses velocity undershoot vs
+  `DetectionVelocityLimit`/`LagLimit`, not torque/lag telemetry;
+  `BufferMode`, `OptDisableDriveAccess`, drive-parameter backup and
+  `MC_HomingParameterDrive` torque fields are accepted but not modeled.
 - **Integration:** Advanced homing routines: axis backend homing state machines.
 
 #### Function blocks › Finalizing functions

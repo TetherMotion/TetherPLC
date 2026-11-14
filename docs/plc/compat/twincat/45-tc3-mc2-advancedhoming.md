@@ -8,6 +8,15 @@
 
 **Integration:** Advanced homing routines: axis backend homing state machines.
 
+**Status:** IMPLEMENTED — `compat/tc3/tc3_mc2_ah.st` covers all 16
+APIs over the shared `AH_Run` engine on `FB_MotionAxis` (ctest
+`tc3_mc2_ah` + `tc3_mc2_ah_io`, mask `0xffff`). `MC_HomingParameter`,
+`MC_Ref_Signal_Ref` and the direction/switch-mode enums flatten to
+scalar/BOOL/LREAL members; reference signals are caller-supplied
+BOOLs and block/lag detection uses velocity undershoot, not
+hardware switch/torque telemetry. See `docs/plc/compat/README.md`
+for the full deviation list.
+
 ---
 
 #### Function blocks › Finalizing functions

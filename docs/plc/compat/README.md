@@ -207,6 +207,18 @@ compat/tc3/
                       encode/decode, CP24/CP32 truncation, IOA
                       composition, SPI/DPI/VTI bit helpers,
                       GetIec870_Version
+  tc3_mc2_ah.st       Tc3_MC2_AdvancedHoming wrappers (16 APIs) over
+                      a shared AH_Run engine on FB_MotionAxis:
+                      MC_FinishHoming/HomeDirect/AbortHoming/
+                      AbortPassiveHoming finalizers, ten
+                      MC_Step* search/detection FBs (reference
+                      pulse, absolute switch, limit switch, block,
+                      block-lag, flying reference) driving PV-mode
+                      velocity searches with switch-edge or
+                      velocity-undershoot detection. MC_Homing-
+                      Parameter/MC_Ref_Signal_Ref/enums flatten to
+                      scalar/BOOL/LREAL members; reference signals
+                      are caller-supplied BOOLs.
 tests/compat/
   tc2_case.st         consumer program (28 packed checks)
   tc2.sh              ctest tc2_compat: build libs, --lib consume,
@@ -504,6 +516,24 @@ tests/compat/
                       nc.* channel over Tether IO (G-code
                       interpreted by Tether's interpreter +
                       motion planner, CSP streaming to the fleet)
+  tc3_mc2_ah_case.st Tc3_MC2_AdvancedHoming program (16 packed
+                     checks: axis create + pos limits, power,
+                     position preset, reference pulse, absolute
+                     switch + detection, limit switch, block,
+                     block detection, block-lag, home direct,
+                     finish homing, abort homing, flying switch,
+                     bad-velocity and bad-direction error ids)
+  tc3_mc2_ah.sh      ctest tc3_mc2_ah: builds tc2_mc2.st +
+                     tc3_mc2_ah.st as libraries, consumes via
+                     --lib, 4000-step in-process replay expecting
+                     mask 0xffff
+  tc3_mc2_ah_io.sh   ctest tc3_mc2_ah_io: same case replayed over
+                     Tether IO against tether_io_motion_server
+                     (--clock sim) via TPLC_MOTION_IO; pos limits
+                     go through the 0x200A/0x200B/0x200C sim-ext
+                     objects since IO axis create does not carry
+                     the config struct; skips when the Tether
+                     server binary is unavailable
 ```
 
 ## Building and consuming
@@ -1486,6 +1516,41 @@ library object keeps relocatable `__tplc_pou_*` symbols for it.
   UDINT axis handle and `NetId` string those FBs already accept.
   `compat/tc2/tc2_ncdrive.st` carries `F_GetVersionTcNcDrive` and
   documents the mapping; the e2e coverage is `tc2_mc2_drive_io`.
+- **Tc3_MC2_AdvancedHoming wrappers**: `compat/tc3/tc3_mc2_ah.st`
+  implements all 16 documented APIs over one internal `AH_Run`
+  engine on `FB_MotionAxis`. Step/search FBs run a PV-mode
+  (0x6060=3) velocity search at `Velocity` user units/s (0x60FF),
+  poll the OP6 snapshot, and evaluate `MC_Switch_Mode` edges or
+  velocity undershoot (`DetectionVelocityLimit` sustained for
+  `DetectionVelocityTime`, plus the `LagLimit` deficit proxy for
+  the lag-based variants); on detection the axis is stopped
+  (0x60FF=0), allowed to settle, then `SetPosition` is assigned
+  via a direct 0x6064 write unless the FB is a `*Detection`
+  variant, which reports `RecordedPosition` instead. Finalizers:
+  `MC_FinishHoming` runs a bounded distance move (kind 20),
+  `MC_HomeDirect` assigns the position and leaves the homing
+  state, `MC_AbortHoming`/`MC_AbortPassiveHoming` stop motion and
+  clear/keep the stored-parameter flag. Step FBs keep
+  `P_Stored = TRUE` after Done so chained steps share the
+  parameter block; finalizers restore it. `MC_HomingParameter`,
+  `MC_HomingParameterNc`/`Drive`, `MC_Ref_Signal_Ref` and the
+  direction/switch-mode enums flatten to the `P_*` scalar members
+  and BOOL/LREAL inputs; `BufferMode`,
+  `OptDisableDriveAccess`, `OptEnableLagErrorDetection`,
+  `OptInstantLagReduction`, torque fields and drive-parameter
+  backup are accepted but not modeled. Reference signals are
+  caller-supplied BOOLs — the simulated drive has no physical
+  switch or encoder input, so tests derive them from position.
+  Homing error ids 16#4B90..16#4B98 are returned for the
+  validated failure classes (mode/direction/switch-mode/
+  distance-limit/parameter-state). Position limits for block
+  searches go through the new sim-ext objects 0x200A/0x200B/0x200C
+  (pos_min/pos_max/axis_flags) because the IO backend's axis
+  create does not carry the config struct; the in-process backend
+  honors them through `TPLC_MotionAxisCfg` as well.
+  Verified: `tc3_mc2_ah` + `tc3_mc2_ah_io` replay
+  `tc3_mc2_ah_case.st` (mask `0xffff`, 16 checks) on both
+  backends.
 - **Honest gaps**: `MC_TouchProbe` is a cycle-level software latch —
   TwinCAT's hardware touch-probe latches sub-cycle against an encoder
   event, but neither the in-process axis nor `SimulatedCiA402Drive`
