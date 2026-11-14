@@ -27,11 +27,23 @@ fire once the slave position error stays inside the window, and the
 command ends there (persistent cam coupling needs the NC kernel).
 Velocity/Acceleration/Deceleration/Jerk inputs are accepted but not
 enforced; the simulated drive applies its own dynamics limits.
-Deferred: the cam-table set (`MC_CamScaling`, `MC_CamTableSelect`,
-`MC_ReadCamInfo`, `MC_CamAdd`, `MC_CamExchange`, `MC_CamIn`,
-`MC_CamRemove`), fluid power (`MC_ValveCharacterization`) and the
-TcCOM `AXIS_REF`/`ENCODER_AXIS_REF` object model (METHOD-based,
-not expressible in the ST dialect).
+Cam-table set done in `compat/tc3/tc3_mc3cam.st` (e2e
+`tc3_mc3camtbl{,_io}`, mask `0xff`): `FB_CamTable` is the flattened
+`MC_CamObject` (UDINT handle into the new `tplc-cam` service holding
+the point table, periodic/continuity flags and the per-slave binding
+registry with coupling scalings); `MC_CamTableSelect`,
+`MC_CamIn`, `MC_CamAdd`, `MC_CamExchange`, `MC_CamRemove`,
+`MC_CamScaling` and `MC_ReadCamInfo` bind/unbind/query the slave and
+stream interpolated 0x607A position targets while the binding lives.
+Deviations: one binding per slave (multi-plate summation and
+superposition need the NC kernel), `MC_CamObject` METHODs flatten
+to `FB_CamTable` edges, `MC_CAM_REF`/`Type_CouplingFunction1D`/
+`CamScalingData`/`CamActivationOptions` flatten to UDINT handles and
+LREAL scalars, continuity is stored not enforced, ActivationOptions
+and BufferMode are accepted but not modeled. Deferred: fluid power
+(`MC_ValveCharacterization`) and the TcCOM `AXIS_REF`/
+`ENCODER_AXIS_REF` object model (METHOD-based, not expressible in
+the ST dialect).
 
 ---
 

@@ -18353,7 +18353,7 @@ per-parameter prose.
 
 - **Category:** Motion/MC3 · **Tier:** T3
 - **Manual:** `TF55xx_TC3_MC3_EN.pdf` · **API entries:** 89
-- **Status:** PARTIAL — PTP core in `compat/tc2/tc2_mc2.st` plus `compat/tc3/tc3_mc3ptp.st` (torque/hw-param access, wait-for-stable, 3 accepted no-ops, error inject via 0x200D; ctest `tc3_mc3ptp{,_io}`) and `compat/tc3/tc3_mc3cam.st` (phasing subset: `MC_PhasingAbsolute`/`MC_PhasingRelative`/`MC_GearInPos`/`MC_HaltPhasing` as finite position-convergence commands over a PV-mode feedforward+P loop; ctest `tc3_mc3cam{,_io}` mask `0x3f`); cam-table set, fluid power and TcCOM objects deferred
+- **Status:** PARTIAL — PTP core in `compat/tc2/tc2_mc2.st` plus `compat/tc3/tc3_mc3ptp.st` (torque/hw-param access, wait-for-stable, 3 accepted no-ops, error inject via 0x200D; ctest `tc3_mc3ptp{,_io}`) `compat/tc3/tc3_mc3cam.st` phasing subset (`MC_PhasingAbsolute`/`MC_PhasingRelative`/`MC_GearInPos`/`MC_HaltPhasing` finite position-convergence commands; ctest `tc3_mc3cam{,_io}` mask `0x3f`) and cam-table set (`FB_CamTable` flattened cam object over the new `tplc-cam` service + `MC_CamTableSelect`/`MC_CamIn`/`MC_CamAdd`/`MC_CamExchange`/`MC_CamRemove`/`MC_CamScaling`/`MC_ReadCamInfo` with one-binding-per-slave CSP coupling; ctest `tc3_mc3camtbl{,_io}` mask `0xff`); fluid power and TcCOM objects deferred
 - **Integration:** MC3 motion function blocks (PTP, camming, fluid power): axis backend.
 
 #### Development environment › MOTION › Default Axis › Drive modules › Pulse Width Current Drive (MDP250) (both channels)

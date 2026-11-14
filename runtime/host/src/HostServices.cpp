@@ -30,7 +30,7 @@ HostServices::HostServices(uint32_t caps)
       motion_io_(&host_steady_ns, this), nci_io_(&host_steady_ns, this),
       fifo_io_(&host_steady_ns, this), fifo_(&host_steady_ns, this),
       kin_io_(&host_steady_ns, this), kin_(&host_steady_ns, this),
-      mcgroup_(),
+      mcgroup_(), cam_(),
       soe_(&host_steady_ns, this) {
     fifo_.setMotion(&motion_.table());
     svc_.struct_size  = sizeof(TplcServices);
@@ -150,6 +150,11 @@ void* HostServices::getService(const char* name, uint32_t len) {
         /* Coordinated-motion groups: pure PLC-side bookkeeping,
            always served in-process. */
         return const_cast<TplcMcGroupService*>(&mcgroup_.svc());
+    }
+    if (len == 8 && memcmp(name, "tplc-cam", 8) == 0) {
+        /* Cam objects and slave bindings: pure PLC-side
+           bookkeeping, always served in-process. */
+        return const_cast<TplcCamService*>(&cam_.svc());
     }
     if (len == 10 && memcmp(name, "tplc-opcua", 10) == 0) {
         /* OPC UA client: only when built with libopen62541. */

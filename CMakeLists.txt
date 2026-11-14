@@ -56,6 +56,7 @@ add_library(tplc_host STATIC
   runtime/host/src/KinService.cpp
   runtime/host/src/KinIoService.cpp
   runtime/host/src/McGroupService.cpp
+  runtime/host/src/CamService.cpp
   runtime/host/src/EcSyncService.cpp
   runtime/host/src/EcDiagService.cpp
   runtime/host/src/SoeService.cpp
@@ -375,6 +376,7 @@ if(TARGET tplc_tether_io)
                               runtime/host/src/KinIoService.cpp
                               runtime/host/src/KinService.cpp
                               runtime/host/src/McGroupService.cpp
+                              runtime/host/src/CamService.cpp
                               runtime/host/src/EcSyncService.cpp
                               runtime/host/src/EcDiagService.cpp
                               runtime/host/src/SoeService.cpp
@@ -1286,6 +1288,18 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_mc3cam_io
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc3cam_io.sh)
   set_tests_properties(tc3_mc3cam_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
+
+  # Tc3_Mc3Camming cam-table e2e: FB_CamTable object +
+  # MC_CamTableSelect/CamIn/CamScaling/ReadCamInfo/CamRemove over
+  # the tplc-cam service; in-process and Tether IO variants
+  add_test(NAME tc3_mc3camtbl
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc3camtbl.sh)
+  set_tests_properties(tc3_mc3camtbl PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  add_test(NAME tc3_mc3camtbl_io
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc3camtbl_io.sh)
+  set_tests_properties(tc3_mc3camtbl_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real

@@ -1343,6 +1343,41 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "OVRACT", lreal());
             push(&mut off, "AXES", u32arr(16));
         }
+        /* FB_Cam — tplc-cam service bridge (Tc3_Mc3Camming cam
+        objects and slave bindings). Synchronous op dispatch:
+        OP 0=create (HANDLE out), 1=clear, 2=write point
+        (AUX=idx, F1=master pos, F2=slave pos), 3=config
+        (AUX=npts, FLAGS=periodic|continuity<<1),
+        4=eval (F1=master pos in, F2=slave pos out),
+        5=info (AUX=npts, FLAGS out), 6=bind
+        (AUX=slave, AUX2=master, HANDLE=cam, F1..F4 scalings),
+        7=bound query (AUX=slave -> HANDLE/AUX2 cam/master,
+        F1..F4 scalings), 8=unbind (AUX=slave, HANDLE=cam),
+        9=scaling (AUX=slave, F1..F4 scalings). STATUS carries
+        the service return code, ERRID its magnitude. */
+        "FB_Cam" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let lreal = || Type::Real { bits: 64 };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "AUX2", udint());
+            push(&mut off, "FLAGS", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "NPTS", udint());
+            push(&mut off, "F1", lreal());
+            push(&mut off, "F2", lreal());
+            push(&mut off, "F3", lreal());
+            push(&mut off, "F4", lreal());
+        }
         /* FB_UaClient — tplc-opcua service bridge (OPC UA client via
         libopen62541). Synchronous op dispatch like FB_NciChan: set
         OP + fields and call. OP 1=connect (URL string → HANDLE),

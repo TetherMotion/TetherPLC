@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# tc3_mc3camtbl.sh — Tc3_Mc3Camming cam-table e2e: builds
+# compat/tc2/tc2_mc2.st + compat/tc3/tc3_mc3cam.st as libraries,
+# consumes them into tests/compat/tc3_mc3camtbl_case.st via --lib,
+# and replays through tether-plc-sim (in-process tplc-motion,
+# 2 axes; slave in CSP mode tracking 0x607A cam targets).
+# Covers FB_CamTable create/WritePt/Config, MC_CamTableSelect,
+# MC_CamIn coupling, MC_CamScaling, MC_ReadCamInfo and
+# MC_CamRemove. Expects mask 0xff.
+set -u
+cd "$(dirname "$0")/../.."
+TPLCC=${TPLCC:-compiler/target/debug/tplcc}
+BUILD=${BUILD:-./build}
+[ -x "$TPLCC" ] || { echo "tplcc missing: $TPLCC" >&2; exit 77; }
+[ -x "$BUILD/tether-plc-sim" ] || { echo "tether-plc-sim missing" >&2; exit 77; }
+pass=0; fail=0
+ok()  { echo "PASS $1"; pass=$((pass+1)); }
+bad() { echo "FAIL $1"; fail=$((fail+1)); }
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+"$TPLCC" build --library --name Tc2_MC2 \
+    compat/tc2/tc2_mc2.st -o "$WORK/tc2_mc2.tplc" >/dev/null 2>&1 \
+    && ok "Tc2_MC2 library" || { bad "Tc2_MC2 library"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+"$TPLCC" build --library --name Tc3_Mc3Cam \
+    compat/tc3/tc3_mc3cam.st -o "$WORK/tc3_mc3cam.tplc" >/dev/null 2>&1 \
+    && ok "Tc3_Mc3Cam library" || { bad "Tc3_Mc3Cam library"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+"$TPLCC" build tests/compat/tc3_mc3camtbl_case.st \
+    --lib "$WORK/tc2_mc2.tplc" --lib "$WORK/tc3_mc3cam.tplc" \
+    -o "$WORK/tc3_mc3camtbl_case.tplc" >/dev/null 2>&1 \
+    && ok "case build with --lib" \
+    || { bad "case build with --lib"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+
+{
+    for i in $(seq 0 300); do
+        t=$((i * 10000000))
+        if [ "$i" -eq 300 ]; then
+            echo "step $i time=$t in 0=00 expect 0=ff000000"
+        else
+            echo "step $i time=$t in 0=00"
+        fi
+    done
+} > "$WORK/camtbl.steps"
+
+IMG=/tplc_tctcam_$$; CTL="$WORK/camtbl.ctl"
+"$BUILD/tether-plc-sim" --image "$IMG" --package "$WORK/tc3_mc3camtbl_case.tplc" \
+    --steps "$WORK/camtbl.steps" --plc "$BUILD/tether-plc" \
+    --ctl "$CTL" --settle-ms 800 >"$WORK/sim.log" 2>&1
+rc=$?
+if [ $rc -eq 0 ] && grep -q "all matched" "$WORK/sim.log"; then
+    ok "sim replay: cam table select/in/scaling/info/remove"
+else
+    bad "sim replay: cam table select/in/scaling/info/remove"
+    tail -20 "$WORK/sim.log"
+fi
+
+echo "== $pass pass, $fail fail"
+[ $fail -eq 0 ]
