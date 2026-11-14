@@ -61,6 +61,11 @@ the caller for pulses.
 | `FB_AtcToolLife` | Tool/cycle life: `Cycles` on `Cycle` rising edge, `Hours` while `Enable`; `PctUsed` for HMI, `Warn` at `WarnPct` %, `Due` latches at `LifeLimit` until `Reset` (tool change). |
 | `FB_AtcSoftLimit` | Axis software limits: `PosValid` only after `Homed`; `InWindow`/`OverPos`/`UnderPos` vs `[MinPos,MaxPos]` (auto-swapped); `Fault` latches first violation while `Enable`; `NeedHome` = enabled but unhomed; `Reset` clears `Fault`. |
 | `FB_AtcDeviation` | PV-SP band alarm: `Dev` instantaneous, `Alarm` after `OnDelay` s out-of-band, clears after `OffDelay` s back in band (`<=0` immediate); `ET` = continuous deviation time. Batch-record temperature deviation alarm. |
+| `FB_AtcDualChannel` | Two-channel safety input agreement (E-stop/OSSD/door): disagreement < `MismatchTime` is bounce; longer latches `Fault` until `Reset`. `Safe` = both TRUE and no fault. No bypass by design. |
+| `FB_AtcMuting` | Safety-device muting (light curtain/mat): `MutingActive` mutes outputs so the machine runs while material passes; `SafeRun` = `SafeIn OR MutingActive`; `MutingBad` flags mute requested while device already clear. When muting drops, `SafeIn` governs again (restart inhibit). |
+| `FB_AtcValveFb` | Valve/pneumatic feedback verify: `Cmd` vs `Fb` mismatch persisting `FbDelay` s latches `Fault`; `OK` = enabled, agreed, no fault. Catches stuck-open and stuck-closed. |
+| `FB_AtcVote` | Median-of-3 redundant analog inputs: `Vout` = middle value (single drifting probe can't move PV); `Spread` = max−min, `Bad` while `Spread > Band`; `UseDefault`+`DefV` substitutes a fallback. |
+| `FB_AtcLoto` | Lockout-tagout permit: `L1..L8` locked signals; `Permit` only when all released and `Enable`; `LockedCount`/`FirstLock` for the HMI. No bypass input by design. |
 
 ## Machine control
 
@@ -85,8 +90,8 @@ the caller for pulses.
 
 ## Tests
 
-`tests/ops/e2e.sh` — library check/build/verify plus a 27-program
-self-checking vector suite (`tests/ops/cases/o01..o27`) covering
+`tests/ops/e2e.sh` — library check/build/verify plus a 32-program
+self-checking vector suite (`tests/ops/cases/o01..o32`) covering
 every block: debounce timing, alarm ack/shelve/first-out, hour-meter
 preset alarm + reset, OEE counters + reset, sensor range/rate/stuck
 priority, sequencer timed/condition steps + done, andon priority
@@ -97,4 +102,6 @@ demand, override release track, two-hand gap/anti-tie-down, three-shift
 schedule incl. overnight wrap, cooler defrost with door/warm alarms,
 zone-balance trim saturation, freeze-dryer endpoint dry/wet classify,
 lead/lag staging with rotation + stage delay, tool-life warn/due/reset,
-soft-limit window + homing gate, PV-SP deviation on/off delay.
+soft-limit window + homing gate, PV-SP deviation on/off delay,
+dual-channel safety agreement, safety muting, valve feedback verify,
+median-of-3 analog voting, LOTO permit.

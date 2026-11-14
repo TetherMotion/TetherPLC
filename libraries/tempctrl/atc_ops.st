@@ -1546,3 +1546,181 @@ END_VAR
         IF Alarm AND inT >= OffDelay THEN Alarm := FALSE; END_IF;
     END_IF;
 END_FUNCTION_BLOCK
+
+// ---- FB_AtcDualChannel: two-channel input agreement ------------------
+// Safety input redundancy (E-stop, safety door, light curtain OSSD):
+// both channels must agree. A mismatch shorter than MismatchTime is
+// contact bounce; longer is a fault — Fault latches until Reset.
+// Safe = both channels in the safe state AND no latched fault.
+// No bypass by design — wire safety contacts, not logic tricks.
+FUNCTION_BLOCK FB_AtcDualChannel
+VAR_INPUT
+    In1 : BOOL;
+    In2 : BOOL;
+    MismatchTime : LREAL; // s of disagreement before Fault
+    Enable : BOOL;
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Agree : BOOL;      // channels currently equal
+    Safe : BOOL;       // both TRUE and no fault
+    Fault : BOOL;      // latched disagreement
+    ET : LREAL;        // s of current disagreement
+END_VAR
+VAR
+    mm : LREAL;
+END_VAR
+    mm := MismatchTime;
+    IF mm < 0.0 THEN mm := 0.0; END_IF;
+    IF Reset THEN Fault := FALSE; ET := 0.0; END_IF;
+    IF NOT Enable THEN
+        Agree := FALSE; Safe := FALSE; ET := 0.0;
+        RETURN;
+    END_IF;
+    IF In1 = In2 THEN
+        Agree := TRUE; ET := 0.0;
+    ELSE
+        Agree := FALSE;
+        ET := ET + CycleTime;
+        IF ET >= mm THEN Fault := TRUE; END_IF;
+    END_IF;
+    Safe := In1 AND In2 AND NOT Fault;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcMuting: safety-device muting with restart inhibit ---------
+// Light-curtain/safety-mat muting: MutingActive (material present /
+// vacuum / guard open authorisation) mutes the protective outputs so
+// the machine can run while material passes. SafeRun = SafeIn OR
+// (MutingActive AND NOT MutingBad). When MutingActive drops, SafeRun
+// stays FALSE until SafeIn is clear — no restart into the zone.
+// MutingBad flags muting requested while the device is already clear
+// (wiring fault or misuse).
+FUNCTION_BLOCK FB_AtcMuting
+VAR_INPUT
+    SafeIn : BOOL;       // protective device clear (TRUE = clear)
+    MutingActive : BOOL; // material/vacuum authorising the mute
+    Enable : BOOL;
+    CycleTime : LREAL;   // unused, kept for interface symmetry
+END_VAR
+VAR_OUTPUT
+    MuteOut : BOOL;      // mute the protective outputs
+    SafeRun : BOOL;      // machine may run
+    MutingBad : BOOL;    // mute requested while device clear
+END_VAR
+    MuteOut := Enable AND MutingActive;
+    MutingBad := Enable AND MutingActive AND SafeIn;
+    // SafeRun while the device is clear, or while legitimately
+    // muted. When MutingActive drops, SafeIn alone governs again —
+    // a still-blocked device keeps SafeRun FALSE (restart inhibit).
+    SafeRun := Enable AND (SafeIn OR MutingActive);
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcValveFb: valve/pneumatic feedback verification ------------
+// Compares commanded vs actual feedback; a mismatch persisting
+// FbDelay s latches Fault (until Reset). Stuck-open and stuck-closed
+// both detected — direction is irrelevant for interlock purposes.
+// OK = enabled, no fault, command and feedback agree.
+FUNCTION_BLOCK FB_AtcValveFb
+VAR_INPUT
+    Cmd : BOOL;          // valve command (TRUE = open/energise)
+    Fb : BOOL;           // valve feedback (TRUE = open/energised)
+    FbDelay : LREAL;     // s allowed for feedback to follow
+    Enable : BOOL;
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Fault : BOOL;        // latched Cmd/Fb mismatch
+    OK : BOOL;           // command verified
+    ET : LREAL;          // s of current mismatch
+END_VAR
+VAR
+    dl : LREAL;
+END_VAR
+    dl := FbDelay;
+    IF dl < 0.0 THEN dl := 0.0; END_IF;
+    IF Reset THEN Fault := FALSE; ET := 0.0; END_IF;
+    IF NOT Enable THEN
+        Fault := FALSE; OK := FALSE; ET := 0.0;
+        RETURN;
+    END_IF;
+    IF Cmd = Fb THEN
+        ET := 0.0;
+    ELSE
+        ET := ET + CycleTime;
+        IF ET >= dl THEN Fault := TRUE; END_IF;
+    END_IF;
+    OK := Cmd = Fb AND NOT Fault;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcVote: redundant analog input voting -----------------------
+// Median-of-3 for redundant transmitters (US-020): Vout is the
+// middle value so a single drifting/frozen probe cannot move the
+// process value. Spread = max-min; Bad asserts while Spread > Band
+// (two probes disagree — maintenance needed). BadVote optionally
+// substitutes a caller default when Bad.
+FUNCTION_BLOCK FB_AtcVote
+VAR_INPUT
+    V1 : LREAL;
+    V2 : LREAL;
+    V3 : LREAL;
+    Band : LREAL;        // max allowed spread, EU
+    UseDefault : BOOL;   // substitute DefV when Bad
+    DefV : LREAL;        // fallback value
+END_VAR
+VAR_OUTPUT
+    Vout : LREAL;        // median (or DefV when UseDefault AND Bad)
+    Spread : LREAL;      // max - min of the three inputs
+    Bad : BOOL;          // Spread > Band
+END_VAR
+VAR
+    a : LREAL;
+    b : LREAL;
+    c : LREAL;
+    tmp : LREAL;
+END_VAR
+    a := V1; b := V2; c := V3;
+    // order a<=b<=c with three compare-exchanges
+    IF a > b THEN
+        tmp := a; a := b; b := tmp;
+    END_IF;
+    IF b > c THEN
+        tmp := b; b := c; c := tmp;
+    END_IF;
+    IF a > b THEN
+        tmp := a; a := b; b := tmp;
+    END_IF;
+    Vout := b;
+    Spread := c - a;
+    Bad := Spread > Band;
+    IF Bad AND UseDefault THEN Vout := DefV; END_IF;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcLoto: lockout-tagout permit enforcement -------------------
+// L1..L8 are per-lock "locked" signals (TRUE = lock applied). Permit
+// asserts only when EVERY lock is released — no bypass input by
+// design (bypass belongs upstream in a guarded procedure step).
+// LockedCount / FirstLock feed the HMI "which lock is still on".
+FUNCTION_BLOCK FB_AtcLoto
+VAR_INPUT
+    L1 : BOOL; L2 : BOOL; L3 : BOOL; L4 : BOOL;
+    L5 : BOOL; L6 : BOOL; L7 : BOOL; L8 : BOOL;
+    Enable : BOOL;
+END_VAR
+VAR_OUTPUT
+    Permit : BOOL;        // all locks released
+    LockedCount : INT;    // how many locks still applied
+    FirstLock : INT;      // lowest locked index, 0 = none
+END_VAR
+    LockedCount := 0; FirstLock := 0;
+    IF L1 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 1; END_IF; END_IF;
+    IF L2 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 2; END_IF; END_IF;
+    IF L3 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 3; END_IF; END_IF;
+    IF L4 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 4; END_IF; END_IF;
+    IF L5 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 5; END_IF; END_IF;
+    IF L6 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 6; END_IF; END_IF;
+    IF L7 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 7; END_IF; END_IF;
+    IF L8 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 8; END_IF; END_IF;
+    Permit := Enable AND LockedCount = 0;
+END_FUNCTION_BLOCK
