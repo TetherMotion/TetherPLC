@@ -1,0 +1,776 @@
+{
+ "schema": "fbd.v1",
+ "project": "ui_tune",
+ "data_types": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "Main",
+   "kind": "program",
+   "en_eno": "off",
+   "interface": [
+    {
+     "name": "Run",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "Pv",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "Sp",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "X2",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "Out",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "TuneRun",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "TuneOut",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "TuneApply",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "TuneReset",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "tune_ku",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "tune_tu",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "tune_amp",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "tune_kp",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "tune_tn",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "tune_tv",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "tune_cycles",
+     "kind": "var_output",
+     "type": "DINT"
+    },
+    {
+     "name": "tune_done",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "tune_busy",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "tune_err",
+     "kind": "var_output",
+     "type": "BOOL"
+    }
+   ],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 90,
+       "kind": "fb",
+       "type_ref": "FB_AtcPid",
+       "instance": "pid",
+       "pos": {
+        "x": 30,
+        "y": 2
+       },
+       "params": {
+        "CycleTime": "0.1"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "controller"
+      },
+      {
+       "id": 91,
+       "kind": "fb",
+       "type_ref": "FB_AtcRelayTune",
+       "instance": "tune",
+       "pos": {
+        "x": 14,
+        "y": 8
+       },
+       "params": {
+        "RelayAmp": "10.0",
+        "MeanOut": "30.0",
+        "Hyst": "0.5",
+        "OutMin": "0.0",
+        "OutMax": "100.0",
+        "TuneRule": "0",
+        "MinCyc": "3",
+        "CycleTime": "0.1",
+        "Abort": "FALSE",
+        "Reset": "FALSE"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune FB_AtcRelayTune"
+      },
+      {
+       "id": 92,
+       "kind": "st",
+       "type_ref": "ST",
+       "pos": {
+        "x": 2,
+        "y": 14
+       },
+       "params": {
+        "CODE": "tune_ku := TUNE.Ku;\ntune_tu := TUNE.Tu;\ntune_amp := TUNE.Amp;\ntune_kp := TUNE.Kp;\ntune_tn := TUNE.Tn;\ntune_tv := TUNE.Tv;\ntune_cycles := TUNE.Cycles;\ntune_done := TUNE.Done;\ntune_busy := TUNE.Busy;\ntune_err := TUNE.Err;\nIF APPLY AND NOT applied THEN\n    CTL.Kp := TUNE.Kp;\n    CTL.Tn := TUNE.Tn;\n    CTL.Tv := TUNE.Tv;\n    applied := TRUE;\nEND_IF;\nIF RESET THEN applied := FALSE; END_IF;\n"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune handoff relay",
+       "pins": [
+        {
+         "name": "TUNE",
+         "kind": "var_in_out",
+         "type": "FB_AtcRelayTune"
+        },
+        {
+         "name": "CTL",
+         "kind": "var_in_out",
+         "type": "FB_AtcPid"
+        },
+        {
+         "name": "APPLY",
+         "kind": "var_input",
+         "type": "BOOL"
+        },
+        {
+         "name": "RESET",
+         "kind": "var_input",
+         "type": "BOOL"
+        },
+        {
+         "name": "tune_ku",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "tune_tu",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "tune_amp",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "tune_kp",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "tune_tn",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "tune_tv",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "tune_cycles",
+         "kind": "var_output",
+         "type": "DINT"
+        },
+        {
+         "name": "tune_done",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "tune_busy",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "tune_err",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "applied",
+         "kind": "var",
+         "type": "BOOL"
+        }
+       ]
+      },
+      {
+       "id": 93,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 2,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "tune"
+      },
+      {
+       "id": 95,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 14,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "pid"
+      },
+      {
+       "id": 97,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 0,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "TuneApply"
+      },
+      {
+       "id": 99,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 0,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "TuneReset"
+      },
+      {
+       "id": 101,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_ku"
+      },
+      {
+       "id": 103,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_tu"
+      },
+      {
+       "id": 105,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_amp"
+      },
+      {
+       "id": 107,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_kp"
+      },
+      {
+       "id": 109,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_tn"
+      },
+      {
+       "id": 111,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_tv"
+      },
+      {
+       "id": 113,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_cycles"
+      },
+      {
+       "id": 115,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_done"
+      },
+      {
+       "id": 117,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_busy"
+      },
+      {
+       "id": 119,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "tune_err"
+      },
+      {
+       "id": 121,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 0,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "TuneRun"
+      },
+      {
+       "id": 123,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 4,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "Pv"
+      },
+      {
+       "id": 125,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 8,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "Sp"
+      },
+      {
+       "id": 128,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 40,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "TuneOut"
+      }
+     ],
+     "wires": [
+      {
+       "id": 94,
+       "src": {
+        "block": 93,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "TUNE"
+        }
+       ]
+      },
+      {
+       "id": 96,
+       "src": {
+        "block": 95,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "CTL"
+        }
+       ]
+      },
+      {
+       "id": 98,
+       "src": {
+        "block": 97,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "APPLY"
+        }
+       ]
+      },
+      {
+       "id": 100,
+       "src": {
+        "block": 99,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "RESET"
+        }
+       ]
+      },
+      {
+       "id": 102,
+       "src": {
+        "block": 92,
+        "port": "tune_ku"
+       },
+       "dsts": [
+        {
+         "block": 101,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 104,
+       "src": {
+        "block": 92,
+        "port": "tune_tu"
+       },
+       "dsts": [
+        {
+         "block": 103,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 106,
+       "src": {
+        "block": 92,
+        "port": "tune_amp"
+       },
+       "dsts": [
+        {
+         "block": 105,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 108,
+       "src": {
+        "block": 92,
+        "port": "tune_kp"
+       },
+       "dsts": [
+        {
+         "block": 107,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 110,
+       "src": {
+        "block": 92,
+        "port": "tune_tn"
+       },
+       "dsts": [
+        {
+         "block": 109,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 112,
+       "src": {
+        "block": 92,
+        "port": "tune_tv"
+       },
+       "dsts": [
+        {
+         "block": 111,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 114,
+       "src": {
+        "block": 92,
+        "port": "tune_cycles"
+       },
+       "dsts": [
+        {
+         "block": 113,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 116,
+       "src": {
+        "block": 92,
+        "port": "tune_done"
+       },
+       "dsts": [
+        {
+         "block": 115,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 118,
+       "src": {
+        "block": 92,
+        "port": "tune_busy"
+       },
+       "dsts": [
+        {
+         "block": 117,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 120,
+       "src": {
+        "block": 92,
+        "port": "tune_err"
+       },
+       "dsts": [
+        {
+         "block": 119,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 122,
+       "src": {
+        "block": 121,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 91,
+         "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 124,
+       "src": {
+        "block": 123,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 91,
+         "port": "Actual"
+        }
+       ]
+      },
+      {
+       "id": 126,
+       "src": {
+        "block": 125,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 91,
+         "port": "Setpoint"
+        }
+       ]
+      },
+      {
+       "id": 127,
+       "src": {
+        "block": 99,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 91,
+         "port": "Reset"
+        }
+       ]
+      },
+      {
+       "id": 129,
+       "src": {
+        "block": 91,
+        "port": "Out"
+       },
+       "dsts": [
+        {
+         "block": 128,
+         "port": 0
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,1032 @@
+{
+ "schema": "fbd.v1",
+ "project": "ui_tune_step",
+ "data_types": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "Main",
+   "kind": "program",
+   "en_eno": "off",
+   "interface": [
+    {
+     "name": "Run",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "Pv",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "Sp",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "X2",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "Out",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "TuneRun",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "TuneOut",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "TuneApply",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "ident_k",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "ident_tau",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "ident_theta",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "ident_pv0",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "ident_pvf",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "ident_t35",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "ident_t85",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "ident_errid",
+     "kind": "var_output",
+     "type": "INT"
+    },
+    {
+     "name": "ident_done",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "ident_busy",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "ident_err",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "rules_kp",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "rules_tn",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "rules_tv",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "rules_done",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "rules_err",
+     "kind": "var_output",
+     "type": "BOOL"
+    }
+   ],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 90,
+       "kind": "fb",
+       "type_ref": "FB_AtcPid",
+       "instance": "pid",
+       "pos": {
+        "x": 30,
+        "y": 2
+       },
+       "params": {
+        "CycleTime": "0.1"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "controller"
+      },
+      {
+       "id": 91,
+       "kind": "fb",
+       "type_ref": "FB_AtcStepIdent",
+       "instance": "ident",
+       "pos": {
+        "x": 14,
+        "y": 8
+       },
+       "params": {
+        "U0": "0.0",
+        "U1": "50.0",
+        "SettleT": "30.0",
+        "TolBand": "0.2",
+        "SettleN": "10",
+        "MaxTime": "300.0",
+        "StoreEvery": "1",
+        "CycleTime": "0.1",
+        "Reset": "FALSE"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune FB_AtcStepIdent"
+      },
+      {
+       "id": 92,
+       "kind": "fb",
+       "type_ref": "FB_AtcTuneRules",
+       "instance": "rules",
+       "pos": {
+        "x": 30,
+        "y": 8
+       },
+       "params": {
+        "Rule": "0",
+        "Lambda": "0.0"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune FB_AtcTuneRules"
+      },
+      {
+       "id": 96,
+       "kind": "st",
+       "type_ref": "ST",
+       "pos": {
+        "x": 2,
+        "y": 14
+       },
+       "params": {
+        "CODE": "ident_k := IDENT.K;\nident_tau := IDENT.Tau;\nident_theta := IDENT.Theta;\nident_pv0 := IDENT.Pv0;\nident_pvf := IDENT.PvFinal;\nident_t35 := IDENT.T35;\nident_t85 := IDENT.T85;\nident_errid := IDENT.ErrId;\nident_done := IDENT.Done;\nident_busy := IDENT.Busy;\nident_err := IDENT.Err;\nrules_kp := RULES.Kp;\nrules_tn := RULES.Tn;\nrules_tv := RULES.Tv;\nrules_done := RULES.Done;\nrules_err := RULES.Err;\nIF APPLY AND NOT applied THEN\n    CTL.Kp := RULES.Kp;\n    CTL.Tn := RULES.Tn;\n    CTL.Tv := RULES.Tv;\n    applied := TRUE;\nEND_IF;\nIF RESET THEN applied := FALSE; END_IF;\n",
+        "RESET": "FALSE"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune handoff step",
+       "pins": [
+        {
+         "name": "IDENT",
+         "kind": "var_in_out",
+         "type": "FB_AtcStepIdent"
+        },
+        {
+         "name": "RULES",
+         "kind": "var_in_out",
+         "type": "FB_AtcTuneRules"
+        },
+        {
+         "name": "CTL",
+         "kind": "var_in_out",
+         "type": "FB_AtcPid"
+        },
+        {
+         "name": "APPLY",
+         "kind": "var_input",
+         "type": "BOOL"
+        },
+        {
+         "name": "RESET",
+         "kind": "var_input",
+         "type": "BOOL"
+        },
+        {
+         "name": "ident_k",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "ident_tau",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "ident_theta",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "ident_pv0",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "ident_pvf",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "ident_t35",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "ident_t85",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "ident_errid",
+         "kind": "var_output",
+         "type": "INT"
+        },
+        {
+         "name": "ident_done",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "ident_busy",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "ident_err",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "rules_kp",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "rules_tn",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "rules_tv",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "rules_done",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "rules_err",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "applied",
+         "kind": "var",
+         "type": "BOOL"
+        }
+       ]
+      },
+      {
+       "id": 97,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 2,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "ident"
+      },
+      {
+       "id": 99,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 6,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "rules"
+      },
+      {
+       "id": 101,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 14,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "pid"
+      },
+      {
+       "id": 103,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 0,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "TuneApply"
+      },
+      {
+       "id": 105,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_k"
+      },
+      {
+       "id": 107,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_tau"
+      },
+      {
+       "id": 109,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_theta"
+      },
+      {
+       "id": 111,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_pv0"
+      },
+      {
+       "id": 113,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_pvf"
+      },
+      {
+       "id": 115,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_t35"
+      },
+      {
+       "id": 117,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_t85"
+      },
+      {
+       "id": 119,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_errid"
+      },
+      {
+       "id": 121,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_done"
+      },
+      {
+       "id": 123,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_busy"
+      },
+      {
+       "id": 125,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "ident_err"
+      },
+      {
+       "id": 127,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "rules_kp"
+      },
+      {
+       "id": 129,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "rules_tn"
+      },
+      {
+       "id": 131,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "rules_tv"
+      },
+      {
+       "id": 133,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "rules_done"
+      },
+      {
+       "id": 135,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "rules_err"
+      },
+      {
+       "id": 137,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 0,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "TuneRun"
+      },
+      {
+       "id": 139,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 4,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "Pv"
+      },
+      {
+       "id": 141,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 40,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "TuneOut"
+      }
+     ],
+     "wires": [
+      {
+       "id": 93,
+       "src": {
+        "block": 91,
+        "port": "K"
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "K"
+        }
+       ]
+      },
+      {
+       "id": 94,
+       "src": {
+        "block": 91,
+        "port": "Tau"
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "Tau"
+        }
+       ]
+      },
+      {
+       "id": 95,
+       "src": {
+        "block": 91,
+        "port": "Theta"
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "Theta"
+        }
+       ]
+      },
+      {
+       "id": 98,
+       "src": {
+        "block": 97,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 96,
+         "port": "IDENT"
+        }
+       ]
+      },
+      {
+       "id": 100,
+       "src": {
+        "block": 99,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 96,
+         "port": "RULES"
+        }
+       ]
+      },
+      {
+       "id": 102,
+       "src": {
+        "block": 101,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 96,
+         "port": "CTL"
+        }
+       ]
+      },
+      {
+       "id": 104,
+       "src": {
+        "block": 103,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 96,
+         "port": "APPLY"
+        }
+       ]
+      },
+      {
+       "id": 106,
+       "src": {
+        "block": 96,
+        "port": "ident_k"
+       },
+       "dsts": [
+        {
+         "block": 105,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 108,
+       "src": {
+        "block": 96,
+        "port": "ident_tau"
+       },
+       "dsts": [
+        {
+         "block": 107,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 110,
+       "src": {
+        "block": 96,
+        "port": "ident_theta"
+       },
+       "dsts": [
+        {
+         "block": 109,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 112,
+       "src": {
+        "block": 96,
+        "port": "ident_pv0"
+       },
+       "dsts": [
+        {
+         "block": 111,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 114,
+       "src": {
+        "block": 96,
+        "port": "ident_pvf"
+       },
+       "dsts": [
+        {
+         "block": 113,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 116,
+       "src": {
+        "block": 96,
+        "port": "ident_t35"
+       },
+       "dsts": [
+        {
+         "block": 115,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 118,
+       "src": {
+        "block": 96,
+        "port": "ident_t85"
+       },
+       "dsts": [
+        {
+         "block": 117,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 120,
+       "src": {
+        "block": 96,
+        "port": "ident_errid"
+       },
+       "dsts": [
+        {
+         "block": 119,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 122,
+       "src": {
+        "block": 96,
+        "port": "ident_done"
+       },
+       "dsts": [
+        {
+         "block": 121,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 124,
+       "src": {
+        "block": 96,
+        "port": "ident_busy"
+       },
+       "dsts": [
+        {
+         "block": 123,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 126,
+       "src": {
+        "block": 96,
+        "port": "ident_err"
+       },
+       "dsts": [
+        {
+         "block": 125,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 128,
+       "src": {
+        "block": 96,
+        "port": "rules_kp"
+       },
+       "dsts": [
+        {
+         "block": 127,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 130,
+       "src": {
+        "block": 96,
+        "port": "rules_tn"
+       },
+       "dsts": [
+        {
+         "block": 129,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 132,
+       "src": {
+        "block": 96,
+        "port": "rules_tv"
+       },
+       "dsts": [
+        {
+         "block": 131,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 134,
+       "src": {
+        "block": 96,
+        "port": "rules_done"
+       },
+       "dsts": [
+        {
+         "block": 133,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 136,
+       "src": {
+        "block": 96,
+        "port": "rules_err"
+       },
+       "dsts": [
+        {
+         "block": 135,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 138,
+       "src": {
+        "block": 137,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 91,
+         "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 140,
+       "src": {
+        "block": 139,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 91,
+         "port": "Actual"
+        }
+       ]
+      },
+      {
+       "id": 142,
+       "src": {
+        "block": 91,
+        "port": "Out"
+       },
+       "dsts": [
+        {
+         "block": 141,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 143,
+       "src": {
+        "block": 91,
+        "port": "Done"
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "Execute"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

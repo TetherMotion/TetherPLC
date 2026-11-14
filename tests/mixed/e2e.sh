@@ -88,5 +88,17 @@ else
     bad "build: ui curve editor profile"; cat "$W/ui.log"
 fi
 
+# 8. TetherWebUI autotune-editor output: tuner FBs + inline `st`
+# handoff (VAR_IN_OUT FB pins, live mirrors, APPLY gain copy) for all
+# three tuner shapes — relay, step-identification pair, LQG pair.
+for t in ui_tune ui_tune_step ui_tune_lqg; do
+    if "$TPLCC" build "$D/$t.fbd.json" libraries/tempctrl/atc_tempctrl.st \
+            -o "$W/$t.tplc" >"$W/$t.log" 2>&1 && [ -s "$W/$t.tplc" ]; then
+        ok "build: ui autotune $t"
+    else
+        bad "build: ui autotune $t"; cat "$W/$t.log"
+    fi
+done
+
 echo "== $pass pass, $fail fail"
 [ "$fail" -eq 0 ]

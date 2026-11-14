@@ -1,0 +1,797 @@
+{
+ "schema": "fbd.v1",
+ "project": "ui_tune_lqg",
+ "data_types": [],
+ "pous": [
+  {
+   "id": "p1",
+   "name": "Main",
+   "kind": "program",
+   "en_eno": "off",
+   "interface": [
+    {
+     "name": "Run",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "Pv",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "Sp",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "X2",
+     "kind": "var_input",
+     "type": "LREAL"
+    },
+    {
+     "name": "Out",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "TuneRun",
+     "kind": "var_input",
+     "type": "BOOL"
+    },
+    {
+     "name": "kal_l1",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "kal_l2",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "kal_iter",
+     "kind": "var_output",
+     "type": "DINT"
+    },
+    {
+     "name": "kal_conv",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "kal_done",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "kal_err",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "lqr_k1",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "lqr_k2",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "lqr_ki",
+     "kind": "var_output",
+     "type": "LREAL"
+    },
+    {
+     "name": "lqr_iter",
+     "kind": "var_output",
+     "type": "DINT"
+    },
+    {
+     "name": "lqr_conv",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "lqr_done",
+     "kind": "var_output",
+     "type": "BOOL"
+    },
+    {
+     "name": "lqr_err",
+     "kind": "var_output",
+     "type": "BOOL"
+    }
+   ],
+   "networks": [
+    {
+     "id": "n1",
+     "kind": "fbd",
+     "label": "",
+     "comments": [],
+     "assocs": [],
+     "labels": [],
+     "jumps": [],
+     "returns": [],
+     "blocks": [
+      {
+       "id": 90,
+       "kind": "fb",
+       "type_ref": "FB_AtcLqg",
+       "instance": "pid",
+       "pos": {
+        "x": 30,
+        "y": 2
+       },
+       "params": {
+        "CycleTime": "0.1"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "controller"
+      },
+      {
+       "id": 91,
+       "kind": "fb",
+       "type_ref": "FB_AtcKalmanTune",
+       "instance": "kal",
+       "pos": {
+        "x": 14,
+        "y": 8
+       },
+       "params": {
+        "A11": "0.98",
+        "A12": "0.0",
+        "A21": "0.05",
+        "A22": "0.95",
+        "Q1": "0.001",
+        "Q2": "0.0001",
+        "R": "0.1",
+        "MaxIter": "30",
+        "Tol": "1e-10"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune FB_AtcKalmanTune"
+      },
+      {
+       "id": 92,
+       "kind": "fb",
+       "type_ref": "FB_AtcLqrTune",
+       "instance": "lqr",
+       "pos": {
+        "x": 30,
+        "y": 8
+       },
+       "params": {
+        "A11": "0.98",
+        "A12": "0.0",
+        "A21": "0.05",
+        "A22": "0.95",
+        "B1": "0.5",
+        "B2": "0.1",
+        "Q1": "1.0",
+        "Q2": "0.1",
+        "Qi": "0.01",
+        "R": "1.0",
+        "Ts": "0.1",
+        "MaxIter": "30",
+        "Tol": "1e-10"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune FB_AtcLqrTune"
+      },
+      {
+       "id": 93,
+       "kind": "st",
+       "type_ref": "ST",
+       "pos": {
+        "x": 2,
+        "y": 14
+       },
+       "params": {
+        "CODE": "kal_l1 := KAL.L1;\nkal_l2 := KAL.L2;\nkal_iter := KAL.Iter;\nkal_conv := KAL.Conv;\nkal_done := KAL.Done;\nkal_err := KAL.Err;\nlqr_k1 := LQR.K1;\nlqr_k2 := LQR.K2;\nlqr_ki := LQR.Ki;\nlqr_iter := LQR.Iter;\nlqr_conv := LQR.Conv;\nlqr_done := LQR.Done;\nlqr_err := LQR.Err;\nIF APPLY AND NOT applied THEN\n    CTL.L1 := KAL.L1;\n    CTL.L2 := KAL.L2;\n    CTL.K1 := LQR.K1;\n    CTL.K2 := LQR.K2;\n    CTL.Ki := LQR.Ki;\n    applied := TRUE;\nEND_IF;\nIF RESET THEN applied := FALSE; END_IF;\n",
+        "APPLY": "TRUE",
+        "RESET": "FALSE"
+       },
+       "exec_order": 0,
+       "negated": [],
+       "comment": "autotune handoff lqg",
+       "pins": [
+        {
+         "name": "KAL",
+         "kind": "var_in_out",
+         "type": "FB_AtcKalmanTune"
+        },
+        {
+         "name": "LQR",
+         "kind": "var_in_out",
+         "type": "FB_AtcLqrTune"
+        },
+        {
+         "name": "CTL",
+         "kind": "var_in_out",
+         "type": "FB_AtcLqg"
+        },
+        {
+         "name": "APPLY",
+         "kind": "var_input",
+         "type": "BOOL"
+        },
+        {
+         "name": "RESET",
+         "kind": "var_input",
+         "type": "BOOL"
+        },
+        {
+         "name": "kal_l1",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "kal_l2",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "kal_iter",
+         "kind": "var_output",
+         "type": "DINT"
+        },
+        {
+         "name": "kal_conv",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "kal_done",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "kal_err",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "lqr_k1",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "lqr_k2",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "lqr_ki",
+         "kind": "var_output",
+         "type": "LREAL"
+        },
+        {
+         "name": "lqr_iter",
+         "kind": "var_output",
+         "type": "DINT"
+        },
+        {
+         "name": "lqr_conv",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "lqr_done",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "lqr_err",
+         "kind": "var_output",
+         "type": "BOOL"
+        },
+        {
+         "name": "applied",
+         "kind": "var",
+         "type": "BOOL"
+        }
+       ]
+      },
+      {
+       "id": 94,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 2,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "kal"
+      },
+      {
+       "id": 96,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 6,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "lqr"
+      },
+      {
+       "id": 98,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 14,
+        "y": 12
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "pid"
+      },
+      {
+       "id": 100,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "kal_l1"
+      },
+      {
+       "id": 102,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "kal_l2"
+      },
+      {
+       "id": 104,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "kal_iter"
+      },
+      {
+       "id": 106,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "kal_conv"
+      },
+      {
+       "id": 108,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "kal_done"
+      },
+      {
+       "id": 110,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 30,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "kal_err"
+      },
+      {
+       "id": 112,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_k1"
+      },
+      {
+       "id": 114,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_k2"
+      },
+      {
+       "id": 116,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_ki"
+      },
+      {
+       "id": 118,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_iter"
+      },
+      {
+       "id": 120,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_conv"
+      },
+      {
+       "id": 122,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_done"
+      },
+      {
+       "id": 124,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 36,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "out",
+       "name": "lqr_err"
+      },
+      {
+       "id": 126,
+       "kind": "variable",
+       "type_ref": "",
+       "pos": {
+        "x": 0,
+        "y": 10
+       },
+       "params": {},
+       "exec_order": 0,
+       "negated": [],
+       "comment": "",
+       "role": "in",
+       "name": "TuneRun"
+      }
+     ],
+     "wires": [
+      {
+       "id": 95,
+       "src": {
+        "block": 94,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 93,
+         "port": "KAL"
+        }
+       ]
+      },
+      {
+       "id": 97,
+       "src": {
+        "block": 96,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 93,
+         "port": "LQR"
+        }
+       ]
+      },
+      {
+       "id": 99,
+       "src": {
+        "block": 98,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 93,
+         "port": "CTL"
+        }
+       ]
+      },
+      {
+       "id": 101,
+       "src": {
+        "block": 93,
+        "port": "kal_l1"
+       },
+       "dsts": [
+        {
+         "block": 100,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 103,
+       "src": {
+        "block": 93,
+        "port": "kal_l2"
+       },
+       "dsts": [
+        {
+         "block": 102,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 105,
+       "src": {
+        "block": 93,
+        "port": "kal_iter"
+       },
+       "dsts": [
+        {
+         "block": 104,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 107,
+       "src": {
+        "block": 93,
+        "port": "kal_conv"
+       },
+       "dsts": [
+        {
+         "block": 106,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 109,
+       "src": {
+        "block": 93,
+        "port": "kal_done"
+       },
+       "dsts": [
+        {
+         "block": 108,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 111,
+       "src": {
+        "block": 93,
+        "port": "kal_err"
+       },
+       "dsts": [
+        {
+         "block": 110,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 113,
+       "src": {
+        "block": 93,
+        "port": "lqr_k1"
+       },
+       "dsts": [
+        {
+         "block": 112,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 115,
+       "src": {
+        "block": 93,
+        "port": "lqr_k2"
+       },
+       "dsts": [
+        {
+         "block": 114,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 117,
+       "src": {
+        "block": 93,
+        "port": "lqr_ki"
+       },
+       "dsts": [
+        {
+         "block": 116,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 119,
+       "src": {
+        "block": 93,
+        "port": "lqr_iter"
+       },
+       "dsts": [
+        {
+         "block": 118,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 121,
+       "src": {
+        "block": 93,
+        "port": "lqr_conv"
+       },
+       "dsts": [
+        {
+         "block": 120,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 123,
+       "src": {
+        "block": 93,
+        "port": "lqr_done"
+       },
+       "dsts": [
+        {
+         "block": 122,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 125,
+       "src": {
+        "block": 93,
+        "port": "lqr_err"
+       },
+       "dsts": [
+        {
+         "block": 124,
+         "port": 0
+        }
+       ]
+      },
+      {
+       "id": 127,
+       "src": {
+        "block": 126,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 91,
+         "port": "Execute"
+        }
+       ]
+      },
+      {
+       "id": 128,
+       "src": {
+        "block": 126,
+        "port": 0
+       },
+       "dsts": [
+        {
+         "block": 92,
+         "port": "Execute"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -108,7 +108,7 @@ done
 cp tests/tempctrl/vectors.jsonl "$WORK/vectors.jsonl"
 if "$TPLCC" vectors run "$WORK/vectors.jsonl" \
        > "$WORK/vec.log" 2>&1; then
-    ok "tplcc vectors: tempctrl suite (12 programs)"
+    ok "tplcc vectors: tempctrl suite (13 programs)"
 else
     bad "tplcc vectors: tempctrl suite"
     cat "$WORK/vec.log"

@@ -20,6 +20,8 @@ PlcIde (Lit element, src/plc/plc-ide.ts)
  ├── stiface.ts    ST interface parser (library FB decls → pins)
  ├── curve.ts      temperature-profile model + FBD/ST codegen
  ├── tempcurve.ts  <temp-curve> graphical profile editor
+ ├── tune.ts       autotune model + ST handoff codegen
+ ├── temp-tune.ts  <temp-tune> graphical autotune editor
  ├── plcopen.ts    PLCopen XML import/export (DOM port of plcopen-io)
  ├── build.ts      /compile client, source-frame encode, diag mapping
  ├── mon.ts        catalog naming contract + scalar force encoder
@@ -37,8 +39,9 @@ runtime logic in the browser beyond model validation.
 The editor's save format is the canonical `fbd.v1` JSON (stable key
 order) — the same schema `fbd-model` consumes, so a project round-trips
 WebUI ↔ `tplcc` losslessly. `PlcProject` = `{fbd: Project, stSources:
-Record<pouName,string>, curves?: Record<pouName, CurveProfile>}` (the
-`curves` map holds the Curves-pane editor model per POU). PLCopen XML is exchange-only
+Record<pouName,string>, curves?: Record<pouName, CurveProfile>,
+tunes?: Record<pouName, TuneCfg>}` (the `curves`/`tunes` maps hold the
+Curves-pane editor models per POU). PLCopen XML is exchange-only
 (import/export, never the save format). ST sources are stored per-POU
 name; FBD POUs live in `fbd.pous[].networks[]`.
 
@@ -199,6 +202,39 @@ output for a complete project (profile + PID + RUN/PV/SP/OUT wiring);
 `tests/mixed/e2e.sh` builds it and `tplcc`'s `ui_curve_profile_runs`
 unit test runs it for 90 s of simulated time, asserting the ramp and
 soak.
+
+## 4c. Autotune editor
+
+`<temp-tune>` (same **Curves** pane, below the profile editor) wires up
+the `Atc_TempCtrl` tuner family:
+
+- Four methods: **relay feedback** (`FB_AtcRelayTune` → PID Z-N gains),
+  **step identification** (`FB_AtcStepIdent` + `FB_AtcTuneRules` → PID
+  FOPDT gains), **LQR** (`FB_AtcLqrTune` → `K1/K2/Ki`), and **LQG**
+  (`FB_AtcKalmanTune` + `FB_AtcLqrTune` → `L1/L2` + `K1/K2/Ki`).
+- Editable tuner params (model matrices `A*/B*/Q*/R`, relay amplitude,
+  step-test windows, DARE iteration caps…) seeded with sane defaults.
+- Interface-var bindings: `run` → Execute, `pv` → Actual (process-driven
+  tuners only — matrix tuners have no Actual pin), `sp`/`out`/`reset`
+  where the FB supports them, `apply` → the gain-apply strobe.
+- **Live readout**: the handoff mirrors every tuner output to plain
+  `plc.<pou>.<inst>_<pin>` catalog vars (BOOL/DINT/INT/LREAL), so the
+  pane shows Ku/Tu/cycles, FOPDT K/Tau/Theta, or solver K/L gains live
+  without decoding FB instance blobs.
+- **Insert into POU** adds the tuner FB blocks plus an inline `st`
+  handoff whose `VAR_IN_OUT` pins alias the tuner and controller
+  instances. On the APPLY strobe it copies gains into the controller's
+  input members (`CTL.Kp := TUNE.Kp`, `CTL.L1 := KAL.L1`, …) — the
+  tuned members are stripped from the controller block's params so the
+  handoff owns them (a param binding would clobber the gains every
+  scan). `tunerFromPou` recovers the config from existing blocks.
+- Persisted per POU as `PlcProject.tunes`.
+
+`tests/mixed/ui_tune{,_step,_lqg}.fbd.json` are this editor's output for
+all three shapes; `tests/mixed/e2e.sh` builds them against
+`atc_tempctrl.st`. Runtime semantics (VAR_IN_OUT FB aliases, member
+writes, apply latch) are covered by `tests/tempctrl/cases/t13_handoff.st`
+in the vectors suite.
 
 ## 5. Compile + diagnostics
 
