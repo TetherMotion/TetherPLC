@@ -1120,3 +1120,212 @@ END_VAR
     END_IF;
     lastShift := Shift;
 END_FUNCTION_BLOCK
+
+// ---- FB_AtcDefrost: cooler defrost sequencer (US-004) ----------------
+// Timed defrost every DefrostEvery s of compressor runtime: kills the
+// fridge output, energizes the defrost heater for DefrostTime s, then
+// holds the compressor off for MinOffTime s (anti-short-cycle).
+// DoorOpen/Warm are pre-conditioned inputs (switch / temp compare).
+// DoorAlarm latches after DoorAlarmTime s ajar while fridge runs;
+// TempAlarm latches after WarmTime s warm; Ack clears both.
+FUNCTION_BLOCK FB_AtcDefrost
+VAR_INPUT
+    Enable : BOOL;
+    DoorOpen : BOOL;
+    Warm : BOOL;          // cooler temp above alarm threshold
+    Ack : BOOL;           // alarm acknowledge
+    DefrostEvery : LREAL; // s between defrost starts (compressor time)
+    DefrostTime : LREAL;  // s heater on
+    MinOff : LREAL;       // s compressor off after defrost
+    DoorAlarmTime : LREAL;// s door ajar while fridge runs
+    WarmTime : LREAL;     // s warm before TempAlarm
+    CycleTime : LREAL;
+END_VAR
+VAR_OUTPUT
+    Fridge : BOOL;        // compressor enable
+    DefrostHeat : BOOL;
+    InDefrost : BOOL;
+    DoorAlarm : BOOL;
+    TempAlarm : BOOL;
+    DefrostCount : DINT;
+END_VAR
+VAR
+    coolT : LREAL;
+    defT : LREAL;
+    offT : LREAL;
+    doorT : LREAL;
+    warmT : LREAL;
+    st : INT;             // 0 cool-run, 1 defrost, 2 off-delay
+    fridgeOn : BOOL;      // mirrors Fridge for same-scan reads
+    enLast : BOOL;
+END_VAR
+    IF NOT Enable THEN
+        Fridge := FALSE; DefrostHeat := FALSE; InDefrost := FALSE;
+        DoorAlarm := FALSE; TempAlarm := FALSE;
+        coolT := 0.0; defT := 0.0; offT := 0.0;
+        doorT := 0.0; warmT := 0.0; st := 0;
+        fridgeOn := FALSE;
+        enLast := FALSE;
+        RETURN;
+    END_IF;
+    // alarm timers + ack — read fridgeOn (internal), not the Fridge
+    // output, so the value is valid before this scan's assignment
+    IF DoorOpen AND fridgeOn THEN
+        doorT := doorT + CycleTime;
+        IF doorT >= DoorAlarmTime THEN DoorAlarm := TRUE; END_IF;
+    ELSE
+        doorT := 0.0;
+    END_IF;
+    IF Warm THEN
+        warmT := warmT + CycleTime;
+        IF warmT >= WarmTime THEN TempAlarm := TRUE; END_IF;
+    ELSE
+        warmT := 0.0;
+    END_IF;
+    IF Ack THEN DoorAlarm := FALSE; TempAlarm := FALSE; END_IF;
+    // state machine
+    IF st = 0 THEN
+        Fridge := TRUE; fridgeOn := TRUE;
+        DefrostHeat := FALSE; InDefrost := FALSE;
+        coolT := coolT + CycleTime;
+        IF coolT >= DefrostEvery AND NOT DoorOpen THEN
+            st := 1; defT := 0.0; Fridge := FALSE; fridgeOn := FALSE;
+            DefrostHeat := TRUE; InDefrost := TRUE;
+            DefrostCount := DefrostCount + 1;
+        END_IF;
+    ELSIF st = 1 THEN
+        Fridge := FALSE; fridgeOn := FALSE;
+        DefrostHeat := TRUE; InDefrost := TRUE;
+        defT := defT + CycleTime;
+        IF defT >= DefrostTime OR DoorOpen THEN
+            // door opened mid-defrost: abort early, still off-delay
+            st := 2; offT := 0.0; DefrostHeat := FALSE; InDefrost := FALSE;
+        END_IF;
+    ELSE
+        Fridge := FALSE; fridgeOn := FALSE;
+        DefrostHeat := FALSE; InDefrost := FALSE;
+        offT := offT + CycleTime;
+        coolT := 0.0;
+        IF offT >= MinOff THEN st := 0; END_IF;
+    END_IF;
+    enLast := Enable;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcZoneBalance: master/slave trim (US-008) --------------------
+// Master zone error (PV - SP) produces a bounded, rate-limited trim
+// added to slave zone setpoints. Trim saturates at TrimMax and flags
+// Sat so the HMI can show windup; Enable rising starts bumpless at 0.
+FUNCTION_BLOCK FB_AtcZoneBalance
+VAR_INPUT
+    MasterErr : LREAL;   // master PV - SP, degC
+    Enable : BOOL;
+    Gain : LREAL;       // trim per degC of master error
+    TrimMax : LREAL;    // |trim| limit, degC
+    RateMax : LREAL;    // max |dTrim/dt|, degC/s (0 = unlimited)
+    CycleTime : LREAL;
+END_VAR
+VAR_OUTPUT
+    TrimOut : LREAL;    // add to slave SPs
+    Sat : BOOL;         // trim at a limit
+END_VAR
+VAR
+    tr : LREAL;
+    dt : LREAL;
+    want : LREAL;
+    g : LREAL;
+    tm : LREAL;
+    enLast : BOOL;
+END_VAR
+    g := Gain;
+    tm := TrimMax;
+    IF tm <= 0.0 THEN tm := 10.0; END_IF;
+    IF NOT Enable THEN
+        tr := 0.0; Sat := FALSE; enLast := FALSE;
+        TrimOut := 0.0;
+        RETURN;
+    END_IF;
+    IF NOT enLast THEN tr := 0.0; END_IF;
+    enLast := TRUE;
+    want := g * MasterErr;
+    IF want > tm THEN want := tm; END_IF;
+    IF want < -tm THEN want := -tm; END_IF;
+    dt := want - tr;
+    IF RateMax > 0.0 THEN
+        IF dt > RateMax * CycleTime THEN
+            dt := RateMax * CycleTime;
+        END_IF;
+        IF dt < -RateMax * CycleTime THEN
+            dt := -RateMax * CycleTime;
+        END_IF;
+    END_IF;
+    tr := tr + dt;
+    IF tr > tm THEN tr := tm; END_IF;
+    IF tr < -tm THEN tr := -tm; END_IF;
+    Sat := (tr >= tm - 0.0001) OR (tr <= -tm + 0.0001);
+    TrimOut := tr;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcEndpoint: pressure-rise dryness test (US-009) --------------
+// Freeze-dryer endpoint: close the isolation valve, let pressure
+// settle, then sample chamber pressure for SampleTime. A fast rise
+// means residual moisture (wet); slow rise means dry. Result:
+// 0 none, 1 dry, 2 wet. ValveCmd stays FALSE for the whole test.
+FUNCTION_BLOCK FB_AtcEndpoint
+VAR_INPUT
+    Execute : BOOL;     // start test (rising edge)
+    Pressure : LREAL;   // chamber pressure, any unit
+    SettleTime : LREAL; // s valve-closed settle before sampling
+    SampleTime : LREAL; // s pressure-rise sampling window
+    MaxRise : LREAL;    // max dP/dt for 'dry' (pressure/s)
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    ValveCmd : BOOL;    // TRUE = open; FALSE = isolate
+    Testing : BOOL;
+    Result : INT;       // 0 none, 1 dry, 2 wet
+    RiseRate : LREAL;   // measured dP/dt over the window
+END_VAR
+VAR
+    st : INT;           // 0 idle, 1 settle, 2 sample, 3 done
+    t : LREAL;
+    pRef : LREAL;
+    exLast : BOOL;
+END_VAR
+    IF Reset THEN
+        st := 0; t := 0.0; pRef := 0.0;
+        ValveCmd := TRUE; Testing := FALSE;
+        Result := 0; RiseRate := 0.0;
+        exLast := Execute;
+        RETURN;
+    END_IF;
+    IF Execute AND NOT exLast AND st = 0 THEN
+        st := 1; t := 0.0; Result := 0; RiseRate := 0.0;
+    END_IF;
+    exLast := Execute;
+    IF st = 0 THEN
+        ValveCmd := TRUE; Testing := FALSE;
+    ELSIF st = 1 THEN
+        ValveCmd := FALSE; Testing := TRUE;
+        t := t + CycleTime;
+        IF t >= SettleTime THEN
+            st := 2; t := 0.0; pRef := Pressure;
+        END_IF;
+    ELSIF st = 2 THEN
+        ValveCmd := FALSE; Testing := TRUE;
+        t := t + CycleTime;
+        IF t >= SampleTime THEN
+            st := 3;
+            IF SampleTime > 0.0 THEN
+                RiseRate := (Pressure - pRef) / SampleTime;
+            ELSE
+                RiseRate := 0.0;
+            END_IF;
+            IF RiseRate <= MaxRise THEN Result := 1;
+            ELSE Result := 2; END_IF;
+        END_IF;
+    ELSE
+        // done: hold result, valve open again
+        ValveCmd := TRUE; Testing := FALSE;
+    END_IF;
+END_FUNCTION_BLOCK

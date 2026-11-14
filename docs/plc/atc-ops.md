@@ -41,6 +41,7 @@ the caller for pulses.
 | `FB_AtcHourMeter` | Run-hour accumulator: `Hours += CycleTime/3600` while `Run`. `Preset` = service interval (h); `Alarm` asserts at `Hours >= Preset` until `Reset`. `Pct` = 0–100+ for HMI bars (`-1` when `Preset<=0`). Compressor/spindle/filter hours. |
 | `FB_AtcOee` | Availability/performance/quality: `PlannedH` while `Planned`, `RunH` while `Running AND Planned`, `GoodCount`/`TotalCount` on part pulses. `Availability = RunH/PlannedH`, `Performance = Good*IdealCycle/RunH`, `Quality = Good/Total`, `OEE = A·P·Q/10000`. `Reset` zeroes all. Times in hours. |
 | `FB_AtcRecipe` | 16 sets × 16 LREAL parameters, addressed `(WrSet, WrParam)` 0–15. `WrStrobe` rising edge writes `WrVal`; `RdSet`/`RdParam` continuously expose `Val`/`Valid`. `Clear` zeroes the store. Not itself persistent — copy hot params to retained vars for NV. |
+| `FB_AtcShift` | Three-shift schedule in caller-supplied time-of-day units (seconds or TOD-derived). `S1Start/S1End`, `S2Start/S2End`, `S3Start/S3End`; `S1En/S2En/S3En` = inside window (normal `Start<TOD<End`, overnight `TOD>=Start OR TOD<End`, equal bounds disable). `ShiftStart`/`ShiftEnd` pulses on window edges — hook production counters to `ShiftEnd`. `Elapsed`/`Remaining` seconds in current shift (`-1` when none). |
 
 ## Sequencing & indication
 
@@ -48,6 +49,14 @@ the caller for pulses.
 |---|---|
 | `FB_AtcSeq` | Drum sequencer over `STEPS : ARRAY[1..32] OF ST_AtcStep` (`TIME` dwell s — `<=0` waits for `StepDone`; `NEXT` target, `0`/out-of-range ends; `EV` event word). `RUN` rising edge starts at step 1; `HOLD` freezes; `RESET` aborts. Outputs `StepIdx`, `StepTime`, `StepTgt`, `Done`, `Busy`, `EV`, `Err`. Backward `NEXT` makes loops legal — caller owns termination. |
 | `FB_AtcAndon` | Stack-light/buzzer mapper, purely combinational: `Red = Fault OR Alarm`, `Amber = Warning OR Maintenance`, `Green = Run AND no higher state`, `Blue = Changeover`, `Buzzer = Red`. Priority Fault > Alarm > Warning > Maintenance > Run. Flashers are downstream logic. |
+
+## Process control
+
+| Block | Purpose |
+|---|---|
+| `FB_AtcDefrost` | Cooler defrost sequencer: refrigeration runs until `coolT >= DefrostEvery`, then heater on for `DefrostTime`, compressor off for `MinOff` (anti-short-cycle), resume. `DoorOpen` blocks defrost start and aborts it mid-cycle; `DoorAlarm` latches after `DoorAlarmTime` s ajar *while the compressor is actually running*; `TempAlarm` after `WarmTime` s of `Warm`; `Ack` clears both; `DefrostCount` totals cycles. |
+| `FB_AtcZoneBalance` | Master/slave zone trim: `TrimOut = sat(rate-limit(Gain * MasterErr))`, bounded by `TrimMax`, `Sat` flags windup, `Enable` rising starts bumpless at 0. Add `TrimOut` to slave-zone setpoints. |
+| `FB_AtcEndpoint` | Freeze-dryer endpoint (pressure-rise test): `Execute` rising edge closes the isolation valve (`ValveCmd` FALSE) for `SettleTime`, samples chamber `Pressure` for `SampleTime`, then classifies `Result` — 1 dry when `RiseRate <= MaxRise`, 2 wet otherwise. `Testing` while running, `Reset` re-arms. |
 
 ## Machine control
 
@@ -72,12 +81,14 @@ the caller for pulses.
 
 ## Tests
 
-`tests/ops/e2e.sh` — library check/build/verify plus a 19-program
-self-checking vector suite (`tests/ops/cases/o01..o19`) covering
+`tests/ops/e2e.sh` — library check/build/verify plus a 23-program
+self-checking vector suite (`tests/ops/cases/o01..o23`) covering
 every block: debounce timing, alarm ack/shelve/first-out, hour-meter
 preset alarm + reset, OEE counters + reset, sensor range/rate/stuck
 priority, sequencer timed/condition steps + done, andon priority
 matrix, recipe write/read/clear/invalid, on/off hysteresis,
 permissive deny mask, mode arbitration, jog timeout, watchdog
 heartbeat, blinker phase, totalizer reset, moving average, windowed
-demand, override release track, two-hand gap/anti-tie-down.
+demand, override release track, two-hand gap/anti-tie-down, three-shift
+schedule incl. overnight wrap, cooler defrost with door/warm alarms,
+zone-balance trim saturation, freeze-dryer endpoint dry/wet classify.

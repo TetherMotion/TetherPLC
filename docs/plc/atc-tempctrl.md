@@ -42,6 +42,12 @@ online change / shadow run treat it like any other instance data.
 | `FB_AtcPwm` | Time-proportioning output: `Duty` % → BOOL pulse over `Period`, `MinOn` drops too-short pulses. |
 | `FB_AtcHeatCool` | Split-range: `U ∈ [-100,100]` → `Heat = max(U-DZ,0)`, `Cool = CoolGain*max(-U-DZ,0)`. |
 
+## Process & validation
+
+| Block | Purpose |
+|---|---|
+| `FB_AtcLethality` | F0 lethality accumulation (US-007 pasteurization/retort): while `InProduct` and `SensorOK`, `F0 += 10^((Temp-Tref)/Z) * CycleTime/60` minutes. `Rate` = current lethality; `Frozen` latches on sensor fault and freezes accumulation; `Divert` fires on `ExitProduct` when `F0 < F0Target` or frozen; `Done` when target reached. `Reset` clears. |
+
 ## State-space control (LQR / LQG)
 
 The plant is modeled as a discrete 2-state system
@@ -162,9 +168,9 @@ program without interference since instance state is per-FB.
 ## Tests
 
 `tests/tempctrl/e2e.sh` (ctest `tempctrl_lib`): packages the library,
-verifies the `.tplc`, builds a `--lib` consumer, replays twelve
+verifies the `.tplc`, builds a `--lib` consumer, replays thirteen
 self-checking programs through `tplcc vectors` (`tests/tempctrl/
-t01..t12*.st` + `vectors.jsonl`) — PID/cascade/Smith closed loops on
+t01..t15*.st` + `vectors.jsonl`) — PID/cascade/Smith closed loops on
 simulated plants, relay and step-response autotune, tuning-rule
 constants, LQR/LQG gains checked against scipy `solve_discrete_are`
 references, profile sequencing with guaranteed-soak and LOOP — and,

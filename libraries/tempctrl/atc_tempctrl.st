@@ -2010,3 +2010,55 @@ END_VAR
         Done := TRUE;
     END_IF;
 END_FUNCTION_BLOCK
+// ---- FB_AtcLethality: F0 accumulation + divert (US-007) ---------------
+// F0 = INT 10^((T - Tref)/Z) dt while product is in the hold zone.
+// SensorOK=FALSE freezes accumulation AND asserts Divert (product
+// must not pass on unproven lethality). Exit pulses Divert when the
+// accumulated F0 is still below F0Target at the exit sensor.
+FUNCTION_BLOCK FB_AtcLethality
+VAR_INPUT
+    Temp : LREAL;
+    InProduct : BOOL;    // product inside hold zone
+    SensorOK : BOOL;
+    ExitProduct : BOOL;  // product at exit sensor (level)
+    Tref : LREAL;        // reference temp, degC (e.g. 70 HTST, 121 retort)
+    Z : LREAL;           // z-value, degC (typically 7..10)
+    F0Target : LREAL;    // required minutes
+    CycleTime : LREAL;   // s per scan
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    F0 : LREAL;          // accumulated lethality, minutes
+    Rate : LREAL;        // current lethality rt (F0/min)
+    Frozen : BOOL;       // accumulation frozen by sensor fault
+    Divert : BOOL;       // exit product under-lethality -> rework
+    Done : BOOL;         // F0 target reached while InProduct
+END_VAR
+VAR
+    acc : LREAL;
+    frz : BOOL;
+    rt : LREAL;
+    zsafe : LREAL;
+    trf : LREAL;
+END_VAR
+    zsafe := Z;
+    IF zsafe <= 0.0 THEN zsafe := 10.0; END_IF;
+    trf := Tref;
+    IF Reset THEN acc := 0.0; frz := FALSE; END_IF;
+    IF NOT SensorOK THEN frz := TRUE; END_IF;
+    Frozen := frz;
+    // lethal rt: 10^((T-Tref)/Z) is the fraction of reference
+    // lethality per unit time; F0 in minutes needs /60 scaling.
+    IF InProduct AND SensorOK AND NOT frz THEN
+        rt := F_AtcPow(10.0, (Temp - trf) / zsafe) / 60.0;
+        acc := acc + rt * CycleTime;
+        IF acc < 0.0 THEN acc := 0.0; END_IF;
+    ELSE
+        rt := 0.0;
+    END_IF;
+    Rate := rt;
+    F0 := acc;
+    Done := InProduct AND acc >= F0Target;
+    Divert := ExitProduct AND (acc < F0Target OR frz);
+END_FUNCTION_BLOCK
+
