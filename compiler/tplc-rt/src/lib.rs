@@ -7342,6 +7342,181 @@ pub unsafe extern "C" fn __tplc_rt_FB_CanOpen(this: *mut u8, ctx: *mut u8) -> i3
     0
 }
 
+// FB_IoLink — IO-Link master data-link over tplc-iolink (IEC 61131-9
+// SDCI wire protocol; per-port byte transports configured via
+// TPLC_IOLINK_IO).
+// ---------------------------------------------------------------------------
+
+// FB_IoLink member offsets (see builtin_fb_layout("FB_IoLink")).
+const IL_OP: usize = 0;
+const IL_PORT: usize = 4;
+const IL_MSEQ: usize = 8;
+const IL_ADDR: usize = 12;
+const IL_DLEN: usize = 16;
+const IL_STATUS: usize = 20;
+const IL_ERRID: usize = 24;
+const IL_CKSFLAGS: usize = 28;
+const IL_IDENT: usize = 32; // u8[16]
+const IL_PDIN: usize = 48; // u8[40]
+const IL_PDOUT: usize = 88; // u8[32]
+const IL_OD: usize = 120; // u8[8]
+
+// tplc-iolink service vtable offsets (TplcIoLinkService):
+// struct_size@0 u32, abi@4 u32, host@8 ptr(8B),
+// il_state@16, il_open@24, il_close@32, il_ident@40,
+// il_pd_exchange@48, il_isdu_read@56, il_isdu_write@64, il_port_info@72.
+const IL_SVC_STATE: usize = 16;
+const IL_SVC_OPEN: usize = 24;
+const IL_SVC_CLOSE: usize = 32;
+const IL_SVC_IDENT: usize = 40;
+const IL_SVC_PDEX: usize = 48;
+const IL_SVC_ISDU_R: usize = 56;
+const IL_SVC_ISDU_W: usize = 64;
+
+/// service lookup for "tplc-iolink" (11 chars)
+unsafe fn iolink_service(ctx: *const u8) -> *const u8 {
+    let svcs = (ctx.add(CTX_SVC) as *const *const u8).read();
+    if svcs.is_null() {
+        return core::ptr::null();
+    }
+    let host = (svcs.add(SVC_HOST) as *const *mut u8).read();
+    let gs = core::mem::transmute::<usize, unsafe extern "C" fn(*mut u8, *const u8, u32) -> *mut u8>(
+        (svcs.add(SVC_GET_SERVICE) as *const usize).read(),
+    );
+    gs(host, c"tplc-iolink".as_ptr() as *const u8, 11) as *const u8
+}
+
+/// `__tplc_rt_FB_IoLink` — OP 1=open, 2=close, 3=state, 4=ident,
+/// 5=pd_exchange, 6=isdu_read, 7=isdu_write.
+/// # Safety
+/// `this` must point at a valid instance block of the documented
+/// layout; `ctx` at a live `TplcCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn __tplc_rt_FB_IoLink(this: *mut u8, ctx: *mut u8) -> i32 {
+    let op = ru32(this.add(IL_OP));
+    wi32(this.add(IL_STATUS), 0);
+    wu32(this.add(IL_ERRID), 0);
+    wu32(this.add(IL_CKSFLAGS), 0);
+    let svc = iolink_service(ctx);
+    if svc.is_null() {
+        wi32(this.add(IL_STATUS), -3);
+        wu32(this.add(IL_ERRID), 99);
+        return 0;
+    }
+    let set_rc = |rc: i32| {
+        wi32(this.add(IL_STATUS), rc);
+        wu32(this.add(IL_ERRID), (-rc).max(0) as u32);
+    };
+    let port = ru32(this.add(IL_PORT));
+    match op {
+        1 => {
+            let f: unsafe extern "C" fn(*const u8, u32) -> i32 =
+                core::mem::transmute(
+                    (svc.add(IL_SVC_OPEN) as *const usize).read(),
+                );
+            set_rc(f(svc, port));
+        }
+        2 => {
+            let f: unsafe extern "C" fn(*const u8, u32) -> i32 =
+                core::mem::transmute(
+                    (svc.add(IL_SVC_CLOSE) as *const usize).read(),
+                );
+            set_rc(f(svc, port));
+        }
+        3 => {
+            let f: unsafe extern "C" fn(*const u8) -> i32 =
+                core::mem::transmute(
+                    (svc.add(IL_SVC_STATE) as *const usize).read(),
+                );
+            set_rc(f(svc));
+        }
+        4 => {
+            /* il_ident(svc, port, out, cap, out_len*) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, *mut u8, u32, *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(IL_SVC_IDENT) as *const usize).read(),
+            );
+            let mut len: u32 = 0;
+            let rc = f(svc, port, this.add(IL_IDENT), 16, &mut len);
+            wu32(this.add(IL_DLEN), len);
+            set_rc(rc);
+        }
+        5 => {
+            /* il_pd_exchange(svc, port, mseq, pdo, pdo_len, pdi, cap,
+               pdi_len*, cks_flags*) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u32, *const u8, u32, *mut u8, u32,
+                *mut u32, *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(IL_SVC_PDEX) as *const usize).read(),
+            );
+            let pdo_len = ru32(this.add(IL_DLEN)).min(32);
+            let mut pdi_len: u32 = 0;
+            let mut cks: u32 = 0;
+            let rc = f(
+                svc,
+                port,
+                ru32(this.add(IL_MSEQ)),
+                this.add(IL_PDOUT),
+                pdo_len,
+                this.add(IL_PDIN),
+                40,
+                &mut pdi_len,
+                &mut cks,
+            );
+            wu32(this.add(IL_DLEN), pdi_len);
+            wu32(this.add(IL_CKSFLAGS), cks);
+            set_rc(rc);
+        }
+        6 => {
+            /* il_isdu_read(svc, port, addr u8, od, od_len, resp,
+               cap, resp_len*) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u8, *const u8, u32, *mut u8, u32,
+                *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(IL_SVC_ISDU_R) as *const usize).read(),
+            );
+            let od_len = ru32(this.add(IL_DLEN)).min(8);
+            let mut resp_len: u32 = 0;
+            let rc = f(
+                svc,
+                port,
+                ru32(this.add(IL_ADDR)) as u8,
+                this.add(IL_OD),
+                od_len,
+                this.add(IL_OD),
+                8,
+                &mut resp_len,
+            );
+            wu32(this.add(IL_DLEN), resp_len);
+            set_rc(rc);
+        }
+        7 => {
+            /* il_isdu_write(svc, port, addr u8, od, od_len) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u8, *const u8, u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(IL_SVC_ISDU_W) as *const usize).read(),
+            );
+            let od_len = ru32(this.add(IL_DLEN)).min(8);
+            set_rc(f(
+                svc,
+                port,
+                ru32(this.add(IL_ADDR)) as u8,
+                this.add(IL_OD),
+                od_len,
+            ));
+        }
+        _ => {
+            wi32(this.add(IL_STATUS), -1);
+            wu32(this.add(IL_ERRID), 1);
+        }
+    }
+    0
+}
+
 // FB_Soe — EtherCAT SoE mailbox over tplc-soe (Tether IO ec.soe.*
 // params).
 // ---------------------------------------------------------------------------

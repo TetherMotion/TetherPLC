@@ -244,6 +244,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcCanopenService*>(&canopen_.table());
         return nullptr;
     }
+    if (len == 11 && memcmp(name, "tplc-iolink", 11) == 0) {
+        /* IO-Link master data-link: only when ports are configured. */
+        if (iolink_.active())
+            return const_cast<TplcIoLinkService*>(&iolink_.table());
+        return nullptr;
+    }
     if (len == 8 && memcmp(name, "tplc-soe", 8) == 0) {
         /* EtherCAT SoE mailbox: only when ec.soe.* live. */
         if (soe_.active())

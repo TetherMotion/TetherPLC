@@ -1773,6 +1773,44 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
                 hi: 255,
             });
         }
+        /* FB_IoLink — tplc-iolink service bridge (IO-Link master
+        data-link, IEC 61131-9 / SDCI over per-port byte transports).
+        Synchronous op dispatch: OP 1=open, 2=close, 3=state,
+        4=ident (PORT -> IDENT/DLEN), 5=pd_exchange (PORT/MSEQ/
+        PDOUT/DLEN -> PDIN/DLEN/CKSFLAGS), 6=isdu_read and
+        7=isdu_write (PORT/ADDR/OD/DLEN). STATUS carries the service
+        return code, ERRID its positive form. */
+        "FB_IoLink" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            let arr = |hi: i64| Type::Array {
+                elem: Box::new(byte()),
+                lo: 0,
+                hi,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "PORT", udint());
+            push(&mut off, "MSEQ", udint());
+            push(&mut off, "ADDR", udint());
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "CKSFLAGS", udint());
+            push(&mut off, "IDENT", arr(15));
+            push(&mut off, "PDIN", arr(39));
+            push(&mut off, "PDOUT", arr(31));
+            push(&mut off, "OD", arr(7));
+        }
         /* FB_Soe — tplc-soe service bridge (EtherCAT SoE mailbox over
         Tether IO ec.soe.* params). Synchronous op dispatch: OP 1=
         read_state (SLAVE -> STATUSW/CMDSTATE/PASSWD/DIAG fields/temps/
