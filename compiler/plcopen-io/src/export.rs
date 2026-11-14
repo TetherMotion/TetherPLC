@@ -364,6 +364,9 @@ fn export_var_block(
         b.at.clone()
             .unwrap_or_else(|| b.name.clone().unwrap_or_default());
     let mut a = vec![("localId", b.id.to_string())];
+    if !b.negated.is_empty() {
+        a.push(("negated", "true".into()));
+    }
     if mode == ExportMode::Roundtrip {
         if b.at.is_some() {
             if let Some(n) = &b.name {
@@ -381,12 +384,24 @@ fn export_var_block(
         "position",
         &[("x", b.pos.x.to_string()), ("y", b.pos.y.to_string())],
     );
-    if role != VarRole::In {
+    // connectionPointIn carries incoming wires for any role — LD
+    // contacts are role=in yet receive flow from upstream elements,
+    // so emit whenever the dst index has entries (FBD inputs stay
+    // empty and unchanged)
+    let has_in = by_dst.contains_key(&(b.id, "#0".to_string()))
+        || by_dst.contains_key(&(b.id, String::new()));
+    if role != VarRole::In || has_in {
         x.open("connectionPointIn", &[]);
+        // by_dst indexes variable dsts under both "#0" and "" — emit
+        // each wire once or reimport sees duplicate connections
+        let mut emitted: std::collections::HashSet<*const Wire> =
+            std::collections::HashSet::new();
         for key in ["#0".to_string(), String::new()] {
             if let Some(ws) = by_dst.get(&(b.id, key)) {
                 for w in ws {
-                    conn_elem(x, &w.src, wire_attr(w, mode));
+                    if emitted.insert(*w) {
+                        conn_elem(x, &w.src, wire_attr(w, mode));
+                    }
                 }
             }
         }

@@ -284,8 +284,10 @@ canvas. The stack spawns automatically when `tether-plc`, `tplc-image`,
 - No variable writes outside the catalog force path — there is no
   `dbg.*` plane yet (plan 12 keeps suspend/step/trace).
 - LD networks have a rung renderer (`ld-canvas`) with positional
-  contact/coil editing; the compiler lowers series rungs. Parallel
-  branches and FB/function elements in rungs are not yet supported.
-  No SFC editor — deferred per the language decision.
+  contact/coil editing plus a `wire` tool for parallel branches;
+  the compiler lowers both positional series rungs and wire-topology
+  graphs (OR-merged inputs, NC contacts/coils, cycle diagnostics).
+  FB/function elements in rungs are not yet executable. No SFC
+  editor — deferred per the language decision.
 - No per-keystroke compile — `check` is explicit; the `serve` daemon
   keeps it cheap enough for the manual cadence.

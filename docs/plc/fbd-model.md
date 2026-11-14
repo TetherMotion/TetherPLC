@@ -70,8 +70,19 @@ this file.
   re-split into segments; empty implicit nets drop. FB-instance
   localVars matching a block's (instance, type) fold into the block —
   extras (AT/init/retain) keep the decl. Elements with no `localId`
-  get allocator ids. Non-FBD bodies (`<SFC>/<LD>/<ST>`) report notes,
-  not silent drops.
+  get allocator ids (foreign `localId`s also advance the allocator so
+  auto ids can't collide). `<LD>` bodies import as `ladder` networks:
+  `<contact>`/`<coil>` become variable blocks (`negated` → NC,
+  `<variable>`/`<expression>` → name or `%addr`, `<position>` → row),
+  `connectionPointIn` links become wires, and power-rail sources are
+  dropped so rail-fed elements evaluate rail-powered. `storage`/`edge`
+  attributes (SET/RST coils, transition contacts) surface notes —
+  the flow model supports `none` only. Non-FBD bodies
+  (`<SFC>/<ST>`) report notes, not silent drops.
+- `cargo run -p plcopen-io --example xml2json -- in.xml out.fbd.json`
+  converts a TC6 project to the WebUI `.fbd.json` format (notes →
+  stderr); `tests/ld/e2e.sh` uses it to prove imported `<LD>` bodies
+  run bit-identical to their ST references.
 - Coverage: real Beremiz corpus in `tools/oracle-beremiz/corpus`
   (5 project XMLs, incl. `iec61131_lang_test`) imports at 100% node /
   98.4% edge coverage — over the §13.2 ≥95% target

@@ -105,6 +105,9 @@ struct P {
     in_adddata: bool,
     cur_task: Option<Task>,
     conns: Vec<Conn>,
+    /// localIds of LD power rails — rail-sourced connections are
+    /// dropped at merge so rail-fed elements evaluate rail-powered.
+    rail_ids: std::collections::HashSet<u64>,
     alloc: IdAlloc,
 }
 
@@ -145,9 +148,17 @@ impl P {
     }
 
     fn local_id(&mut self, e: &quick_xml::events::BytesStart) -> NodeId {
-        Self::attr(e, "localId")
+        match Self::attr(e, "localId")
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or_else(|| self.alloc.alloc())
+        {
+            // foreign ids share the node-id space — keep the
+            // allocator ahead so auto ids can't collide
+            Some(id) => {
+                self.alloc.over(std::iter::once(&id));
+                id
+            }
+            None => self.alloc.alloc(),
+        }
     }
 
     fn auto_net_id(&self) -> u64 {
@@ -178,6 +189,17 @@ impl P {
         }
     }
 
+    /// `<LD>` bodies map to a single ladder-kind network; rung
+    /// structure comes from `<position>` rows + connection wires.
+    fn ensure_ld_net(&mut self) {
+        if self.cur_net.is_none() && self.cur_pou.is_some() {
+            let mut n = self.new_net(format!("net_{}", self.auto_net_id()));
+            n.kind = NetworkKind::Ladder;
+            n.label = "LD".into();
+            self.cur_net = Some(n);
+        }
+    }
+
     fn pos_of(e: &quick_xml::events::BytesStart) -> Pos {
         Pos {
             x: Self::attr(e, "x")
@@ -192,6 +214,7 @@ impl P {
     fn start(&mut self, e: &quick_xml::events::BytesStart) {
         let tag = Self::local(e.name().as_ref()).to_string();
         let in_fbdish = self.depth_tag("FBD");
+        let in_ld = self.depth_tag("LD");
         match tag.as_str() {
             "contentHeader" => {
                 if let Some(n) = Self::attr(e, "name") {
@@ -237,7 +260,7 @@ impl P {
                     }
                 }
             }
-            "block" if in_fbdish => {
+            "block" if in_fbdish || in_ld => {
                 let tn = Self::attr(e, "typeName").unwrap_or_default();
                 let inst = Self::attr(e, "instanceName");
                 let kind = if inst.is_some() {
@@ -265,7 +288,7 @@ impl P {
                     at: None,
                 });
             }
-            "inVariable" | "outVariable" | "inOutVariable" if in_fbdish => {
+            "inVariable" | "outVariable" | "inOutVariable" if in_fbdish || in_ld => {
                 let role = match tag.as_str() {
                     "inVariable" => VarRole::In,
                     "outVariable" => VarRole::Out,
@@ -280,14 +303,73 @@ impl P {
                     params: BTreeMap::new(),
                     pins: vec![],
                     exec_order: 0,
-                    negated: vec![],
+                    negated: if Self::attr(e, "negated").as_deref() == Some("true") {
+                        vec![0]
+                    } else {
+                        vec![]
+                    },
                     comment: String::new(),
                     role: Some(role),
                     name: Self::attr(e, "name"),
                     at: None,
                 });
             }
+            // LD contacts read a variable and gate power flow; coils
+            // latch it. `negated` is the NC marker on either element.
+            "contact" | "coil" if in_ld => {
+                let mut b = Block {
+                    id: self.local_id(e),
+                    kind: BlockKind::Variable,
+                    type_ref: String::new(),
+                    instance: None,
+                    pos: Pos::default(),
+                    params: BTreeMap::new(),
+                    pins: vec![],
+                    exec_order: 0,
+                    negated: vec![],
+                    comment: String::new(),
+                    role: Some(if tag == "contact" {
+                        VarRole::In
+                    } else {
+                        VarRole::Out
+                    }),
+                    name: None,
+                    at: None,
+                };
+                if Self::attr(e, "negated").as_deref() == Some("true") {
+                    b.negated.push(0);
+                }
+                for a in ["storage", "edge"] {
+                    if let Some(v) = Self::attr(e, a) {
+                        if v != "none" {
+                            self.notes.push(XmlNote {
+                                what: format!(
+                                    "LD {tag} {a}=\"{v}\" not imported (flow model supports none only)"
+                                ),
+                            });
+                        }
+                    }
+                }
+                self.cur_block = Some(b);
+            }
+            // power rails carry no block — connections referencing
+            // their localId are dropped in merge_wires so fed
+            // elements evaluate rail-powered.
+            "leftPowerRail" | "rightPowerRail" | "powerRail" => {
+                if let Some(id) = Self::attr(e, "localId")
+                    .and_then(|s| s.parse::<u64>().ok())
+                {
+                    self.rail_ids.insert(id);
+                }
+            }
+            "LD" => self.ensure_ld_net(),
             "variable" => match self.parent() {
+                // contact/coil variable refs — captured via expr_text
+                // and assigned to the block on </variable>
+                "contact" | "coil" => {
+                    self.in_expr = true;
+                    self.expr_text.clear();
+                }
                 "inputVariables" | "inOutVariables" | "outputVariables" => {
                     self.cur_pin = Self::attr(e, "formalParameter");
                 }
@@ -483,9 +565,9 @@ impl P {
                 }
             }
             // known-but-unsupported body languages: note once
-            "SFC" | "LD" | "ST" if self.depth_tag("body") => {
+            "SFC" | "ST" if self.depth_tag("body") => {
                 self.notes.push(XmlNote {
-                    what: format!("body language <{tag}> not imported (FBD only)"),
+                    what: format!("body language <{tag}> not imported (FBD/LD only)"),
                 });
             }
             _ => {}
@@ -520,7 +602,16 @@ impl P {
                     }
                 }
             }
-            "block" | "inVariable" | "outVariable" | "inOutVariable" => {
+            "LD" => {
+                if let Some(net) = self.cur_net.take() {
+                    if !net_is_empty(&net) {
+                        if let Some(pou) = &mut self.cur_pou {
+                            pou.networks.push(net);
+                        }
+                    }
+                }
+            }
+            "block" | "inVariable" | "outVariable" | "inOutVariable" | "contact" | "coil" => {
                 if let Some(b) = self.cur_block.take() {
                     if let Some(n) = &mut self.cur_net {
                         n.blocks.push(b);
@@ -562,6 +653,23 @@ impl P {
                         pou.interface.push(v);
                     } else {
                         self.gvl.push(v);
+                    }
+                } else if self.in_expr {
+                    // contact/coil <variable>name</variable> — same
+                    // name/%addr split as <expression>
+                    self.in_expr = false;
+                    let t = self.expr_text.trim().to_string();
+                    self.expr_text.clear();
+                    if let Some(b) = &mut self.cur_block {
+                        if b.kind == BlockKind::Variable && !t.is_empty() {
+                            if t.starts_with('%') {
+                                if b.at.is_none() {
+                                    b.at = Some(t);
+                                }
+                            } else if b.name.is_none() {
+                                b.name = Some(t);
+                            }
+                        }
                     }
                 }
             }
@@ -623,9 +731,16 @@ impl P {
     /// `tether:wire` ids (exact merge key); foreign files merge by
     /// source endpoint (fan-out). Negated dsts mark the block pin.
     fn merge_wires(&mut self, pou: &mut Pou) {
+        // connections sourced at a power rail don't become wires —
+        // the fed element is rail-powered by having no input wire
+        let rails = std::mem::take(&mut self.rail_ids);
+        // wire ids allocate here — resume above every node id the
+        // foreign file already used (localIds aren't allocator-aware)
+        self.alloc
+            .over(pou.networks.iter().flat_map(|n| n.node_ids()));
         let mut wires: Vec<Wire> = Vec::new();
         let mut key_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        for c in self.conns.drain(..) {
+        for c in self.conns.drain(..).filter(|c| !rails.contains(&c.src.block)) {
             let key = match c.wire_id {
                 Some(id) => format!("w{id}"),
                 None => format!("s{}:{:?}", c.src.block, c.src.port),

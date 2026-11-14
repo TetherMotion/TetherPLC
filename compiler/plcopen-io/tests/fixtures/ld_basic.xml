@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <contentHeader name="ldtest"/>
+  <types/>
+  <pous>
+    <pou name="LdDemo" pouType="program">
+      <interface/>
+      <body>
+        <LD>
+          <leftPowerRail localId="1" height="60" width="10">
+            <position x="20" y="20"/>
+            <connectionPointOut formalParameter="none">
+              <relPosition x="10" y="20"/>
+            </connectionPointOut>
+          </leftPowerRail>
+          <contact localId="3" negated="false" storage="none" edge="none" height="15" width="21">
+            <position x="60" y="30"/>
+            <connectionPointIn>
+              <relPosition x="0" y="10"/>
+              <connection refLocalId="1"/>
+            </connectionPointIn>
+            <connectionPointOut>
+              <relPosition x="21" y="10"/>
+            </connectionPointOut>
+            <variable>%IX0.0</variable>
+          </contact>
+          <contact localId="4" negated="false" storage="none" edge="none" height="15" width="21">
+            <position x="60" y="70"/>
+            <connectionPointIn>
+              <relPosition x="0" y="10"/>
+              <connection refLocalId="1"/>
+            </connectionPointIn>
+            <connectionPointOut>
+              <relPosition x="21" y="10"/>
+            </connectionPointOut>
+            <variable>%IX0.1</variable>
+          </contact>
+          <contact localId="5" negated="true" storage="none" edge="none" height="15" width="21">
+            <position x="120" y="30"/>
+            <connectionPointIn>
+              <relPosition x="0" y="10"/>
+              <connection refLocalId="3"/>
+              <connection refLocalId="4"/>
+            </connectionPointIn>
+            <connectionPointOut>
+              <relPosition x="21" y="10"/>
+            </connectionPointOut>
+            <variable>%IX0.2</variable>
+          </contact>
+          <coil localId="6" negated="false" storage="none" height="15" width="21">
+            <position x="180" y="30"/>
+            <connectionPointIn>
+              <relPosition x="0" y="10"/>
+              <connection refLocalId="5"/>
+            </connectionPointIn>
+            <connectionPointOut>
+              <relPosition x="21" y="10"/>
+            </connectionPointOut>
+            <variable>%QX0.0</variable>
+          </coil>
+        </LD>
+      </body>
+    </pou>
+  </pous>
+</project>
