@@ -447,6 +447,9 @@ int32_t MotionService::objRead(void*, uint32_t axis, uint32_t index,
     case TPLC_MOTION_OBJ_AXIS_FLAGS:
         *out = int32_t(a->cfg.flags);
         break;
+    case TPLC_MOTION_OBJ_ERR_INJECT:
+        *out = a->error_code;
+        break;
     default:
         return TPLC_MOTION_E_STATE;
     }
@@ -531,6 +534,10 @@ int32_t MotionService::objWrite(void*, uint32_t axis, uint32_t index,
         break;
     case TPLC_MOTION_OBJ_AXIS_FLAGS:
         a->cfg.flags = uint32_t(value);
+        break;
+    case TPLC_MOTION_OBJ_ERR_INJECT:
+        a->error_code = value;
+        if (value != 0) a->state = kFault;
         break;
     default:
         /* controlword/statusword/mode-display/actuals are not

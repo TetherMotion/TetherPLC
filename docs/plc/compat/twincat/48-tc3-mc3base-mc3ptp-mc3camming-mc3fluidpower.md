@@ -8,6 +8,25 @@
 
 **Integration:** MC3 motion function blocks (PTP, camming, fluid power): axis backend.
 
+**Status:** PARTIAL — the single-axis PTP core lives in
+`compat/tc2/tc2_mc2.st` (power/reset/position/moves/jog/home/
+parameters/touch-probe/gear-in). `compat/tc3/tc3_mc3ptp.st` adds the
+remaining tractable PTP FBs (ctest `tc3_mc3ptp` + `tc3_mc3ptp_io`,
+mask `0x1ff`): `MC_ReadActualTorque` (0x6077),
+`MC_ReadHardwareParameter`/`MC_WriteHardwareParameter` (OD index
+space), `MC_WaitForStableActualPosition` (velocity-window settle),
+`MC_TriggerError` (fault inject via sim-ext object 0x200D latching
+the CiA402 fault state; 0x603F reports the code, MC_Reset clears)
+and `MC_SetHomingState`/`MC_LoadControl`/
+`MC_ActivateExternalSetpointGeneration` as accepted no-ops. Deferred:
+the camming set (`MC_CamScaling`, `MC_CamTableSelect`,
+`MC_ReadCamInfo`, `MC_CamAdd`, `MC_CamExchange`, `MC_CamIn`,
+`MC_CamRemove`), phasing (`MC_GearInPos`, `MC_HaltPhasing`,
+`MC_PhasingAbsolute`, `MC_PhasingRelative`), fluid power
+(`MC_ValveCharacterization`) and the TcCOM `AXIS_REF`/
+`ENCODER_AXIS_REF` object model (METHOD-based, not expressible in
+the ST dialect).
+
 ---
 
 #### Development environment › MOTION › Default Axis › Drive modules › Pulse Width Current Drive (MDP250) (both channels)

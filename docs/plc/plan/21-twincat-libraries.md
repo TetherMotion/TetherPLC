@@ -18351,7 +18351,7 @@ per-parameter prose.
 
 - **Category:** Motion/MC3 · **Tier:** T3
 - **Manual:** `TF55xx_TC3_MC3_EN.pdf` · **API entries:** 89
-- **Status:** single-axis core in `compat/tc2/tc2_mc2.st`; camming/fluid-power/multi-axis on request
+- **Status:** PARTIAL — PTP core in `compat/tc2/tc2_mc2.st` plus `compat/tc3/tc3_mc3ptp.st` (torque/hw-param access, wait-for-stable, 3 accepted no-ops, error inject via 0x200D; ctest `tc3_mc3ptp{,_io}`); camming/phasing/fluid-power/TcCOM objects deferred
 - **Integration:** MC3 motion function blocks (PTP, camming, fluid power): axis backend.
 
 #### Development environment › MOTION › Default Axis › Drive modules › Pulse Width Current Drive (MDP250) (both channels)
