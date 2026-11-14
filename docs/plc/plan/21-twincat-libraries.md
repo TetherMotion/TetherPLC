@@ -21649,7 +21649,7 @@ per-parameter prose.
 
 - **Category:** Motion/CNC · **Tier:** T3
 - **Manual:** `TF5200_HLI_INTERFACE_EN.pdf` · **API entries:** 9
-- **Status:** CNC HLI covered conceptually by `compat/tc2/tc2_nci.st` channel surface; HLI specifics on request
+- **Status:** DEFERRED — HLI is a cyclic PLC<->CNC struct-exchange contract (gpAx^.lr_mc_control/ipo_mc_control elements), not an FB API; needs the TF5200 HLI struct spec plus a CNC-kernel counterpart. Tether's tplc-nci channel covers the motion path
 - **Integration:** CNC HLI (OPC UA companion spec for machines): axis backend + OPC UA server.
 
 #### Axes › Description of the axis-specific interface
@@ -21789,7 +21789,7 @@ per-parameter prose.
 
 - **Category:** Motion/CNC · **Tier:** T4
 - **Manual:** `TF5200_JOBMANAGER_EN.pdf` · **API entries:** 1
-- **Status:** PLCopen-part-4 CNC functions covered by `compat/tc2/tc2_nci.st` (G-code owned by Tether)
+- **Status:** DEFERRED — single entry MCV_GrpReadJobAck evaluates MC_MovePath job acknowledgements; needs the coordinated-motion trajectory engine (row 24 remainder)
 - **Integration:** PLCopen P4 (packaging): state machines are T0 logic; full conformance needs the motion/packaging backends.
 
 #### PLCopen function blocks
@@ -21808,7 +21808,7 @@ per-parameter prose.
 
 - **Category:** Motion · **Tier:** T3
 - **Manual:** `TF5810_TC3_Hydraulic_Positioning_EN.pdf` · **API entries:** 118
-- **Status:** the standard PLCopen `MC_*_BkPlcMc` blocks (power/read/write/cam/gear/halt/jog/home/stop/table-select, ~75 entries) are covered by `compat/tc2/tc2_mc2.st` — ctest tc2_mc2_*_io. Remaining: the hydraulic drive-model FBs — `MC_AxCtrl*` (pressure/force/PI/de-stall control), `MC_AxRt*` (runtime axis: force/pressure/encoder actuals, hybrid axis, function generators), `MC_AxTable*` (cam-table file I/O), `MC_AxRuntime` — need a hydraulic axis model in Tether motion; on request.
+- **Status:** the standard PLCopen `MC_*_BkPlcMc` blocks (power/read/write/cam/gear/halt/jog/home/stop/table-select, ~75 entries) are covered by `compat/tc2/tc2_mc2.st` — ctest tc2_mc2_*_io. Remaining: the hydraulic drive-model FBs — `MC_AxCtrl*` (pressure/force/PI/de-stall control), `MC_AxRt*` (runtime axis: force/pressure/encoder actuals, hybrid axis, function generators), `MC_AxTable*` (cam-table file I/O), `MC_AxRuntime` — need a hydraulic axis model in Tether motion; on request. Status stands: hydraulic drive-model subset deferred pending a hydraulic axis model in Tether motion
 - **Integration:** Hydraulic positioning: axis backend with hydraulic drive model.
 
 #### PLCopen Motion Control › Administrative
