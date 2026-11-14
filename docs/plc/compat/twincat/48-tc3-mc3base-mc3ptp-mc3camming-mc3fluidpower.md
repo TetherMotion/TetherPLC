@@ -18,14 +18,20 @@ space), `MC_WaitForStableActualPosition` (velocity-window settle),
 `MC_TriggerError` (fault inject via sim-ext object 0x200D latching
 the CiA402 fault state; 0x603F reports the code, MC_Reset clears)
 and `MC_SetHomingState`/`MC_LoadControl`/
-`MC_ActivateExternalSetpointGeneration` as accepted no-ops. Deferred:
-the camming set (`MC_CamScaling`, `MC_CamTableSelect`,
+`MC_ActivateExternalSetpointGeneration` as accepted no-ops. Phasing
+subset done in `compat/tc3/tc3_mc3cam.st` (e2e `tc3_mc3cam{,_io}`,
+mask `0x3f`): `MC_PhasingAbsolute`, `MC_PhasingRelative`,
+`MC_GearInPos` and `MC_HaltPhasing` as finite position-convergence
+commands over a PV-mode feedforward+proportional loop; Done/InSync
+fire once the slave position error stays inside the window, and the
+command ends there (persistent cam coupling needs the NC kernel).
+Velocity/Acceleration/Deceleration/Jerk inputs are accepted but not
+enforced; the simulated drive applies its own dynamics limits.
+Deferred: the cam-table set (`MC_CamScaling`, `MC_CamTableSelect`,
 `MC_ReadCamInfo`, `MC_CamAdd`, `MC_CamExchange`, `MC_CamIn`,
-`MC_CamRemove`), phasing (`MC_GearInPos`, `MC_HaltPhasing`,
-`MC_PhasingAbsolute`, `MC_PhasingRelative`), fluid power
-(`MC_ValveCharacterization`) and the TcCOM `AXIS_REF`/
-`ENCODER_AXIS_REF` object model (METHOD-based, not expressible in
-the ST dialect).
+`MC_CamRemove`), fluid power (`MC_ValveCharacterization`) and the
+TcCOM `AXIS_REF`/`ENCODER_AXIS_REF` object model (METHOD-based,
+not expressible in the ST dialect).
 
 ---
 

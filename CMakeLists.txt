@@ -984,6 +984,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc3_mc3ptp PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
+  # Tc3_Mc3Camming phasing e2e: absolute/relative phasing and
+  # gear-in-position over a 2-axis master PV move plus halt
+  # phasing; in-process and Tether IO variants
+  add_test(NAME tc3_mc3cam
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc3cam.sh)
+  set_tests_properties(tc3_mc3cam PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+
   # Tc3_NC_Camming e2e: two simulated axes, 3-point cam table
   # (master -> 2x slave), coupling while the master runs a velocity
   # move, periodic wrap, table clear, WritePt edge; in-process
@@ -1273,6 +1281,11 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_mc3ptp_io
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc3ptp_io.sh)
   set_tests_properties(tc3_mc3ptp_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
+
+  add_test(NAME tc3_mc3cam_io
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mc3cam_io.sh)
+  set_tests_properties(tc3_mc3cam_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real
