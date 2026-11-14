@@ -53,6 +53,9 @@ private:
     int32_t masterCmd(void*, uint32_t port, uint8_t cmd);
     int32_t diagRead(void*, uint32_t port, uint8_t* mem,
                      uint32_t cap, uint32_t* len);
+    int32_t alNeg(void*, uint32_t port, uint32_t pdo_req,
+                  uint32_t pdi_req, uint32_t* pdo_out,
+                  uint32_t* pdi_out);
     int32_t isduService(Port* p, bool wr, uint16_t index,
                         uint8_t subindex, const uint8_t* data,
                         uint32_t dlen, uint8_t* resp, uint32_t rcap,
@@ -67,6 +70,7 @@ private:
                             uint32_t* cksFlags);
     static int32_t pageRead(Port* p, uint8_t addr, uint8_t* od);
     static int32_t diagFetch2(Port* p, uint8_t addr, uint8_t* m);
+    static void portPdLens(Port* p, uint32_t* pdo, uint32_t* pdi);
 
     TplcIoLinkService svc_{};
     std::vector<std::unique_ptr<Port>> ports_;

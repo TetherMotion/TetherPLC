@@ -27,6 +27,7 @@ VAR
     ok12 : BOOL;
     ok13 : BOOL;
     ok14 : BOOL;
+    ok15 : BOOL;
 END_VAR
     IF st = 0 THEN
         mask := 0;
@@ -178,23 +179,34 @@ END_VAR
                 il.DIAG[0] = 16#81 AND il.DIAG[1] = 16#54 AND
                 il.DIAG[2] = 16#20 AND il.DIAG[3] = 16#01;
         IF ok12 THEN mask := mask + 2048; END_IF;
-        // close the port
-        il.OP := 2;
+        // arm AL negotiation (OP 12): request 64 octets each way —
+        // clamps to the DPP1 device maximum of 4
+        il.OP := 12;
         il.PORT := 0;
+        il.MSEQ := 64;
+        il.ADDR := 64;
         st := 13;
     ELSIF st = 13 THEN
         il();
-        ok13 := il.STATUS = 0;
+        ok13 := il.STATUS = 0 AND il.ALPDO = 4 AND il.ALPDI = 4;
         IF ok13 THEN mask := mask + 4096; END_IF;
-        // invalid op -> rejection
-        il.OP := 99;
+        // close the port
+        il.OP := 2;
         il.PORT := 0;
         st := 14;
     ELSIF st = 14 THEN
         il();
-        ok14 := il.STATUS = -1 AND il.ERRID = 1;
+        ok14 := il.STATUS = 0;
         IF ok14 THEN mask := mask + 8192; END_IF;
-        il.OP := 0;
+        // invalid op -> rejection
+        il.OP := 99;
+        il.PORT := 0;
         st := 15;
+    ELSIF st = 15 THEN
+        il();
+        ok15 := il.STATUS = -1 AND il.ERRID = 1;
+        IF ok15 THEN mask := mask + 16384; END_IF;
+        il.OP := 0;
+        st := 16;
     END_IF
 END_PROGRAM

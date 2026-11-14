@@ -7363,13 +7363,15 @@ const IL_OD: usize = 120; // u8[8]
 const IL_ISDUERR: usize = 128; // u32
 const IL_ISDU: usize = 132; // u8[240]
 const IL_DIAG: usize = 372; // u8[19] event memory
+const IL_ALPDO: usize = 392; // u32 negotiated PD-out octets
+const IL_ALPDI: usize = 396; // u32 negotiated PD-in octets
 
 // tplc-iolink service vtable offsets (TplcIoLinkService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B),
 // il_state@16, il_open@24, il_close@32, il_ident@40,
 // il_pd_exchange@48, il_isdu_read@56, il_isdu_write@64, il_port_info@72,
 // il_isdu_read_ex@80, il_isdu_write_ex@88, il_master_cmd@96,
-// il_diag_read@104.
+// il_diag_read@104, il_al_neg@112.
 const IL_SVC_STATE: usize = 16;
 const IL_SVC_OPEN: usize = 24;
 const IL_SVC_CLOSE: usize = 32;
@@ -7381,6 +7383,7 @@ const IL_SVC_ISDU_RX: usize = 80;
 const IL_SVC_ISDU_WX: usize = 88;
 const IL_SVC_MCMD: usize = 96;
 const IL_SVC_DIAG: usize = 104;
+const IL_SVC_ALNEG: usize = 112;
 
 /// service lookup for "tplc-iolink" (11 chars)
 unsafe fn iolink_service(ctx: *const u8) -> *const u8 {
@@ -7588,6 +7591,23 @@ pub unsafe extern "C" fn __tplc_rt_FB_IoLink(this: *mut u8, ctx: *mut u8) -> i32
             );
             wu32(this.add(IL_DLEN), len);
             set_rc(rc);
+        }
+        12 => {
+            /* il_al_neg(svc, port, pdo_req, pdi_req, pdo*, pdi*)
+               -> i32: AL negotiation — MSEQ=pdo request, ADDR=pdi
+               request (0 = device max), results in ALPDO/ALPDI. */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, u32, u32, *mut u32, *mut u32,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(IL_SVC_ALNEG) as *const usize).read(),
+            );
+            set_rc(f(
+                svc, port,
+                ru32(this.add(IL_MSEQ)),
+                ru32(this.add(IL_ADDR)),
+                this.add(IL_ALPDO) as *mut u32,
+                this.add(IL_ALPDI) as *mut u32,
+            ));
         }
         _ => {
             wi32(this.add(IL_STATUS), -1);

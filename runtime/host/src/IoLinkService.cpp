@@ -43,6 +43,11 @@ struct IoLinkService::Port {
     uint32_t cksFlags = 0;
     uint8_t dpp1[16] = {};
     bool haveIdent = false;
+    /* negotiated activation parameters (OP 12); when alNeg is set,
+       cyclic/diagnosis exchanges use these PD lengths */
+    uint8_t alPdo = 0;
+    uint8_t alPdi = 0;
+    bool alNeg = false;
 };
 
 namespace {
@@ -156,6 +161,13 @@ int xread(int fd, uint8_t* d, size_t n) {
     return 0;
 }
 
+/* PD length in octets from a DPP1 descriptor octet (bit7 =
+   byte-count flag, else bit-count). */
+uint32_t pdOctets(uint8_t desc) {
+    const uint32_t v = desc & 0x1F;
+    return (desc & 0x80) ? v : (v + 7) / 8;
+}
+
 IoLinkService* self(void* s) { return static_cast<IoLinkService*>(s); }
 
 } // namespace
@@ -231,6 +243,10 @@ IoLinkService::IoLinkService() {
     svc_.il_diag_read = [](void* s, uint32_t p, uint8_t* m,
                            uint32_t c, uint32_t* l) {
         return self(s)->diagRead(s, p, m, c, l);
+    };
+    svc_.il_al_neg = [](void* s, uint32_t p, uint32_t pr,
+                        uint32_t pi, uint32_t* po, uint32_t* qi) {
+        return self(s)->alNeg(s, p, pr, pi, po, qi);
     };
 }
 
@@ -344,22 +360,31 @@ int32_t IoLinkService::pdExchange(void*, uint32_t port, uint32_t mseq,
     if (pdo_len > TPLC_IOLINK_MAX_PD || pdi_cap > TPLC_IOLINK_MAX_PD +
         TPLC_IOLINK_MAX_OD + 8)
         return TPLC_IL_E_PARAM;
-    /* negotiated sizes come from the DPP1 when known; until the AL
-       negotiation lands we use the caller's lengths */
-    const uint32_t pdi_len_dev = pdi_cap; /* reply carries pdi_cap octets */
+    /* negotiated sizes: AL negotiation (OP 12) wins; otherwise the
+       DPP1 descriptors when identified, else caller lengths */
+    uint8_t pdoBuf[TPLC_IOLINK_MAX_PD] = {};
+    uint32_t framePdo = pdo_len;
+    if (p->alNeg) {
+        framePdo = p->alPdo;
+        if (pdo && pdo_len)
+            memcpy(pdoBuf, pdo,
+                   pdo_len < framePdo ? pdo_len : framePdo);
+        pdo = pdoBuf;
+    }
     uint8_t tx[80];
     /* rest = PDO octets then OD octets (none for cyclic PD) */
-    buildCkt(uint8_t((pdo_len ? 0 : MC_READ) | CH_PROCESS | 0),
-             MSEQ_T2V, pdo, pdo_len, tx);
-    const size_t txLen = 2 + pdo_len;
-    /* device reply: pdi_len_dev PD-in octets + 0 OD + CKS — we don't
-       know the device's PD-in length a priori; use the DPP1 pd-in
-       descriptor when identified, else pdi_cap */
-    uint32_t wantPdi = pdi_len_dev;
-    if (p->haveIdent) {
-        const uint8_t desc = p->dpp1[5];
-        const bool isBytes = (desc & 0x80) != 0;
-        wantPdi = isBytes ? (desc & 0x1F) : ((desc & 0x1F) + 7) / 8;
+    buildCkt(uint8_t((framePdo ? 0 : MC_READ) | CH_PROCESS | 0),
+             MSEQ_T2V, pdo, framePdo, tx);
+    const size_t txLen = 2 + framePdo;
+    /* device reply: negotiated/DPP1 PD-in octets + CKS — reading a
+       different count than the device sends would desync the stream,
+       so an undersized caller buffer is rejected, not clamped */
+    uint32_t wantPdi = pdi_cap;
+    if (p->alNeg) {
+        if (p->alPdi > pdi_cap) return TPLC_IL_E_PARAM;
+        wantPdi = p->alPdi;
+    } else if (p->haveIdent) {
+        wantPdi = pdOctets(p->dpp1[5]);
         if (wantPdi > pdi_cap) wantPdi = pdi_cap;
     }
     uint8_t rx[80];
@@ -407,11 +432,15 @@ int32_t IoLinkService::isduWrite(void*, uint32_t port, uint8_t addr,
     return exchange(p, tx, 3, rx, 1, nullptr, nullptr);
 }
 
-/* PD length in octets from a DPP1 descriptor octet (same decode
-   as pdExchange: bit7 = byte-count flag, else bit-count). */
-static uint32_t pdOctets(uint8_t desc) {
-    const uint32_t v = desc & 0x1F;
-    return (desc & 0x80) ? v : (v + 7) / 8;
+void IoLinkService::portPdLens(Port* p, uint32_t* pdo,
+                               uint32_t* pdi) {
+    if (p->alNeg) {
+        *pdo = p->alPdo;
+        *pdi = p->alPdi;
+    } else {
+        *pdo = pdOctets(p->dpp1[6]);
+        *pdi = pdOctets(p->dpp1[5]);
+    }
 }
 
 /* Diagnosis-channel read on the negotiated type-2_V profile:
@@ -421,8 +450,8 @@ static uint32_t pdOctets(uint8_t desc) {
 int32_t IoLinkService::diagFetch2(Port* p, uint8_t addr,
                                   uint8_t* m) {
     uint8_t pdo[TPLC_IOLINK_MAX_PD] = {};
-    const uint32_t pdo_len = pdOctets(p->dpp1[6]);
-    const uint32_t pdi_len = pdOctets(p->dpp1[5]);
+    uint32_t pdo_len = 0, pdi_len = 0;
+    portPdLens(p, &pdo_len, &pdi_len);
     uint8_t tx[80];
     buildCkt(uint8_t(MC_READ | CH_DIAG | (addr & 0x1F)), MSEQ_T2V,
              pdo, pdo_len, tx);
@@ -447,7 +476,8 @@ int32_t IoLinkService::diagRead(void*, uint32_t port, uint8_t* mem,
     if (p->fd < 0 || !p->haveIdent)
         return TPLC_IL_E_STATE;   /* negotiated PD sizes required */
     if (!mem || cap == 0) return TPLC_IL_E_PARAM;
-    const uint32_t pdi_len = pdOctets(p->dpp1[5]);
+    uint32_t pdi_len = 0, pdo_len = 0;
+    portPdLens(p, &pdo_len, &pdi_len);
     uint8_t pair[2];
     int32_t rc = diagFetch2(p, 0, pair);
     if (rc != TPLC_IL_OK) return rc;
@@ -473,7 +503,6 @@ int32_t IoLinkService::diagRead(void*, uint32_t port, uint8_t* mem,
     }
     /* confirm the readout: type-2_V write, addr 0, OD = {0,0};
        PD-out content is don't-care on the diagnosis channel */
-    const uint32_t pdo_len = pdOctets(p->dpp1[6]);
     uint8_t tx[80];
     uint8_t* rest = tx + 2;
     memset(rest, 0, pdo_len);
@@ -485,6 +514,32 @@ int32_t IoLinkService::diagRead(void*, uint32_t port, uint8_t* mem,
                   nullptr, nullptr);
     if (rc != TPLC_IL_OK) return rc;
     if (len) *len = needed;
+    return TPLC_IL_OK;
+}
+
+/* AL negotiation: ensure the DPP1 record, pick type-2_V with the
+   requested PD lengths clamped to the device maximum (0 = max),
+   and store the result — cyclic/diagnosis exchanges then frame
+   themselves from the negotiated lengths. */
+int32_t IoLinkService::alNeg(void*, uint32_t port, uint32_t pdo_req,
+                             uint32_t pdi_req, uint32_t* pdo_out,
+                             uint32_t* pdi_out) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_IL_E_PARAM;
+    if (p->fd < 0 || p->pst < TPLC_IL_ST_OPEN)
+        return TPLC_IL_E_STATE;
+    if (!p->haveIdent) {
+        int32_t rc = ident(nullptr, port, nullptr, 0, nullptr);
+        if (rc != TPLC_IL_OK) return rc;
+    }
+    const auto pick = [](uint32_t req, uint32_t devMax) {
+        return (req == 0 || req > devMax) ? devMax : req;
+    };
+    p->alPdo = uint8_t(pick(pdo_req, pdOctets(p->dpp1[6])));
+    p->alPdi = uint8_t(pick(pdi_req, pdOctets(p->dpp1[5])));
+    p->alNeg = true;
+    if (pdo_out) *pdo_out = p->alPdo;
+    if (pdi_out) *pdi_out = p->alPdi;
     return TPLC_IL_OK;
 }
 

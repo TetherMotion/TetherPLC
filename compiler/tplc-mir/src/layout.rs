@@ -1818,6 +1818,8 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "ISDUERR", udint());
             push(&mut off, "ISDU", arr(239));
             push(&mut off, "DIAG", arr(18)); /* event memory 19 octets */
+            push(&mut off, "ALPDO", udint());
+            push(&mut off, "ALPDI", udint());
         }
         /* FB_Profinet — tplc-profinet service bridge (PROFINET DCP
         discovery/configuration + cyclic IO record exchange over

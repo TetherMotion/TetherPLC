@@ -123,6 +123,17 @@ typedef struct TplcIoLinkService {
        set (the port is left unacknowledged so no event is lost). */
     int32_t (*il_diag_read)(void* svc, uint32_t port, uint8_t* mem,
                             uint32_t cap, uint32_t* len);
+    /* Activation-layer negotiation (PREOPERATE): reads the DPP1
+       record if needed, then negotiates the type-2_V profile with
+       the requested process-data lengths — 0 means "device
+       maximum" from the DPP1 descriptors; larger requests clamp to
+       the device maximum. Results are stored on the port: cyclic
+       exchanges then use the negotiated PD lengths automatically.
+       pdo_out/pdi_out receive the negotiated octet counts (may be
+       NULL). Requires OP 4 ident or performs it implicitly. */
+    int32_t (*il_al_neg)(void* svc, uint32_t port,
+                         uint32_t pdo_req, uint32_t pdi_req,
+                         uint32_t* pdo_out, uint32_t* pdi_out);
 } TplcIoLinkService;
 
 #ifdef __cplusplus

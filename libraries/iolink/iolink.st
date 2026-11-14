@@ -49,6 +49,12 @@
 //       EventQualifier: bits7-6 MODE (16#C0 appears, 16#40
 //       single-shot, 16#80 disappears), bits5-4 type (16#10
 //       notification, 16#20 warning, 16#30 error), bit2 instance.
+//   12 = AL negotiation (PORT, MSEQ=PD-out request, ADDR=PD-in
+//       request, 0 = device maximum -> ALPDO/ALPDI). Performs the
+//       DPP1 identification implicitly when needed, clamps requests
+//       to the device maximum, and stores the result: subsequent
+//       OP 5/11 exchanges frame themselves from the negotiated PD
+//       lengths instead of caller-supplied ones.
 // ISDU indices follow Table B.8: 16#0010 VendorName, 16#0012
 // ProductName, 16#0015 SerialNumber, 16#0024 DeviceStatus,
 // 16#0028/16#0029 last PDin/PDout, vendor range 16#0040+.
@@ -82,6 +88,8 @@ VAR_OUTPUT
     PDIN : ARRAY[0..39] OF BYTE;
     ODDATA : ARRAY[0..7] OF BYTE;
     DIAG : ARRAY[0..18] OF BYTE;    // OP11 event memory snapshot
+    ALPDO : UDINT;                  // OP12 negotiated PD-out octets
+    ALPDI : UDINT;                  // OP12 negotiated PD-in octets
 END_VAR
 VAR
     raw : FB_IoLink;
@@ -130,6 +138,8 @@ END_VAR
         FOR i := 0 TO 18 DO
             DIAG[i] := raw.DIAG[i];
         END_FOR;
+        ALPDO := raw.ALPDO;
+        ALPDI := raw.ALPDI;
         DONE := TRUE;
     END_IF;
     prevExec := EXEC;

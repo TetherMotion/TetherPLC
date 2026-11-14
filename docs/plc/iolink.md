@@ -77,6 +77,7 @@ selects it. `TPLC_IOLINK_IO` takes a comma-separated list of
 | 9  | isdu_read_ex | `MSEQ`=index, `ADDR`=subindex → `ISDU`/`DLEN`/`ISDUERR` |
 | 10 | isdu_write_ex| `MSEQ`=index, `ADDR`=subindex, `ISDU`/`DLEN` payload → `ISDUERR` |
 | 11 | diag_read   | → `DIAG[0..18]` event memory, `DLEN`=octets (needs OP 4 first) |
+| 12 | al_neg      | `MSEQ`/`ADDR`=PD-out/in requests (0=max) → `ALPDO`/`ALPDI` |
 
 `STATUS` carries the service return code (0 ok, -2 transport,
 -5 checksum, -6 malformed, -7 device error); `ERRID` its magnitude.
@@ -88,10 +89,12 @@ On `STATUS=-7` from ops 9/10, `ISDUERR` holds the device ErrorType
 - **Transport**: TCP per port. Real IO-Link needs 24 V-class
   signaling — deploy behind a PHY-equipped adapter; a UART/PHY
   transport is the hardware path (staged).
-- **M-sequence**: the codec emits type-2_V for cyclic PD; other
-  negotiated types are staged. AL negotiation (cycle-time/M-seq
-  capability handshake during PREOPERATE) is not yet automated —
-  the port operates with caller-supplied lengths.
+- **M-sequence**: the codec emits type-2_V. OP 12 performs
+  activation-layer negotiation: implicit DPP1 identification,
+  PD-length selection clamped to the device maximum (0 = max),
+  stored per port — cyclic and diagnosis exchanges then frame
+  from the negotiated lengths. MinCycleTime-aware scheduling and
+  VCE/SST parameterization remain staged.
 - **ISDU**: segmented services implemented over a PD-free type-2
   profile (2 OD octets/M-sequence). ISDU M-sequences on a real
   device in OPERATE carry negotiated PD-in/out octets — full AL
@@ -111,8 +114,9 @@ the device side of the protocol (page record, deterministic PD-in
 pattern, legacy + segmented ISDU object store with the A.5/FlowCTRL
 state machine, MasterCommand handling, diagnosis-channel event
 memory with severity ordering + ack/re-publish, A.1.6 checksums).
-14/14 checks: open, service state, DPP1 ident, cyclic PD exchange
+15/15 checks: open, service state, DPP1 ident, cyclic PD exchange
 (CKS event flag), legacy ISDU write+readback, MasterCommand,
 segmented ISDU write+readback (20-octet ExtLength), negative ISDU
 response (`ISDUERR=16#8011`), two diagnosis snapshots (severity
-sort + ack re-publish), close, invalid-op rejection.
+sort + ack re-publish), AL negotiation clamping to the DPP1
+maximum, close, invalid-op rejection.
