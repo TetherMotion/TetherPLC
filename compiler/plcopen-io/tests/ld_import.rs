@@ -117,6 +117,36 @@ fn ld_roundtrips_through_export() {
 }
 
 #[test]
+fn nested_type_elements_populate_iface_types() {
+    // Beremiz emits <type><INT/></type> inside interface vars rather
+    // than a type attribute — the importer must read them (arrays
+    // via dimension+baseType).
+    let xml = r#"<?xml version="1.0"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <pous>
+    <pou name="T" pouType="program">
+      <interface>
+        <inputVars>
+          <variable name="A"><type><INT/></type></variable>
+          <variable name="B"><type><BOOL/></type></variable>
+        </inputVars>
+        <localVars>
+          <variable name="ARR"><type><array><dimension lower="1" upper="4"/><baseType><DINT/></baseType></array></type></variable>
+        </localVars>
+      </interface>
+      <body><FBD/></body>
+    </pou>
+  </pous>
+</project>"#;
+    let rep = import(xml).expect("import failed");
+    let iface = &rep.project.pous[0].interface;
+    let ty = |n: &str| iface.iter().find(|v| v.name == n).map(|v| v.ty.as_str());
+    assert_eq!(ty("A"), Some("INT"));
+    assert_eq!(ty("B"), Some("BOOL"));
+    assert_eq!(ty("ARR"), Some("ARRAY[1..4] OF DINT"));
+}
+
+#[test]
 fn ld_storage_edge_attrs_surface_notes() {
     let xml = ld_xml().replace(
         "storage=\"none\" edge=\"none\"",

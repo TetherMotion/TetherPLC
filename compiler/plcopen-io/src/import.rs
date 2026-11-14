@@ -102,6 +102,9 @@ struct P {
     comment_text: String,
     ann: Option<AnnTarget>,
     pending_var: Option<IfaceVar>,
+    /// `<dimension lower upper>` bounds captured while parsing an
+    /// `<array>` type for the pending interface var.
+    arr_bounds: Option<(i64, i64)>,
     in_adddata: bool,
     cur_task: Option<Task>,
     conns: Vec<Conn>,
@@ -407,15 +410,65 @@ impl P {
                 }
                 _ => {}
             },
-            "type" if self.pending_var.is_some() => {}
+            "type" if self.pending_var.is_some() => {
+                self.arr_bounds = None;
+            }
+            // IEC elementary type elements inside <type> — Beremiz
+            // emits <type><INT/></type> rather than a type attribute
+            "BOOL" | "SINT" | "USINT" | "BYTE" | "INT" | "UINT" | "WORD"
+            | "DINT" | "UDINT" | "DWORD" | "LINT" | "ULINT" | "LWORD"
+            | "REAL" | "LREAL" | "TIME" | "DATE" | "TOD" | "DT"
+            | "STRING" | "WSTRING"
+                if self.pending_var.is_some() && self.depth_tag("type") =>
+            {
+                let mut elem = tag.to_ascii_uppercase();
+                if matches!(elem.as_str(), "STRING" | "WSTRING") {
+                    if let Some(n) = Self::attr(e, "length") {
+                        elem = format!("{elem}[{n}]");
+                    }
+                }
+                let arr_elem = self.depth_tag("baseType") && self.depth_tag("array");
+                let bounds = self.arr_bounds.unwrap_or((0, 0));
+                if let Some(v) = &mut self.pending_var {
+                    if v.ty.is_empty() {
+                        v.ty = if arr_elem {
+                            format!("ARRAY[{}..{}] OF {elem}", bounds.0, bounds.1)
+                        } else {
+                            elem
+                        };
+                    }
+                }
+            }
+            "dimension"
+                if self.pending_var.is_some()
+                    && self.depth_tag("type")
+                    && self.depth_tag("array") =>
+            {
+                let lo = Self::attr(e, "lower").and_then(|s| s.parse().ok());
+                let hi = Self::attr(e, "upper").and_then(|s| s.parse().ok());
+                if let (Some(l), Some(h)) = (lo, hi) {
+                    self.arr_bounds.get_or_insert((l, h));
+                }
+            }
             "derived" => {
+                let arr_elem = self.depth_tag("baseType") && self.depth_tag("array");
+                let bounds = self.arr_bounds.unwrap_or((0, 0));
                 if let Some(v) = &mut self.pending_var {
                     if v.ty.is_empty() {
                         if let Some(n) = Self::attr(e, "name") {
-                            v.ty = n;
+                            v.ty = if arr_elem {
+                                format!("ARRAY[{}..{}] OF {n}", bounds.0, bounds.1)
+                            } else {
+                                n
+                            };
                         }
                     }
                 }
+            }
+            "struct" | "enum" if self.pending_var.is_some() && self.depth_tag("type") => {
+                self.notes.push(XmlNote {
+                    what: format!("<{tag}> type not imported (no struct/enum support)"),
+                });
             }
             "simpleValue" => {
                 if self.depth_tag("initialValue") {

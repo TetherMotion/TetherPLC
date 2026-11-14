@@ -591,6 +591,12 @@ impl<'a> Cx<'a> {
                 }
                 // undeclared name is only a declaration when `at` present
                 let Some(a) = atp else {
+                    // PLCopen constant taps (Beremiz <inVariable>
+                    // <expression>1</expression>) carry a literal,
+                    // not a name — src_expr resolves them, no storage
+                    if parse_lit(n).is_ok() {
+                        return;
+                    }
                     self.err(codes::UNDECLARED, format!("undeclared name {n}"), b.id);
                     return;
                 };
@@ -1818,13 +1824,28 @@ impl<'a> Cx<'a> {
                         return Some(g.clone());
                     }
                 }
-                let r = self.var_ref(b)?;
-                let ty = self.ref_ty(&r);
-                Some(Expr {
-                    kind: ExprKind::Ref(r),
-                    ty,
-                    prov: self.prov(b.id, 0),
-                })
+                if let Some(r) = self.var_ref(b) {
+                    let ty = self.ref_ty(&r);
+                    return Some(Expr {
+                        kind: ExprKind::Ref(r),
+                        ty,
+                        prov: self.prov(b.id, 0),
+                    });
+                }
+                // constant tap — a PLCopen variable element whose
+                // expression is a literal (e.g. Beremiz inVariable
+                // "1") sources its value directly, no storage
+                if let Some(n) = &b.name {
+                    if let Ok(l) = parse_lit(n) {
+                        let ty = lit_ty(&l);
+                        return Some(Expr {
+                            kind: ExprKind::Lit(l),
+                            ty,
+                            prov: self.prov(b.id, 0),
+                        });
+                    }
+                }
+                None
             }
             BlockKind::Fb => {
                 let sig = self.sigs.get(&b.id).cloned().unwrap_or_default();
