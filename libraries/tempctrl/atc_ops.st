@@ -1724,3 +1724,263 @@ END_VAR
     IF L8 THEN LockedCount := LockedCount + 1; IF FirstLock = 0 THEN FirstLock := 8; END_IF; END_IF;
     Permit := Enable AND LockedCount = 0;
 END_FUNCTION_BLOCK
+
+// ---- FB_AtcCounter: preset up/down counter ---------------------------
+// Case/parts/bin counts: Up/Down are level inputs edge-detected inside.
+// Count clamps to [0, Preset]; AtPreset = Count >= Preset ( Preset<=0
+// disables the clamp and the flag). Zero-detect for empty-bin logic.
+FUNCTION_BLOCK FB_AtcCounter
+VAR_INPUT
+    Up : BOOL;
+    Down : BOOL;
+    Preset : DINT;      // count target (<=0 = no preset)
+    Enable : BOOL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Count : DINT;
+    AtPreset : BOOL;
+    Zero : BOOL;
+END_VAR
+VAR
+    upL : BOOL;
+    dnL : BOOL;
+END_VAR
+    IF Reset THEN Count := 0; END_IF;
+    IF Enable THEN
+        IF Up AND NOT upL THEN
+            Count := Count + 1;
+        END_IF;
+        IF Down AND NOT dnL THEN
+            Count := Count - 1;
+        END_IF;
+        IF Preset > 0 THEN
+            IF Count > Preset THEN Count := Preset; END_IF;
+            IF Count < 0 THEN Count := 0; END_IF;
+        END_IF;
+    END_IF;
+    upL := Up; dnL := Down;
+    AtPreset := Preset > 0 AND Count >= Preset;
+    Zero := Count <= 0;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcRateAlarm: PV rate-of-change alarm ------------------------
+// Exotherm/runaway/coil-burn detection: Alarm latches after |dPV/dt|
+// exceeds MaxRate for OnDelay s and clears after RateNow stays inside
+// for OffDelay s. RateNow is EU/s (signed). First scan RateNow = 0.
+FUNCTION_BLOCK FB_AtcRateAlarm
+VAR_INPUT
+    PV : LREAL;
+    MaxRate : LREAL;    // |EU/s| limit (<=0 disables alarming)
+    OnDelay : LREAL;    // s over-rate before Alarm
+    OffDelay : LREAL;   // s in-rate before clear (<=0 immediate)
+    Enable : BOOL;
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    RateNow : LREAL;    // signed dPV/dt, EU/s
+    Alarm : BOOL;
+    ET : LREAL;         // s continuously over-rate
+END_VAR
+VAR
+    pvL : LREAL;
+    haveL : BOOL;
+    inT : LREAL;
+    lim : LREAL;
+END_VAR
+    lim := MaxRate;
+    IF lim < 0.0 THEN lim := -lim; END_IF;
+    IF Reset THEN Alarm := FALSE; ET := 0.0; inT := 0.0; haveL := FALSE;
+    END_IF;
+    IF NOT Enable THEN
+        RateNow := 0.0; ET := 0.0; inT := 0.0;
+        RETURN;
+    END_IF;
+    IF haveL AND CycleTime > 0.0 THEN
+        RateNow := (PV - pvL) / CycleTime;
+    ELSE
+        RateNow := 0.0;
+    END_IF;
+    pvL := PV; haveL := TRUE;
+    IF RateNow > lim OR RateNow < -lim THEN
+        ET := ET + CycleTime;
+        inT := 0.0;
+        IF ET >= OnDelay THEN Alarm := TRUE; END_IF;
+    ELSE
+        ET := 0.0;
+        inT := inT + CycleTime;
+        IF Alarm AND inT >= OffDelay THEN Alarm := FALSE; END_IF;
+    END_IF;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcDelay: transport delay line --------------------------------
+// Pure-delay element for pipeline/conveyor transport lag: Out follows
+// In by Delay seconds. Implemented as a 512-sample ring; effective
+// delay clamps to the filled depth (Out ramps from passthrough to full
+// delay over the first Delay seconds). Delay > 512*CycleTime clamps.
+FUNCTION_BLOCK FB_AtcDelay
+VAR_INPUT
+    In : LREAL;
+    Delay : LREAL;      // s
+    CycleTime : LREAL;
+    Enable : BOOL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Out : LREAL;
+    Filled : BOOL;      // ring holds >= requested delay
+END_VAR
+VAR
+    buf : ARRAY[1..512] OF LREAL;
+    wr : INT;
+    fill : INT;
+    n : INT;
+    eff : INT;
+    rd : INT;
+    i : INT;
+END_VAR
+    IF Reset THEN
+        wr := 1; fill := 0; Out := 0.0; Filled := FALSE;
+        FOR i := 1 TO 512 DO buf[i] := 0.0; END_FOR;
+    END_IF;
+    IF NOT Enable THEN
+        Out := In; Filled := FALSE;
+        wr := 1; fill := 0;
+        RETURN;
+    END_IF;
+    n := DINT_TO_INT(TRUNC(Delay / CycleTime));
+    IF n < 1 THEN n := 1; END_IF;
+    IF n > 512 THEN n := 512; END_IF;
+    IF fill = 0 THEN
+        Out := In;
+    ELSE
+        eff := n;
+        IF eff > fill THEN eff := fill; END_IF;
+        rd := wr - eff;
+        WHILE rd < 1 DO rd := rd + 512; END_WHILE;
+        Out := buf[rd];
+        Filled := fill >= n;
+    END_IF;
+    buf[wr] := In;
+    wr := wr + 1;
+    IF wr > 512 THEN wr := 1; END_IF;
+    IF fill < 512 THEN fill := fill + 1; END_IF;
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcRamp: trapezoidal position ramp ----------------------------
+// Move Pos toward Target with velocity/acceleration limits: cruise at
+// MaxVel, brake via the v^2/2a stopping-distance curve (triangular
+// profile for short moves), clamp overshoot, Done at rest on target.
+// Enable=FALSE or Reset holds position and zeroes velocity.
+FUNCTION_BLOCK FB_AtcRamp
+VAR_INPUT
+    Target : LREAL;
+    MaxVel : LREAL;     // units/s (<=0 -> treated as 1)
+    MaxAcc : LREAL;     // units/s^2 (<=0 -> treated as 1)
+    Enable : BOOL;
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Pos : LREAL;
+    Vel : LREAL;
+    Moving : BOOL;
+    Done : BOOL;
+END_VAR
+VAR
+    dist : LREAL;
+    s : LREAL;
+    ad : LREAL;
+    sd : LREAL;
+    nv : LREAL;
+    newPos : LREAL;
+    mv : LREAL;
+    ac : LREAL;
+    brk : BOOL;
+END_VAR
+    mv := MaxVel;
+    IF mv <= 0.0 THEN mv := 1.0; END_IF;
+    ac := MaxAcc;
+    IF ac <= 0.0 THEN ac := 1.0; END_IF;
+    IF Reset THEN
+        Vel := 0.0; Done := FALSE; Moving := FALSE; brk := FALSE;
+    END_IF;
+    IF NOT Enable THEN
+        Vel := 0.0; Moving := FALSE; brk := FALSE;
+        Done := (Pos = Target);
+        RETURN;
+    END_IF;
+    dist := Target - Pos;
+    ad := dist;
+    IF ad < 0.0 THEN ad := -ad; END_IF;
+    IF ad <= 0.0000001 THEN
+        // on target: hold, never drift away
+        Vel := 0.0; brk := FALSE;
+    ELSE
+        IF dist > 0.0 THEN s := 1.0; ELSE s := -1.0; END_IF;
+        sd := Vel * Vel / (2.0 * ac);
+        IF (s > 0.0 AND Vel >= 0.0) OR (s < 0.0 AND Vel <= 0.0) THEN
+            // moving toward target (or starting from rest)
+            IF NOT brk AND ad <= sd THEN brk := TRUE; END_IF;
+            IF brk THEN
+                // latched braking: shed speed monotonically so the
+                // move cannot oscillate between accel/brake branches
+                nv := Vel;
+                IF nv < 0.0 THEN nv := -nv; END_IF;
+                nv := nv - ac * CycleTime;
+                IF nv < 0.0 THEN nv := 0.0; END_IF;
+                IF Vel < 0.0 THEN Vel := -nv; ELSE Vel := nv; END_IF;
+                IF Vel = 0.0 THEN brk := FALSE; END_IF;
+            ELSIF ABS(Vel) < mv THEN
+                Vel := Vel + s * ac * CycleTime;
+                IF Vel > mv THEN Vel := mv; END_IF;
+                IF Vel < -mv THEN Vel := -mv; END_IF;
+            END_IF;
+        ELSE
+            // moving away: bleed speed, re-arm braking check
+            nv := Vel;
+            IF nv < 0.0 THEN nv := -nv; END_IF;
+            nv := nv - ac * CycleTime;
+            IF nv < 0.0 THEN nv := 0.0; END_IF;
+            IF Vel < 0.0 THEN Vel := -nv; ELSE Vel := nv; END_IF;
+            brk := FALSE;
+        END_IF;
+        // arrival: remaining distance within this scan's travel
+        IF ad <= ABS(Vel) * CycleTime THEN
+            Pos := Target; Vel := 0.0; brk := FALSE;
+        ELSE
+            newPos := Pos + Vel * CycleTime;
+            IF (newPos - Target) * (Pos - Target) < 0.0 THEN
+                Pos := Target; Vel := 0.0; brk := FALSE;
+            ELSE
+                Pos := newPos;
+            END_IF;
+        END_IF;
+    END_IF;
+    Moving := Vel <> 0.0;
+    Done := (Pos = Target) AND (Vel = 0.0);
+END_FUNCTION_BLOCK
+
+// ---- FB_AtcRatio: ratio/blend feedforward -----------------------------
+// FlowA = FlowB * Ratio + Bias — two-component blending (phosphate/
+// polymer, ingredient dosing). Ratio dimensionless (e.g. 0.02 = 2 %),
+// Bias in flow units/s trims the zero offset. Enable=FALSE outputs 0.
+FUNCTION_BLOCK FB_AtcRatio
+VAR_INPUT
+    FlowB : LREAL;      // master flow (units/s)
+    Ratio : LREAL;      // A per unit B
+    Bias : LREAL;       // constant trim, same units as FlowA
+    Enable : BOOL;
+END_VAR
+VAR_OUTPUT
+    FlowA : LREAL;
+    Total : LREAL;
+END_VAR
+    IF Enable THEN
+        FlowA := FlowB * Ratio + Bias;
+    ELSE
+        FlowA := 0.0;
+    END_IF;
+    Total := FlowA + FlowB;
+END_FUNCTION_BLOCK

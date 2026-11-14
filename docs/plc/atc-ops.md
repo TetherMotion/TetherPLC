@@ -66,6 +66,11 @@ the caller for pulses.
 | `FB_AtcValveFb` | Valve/pneumatic feedback verify: `Cmd` vs `Fb` mismatch persisting `FbDelay` s latches `Fault`; `OK` = enabled, agreed, no fault. Catches stuck-open and stuck-closed. |
 | `FB_AtcVote` | Median-of-3 redundant analog inputs: `Vout` = middle value (single drifting probe can't move PV); `Spread` = max−min, `Bad` while `Spread > Band`; `UseDefault`+`DefV` substitutes a fallback. |
 | `FB_AtcLoto` | Lockout-tagout permit: `L1..L8` locked signals; `Permit` only when all released and `Enable`; `LockedCount`/`FirstLock` for the HMI. No bypass input by design. |
+| `FB_AtcCounter` | Preset up/down counter: `Up`/`Down` edge-detected, `Count` clamps to `[0,Preset]`, `AtPreset`, `Zero`. Case/parts/bin counts. |
+| `FB_AtcRateAlarm` | PV rate-of-change alarm: `RateNow` = signed dPV/dt; `Alarm` after `OnDelay` s beyond `MaxRate`, clears after `OffDelay` s inside. Exotherm/runaway detection. |
+| `FB_AtcDelay` | Transport delay line: `Out` follows `In` by `Delay` s via a 512-sample ring (`Filled` when the ring covers the delay; shorter history outputs the oldest sample). Pipeline/conveyor lag compensation. |
+| `FB_AtcRamp` | Trapezoidal move: `Pos`→`Target` at `MaxVel`/`MaxAcc` with latched braking (v²/2a curve), overshoot clamp, `Done` at rest on target. Latched `brk` prevents accel/brake limit-cycling. |
+| `FB_AtcRatio` | Ratio/blend feedforward: `FlowA = FlowB*Ratio + Bias`, `Total` = sum. Two-component dosing/mixing. |
 
 ## Machine control
 
@@ -90,8 +95,8 @@ the caller for pulses.
 
 ## Tests
 
-`tests/ops/e2e.sh` — library check/build/verify plus a 32-program
-self-checking vector suite (`tests/ops/cases/o01..o32`) covering
+`tests/ops/e2e.sh` — library check/build/verify plus a 37-program
+self-checking vector suite (`tests/ops/cases/o01..o37`) covering
 every block: debounce timing, alarm ack/shelve/first-out, hour-meter
 preset alarm + reset, OEE counters + reset, sensor range/rate/stuck
 priority, sequencer timed/condition steps + done, andon priority
@@ -104,4 +109,5 @@ zone-balance trim saturation, freeze-dryer endpoint dry/wet classify,
 lead/lag staging with rotation + stage delay, tool-life warn/due/reset,
 soft-limit window + homing gate, PV-SP deviation on/off delay,
 dual-channel safety agreement, safety muting, valve feedback verify,
-median-of-3 analog voting, LOTO permit.
+median-of-3 analog voting, LOTO permit, preset counter, rate-of-change
+alarm, transport delay line, trapezoidal ramp, ratio/blend feedforward.
