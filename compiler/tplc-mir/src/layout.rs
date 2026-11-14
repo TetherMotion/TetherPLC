@@ -1739,6 +1739,40 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
                 hi: 15,
             });
         }
+        /* FB_CanOpen — tplc-canopen service bridge (CANopen/CoE CiA 301
+        object dictionary over Tether IO machine.sdo.*). Synchronous op
+        dispatch: OP 1=sdo_read (SLAVE/INDEX/SUB -> DATA/DLEN/ABORT),
+        2=sdo_write (SLAVE/INDEX/SUB/DATA/DLEN/VERIFY -> ABORT),
+        3=state (-> STATUS). STATUS carries the service return code,
+        ERRID its positive form. DATA is a 256-byte payload buffer. */
+        "FB_CanOpen" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let byte = || Type::Int {
+                signed: false,
+                bits: 8,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "SLAVE", udint());
+            push(&mut off, "INDEX", udint());
+            push(&mut off, "SUB", udint());
+            push(&mut off, "VERIFY", udint());
+            push(&mut off, "DLEN", udint());
+            push(&mut off, "ABORT", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "DATA", Type::Array {
+                elem: Box::new(byte()),
+                lo: 0,
+                hi: 255,
+            });
+        }
         /* FB_Soe — tplc-soe service bridge (EtherCAT SoE mailbox over
         Tether IO ec.soe.* params). Synchronous op dispatch: OP 1=
         read_state (SLAVE -> STATUSW/CMDSTATE/PASSWD/DIAG fields/temps/

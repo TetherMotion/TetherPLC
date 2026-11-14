@@ -21,6 +21,7 @@
 #include <tplc/host/KinService.hpp>
 #include <tplc/host/McGroupService.hpp>
 #include <tplc/host/CamService.hpp>
+#include <tplc/host/CanopenService.hpp>
 #include <tplc/host/PathService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
@@ -155,6 +156,8 @@ private:
     EcSyncService ecsync_;
     /* EtherCAT CoE diag history over Tether IO ec.coediag.* params. */
     EcDiagService ecdiag_;
+    /* CANopen/CoE object dictionary over Tether IO machine.sdo.*. */
+    CanopenService canopen_;
     /* EtherCAT SoE mailbox over Tether IO ec.soe.* params. */
     SoeService   soe_;
     /* OCPP-J client (WebSocket + JSON-RPC); always available. */

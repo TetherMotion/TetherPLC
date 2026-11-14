@@ -60,6 +60,7 @@ add_library(tplc_host STATIC
   runtime/host/src/PathService.cpp
   runtime/host/src/EcSyncService.cpp
   runtime/host/src/EcDiagService.cpp
+  runtime/host/src/CanopenService.cpp
   runtime/host/src/SoeService.cpp
   runtime/host/src/OpcUaService.cpp
   runtime/host/src/EipService.cpp
@@ -381,6 +382,7 @@ if(TARGET tplc_tether_io)
                               runtime/host/src/PathService.cpp
                               runtime/host/src/EcSyncService.cpp
                               runtime/host/src/EcDiagService.cpp
+                              runtime/host/src/CanopenService.cpp
                               runtime/host/src/SoeService.cpp
     PROPERTIES COMPILE_OPTIONS "-std=c++23")
   target_compile_definitions(tplc_host PRIVATE TPLC_HAVE_TETHER_IO)

@@ -238,6 +238,12 @@ void* HostServices::getService(const char* name, uint32_t len) {
             return const_cast<TplcEcDiagService*>(&ecdiag_.table());
         return nullptr;
     }
+    if (len == 12 && memcmp(name, "tplc-canopen", 12) == 0) {
+        /* CANopen/CoE SDO: only when machine.sdo.* live. */
+        if (canopen_.active())
+            return const_cast<TplcCanopenService*>(&canopen_.table());
+        return nullptr;
+    }
     if (len == 8 && memcmp(name, "tplc-soe", 8) == 0) {
         /* EtherCAT SoE mailbox: only when ec.soe.* live. */
         if (soe_.active())
