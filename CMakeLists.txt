@@ -1302,6 +1302,18 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(tc3_mc3camtbl_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
+  # Tc3_McCoordinatedMotion group stop/halt e2e: MC_GroupStop
+  # (PV ramp) and MC_GroupHalt (immediate) over real moving axes;
+  # in-process and Tether IO variants
+  add_test(NAME tc3_mcgroup_stop
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mcgroup_stop.sh)
+  set_tests_properties(tc3_mcgroup_stop PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  add_test(NAME tc3_mcgroup_stop_io
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mcgroup_stop_io.sh)
+  set_tests_properties(tc3_mcgroup_stop_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
+
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real
   # WebSocket+JSON-RPC session against the python CSMS fake
   # (ocpp_csms_fake.py — WS upgrade + OCPP-J echo) —
