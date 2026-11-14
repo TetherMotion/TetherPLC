@@ -1319,7 +1319,13 @@ impl<'a> Rt<'a> {
                         for (n, o, t) in io_binds {
                             sub.insert(n, (o, t));
                         }
-                        return self.exec_all(&sub, stmts);
+                        // RETURN/EXIT inside an FB body end only that
+                        // invocation — the caller's scan continues.
+                        // Abort (runtime fault) still propagates.
+                        return match self.exec_all(&sub, stmts) {
+                            Flow::Return(_) | Flow::Exit => Flow::Normal,
+                            f => f,
+                        };
                     }
                 }
                 Flow::Normal

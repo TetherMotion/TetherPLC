@@ -101,18 +101,23 @@ cp libraries/tempctrl/*.st "$ROOT/usr/share/$PKG/libraries/tempctrl/"
 cp compat/tc2/*.st "$ROOT/usr/share/$PKG/compat/tc2/" 2>/dev/null || true
 cp compat/tc3/*.st "$ROOT/usr/share/$PKG/compat/tc3/" 2>/dev/null || true
 
-# --- prebuilt temperature library package --------------------------------
-if "$RUST/tplcc" build --library --name Atc_TempCtrl \
-        libraries/tempctrl/atc_tempctrl.st \
-        -o "$ROOT/usr/share/$PKG/lib/atc_tempctrl.tplc" >/dev/null 2>&1; then
-    echo "built atc_tempctrl.tplc"
-else
-    rm -f "$ROOT/usr/share/$PKG/lib/atc_tempctrl.tplc"
-    echo "warn: atc_tempctrl.tplc build failed — sources still shipped" >&2
-fi
+# --- prebuilt library packages --------------------------------------------
+for pair in "atc_tempctrl Atc_TempCtrl" "atc_ops Atc_Ops"; do
+    set -- $pair
+    lib=$1; name=$2
+    if "$RUST/tplcc" build --library --name "$name" \
+            "libraries/tempctrl/$lib.st" \
+            -o "$ROOT/usr/share/$PKG/lib/$lib.tplc" >/dev/null 2>&1; then
+        echo "built $lib.tplc"
+    else
+        rm -f "$ROOT/usr/share/$PKG/lib/$lib.tplc"
+        echo "warn: $lib.tplc build failed — sources still shipped" >&2
+    fi
+done
 
 # --- docs -----------------------------------------------------------------
-cp docs/plc/atc-tempctrl.md docs/plc/toolchain.md docs/plc/web-ide.md \
+cp docs/plc/atc-tempctrl.md docs/plc/atc-ops.md docs/plc/toolchain.md \
+   docs/plc/web-ide.md \
    "$ROOT/usr/share/doc/$PKG/" 2>/dev/null || true
 cat > "$ROOT/usr/share/doc/$PKG/README" <<'DOC'
 TetherPLC — IEC 61131-3 toolchain + EtherCAT temperature-control runtime
@@ -124,9 +129,10 @@ Binaries:  tplcc (compiler), tplc-pkg (package verify/sign),
            tplc-ec-pump (EtherCAT fleet pump, bundled Tether libs),
            tplc-proxy (WebUI proxy wrapper with installed libdirs)
 
-Libraries: /usr/share/tetherplc/libraries/tempctrl/atc_tempctrl.st
+Libraries: /usr/share/tetherplc/libraries/tempctrl/*.st
            /usr/share/tetherplc/compat/{tc2,tc3}/*.st
            /usr/share/tetherplc/lib/atc_tempctrl.tplc (prebuilt)
+           /usr/share/tetherplc/lib/atc_ops.tplc (prebuilt)
 
 Quick start:
   tplcc build my_program.st --lib /usr/share/tetherplc/lib/atc_tempctrl.tplc \
