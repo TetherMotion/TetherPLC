@@ -21,6 +21,7 @@
 #include <tplc/host/KinService.hpp>
 #include <tplc/host/McGroupService.hpp>
 #include <tplc/host/CamService.hpp>
+#include <tplc/host/PathService.hpp>
 #include <tplc/host/FtpService.hpp>
 #include <tplc/host/Iec61850Service.hpp>
 #include <tplc/host/Iec870Service.hpp>
@@ -138,6 +139,8 @@ private:
     /* Cam objects + per-slave cam bindings; in-process only (table
        data and binding registry are PLC-side state). */
     CamService   cam_;
+    /* Coordinated path objects (MC_PATH_DATA_REF); in-process only. */
+    PathService  path_;
     /* OPC UA client; active() only when built with libopen62541. */
     OpcUaService  opcua_;
     /* EtherNet/IP explicit-messaging client; always available. */

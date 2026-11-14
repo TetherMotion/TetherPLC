@@ -5377,6 +5377,165 @@ pub unsafe extern "C" fn __tplc_rt_FB_Cam(this: *mut u8, ctx: *mut u8) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// FB_Path — tplc-path service bridge (Tc3_McCoordinatedMotion path
+// objects executed by MC_MovePath).
+// ---------------------------------------------------------------------------
+
+// FB_Path member offsets (see builtin_fb_layout("FB_Path")).
+const PT_OP: usize = 0;
+const PT_HANDLE: usize = 4;
+const PT_AUX: usize = 8;
+const PT_AUX2: usize = 12;
+const PT_FLAGS: usize = 16;
+const PT_STATUS: usize = 20;
+const PT_ERRID: usize = 24;
+const PT_NSEG: usize = 28;
+const PT_DONE: usize = 32;
+const PT_NOW: usize = 40;  // f64
+const PT_F1: usize = 48;   // f64
+const PT_F2: usize = 56;   // f64
+const PT_F3: usize = 64;   // f64
+const PT_POS: usize = 72;  // f64[16]
+
+// tplc-path service vtable offsets (TplcPathService):
+// struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
+const PT_SVC_CREATE: usize = 16;
+const PT_SVC_CLEAR: usize = 24;
+const PT_SVC_ADD: usize = 32;
+const PT_SVC_SET_START: usize = 40;
+const PT_SVC_EVAL: usize = 48;
+const PT_SVC_INFO: usize = 56;
+
+/// service lookup for "tplc-path" (9 chars)
+unsafe fn path_service(ctx: *const u8) -> *const u8 {
+    let svcs = (ctx.add(CTX_SVC) as *const *const u8).read();
+    if svcs.is_null() {
+        return core::ptr::null();
+    }
+    let host = (svcs.add(SVC_HOST) as *const *mut u8).read();
+    let gs = core::mem::transmute::<usize, unsafe extern "C" fn(*mut u8, *const u8, u32) -> *mut u8>(
+        (svcs.add(SVC_GET_SERVICE) as *const usize).read(),
+    );
+    gs(host, c"tplc-path".as_ptr() as *const u8, 9) as *const u8
+}
+
+#[inline]
+unsafe fn ptfn(svc: *const u8, off: usize) -> usize {
+    (svc.add(off) as *const usize).read()
+}
+
+type FNptCreate = unsafe extern "C" fn(*const u8, *mut u32) -> i32;
+type FNptPathOp = unsafe extern "C" fn(*const u8, u32) -> i32;
+type FNptAdd = unsafe extern "C" fn(
+    *const u8, u32, u32, *const f64, u32, f64, f64, f64,
+) -> i32;
+type FNptSetStart =
+    unsafe extern "C" fn(*const u8, u32, *const f64, u32) -> i32;
+type FNptEval = unsafe extern "C" fn(
+    *const u8, u32, f64, *mut f64, u32, *mut u32, *mut i32,
+    *mut u32,
+) -> i32;
+type FNptInfo =
+    unsafe extern "C" fn(*const u8, u32, *mut u32, *mut f64) -> i32;
+
+/// `__tplc_rt_FB_Path` — synchronous op dispatch over the tplc-path
+/// path-object table. OP: 0=create, 1=clear, 2=add segment,
+/// 3=set start, 4=eval, 5=info. NOW is refreshed from ctx->now_ns
+/// on every call. STATUS carries the service return code, ERRID its
+/// magnitude.
+/// # Safety
+/// `this` must point at a valid instance block of the documented
+/// layout; `ctx` at a live `TplcCtx`.
+#[no_mangle]
+pub unsafe extern "C" fn __tplc_rt_FB_Path(this: *mut u8, ctx: *mut u8) -> i32 {
+    let op = ru32(this.add(PT_OP));
+    wi32(this.add(PT_STATUS), 0);
+    wu32(this.add(PT_ERRID), 0);
+    /* NOW: ctx->now_ns as seconds (f64) */
+    let now_s = (now_ns(ctx) as f64) / 1.0e9;
+    wu64(this.add(PT_NOW), now_s.to_bits());
+    let svc = path_service(ctx);
+    if svc.is_null() {
+        wi32(this.add(PT_STATUS), -2);
+        wu32(this.add(PT_ERRID), 2);
+        return 0;
+    }
+    let fail = |this: *mut u8, rc: i32| {
+        wi32(this.add(PT_STATUS), rc);
+        wu32(this.add(PT_ERRID), (-rc).max(0) as u32);
+    };
+    match op {
+        0 => {
+            let mut out = 0u32;
+            let f: FNptCreate =
+                core::mem::transmute(ptfn(svc, PT_SVC_CREATE));
+            let rc = f(svc, &mut out);
+            if rc == 0 {
+                wu32(this.add(PT_HANDLE), out);
+            }
+            fail(this, rc);
+        }
+        1 => {
+            let f: FNptPathOp =
+                core::mem::transmute(ptfn(svc, PT_SVC_CLEAR));
+            fail(this, f(svc, ru32(this.add(PT_HANDLE))));
+        }
+        2 => {
+            let f: FNptAdd =
+                core::mem::transmute(ptfn(svc, PT_SVC_ADD));
+            fail(this, f(svc, ru32(this.add(PT_HANDLE)),
+                         ru32(this.add(PT_AUX)),
+                         this.add(PT_POS) as *const f64,
+                         ru32(this.add(PT_AUX2)),
+                         f64::from_bits(ru64(this.add(PT_F1))),
+                         f64::from_bits(ru64(this.add(PT_F2))),
+                         f64::from_bits(ru64(this.add(PT_F3)))));
+        }
+        3 => {
+            let f: FNptSetStart =
+                core::mem::transmute(ptfn(svc, PT_SVC_SET_START));
+            fail(this, f(svc, ru32(this.add(PT_HANDLE)),
+                         this.add(PT_POS) as *const f64,
+                         ru32(this.add(PT_AUX))));
+        }
+        4 => {
+            let mut seg = 0u32;
+            let mut done = 0i32;
+            let mut nout = 0u32;
+            let f: FNptEval =
+                core::mem::transmute(ptfn(svc, PT_SVC_EVAL));
+            let rc = f(svc, ru32(this.add(PT_HANDLE)),
+                       f64::from_bits(ru64(this.add(PT_F1))),
+                       this.add(PT_POS) as *mut f64, 16,
+                       &mut seg, &mut done, &mut nout);
+            fail(this, rc);
+            if rc == 0 {
+                wu32(this.add(PT_AUX), seg);
+                wu32(this.add(PT_DONE), done.max(0) as u32);
+                wu32(this.add(PT_NSEG), nout);
+            }
+        }
+        5 => {
+            let mut ns = 0u32;
+            let mut dur = 0.0f64;
+            let f: FNptInfo =
+                core::mem::transmute(ptfn(svc, PT_SVC_INFO));
+            let rc = f(svc, ru32(this.add(PT_HANDLE)), &mut ns, &mut dur);
+            fail(this, rc);
+            if rc == 0 {
+                wu32(this.add(PT_NSEG), ns);
+                wu64(this.add(PT_F1), dur.to_bits());
+            }
+        }
+        _ => {
+            wi32(this.add(PT_STATUS), -1);
+            wu32(this.add(PT_ERRID), 1);
+        }
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
 // FB_UaClient — OPC UA client over the tplc-opcua service.
 // ---------------------------------------------------------------------------
 

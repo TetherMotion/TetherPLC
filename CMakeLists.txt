@@ -57,6 +57,7 @@ add_library(tplc_host STATIC
   runtime/host/src/KinIoService.cpp
   runtime/host/src/McGroupService.cpp
   runtime/host/src/CamService.cpp
+  runtime/host/src/PathService.cpp
   runtime/host/src/EcSyncService.cpp
   runtime/host/src/EcDiagService.cpp
   runtime/host/src/SoeService.cpp
@@ -377,6 +378,7 @@ if(TARGET tplc_tether_io)
                               runtime/host/src/KinService.cpp
                               runtime/host/src/McGroupService.cpp
                               runtime/host/src/CamService.cpp
+                              runtime/host/src/PathService.cpp
                               runtime/host/src/EcSyncService.cpp
                               runtime/host/src/EcDiagService.cpp
                               runtime/host/src/SoeService.cpp
@@ -1312,6 +1314,19 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME tc3_mcgroup_stop_io
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mcgroup_stop_io.sh)
   set_tests_properties(tc3_mcgroup_stop_io PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
+
+  # Tc3_McCoordinatedMotion path e2e: MC_MoveLinearAbsolutePreparation
+  # /MC_DwellTimePreparation/MC_MoveDirectPreparation build a 3-segment
+  # path in tplc-path and MC_MovePath streams 0x607A CSP targets to
+  # both group members; in-process and Tether IO variants
+  add_test(NAME tc3_mcpath
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mcpath.sh)
+  set_tests_properties(tc3_mcpath PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
+  add_test(NAME tc3_mcpath_io
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/compat/tc3_mcpath_io.sh)
+  set_tests_properties(tc3_mcpath_io PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 180 RESOURCE_LOCK plc_scan)
 
   # OCPP-J client surface (C7): FB_Ocpp* wrappers drive a real

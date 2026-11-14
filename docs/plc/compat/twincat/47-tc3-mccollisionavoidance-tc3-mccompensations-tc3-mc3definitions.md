@@ -8,25 +8,55 @@
 
 **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
-**Status:** PARTIAL — the 12 group-administration APIs are implemented in
-`compat/tc3/tc3_mcgroup.st` over the in-process `tplc-mcgroup` service +
-`FB_McGroup` builtin (ctest `tc3_mcgroup`, mask `0xfff`):
-`MC_AddAxisToGroup`, `MC_RemoveAxisFromGroup`, `MC_UngroupAllAxes`,
-`MC_GroupEnable`, `MC_GroupDisable`, `MC_GroupReset`,
-`MC_GroupReadStatus`, `MC_GroupReadError`, `MC_GroupSetOverride`,
+**Status:** PARTIAL — 18 of the 36 APIs are implemented.
+
+Group administration in `compat/tc3/tc3_mcgroup.st` over the
+in-process `tplc-mcgroup` service + `FB_McGroup` builtin (ctest
+`tc3_mcgroup`, mask `0xfff`): `MC_AddAxisToGroup`,
+`MC_RemoveAxisFromGroup`, `MC_UngroupAllAxes`, `MC_GroupEnable`,
+`MC_GroupDisable`, `MC_GroupReset`, `MC_GroupReadStatus`,
+`MC_GroupReadError`, `MC_GroupSetOverride`,
 `MC_GroupSetSetpointSource`, `MC_SetCoordinateTransform` and
-`UDINT_TO_IDENTINGROUP`. `AXES_GROUP_REF`/`AXIS_REF`/
-`IDENT_IN_GROUP_REF`/`MC_COORD_REF` flatten to UDINT handles;
-`ECmSetpointSource` maps 1/2/3 -> Group/MCS/ACS. Group states
-approximate mcGroupState; the service is synchronous so `Busy` stays
-FALSE. The remaining 24 APIs — collision-avoidance moves
-(`MC_MoveAbsoluteCA`, `MC_MoveRelativeCA`, `MC_HaltCA`,
-`MC_GearInPosCA`), track following (`MC_ReadTrackPositions`,
-`MC_ActivateTrack`, `MC_TrackConveyorBelt`), compensation
-(`MC_RegisterCompensation`, `MC_TransformPosition`), all
-`MC_MovePath`/preparation/blocker/dwell FBs and
-`MC_GroupReadTrajectoryInformation` — require the coordinated-motion
-trajectory engine and are deferred.
+`UDINT_TO_IDENTINGROUP`.
+
+Group motion stop in the same library (ctest `tc3_mcgroup_stop{,_io}`,
+mask `0x3f`): `MC_GroupStop` ramps every member to rest in PV mode
+and `MC_GroupHalt` disables every member immediately; both read the
+membership snapshot via `FB_McGroup` OP10 and poll `VEL_ACTUAL`.
+
+Coordinated paths in `compat/tc3/tc3_mcpath.st` over the in-process
+`tplc-path` service + `FB_Path` builtin (ctest `tc3_mcpath{,_io}`,
+mask `0x3f`): `MC_MoveLinearAbsolutePreparation`,
+`MC_MoveDirectPreparation` (flattened alias of the linear absolute
+segment), `MC_DwellTimePreparation` and `MC_MovePath`. Path objects
+hold up to 32 ordered segments (linear trapezoid moves and dwells)
+with up to 16 position values each; `MC_MovePath` captures member
+axis positions at execute, switches members to CSP mode
+(0x6060=8) and streams interpolated `0x607A` targets per scan until
+the path duration elapses. `MC_PATH_DATA_REF` flattens to a UDINT
+handle, the `POINTER TO LREAL` position vector to an
+`ARRAY[0..15] OF LREAL` + `PositionCount`, and `DwellTime` (TIME)
+to UDINT milliseconds. Deviations: rest-to-rest trapezoids per
+segment on the dominant axis (all axes share the path parameter,
+so they arrive together), `Deceleration`/`Jerk` accepted but the
+service ramps with `Acceleration`, `BufferMode` accepted but every
+Execute edge appends immediately, segment-0 start resolves at
+execute time.
+
+The remaining 18 APIs — circular/blending preparations
+(`MC_MoveCircularAbsolutePreparation`,
+`MC_MoveBlendingPreparation`), blocker control
+(`MC_BlockerPreparation`, `MC_ReleaseBlocker`,
+`MC_GroupReadBlockerStatus`), `MC_CalcTrafo`,
+`MC_SetCoordinateTransformPreparation`,
+`MC_GroupReadTrajectoryInformation`,
+collision-avoidance moves (`MC_MoveAbsoluteCA`,
+`MC_MoveRelativeCA`, `MC_HaltCA`, `MC_GearInPosCA`), track
+following (`MC_ReadTrackPositions`, `MC_ActivateTrack`,
+`MC_TrackConveyorBelt`) and compensation
+(`MC_RegisterCompensation`, `MC_TransformPosition`) — need the
+full coordinated-motion trajectory engine, CA field model and
+compensation pipeline and are deferred.
 
 ---
 

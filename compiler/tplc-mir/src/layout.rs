@@ -1378,6 +1378,46 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "F3", lreal());
             push(&mut off, "F4", lreal());
         }
+        /* FB_Path — tplc-path service bridge (Tc3_McCoordinatedMotion
+        MC_PATH_DATA_REF path objects). Synchronous op dispatch:
+        OP 0=create (HANDLE out), 1=clear, 2=add segment
+        (AUX=type, AUX2=n, F1=vel, F2=acc, F3=dwell_ms, POS f64[16]
+        absolute targets), 3=set start (POS f64[16]),
+        4=eval (F1=t seconds -> POS f64[16] absolute positions,
+        AUX=segment, DONE=1 at path end), 5=info (AUX=nseg,
+        F1=duration s). NOW f64 carries ctx->now_ns seconds,
+        refreshed on every call. STATUS carries the service return
+        code, ERRID its magnitude. */
+        "FB_Path" => {
+            let udint = || Type::Int {
+                signed: false,
+                bits: 32,
+            };
+            let dint = || Type::Int {
+                signed: true,
+                bits: 32,
+            };
+            let lreal = || Type::Real { bits: 64 };
+            let f64arr = |n: u64| Type::Array {
+                elem: Box::new(lreal()),
+                lo: 0,
+                hi: n as i64 - 1,
+            };
+            push(&mut off, "OP", udint());
+            push(&mut off, "HANDLE", udint());
+            push(&mut off, "AUX", udint());
+            push(&mut off, "AUX2", udint());
+            push(&mut off, "FLAGS", udint());
+            push(&mut off, "STATUS", dint());
+            push(&mut off, "ERRID", udint());
+            push(&mut off, "NSEG", udint());
+            push(&mut off, "DONE", udint());
+            push(&mut off, "NOW", lreal());
+            push(&mut off, "F1", lreal());
+            push(&mut off, "F2", lreal());
+            push(&mut off, "F3", lreal());
+            push(&mut off, "POS", f64arr(16));
+        }
         /* FB_UaClient — tplc-opcua service bridge (OPC UA client via
         libopen62541). Synchronous op dispatch like FB_NciChan: set
         OP + fields and call. OP 1=connect (URL string → HANDLE),
