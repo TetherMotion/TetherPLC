@@ -40,6 +40,8 @@ private:
         uint32_t group = 0;    // bound group handle (0 = none)
         double   lastT = 0.0;  // t of most recent eval
         uint32_t lastSeg = 0;  // segment of most recent eval
+        double   pendTrafo = 0.0; // pending transform id
+        uint32_t trafoGen = 0;    // bumps on pendTrafo change
         uint32_t nseg = 0;
         double   duration = 0.0;
         std::array<double, TPLC_PATH_MAX_AXES> start{};
@@ -81,6 +83,7 @@ private:
     int32_t release(void*, double);
     int32_t blocker(void*, double*, int32_t*);
     int32_t bindGroup(void*, uint32_t, uint32_t);
+    int32_t trafo(void*, uint32_t, double*, uint32_t*);
     int32_t traj(void*, uint32_t, double*, double*, uint32_t*,
                  uint32_t*, uint32_t, uint32_t*);
 

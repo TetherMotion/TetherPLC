@@ -250,8 +250,10 @@ compat/tc3/
                       MC_GroupReadBlockerStatus: zero-duration gates
                       that hold path time until released),
                       MC_GroupReadTrajectoryInformation (per-segment
-                      remaining time/length readback) and
-                      MC_MovePath over
+                      remaining time/length readback),
+                      MC_SetCoordinateTransformPreparation (mid-path
+                      reference-system switch applied by MC_MovePath)
+                      and MC_MovePath over
                       the in-process tplc-path service + FB_Path
                       builtin. MC_PATH_DATA_REF flattens to a UDINT
                       handle; the POINTER TO LREAL position vector
@@ -602,9 +604,11 @@ tests/compat/
   tc3_mcpath_case.st  Tc3_McCoordinatedMotion path program (6 packed
                      checks: 2 axes create+power, group membership,
                      6-segment path prepare (linear/circular/dwell/
-                     blend/blocker/linear), MC_MovePath Busy+Done
-                     with blocker wait + release, trajectory info
-                     readback, final positions near (2000,2000))
+                     blend/blocker/linear + transform marker),
+                     MC_MovePath Busy+Done with blocker wait +
+                     release, trajectory readback, mid-path
+                     coordinate-transform switch verified, final
+                     positions near (2000,2000))
   tc3_mcpath.sh      ctest tc3_mcpath: builds tc2_mc2 + tc3_mcgroup
                      + tc3_mcpath as libraries, in-process replay
                      expecting mask 0x3f

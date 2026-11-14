@@ -208,6 +208,8 @@ VAR
     pathT : LREAL;
     lastNow : LREAL;
     blkWait : BOOL;
+    trafoGen : UDINT;
+    lastTrafoGen : UDINT;
     dn : LREAL;
     i : UDINT;
     n : UDINT;
@@ -265,6 +267,14 @@ IF active THEN
         blkWait := p.AUX = 1;
         dn := p.NOW - lastNow; lastNow := p.NOW;
         IF NOT blkWait THEN pathT := pathT + dn; END_IF;
+        /* apply pending coordinate-transform markers: the service
+           bumps AUX2 whenever the pending id changes */
+        p.OP := 11; p.HANDLE := PathData; p();
+        trafoGen := p.AUX2;
+        IF trafoGen <> lastTrafoGen AND p.F1 <> 0.0 THEN
+            lastTrafoGen := trafoGen;
+            mg.OP := 9; mg.COORD := LREAL_TO_DINT(p.F1); mg();
+        END_IF;
         p.OP := 4; p.F1 := pathT; p.HANDLE := PathData; p();
         IF p.STATUS <> 0 THEN
             Error := TRUE;
@@ -586,4 +596,40 @@ IF Enable AND mg.STATUS = 0 THEN
         IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
     END_IF;
 END_IF;
+END_FUNCTION_BLOCK
+
+// MC_SetCoordinateTransformPreparation: inserts a reference-system
+// change marker into the path (TwinCAT signature has no Execute;
+// the flattened version appends when the CoordTransform input
+// changes value). MC_MovePath applies the group's coordinate
+// transform when path time reaches the marker.
+FUNCTION_BLOCK MC_SetCoordinateTransformPreparation
+VAR_INPUT
+    PathData : UDINT;
+    CoordTransform : UDINT;
+END_VAR
+VAR_OUTPUT
+    Error : BOOL;
+    ErrorId : UDINT;
+END_VAR
+VAR
+    p : FB_Path;
+    prevCoord : UDINT := 0;
+END_VAR
+Error := FALSE; ErrorId := 0;
+IF CoordTransform <> prevCoord AND CoordTransform <> 0 THEN
+    p.HANDLE := PathData;
+    IF PathData <> 0 THEN
+        p.OP := 2; p.AUX := 6; p.AUX2 := 0;
+        p.F1 := 0.0; p.F2 := 0.0; p.F3 := CoordTransform;
+        p.HANDLE := PathData; p();
+        IF p.STATUS <> 0 THEN
+            Error := TRUE;
+            IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
+        END_IF;
+    ELSE
+        Error := TRUE; ErrorId := 16#4D01;
+    END_IF;
+END_IF;
+prevCoord := CoordTransform;
 END_FUNCTION_BLOCK

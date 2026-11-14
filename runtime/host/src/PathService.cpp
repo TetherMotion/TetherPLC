@@ -54,6 +54,10 @@ PathService::PathService() {
                         uint32_t cap, uint32_t* cnt) {
         return self(h)->traj(h, g, rd, rl, ids, act, cap, cnt);
     };
+    svc_.path_trafo = [](void* h, uint32_t p, double* id,
+                         uint32_t* gen) {
+        return self(h)->trafo(h, p, id, gen);
+    };
 }
 
 PathService::Path* PathService::find(uint32_t path) {
@@ -114,7 +118,8 @@ double PathService::segDuration(uint32_t type, uint32_t n,
                                 double dwellMs) {
     if (type == TPLC_PATH_SEG_DWELL || type == TPLC_PATH_SEG_BLEND)
         return dwellMs / 1000.0;
-    if (type == TPLC_PATH_SEG_BLOCKER) return 0.0;
+    if (type == TPLC_PATH_SEG_BLOCKER || type == TPLC_PATH_SEG_TRAFO)
+        return 0.0;
     double dmax = 0.0;
     for (uint32_t i = 0; i < n && i < TPLC_PATH_MAX_AXES; ++i) {
         const double d = std::fabs(to[i] - from[i]);
@@ -259,7 +264,8 @@ int32_t PathService::add(void*, uint32_t path, uint32_t type,
     if (p->nseg >= TPLC_PATH_MAX_SEGS) return TPLC_PATH_E_FULL;
     if (n > TPLC_PATH_MAX_AXES) return TPLC_PATH_E_PARAM;
     if (type != TPLC_PATH_SEG_LINEAR && type != TPLC_PATH_SEG_DWELL &&
-        type != TPLC_PATH_SEG_BLEND && type != TPLC_PATH_SEG_BLOCKER)
+        type != TPLC_PATH_SEG_BLEND && type != TPLC_PATH_SEG_BLOCKER &&
+        type != TPLC_PATH_SEG_TRAFO)
         return TPLC_PATH_E_PARAM;
     if (type == TPLC_PATH_SEG_LINEAR && (pos == nullptr || n == 0))
         return TPLC_PATH_E_PARAM;
@@ -312,6 +318,18 @@ int32_t PathService::eval(void*, uint32_t path, double t, double* pos,
         return TPLC_PATH_E_PARAM;
     if (p->nseg == 0) return TPLC_PATH_E_EMPTY;
     if (t < 0.0) t = 0.0;
+    /* publish the pending coordinate transform: the last TRAFO
+       marker at or before t */
+    double pend = 0.0;
+    for (uint32_t i = 0; i < p->nseg; ++i) {
+        const Segment& g = p->segs[i];
+        if (g.type == TPLC_PATH_SEG_TRAFO && t >= g.t0)
+            pend = g.dwellMs;
+    }
+    if (pend != p->pendTrafo) {
+        p->pendTrafo = pend;
+        p->trafoGen += 1;
+    }
     /* an unreleased BLOCKER at or before t holds the path at its
        junction position until path_release opens the gate */
     uint32_t gate = p->nseg;
@@ -490,6 +508,15 @@ int32_t PathService::traj(void*, uint32_t group, double* remDur,
                      s.type == TPLC_PATH_SEG_BLOCKER) ? 1u : 0u;
     }
     *count = n;
+    return TPLC_PATH_OK;
+}
+
+int32_t PathService::trafo(void*, uint32_t path, double* id,
+                           uint32_t* gen) {
+    Path* p = find(path);
+    if (p == nullptr) return TPLC_PATH_E_STATE;
+    if (id != nullptr) *id = p->pendTrafo;
+    if (gen != nullptr) *gen = p->trafoGen;
     return TPLC_PATH_OK;
 }
 

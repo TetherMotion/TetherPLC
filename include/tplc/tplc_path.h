@@ -40,6 +40,7 @@ extern "C" {
 #define TPLC_PATH_SEG_CIRC   2u
 #define TPLC_PATH_SEG_BLEND  4u
 #define TPLC_PATH_SEG_BLOCKER 5u
+#define TPLC_PATH_SEG_TRAFO   6u
 
 /* Circular segment modes (TwinCAT MC_CIRC_MODE subset):
    TPLC_PATH_CIRC_CENTER — aux[] holds the circle center; it must
@@ -50,6 +51,11 @@ extern "C" {
      MC_MoveBlendingPreparation): holds the path end position for
      dwell_ms milliseconds. Real velocity blending/lookahead is
      not modeled; TransitionParameter[0] supplies the time.
+   TPLC_PATH_SEG_TRAFO — reference-system change marker (TwinCAT
+     MC_SetCoordinateTransformPreparation): zero duration,
+     dwell_ms carries the coordinate-transform id; path_eval
+     publishes it as the pending transform once path time reaches
+     the marker.
    TPLC_PATH_SEG_BLOCKER — path gate (TwinCAT MC_BlockerPreparation):
      dwell_ms carries the BlockerId; the segment has zero duration
      and eval holds the junction position until path_release marks
@@ -131,6 +137,13 @@ typedef struct TplcPathService {
                          double* rem_dur, double* rem_len,
                          uint32_t* ids, uint32_t* active,
                          uint32_t cap, uint32_t* count);
+    /* pending coordinate transform for the path: *id gets the
+       transform id of the last TRAFO marker at or before the most
+       recent eval time (0 = none), *gen increments whenever the
+       pending id changes (TwinCAT MC_SetCoordinateTransform-
+       Preparation applied by MC_MovePath) */
+    int32_t (*path_trafo)(void* host, uint32_t path, double* id,
+                          uint32_t* gen);
 } TplcPathService;
 
 #ifdef __cplusplus

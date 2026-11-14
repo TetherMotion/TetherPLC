@@ -30,6 +30,9 @@ VAR
     relBlk : MC_ReleaseBlocker;
     blkSt  : MC_GroupReadBlockerStatus;
     trajRd : MC_GroupReadTrajectoryInformation;
+    trafoPrep : MC_SetCoordinateTransformPreparation;
+    setTrafo : MC_SetCoordinateTransform;
+    mgRd   : FB_McGroup;
     prepC  : MC_MoveCircularAbsolutePreparation;
     prep2  : MC_MoveDirectPreparation;
     mvPath : MC_MovePath;
@@ -49,6 +52,7 @@ VAR
     gotPos  : BOOL;
     sawBlocked : BOOL;
     sawTraj : BOOL;
+    coordNow : UDINT;
     mCnt   : INT;
     dRel   : BOOL;
     pA     : DINT;
@@ -106,6 +110,8 @@ ELSIF st = 2 THEN
 ELSIF st = 3 THEN
     addB(Execute := pulse, IdentInGroup := 0,
          AxesGroup := grp, Axis := axB);
+    setTrafo(Execute := pulse, CoordTransform := 3,
+             AxesGroup := grp);
     IF addB.Done THEN dAddB := TRUE; END_IF;
     IF dAddB THEN
         mask := mask + 4; st := 4;                     // bit2
@@ -147,7 +153,8 @@ ELSIF st = 6 THEN
     IF prepD.Error OR prepB.Error THEN mask := mask + 256; END_IF;
     IF NOT prepD.Error AND NOT prepB.Error THEN st := 7; END_IF;
 ELSIF st = 7 THEN
-    // blocker gate id 7 at the junction, then segment 5 linear
+    // transform marker -> coord 9, blocker gate id 7, linear
+    trafoPrep(PathData := pathH, CoordTransform := 9);
     prepK(Execute := pulse, BlockerId := 7, BufferMode := 1,
           PathData := pathH);
     pos2[0] := 2000.0; pos2[1] := 2000.0;
@@ -181,8 +188,12 @@ ELSIF st = 9 THEN
 ELSIF st = 10 THEN
     // path resumes and finishes
     IF dPath THEN
-        // final positions near (2000, 2000), tolerance 300
-        IF ABS(pA - 2000) < 300 AND ABS(pB - 2000) < 300 THEN
+        // final positions near (2000, 2000), tolerance 300, and the
+        // coordinate transform must have switched to 9 mid-path
+        mgRd.GRP := grp; mgRd.OP := 11; mgRd();
+        coordNow := mgRd.COORD;
+        IF ABS(pA - 2000) < 300 AND ABS(pB - 2000) < 300 AND
+           coordNow = 9 THEN
             gotPos := TRUE;
         END_IF;
         IF gotBusy THEN mask := mask + 16; END_IF;   // bit4

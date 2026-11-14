@@ -5150,6 +5150,18 @@ pub unsafe extern "C" fn __tplc_rt_FB_McGroup(this: *mut u8, ctx: *mut u8) -> i3
                 core::mem::transmute(mgfn(svc, MG_SVC_SET_TRANSFORM));
             fail(this, f(svc, grp, ru32(this.add(MG_COORD))));
         }
+        11 => {
+            let f: FNmgGetU32 =
+                core::mem::transmute(mgfn(svc, MG_SVC_GET_TRANSFORM));
+            let mut c = 0u32;
+            let rc = f(svc, grp, &mut c);
+            wi32(this.add(MG_STATUS), rc);
+            if rc == 0 {
+                wu32(this.add(MG_COORD), c);
+            } else {
+                wu32(this.add(MG_ERRID), (-rc).max(0) as u32);
+            }
+        }
         10 => {
             let mut n = 0i32;
             let f: FNmgAxes =
@@ -5413,6 +5425,7 @@ const PT_SVC_RELEASE: usize = 72;
 const PT_SVC_BLOCKER: usize = 80;
 const PT_SVC_BINDGROUP: usize = 88;
 const PT_SVC_TRAJ: usize = 96;
+const PT_SVC_TRAFO: usize = 104;
 
 /// service lookup for "tplc-path" (9 chars)
 unsafe fn path_service(ctx: *const u8) -> *const u8 {
@@ -5457,6 +5470,8 @@ type FNptTraj = unsafe extern "C" fn(
     *const u8, u32, *mut f64, *mut f64, *mut u32, *mut u32, u32,
     *mut u32,
 ) -> i32;
+type FNptTrafo =
+    unsafe extern "C" fn(*const u8, u32, *mut f64, *mut u32) -> i32;
 
 /// `__tplc_rt_FB_Path` — synchronous op dispatch over the tplc-path
 /// path-object table. OP: 0=create, 1=clear, 2=add segment,
@@ -5585,6 +5600,20 @@ pub unsafe extern "C" fn __tplc_rt_FB_Path(this: *mut u8, ctx: *mut u8) -> i32 {
                 core::mem::transmute(ptfn(svc, PT_SVC_BINDGROUP));
             fail(this, f(svc, ru32(this.add(PT_HANDLE)),
                          ru32(this.add(PT_AUX))));
+        }
+        11 => {
+            /* pending coordinate transform: F1=id, AUX2=gen */
+            let mut id = 0.0f64;
+            let mut gen = 0u32;
+            let f: FNptTrafo =
+                core::mem::transmute(ptfn(svc, PT_SVC_TRAFO));
+            let rc = f(svc, ru32(this.add(PT_HANDLE)), &mut id,
+                       &mut gen);
+            fail(this, rc);
+            if rc == 0 {
+                wu64(this.add(PT_F1), id.to_bits());
+                wu32(this.add(PT_AUX2), gen);
+            }
         }
         10 => {
             /* trajectory readback for group AUX: POS=remLen f64[16],

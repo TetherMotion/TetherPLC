@@ -8,7 +8,7 @@
 
 **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
-**Status:** PARTIAL — 24 of the 36 APIs are implemented.
+**Status:** PARTIAL — 25 of the 36 APIs are implemented.
 
 Group administration in `compat/tc3/tc3_mcgroup.st` over the
 in-process `tplc-mcgroup` service + `FB_McGroup` builtin (ctest
@@ -46,6 +46,14 @@ to the group at execute (OP9); entries carry the 1-based segment
 index as InvokeId, Active for blend/blocker segments,
 RemainingDuration in seconds and RemainingCartesianLength in
 dominant-axis units, all as of the last eval.
+`MC_SetCoordinateTransformPreparation` appends a zero-duration
+TRAFO marker (`dwell_ms` carries the transform id); the service
+publishes it as pending once path time reaches the marker
+(`path_trafo`, generation counter) and `MC_MovePath` applies it to
+the group via `FB_McGroup` OP9. The TwinCAT signature has no
+Execute input; the flattened version appends when the
+CoordTransform input changes. `FB_McGroup` OP11 reads the active
+transform back.
 `MC_MoveCircularAbsolutePreparation` supports `mcCircModeCenter`
 (AuxPoint = circle center, equidistant check) and
 `mcCircModeBorder` (AuxPoint on the circle, circumcenter solved);
@@ -66,8 +74,7 @@ service ramps with `Acceleration`, `BufferMode` accepted but every
 Execute edge appends immediately, segment-0 start resolves at
 execute time.
 
-The remaining 12 APIs — `MC_CalcTrafo`,
-`MC_SetCoordinateTransformPreparation`,
+The remaining 11 APIs — `MC_CalcTrafo`,
 collision-avoidance moves (`MC_MoveAbsoluteCA`,
 `MC_MoveRelativeCA`, `MC_HaltCA`, `MC_GearInPosCA`), track
 following (`MC_ReadTrackPositions`, `MC_ActivateTrack`,
