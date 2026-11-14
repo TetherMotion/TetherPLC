@@ -294,6 +294,206 @@ fn feedback_through_fb_is_legal() {
 }
 
 #[test]
+fn feedback_through_var_store_is_legal() {
+    // Beremiz CounterFBD: Cnt → ADD(Cnt,1) → SEL(Reset ? ResetVal : sum)
+    // → Cnt. The in-out register's read-port sees the pre-store value —
+    // the same legal-feedback rule as FB instances.
+    let mut p = debounce_project();
+    p.global_vars = vec![IfaceVar {
+        name: "ResetCounterValue".into(),
+        kind: IfaceKind::Var,
+        ty: "INT".into(),
+        init: Some("17".into()),
+        at: None,
+        retain: false,
+    }];
+    p.pous[0].interface = vec![
+        IfaceVar {
+            name: "Reset".into(),
+            kind: IfaceKind::VarInput,
+            ty: "BOOL".into(),
+            init: None,
+            at: Some("%IX0.0".into()),
+            retain: false,
+        },
+        IfaceVar {
+            name: "OUT".into(),
+            kind: IfaceKind::VarOutput,
+            ty: "INT".into(),
+            init: None,
+            at: None,
+            retain: false,
+        },
+        IfaceVar {
+            name: "Cnt".into(),
+            kind: IfaceKind::Var,
+            ty: "INT".into(),
+            init: Some("0".into()),
+            at: None,
+            retain: false,
+        },
+    ];
+    let net = &mut p.pous[0].networks[0];
+    net.blocks = vec![
+        var_block(1, VarRole::In, "Reset", Some("%IX0.0"), 0, 0),
+        var_block(2, VarRole::Out, "OUT", None, 30, 0),
+        var_block(3, VarRole::InOut, "Cnt", None, 20, 0),
+        op_block(4, "ADD", 10, 0),
+        var_block(5, VarRole::In, "ResetCounterValue", None, 0, 2),
+        var_block(6, VarRole::In, "1", None, 0, 4),
+        op_block(7, "SEL", 10, 2),
+    ];
+    net.wires = vec![
+        wire(
+            39,
+            (3, PortSel::Index(0)),
+            &[(2, PortSel::Index(0)), (4, PortSel::Index(1))],
+            false,
+        ),
+        wire(40, (7, PortSel::Name("OUT".into())), &[(3, PortSel::Index(0))], false),
+        wire(41, (6, PortSel::Index(0)), &[(4, PortSel::Index(0))], false),
+        wire(42, (1, PortSel::Index(0)), &[(7, PortSel::Index(0))], false),
+        wire(43, (4, PortSel::Name("OUT".into())), &[(7, PortSel::Index(1))], false),
+        wire(44, (5, PortSel::Index(0)), &[(7, PortSel::Index(2))], false),
+    ];
+    let out = lower(&p);
+    assert!(errors(&out).is_empty(), "{:?}", out.diags);
+
+    let pou = &out.module.pous[0];
+    let layout = layout_program(&out.module, pou);
+    let mut blob = vec![0u8; layout.total_size as usize + 64];
+    let ctx = program_ctx(&layout);
+    let Body::Stmts(stmts) = &pou.body else {
+        panic!()
+    };
+    let mut rt = Rt::new(&mut blob, &layout, &out.module, 0);
+    rt.write_field("Cnt", &Value::I(0));
+    rt.write_field("GVL.ResetCounterValue", &Value::I(17));
+    rt.write_field("Reset", &Value::Bool(false));
+    // two scans: Cnt 0→1→2, OUT tracks the NEW value each scan
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 1);
+    assert_eq!(rt.read_field("OUT").as_i64(), 1);
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 2);
+    assert_eq!(rt.read_field("OUT").as_i64(), 2);
+    // Reset loads the preset; releasing resumes incrementing
+    rt.write_field("Reset", &Value::Bool(true));
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 17);
+    assert_eq!(rt.read_field("OUT").as_i64(), 17);
+    rt.write_field("Reset", &Value::Bool(false));
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 18);
+}
+
+#[test]
+fn ladder_feedback_through_var_store_is_legal() {
+    // Beremiz CounterLD: same register cycle as CounterFBD but inside
+    // a ladder network over data taps — Cnt → ADD → SEL → Cnt, with
+    // Out downstream of the store and Reset as a power contact.
+    let mut p = debounce_project();
+    p.pous[0].kind = PouKind::FunctionBlock;
+    p.global_vars = vec![IfaceVar {
+        name: "ResetCounterValue".into(),
+        kind: IfaceKind::Var,
+        ty: "INT".into(),
+        init: Some("17".into()),
+        at: None,
+        retain: false,
+    }];
+    p.pous[0].interface = vec![
+        IfaceVar {
+            name: "Reset".into(),
+            kind: IfaceKind::VarInput,
+            ty: "BOOL".into(),
+            init: None,
+            at: Some("%IX0.0".into()),
+            retain: false,
+        },
+        IfaceVar {
+            name: "Out".into(),
+            kind: IfaceKind::VarOutput,
+            ty: "INT".into(),
+            init: None,
+            at: None,
+            retain: false,
+        },
+        IfaceVar {
+            name: "Cnt".into(),
+            kind: IfaceKind::Var,
+            ty: "INT".into(),
+            init: Some("0".into()),
+            at: None,
+            retain: false,
+        },
+        IfaceVar {
+            name: "ResetCounterValue".into(),
+            kind: IfaceKind::VarExternal,
+            ty: "INT".into(),
+            init: None,
+            at: None,
+            retain: false,
+        },
+    ];
+    let net = &mut p.pous[0].networks[0];
+    net.kind = NetworkKind::Ladder;
+    let dv = |id: u64, role: VarRole, name: &str, x: u32, y: u32| {
+        let mut b = var_block(id, role, name, None, x, y);
+        b.flow = Some(VarFlow::Data);
+        b
+    };
+    net.blocks = vec![
+        dv(2, VarRole::Out, "Out", 30, 0),
+        dv(3, VarRole::InOut, "Cnt", 20, 0),
+        op_block(4, "ADD", 10, 0),
+        dv(5, VarRole::In, "ResetCounterValue", 0, 2),
+        dv(6, VarRole::In, "1", 0, 4),
+        op_block(7, "SEL", 10, 2),
+        var_block(9, VarRole::In, "Reset", Some("%IX0.0"), 0, 6),
+    ];
+    net.wires = vec![
+        wire(
+            30,
+            (3, PortSel::Index(0)),
+            &[(2, PortSel::Index(0)), (4, PortSel::Index(1))],
+            false,
+        ),
+        wire(31, (7, PortSel::Name("OUT".into())), &[(3, PortSel::Index(0))], false),
+        wire(32, (6, PortSel::Index(0)), &[(4, PortSel::Index(0))], false),
+        wire(33, (9, PortSel::Index(0)), &[(7, PortSel::Index(0))], false),
+        wire(34, (4, PortSel::Name("OUT".into())), &[(7, PortSel::Index(1))], false),
+        wire(35, (5, PortSel::Index(0)), &[(7, PortSel::Index(2))], false),
+    ];
+    let out = lower(&p);
+    assert!(errors(&out).is_empty(), "{:?}", out.diags);
+
+    let pou = &out.module.pous[0];
+    let layout = layout_program(&out.module, pou);
+    let mut blob = vec![0u8; layout.total_size as usize + 64];
+    let ctx = program_ctx(&layout);
+    let Body::Stmts(stmts) = &pou.body else {
+        panic!()
+    };
+    let mut rt = Rt::new(&mut blob, &layout, &out.module, 0);
+    rt.write_field("Cnt", &Value::I(0));
+    rt.write_field("GVL.ResetCounterValue", &Value::I(17));
+    rt.write_field("Reset", &Value::Bool(false));
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 1);
+    assert_eq!(rt.read_field("Out").as_i64(), 1);
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 2);
+    assert_eq!(rt.read_field("Out").as_i64(), 2);
+    rt.write_field("Reset", &Value::Bool(true));
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 17);
+    rt.write_field("Reset", &Value::Bool(false));
+    rt.exec_all(&ctx, stmts);
+    assert_eq!(rt.read_field("Cnt").as_i64(), 18);
+}
+
+#[test]
 fn sel_lowers_to_if() {
     let mut p = debounce_project();
     let net = &mut p.pous[0].networks[0];

@@ -6,7 +6,7 @@
 //! `layout_desc` (LAYD) field table.
 
 use crate::ir::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tplc_pkg::sections::{Layd, LaydField, LaydRegion};
 
 pub const REGION_GLOBAL: u8 = 0;
@@ -41,6 +41,9 @@ pub struct Layout {
     pub total_size: u64,
     pub fields: BTreeMap<String, FieldInfo>, // qualified path → leaf field
     pub fb_types: BTreeMap<String, FbLayout>,
+    /// GVL names — their `NAME.var` fields are global storage,
+    /// resolvable by qualified ref from any program scope.
+    pub gvls: BTreeSet<String>,
     pub retain_offset: u64,
     pub retain_size: u64,
     pub align: u64,
@@ -55,6 +58,7 @@ impl Layout {
             total_size: 0,
             fields: BTreeMap::new(),
             fb_types,
+            gvls: BTreeSet::new(),
             retain_offset: 0,
             retain_size: 0,
             align: 1,
@@ -2323,6 +2327,11 @@ fn layout_impl(module: &Module, programs: &[Pou], qualify: bool) -> Layout {
         total_size: total.max(1),
         fields,
         fb_types,
+        gvls: module
+            .gvls
+            .iter()
+            .map(|g| g.name.clone())
+            .collect(),
         retain_offset,
         retain_size,
         align: max_align,

@@ -74,6 +74,12 @@ this file.
   lives on the dst `connectionPointIn`; literals become `<expression>`
   inside the pin's `connectionPointIn`; indexed pins emit
   `formalParameter="IN<n>"` (reimports to `PortSel::Index(n)`).
+  Operator blocks translate at the boundary (`opname.rs`): IEC/Beremiz
+  operand names — arith `IN1`,`IN2`… (1-based), `SEL` `G`/`IN0`/`IN1`,
+  `MUX` `K`/`IN0`…, `LIMIT` `MN`/`IN`/`MX`, unary `IN`, casts `IN` —
+  map to positional `PortSel::Index` on import and back on export.
+  `<returnType>` populates `Pou.ret_ty` (FUNCTION return value);
+  `*_TO_*` cast blocks classify as operators.
 - `import(xml) -> ImportReport{project, notes}`: foreign/flat FBD
   folds to one implicit network; strict-export `--- net ---` markers
   re-split into segments; empty implicit nets drop. FB-instance
@@ -116,8 +122,13 @@ diags}`). Shared plumbing lives in `tplc-mir`: `diag::{Diag,Severity}`
   `project.global_vars` → one `GVL`.
 - Per network (declared order): deterministic topo sort — frontier key
   `(exec_order==0, exec_order, y, x, id)`. Cycles release only through
-  edges into `fb` blocks (feedback reads previous-cycle state);
-  anything else in a cycle is FBD004 with the node-id list.
+  state elements: edges into `fb` blocks, and store-sourced edges that
+  close a cycle through a variable store (`in_out`/`out` data taps —
+  the register read-port sees the pre-store value, downstream edges
+  keep ordering so consumers after the store see the new value).
+  Anything else in a cycle is FBD004 with the node-id list. Ladder
+  networks use the same rule in `lower_ladder_wired`'s second Kahn
+  pass; power-flow cycles still reject.
 - Emission: `fb` → `Call` stmt (EN input wraps it in `If`; ENO feeds
   an `__eno_<id>` flag), `variable` out/inout → `Assign`, operators →
   folded `Bin`/`Un` expressions at consumers except `SEL/MIN/MAX/
@@ -136,7 +147,10 @@ diags}`). Shared plumbing lives in `tplc-mir`: `diag::{Diag,Severity}`
   (`INT#5`), reals, bools, `'strings'`; bad literals → FBD006/PARSE.
 - Jumps to existing labels report UNSUPPORTED (mir has no goto);
   nonexistent labels → FBD011. `return` markers emit `Return` after
-  their network's work. Ladder networks reject (schema-reserved).
+  their network's work. Ladder networks lower through
+  `lower_ladder_wired` (wire-topology signal graph) or positional
+  rung semantics when wire-free; `flow=data` variable blocks are
+  data taps, not power elements.
 
 Interp coverage: `Rt::fb_call` now covers every builtin in
 `builtin_fb_layout` — TON/TOF/TP, R_TRIG/F_TRIG, CTU/CTD/CTUD

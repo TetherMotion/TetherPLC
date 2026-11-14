@@ -275,7 +275,10 @@ impl P {
                 let inst = Self::attr(e, "instanceName");
                 let kind = if inst.is_some() {
                     BlockKind::Fb
-                } else if OPERATORS.contains(&tn.to_ascii_uppercase().as_str()) {
+                } else if OPERATORS.contains(&tn.to_ascii_uppercase().as_str())
+                    || tn.to_ascii_uppercase().contains("_TO_")
+                {
+                    // X_TO_Y casts lower through the operator path
                     BlockKind::Operator
                 } else {
                     BlockKind::Function
@@ -413,13 +416,19 @@ impl P {
             "type" if self.pending_var.is_some() => {
                 self.arr_bounds = None;
             }
+            // <returnType><REAL/></returnType> — IEC FUNCTION return
+            // type; same nested-type vocabulary as interface vars
+            "returnType" => {
+                self.arr_bounds = None;
+            }
             // IEC elementary type elements inside <type> — Beremiz
             // emits <type><INT/></type> rather than a type attribute
             "BOOL" | "SINT" | "USINT" | "BYTE" | "INT" | "UINT" | "WORD"
             | "DINT" | "UDINT" | "DWORD" | "LINT" | "ULINT" | "LWORD"
             | "REAL" | "LREAL" | "TIME" | "DATE" | "TOD" | "DT"
             | "STRING" | "WSTRING"
-                if self.pending_var.is_some() && self.depth_tag("type") =>
+                if (self.pending_var.is_some() && self.depth_tag("type"))
+                    || self.depth_tag("returnType") =>
             {
                 let mut elem = tag.to_ascii_uppercase();
                 if matches!(elem.as_str(), "STRING" | "WSTRING") {
@@ -429,20 +438,27 @@ impl P {
                 }
                 let arr_elem = self.depth_tag("baseType") && self.depth_tag("array");
                 let bounds = self.arr_bounds.unwrap_or((0, 0));
-                if let Some(v) = &mut self.pending_var {
+                let ty = if arr_elem {
+                    format!("ARRAY[{}..{}] OF {elem}", bounds.0, bounds.1)
+                } else {
+                    elem
+                };
+                if self.depth_tag("returnType") {
+                    if let Some(p) = &mut self.cur_pou {
+                        if p.ret_ty.is_none() {
+                            p.ret_ty = Some(ty);
+                        }
+                    }
+                } else if let Some(v) = &mut self.pending_var {
                     if v.ty.is_empty() {
-                        v.ty = if arr_elem {
-                            format!("ARRAY[{}..{}] OF {elem}", bounds.0, bounds.1)
-                        } else {
-                            elem
-                        };
+                        v.ty = ty;
                     }
                 }
             }
             "dimension"
-                if self.pending_var.is_some()
-                    && self.depth_tag("type")
-                    && self.depth_tag("array") =>
+                if self.depth_tag("array")
+                    && (self.depth_tag("returnType")
+                        || (self.pending_var.is_some() && self.depth_tag("type"))) =>
             {
                 let lo = Self::attr(e, "lower").and_then(|s| s.parse().ok());
                 let hi = Self::attr(e, "upper").and_then(|s| s.parse().ok());
@@ -453,7 +469,19 @@ impl P {
             "derived" => {
                 let arr_elem = self.depth_tag("baseType") && self.depth_tag("array");
                 let bounds = self.arr_bounds.unwrap_or((0, 0));
-                if let Some(v) = &mut self.pending_var {
+                if self.depth_tag("returnType") {
+                    if let (Some(p), Some(n)) =
+                        (&mut self.cur_pou, Self::attr(e, "name"))
+                    {
+                        if p.ret_ty.is_none() {
+                            p.ret_ty = Some(if arr_elem {
+                                format!("ARRAY[{}..{}] OF {n}", bounds.0, bounds.1)
+                            } else {
+                                n
+                            });
+                        }
+                    }
+                } else if let Some(v) = &mut self.pending_var {
                     if v.ty.is_empty() {
                         if let Some(n) = Self::attr(e, "name") {
                             v.ty = if arr_elem {
@@ -496,12 +524,27 @@ impl P {
                         .map(PortSel::Name)
                         .unwrap_or(PortSel::Index(0));
                     let dst = match (&self.cur_block, &self.cur_pin) {
-                        (Some(b), Some(pin)) => PortRef {
-                            block: b.id,
-                            port: pin_index(pin)
-                                .map(PortSel::Index)
-                                .unwrap_or_else(|| PortSel::Name(pin.clone())),
-                        },
+                        (Some(b), Some(pin)) => {
+                            // operator dsts carry IEC operand names
+                            // (IN1/IN2 arith, G/IN0/IN1 SEL, …) —
+                            // translate to positional indices; other
+                            // blocks keep the IN{idx} roundtrip
+                            // convention or pass names through
+                            let port = if b.kind == BlockKind::Operator {
+                                if pin.is_empty() {
+                                    PortSel::Index(0)
+                                } else {
+                                    crate::opname::dst_index(&b.type_ref, pin)
+                                        .map(PortSel::Index)
+                                        .unwrap_or_else(|| PortSel::Name(pin.clone()))
+                                }
+                            } else {
+                                pin_index(pin)
+                                    .map(PortSel::Index)
+                                    .unwrap_or_else(|| PortSel::Name(pin.clone()))
+                            };
+                            PortRef { block: b.id, port }
+                        }
                         (Some(b), None) => PortRef {
                             block: b.id,
                             port: PortSel::Index(0),

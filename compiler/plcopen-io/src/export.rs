@@ -487,9 +487,19 @@ fn export_call_block(
         for pin in &ins {
             match pin.strip_prefix('#') {
                 Some(idx) => {
-                    // indexed pin → no formalParameter; TC6 position is
-                    // element order, so emit an empty named-less var
-                    x.open("variable", &[("formalParameter", format!("IN{idx}"))]);
+                    // indexed pin → positional convention IN{idx};
+                    // operator blocks emit the IEC operand name
+                    // instead (IN1/IN2 arith, G/IN0/IN1 SEL, …) so
+                    // foreign tools read real pin names
+                    let formal = if b.kind == BlockKind::Operator {
+                        idx.parse::<u32>()
+                            .ok()
+                            .and_then(|i| crate::opname::in_name(&b.type_ref, i))
+                            .unwrap_or_else(|| format!("IN{idx}"))
+                    } else {
+                        format!("IN{idx}")
+                    };
+                    x.open("variable", &[("formalParameter", formal)]);
                 }
                 None => {
                     x.open("variable", &[("formalParameter", pin.clone())]);

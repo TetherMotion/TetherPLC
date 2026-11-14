@@ -1144,31 +1144,7 @@ impl<'a> Cx<'a> {
             if !seen.insert(id) {
                 continue;
             }
-            let b = ids[&id];
-            if b.kind != BlockKind::Variable || is_data_var(b) {
-                // dataflow element — emit_block resolves its pins
-                // through dst_input/src_expr (gated contacts and
-                // data taps both included)
-                self.emit_block(net, b, &blocks_map, stmts);
-            } else {
-                self.lower_ld_var(net, b, &incoming, &ids, stmts);
-            }
-            // probe stores for wires sourced at this block
-            for w in &net.wires {
-                if w.src.block == id && self.probes.contains_key(&w.id) {
-                    if let Some(e) = self.src_expr(&w.src, net, &blocks_map) {
-                        let pname = self.probes[&w.id].clone();
-                        self.fix_probe_ty(&pname, &e.ty.clone());
-                        stmts.push(Stmt {
-                            kind: StmtKind::Assign {
-                                lhs: Ref::Var(pname),
-                                rhs: e,
-                            },
-                            prov: self.prov(w.id, 0),
-                        });
-                    }
-                }
-            }
+            self.emit_ladder_node(net, id, &ids, &blocks_map, &incoming, stmts);
             if let Some(cs) = consumers.get(&id) {
                 for &c in cs {
                     if let Some(d) = deps.get_mut(&c) {
@@ -1180,7 +1156,159 @@ impl<'a> Cx<'a> {
                 }
             }
         }
+        // cycle recovery: data taps are registers — a store's read-port
+        // edge that closes a cycle sees the pre-store value (same rule
+        // as FBD var stores / FB feedback). Drop those edges and re-run
+        // Kahn over the stuck subgraph; power-flow cycles still error.
+        let stuck: BTreeSet<NodeId> = wired
+            .iter()
+            .filter(|id| !seen.contains(*id))
+            .copied()
+            .collect();
+        if !stuck.is_empty() {
+            self.lower_ladder_feedback(
+                net, &stuck, &ids, &blocks_map, &incoming, stmts, &mut seen,
+            );
+        }
         // cycle check: wired blocks still holding deps never evaluated
+        for (&id, &d) in &deps {
+            if d > 0 && !seen.contains(&id) {
+                self.err(
+                    codes::UNSUPPORTED,
+                    format!("ladder wire cycle at block {id}"),
+                    id,
+                );
+            }
+        }
+    }
+
+    /// Emit one wired ladder node: dataflow elements through
+    /// `emit_block`, power elements through `lower_ld_var`, then any
+    /// probe stores sourced at this block.
+    fn emit_ladder_node(
+        &mut self,
+        net: &Network,
+        id: NodeId,
+        ids: &HashMap<NodeId, &Block>,
+        blocks_map: &BTreeMap<NodeId, &Block>,
+        incoming: &HashMap<NodeId, Vec<PortRef>>,
+        stmts: &mut Vec<Stmt>,
+    ) {
+        let b = ids[&id];
+        if b.kind != BlockKind::Variable || is_data_var(b) {
+            // dataflow element — emit_block resolves its pins
+            // through dst_input/src_expr (gated contacts and
+            // data taps both included)
+            self.emit_block(net, b, blocks_map, stmts);
+        } else {
+            self.lower_ld_var(net, b, incoming, ids, stmts);
+        }
+        // probe stores for wires sourced at this block
+        for w in &net.wires {
+            if w.src.block == id && self.probes.contains_key(&w.id) {
+                if let Some(e) = self.src_expr(&w.src, net, blocks_map) {
+                    let pname = self.probes[&w.id].clone();
+                    self.fix_probe_ty(&pname, &e.ty.clone());
+                    stmts.push(Stmt {
+                        kind: StmtKind::Assign {
+                            lhs: Ref::Var(pname),
+                            rhs: e,
+                        },
+                        prov: self.prov(w.id, 0),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Second Kahn pass over the stuck subgraph: drop store read-edges
+    /// that close a cycle (data-var stores are registers — cycle
+    /// members read the pre-store value), emit what releases, and
+    /// report whatever remains as a genuine wire cycle.
+    fn lower_ladder_feedback(
+        &mut self,
+        net: &Network,
+        stuck: &BTreeSet<NodeId>,
+        ids: &HashMap<NodeId, &Block>,
+        blocks_map: &BTreeMap<NodeId, &Block>,
+        incoming: &HashMap<NodeId, Vec<PortRef>>,
+        stmts: &mut Vec<Stmt>,
+        seen: &mut HashSet<NodeId>,
+    ) {
+        // full adjacency within the stuck subgraph — reachability
+        // decides whether a store's outgoing edge actually closes a
+        // cycle (downstream edges must keep ordering: they read the
+        // NEW value)
+        let mut adj: HashMap<NodeId, BTreeSet<NodeId>> = HashMap::new();
+        for w in &net.wires {
+            for d in &w.dsts {
+                if stuck.contains(&w.src.block) && stuck.contains(&d.block) {
+                    adj.entry(w.src.block).or_default().insert(d.block);
+                }
+            }
+        }
+        let reaches = |from: NodeId, to: NodeId| -> bool {
+            let mut seen: HashSet<NodeId> = HashSet::new();
+            let mut stack = vec![from];
+            while let Some(n) = stack.pop() {
+                if n == to {
+                    return true;
+                }
+                if seen.insert(n) {
+                    if let Some(ns) = adj.get(&n) {
+                        stack.extend(ns.iter().copied());
+                    }
+                }
+            }
+            false
+        };
+        let is_store = |id: NodeId| -> bool {
+            let b = ids[&id];
+            is_data_var(b) && !matches!(b.role, Some(VarRole::In))
+        };
+        let mut deps: HashMap<NodeId, usize> = HashMap::new();
+        let mut consumers: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        let mut edge_seen: HashSet<(NodeId, NodeId)> = HashSet::new();
+        for w in &net.wires {
+            for d in &w.dsts {
+                if !stuck.contains(&w.src.block)
+                    || !stuck.contains(&d.block)
+                    || w.src.block == d.block
+                    || !edge_seen.insert((w.src.block, d.block))
+                {
+                    continue;
+                }
+                if is_store(w.src.block) && reaches(d.block, w.src.block) {
+                    continue; // register read-port — sees pre-store value
+                }
+                *deps.entry(d.block).or_insert(0) += 1;
+                consumers.entry(w.src.block).or_default().push(d.block);
+            }
+        }
+        // seed with every stuck node holding no stuck-internal deps —
+        // nodes absent from `deps` entirely (all their cycle-closing
+        // inputs were store read-edges) must still emit
+        let mut queue: VecDeque<NodeId> = stuck
+            .iter()
+            .filter(|id| deps.get(*id).copied().unwrap_or(0) == 0)
+            .copied()
+            .collect();
+        while let Some(id) = queue.pop_front() {
+            if !seen.insert(id) {
+                continue;
+            }
+            self.emit_ladder_node(net, id, ids, blocks_map, incoming, stmts);
+            if let Some(cs) = consumers.get(&id) {
+                for &c in cs {
+                    if let Some(d) = deps.get_mut(&c) {
+                        *d -= 1;
+                        if *d == 0 {
+                            queue.push_back(c);
+                        }
+                    }
+                }
+            }
+        }
         for (&id, &d) in &deps {
             if d > 0 && !seen.contains(&id) {
                 self.err(
@@ -1711,7 +1839,7 @@ impl<'a> Cx<'a> {
             let r = if let Some(&idx) = self.var_by_name.get(&un) {
                 Ref::Var(self.vars[idx].name.clone())
             } else if let Some((g, m)) = self.gvl_member(&a.src_name) {
-                Ref::Field(Box::new(Ref::Var(g)), m)
+                Ref::Var(format!("{g}.{m}"))
             } else {
                 self.err(
                     codes::UNDECLARED,
@@ -2187,16 +2315,29 @@ impl<'a> Cx<'a> {
             return Some(Ref::Var(self.vars[idx].name.clone()));
         }
         self.gvl_member(n)
-            .map(|(g, m)| Ref::Field(Box::new(Ref::Var(g)), m))
+            .map(|(g, m)| Ref::Var(format!("{g}.{m}")))
     }
 
     fn ref_ty(&self, r: &Ref) -> Type {
         match r {
-            Ref::Var(n) => self
-                .var_by_name
-                .get(&n.to_ascii_uppercase())
-                .map(|&i| self.vars[i].ty.clone())
-                .unwrap_or(Type::Bool),
+            Ref::Var(n) => {
+                if let Some(&i) = self.var_by_name.get(&n.to_ascii_uppercase()) {
+                    return self.vars[i].ty.clone();
+                }
+                // GVL-qualified ref ("GVL.x") — type from the project
+                // global list
+                if let Some((g, m)) = n.split_once('.') {
+                    if g.eq_ignore_ascii_case("gvl") {
+                        for gv in &self.project.global_vars {
+                            if gv.name.eq_ignore_ascii_case(m) {
+                                return parse_type(&gv.ty, self.fb_names)
+                                    .unwrap_or(Type::Bool);
+                            }
+                        }
+                    }
+                }
+                Type::Bool
+            }
             Ref::Field(inner, m) => {
                 if let Ref::Var(g) = inner.as_ref() {
                     if g.eq_ignore_ascii_case("GVL") {

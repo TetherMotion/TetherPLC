@@ -1,7 +1,7 @@
 //! Block signatures (builtin FBs, operators, user POUs) and the
 //! deterministic topological order computation.
 
-use fbd_model::{Block, BlockKind, Network, NodeId, Pou, PouKind};
+use fbd_model::{Block, BlockKind, Network, NodeId, Pou, PouKind, VarRole};
 use std::collections::{BTreeMap, BTreeSet};
 use tplc_mir::ir::Type;
 
@@ -201,9 +201,12 @@ pub fn op_in_index(op: Op, name: &str) -> Option<u32> {
 }
 
 /// Operand index → canonical param name (reverse of `op_in_index`).
+/// Shaped ops use their IEC operand names: SEL data pins are 0-based
+/// `IN0`/`IN1` behind `G`; MUX likewise behind `K`.
 pub fn op_in_name(op: Op, i: u32) -> String {
     match (op, i) {
         (Op::Sel, 0) => "G".into(),
+        (Op::Sel, n) => format!("IN{}", n - 1),
         (Op::Limit, 0) => "MN".into(),
         (Op::Limit, 1) => "IN".into(),
         (Op::Limit, 2) => "MX".into(),
@@ -296,6 +299,36 @@ pub fn topo_order(net: &Network) -> Result<Vec<NodeId>, Vec<NodeId>> {
         .filter(|id| !done.contains(id))
         .copied()
         .collect();
+    // Full adjacency of the stuck subgraph — reachability decides
+    // whether a store's outgoing edge actually closes a cycle (edges
+    // to merely-downstream nodes must keep ordering: they read the
+    // NEW value).
+    let mut adj_all: BTreeMap<NodeId, BTreeSet<NodeId>> = BTreeMap::new();
+    for w in &net.wires {
+        for d in &w.dsts {
+            if stuck.contains(&w.src.block)
+                && stuck.contains(&d.block)
+                && !(w.src.block == d.block && blocks[&d.block].kind == BlockKind::Device)
+            {
+                adj_all.entry(w.src.block).or_default().insert(d.block);
+            }
+        }
+    }
+    let reaches = |from: NodeId, to: NodeId| -> bool {
+        let mut seen: BTreeSet<NodeId> = BTreeSet::new();
+        let mut stack = vec![from];
+        while let Some(n) = stack.pop() {
+            if n == to {
+                return true;
+            }
+            if seen.insert(n) {
+                if let Some(ns) = adj_all.get(&n) {
+                    stack.extend(ns.iter().copied());
+                }
+            }
+        }
+        false
+    };
     let mut indeg2: BTreeMap<NodeId, usize> = stuck.iter().map(|id| (*id, 0)).collect();
     let mut fwd2: BTreeMap<NodeId, BTreeSet<NodeId>> = BTreeMap::new();
     for w in &net.wires {
@@ -308,6 +341,13 @@ pub fn topo_order(net: &Network) -> Result<Vec<NodeId>, Vec<NodeId>> {
             }
             if blocks[&d.block].kind == BlockKind::Fb {
                 continue; // soft edge — breaks at state element
+            }
+            // Variable stores are state too: a register's read-port
+            // inside a cycle sees the pre-store value (the store
+            // itself still runs after its producers — incoming edges
+            // are kept). Only edges that close a cycle are dropped.
+            if is_var_store(blocks[&w.src.block]) && reaches(d.block, w.src.block) {
+                continue;
             }
             *indeg2.entry(d.block).or_insert(0) += 1;
             fwd2.entry(w.src.block).or_default().insert(d.block);
@@ -341,4 +381,12 @@ pub fn topo_order(net: &Network) -> Result<Vec<NodeId>, Vec<NodeId>> {
     // of this cycle, inputs fed by their own outputs see last cycle's).
     done.extend(extra);
     Ok(done)
+}
+
+/// Variable block that writes storage — `emit_var_block`'s store
+/// arm (everything except a pure `in` source). Its read-port may
+/// close a feedback cycle: consumers inside the cycle see the
+/// pre-store value, exactly like reads of an FB instance's fields.
+fn is_var_store(b: &Block) -> bool {
+    b.kind == BlockKind::Variable && !matches!(b.role, Some(VarRole::In))
 }

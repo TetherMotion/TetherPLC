@@ -66,11 +66,20 @@ pub enum Flow {
 pub type Ctx = BTreeMap<String, (u64, Type)>;
 
 /// Build the program-level ctx: top-level var name → (blob offset, ty).
+/// `k` is a GVL field (`GVL.x`) — global storage resolvable by
+/// qualified name from every program scope.
+fn is_gvl_field(layout: &Layout, k: &str) -> bool {
+    let Some((p, _)) = k.split_once('.') else {
+        return false;
+    };
+    layout.gvls.iter().any(|g| g.eq_ignore_ascii_case(p))
+}
+
 pub fn program_ctx(layout: &Layout) -> Ctx {
     layout
         .fields
         .iter()
-        .filter(|(k, _)| !k.contains('.'))
+        .filter(|(k, _)| !k.contains('.') || is_gvl_field(layout, k))
         .map(|(k, f)| (k.clone(), (f.offset, f.ty.clone())))
         .collect()
 }
@@ -90,6 +99,13 @@ pub fn pou_scope(layout: &Layout, prog: &str) -> Ctx {
     if m.is_empty() {
         program_ctx(layout)
     } else {
+        // programs also see GVL storage under its qualified name
+        let mut m = m;
+        for (k, f) in &layout.fields {
+            if is_gvl_field(layout, k) {
+                m.insert(k.clone(), (f.offset, f.ty.clone()));
+            }
+        }
         m
     }
 }

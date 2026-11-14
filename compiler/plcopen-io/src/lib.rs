@@ -10,6 +10,7 @@
 
 mod export;
 mod import;
+mod opname;
 
 pub use export::{export, ExportMode, LossNote};
 pub use import::{import, ImportReport, XmlNote};
