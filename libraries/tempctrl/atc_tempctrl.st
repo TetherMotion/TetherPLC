@@ -2062,3 +2062,59 @@ END_VAR
     Divert := ExitProduct AND (acc < F0Target OR frz);
 END_FUNCTION_BLOCK
 
+
+// FB_AtcHeaterChannel — one heater channel end-to-end: auto/manual
+// select -> clamp -> interlock -> FB_AtcPwm -> DO. Composes the
+// guided path for controller -> PWM -> field DO so each channel is
+// a single block in FBD/ST. InterlockBad reports Execute with the
+// permissive chain open; DO is forced FALSE while inhibited (the
+// PWM phase is held, not reset, so a brief inhibit does not
+// restart the period).
+FUNCTION_BLOCK FB_AtcHeaterChannel
+VAR_INPUT
+    Execute : BOOL;
+    Enable : BOOL;
+    Auto : BOOL;             // FALSE -> ManualMV path
+    MV : LREAL;              // auto controller output 0..100 %
+    ManualMV : LREAL;        // manual output 0..100 %
+    InterlockOK : BOOL;
+    Period : LREAL;          // PWM period (s) > 0; 1.0 = 1 Hz
+    MinOn : LREAL;           // min on-time (s)
+    CycleTime : LREAL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Q : BOOL;                // PWM output to the field DO
+    DutyApplied : LREAL;     // clamped duty actually commanded
+    InterlockBad : BOOL;     // Execute AND NOT (Enable AND InterlockOK)
+    Active : BOOL;           // Execute AND permissives AND duty > 0
+END_VAR
+VAR
+    pwm : FB_AtcPwm;
+    sel : LREAL;
+    ok : BOOL;
+END_VAR
+    Done := FALSE;
+    sel := MV;
+    IF NOT Auto THEN sel := ManualMV; END_IF;
+    IF sel < 0.0 THEN sel := 0.0; END_IF;
+    IF sel > 100.0 THEN sel := 100.0; END_IF;
+    DutyApplied := sel;
+    ok := Enable AND InterlockOK;
+    InterlockBad := Execute AND NOT ok;
+    Active := Execute AND ok AND sel > 0.0;
+    IF Execute AND ok AND CycleTime > 0.0 AND Period > 0.0 THEN
+        pwm.Execute := TRUE;
+        pwm.Duty := sel;
+        pwm.Period := Period;
+        pwm.MinOn := MinOn;
+        pwm.CycleTime := CycleTime;
+        pwm.Reset := FALSE;
+        pwm();
+        Q := pwm.Q;
+        Done := TRUE;
+    ELSE
+        Q := FALSE;
+        IF Execute THEN Done := TRUE; END_IF;
+    END_IF;
+END_FUNCTION_BLOCK

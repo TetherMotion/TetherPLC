@@ -41,6 +41,7 @@ online change / shadow run treat it like any other instance data.
 | `FB_AtcRateLim` | Slew limiter: `Out` approaches `In` at `Rate` units/s. |
 | `FB_AtcPwm` | Time-proportioning output: `Duty` % → BOOL pulse over `Period`, `MinOn` drops too-short pulses. |
 | `FB_AtcHeatCool` | Split-range: `U ∈ [-100,100]` → `Heat = max(U-DZ,0)`, `Cool = CoolGain*max(-U-DZ,0)`. |
+| `FB_AtcHeaterChannel` | Heater channel composition (M6): `Auto` selects `MV` vs `ManualMV`, clamps to 0–100 %, gates on `Enable`/`InterlockOK`, then runs `FB_AtcPwm` internally. Outputs `Q` (field DO), `DutyApplied`, `InterlockBad` (`Execute` with permissives open), `Active`. The PWM phase is held — not reset — across a brief inhibit, so re-enable does not restart the period. |
 
 ## Process & validation
 

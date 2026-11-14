@@ -148,9 +148,11 @@ lines with zero tooling feedback.
   the user manually routes them to DO pins (acceptable, but a
   "status outs" convenience on the profile/curve insertion would
   match the story's finished/running requirement directly).
-- No heater-channel helper composing `controller → FB_AtcPwm → DO`;
-  `ek_pid.fbd.json` proves the manual 4-wire pattern works in FBD;
-  the same is expressible in ST but with no guided path.
+- ~~No heater-channel helper composing `controller → FB_AtcPwm → DO`~~
+  — **done**: `FB_AtcHeaterChannel` (auto/manual select → clamp →
+  `Enable`/`InterlockOK` gate → `FB_AtcPwm` → `Q` DO, with
+  `DutyApplied`/`InterlockBad`/`Active` status outs; PWM phase held
+  across brief inhibits). Vector test `t16_heatch`.
 - PWM granularity: `FB_AtcPwm` steps at `CycleTime`; 1 Hz period at a
   0.1 s task = 10 steps → **10 % duty resolution**. The task table is
   editable, but nothing warns that heater duty resolution is
