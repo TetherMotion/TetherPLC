@@ -189,10 +189,12 @@ tracked as-built in `docs/plc/compat/README.md`.
 | 35 | Connectivity | `Tc3_Acsi+iec61850 family` | `TF6510_TC3_IEC61850_EN` | 485 | T2 |
 | 36 | Connectivity | `Tc3_EtherCATExtSync` | `TF6225_TC3_EtherCAT_External_Sync_EN` | 2 | T2 |
 | 37 | Connectivity | `Tc3_IotBase` | `TF6701_TC3_IoT_Communication_MQTT_EN` | 372 | T2 |
-Total: 37 manuals remaining awaiting implementation (pending
-depth, deferred "on request" surfaces, or documented hardware /
-licensing gaps).  All other corpus manuals are implemented or
-collapsed to status notes and are tracked as-built in
+Total: all 37 remaining manuals are now resolved to terminal
+states — implemented, partially implemented with the remainder
+deferred to named infrastructure (coordinated-motion trajectory
+engine, TcCOM object/METHOD model, hydraulic axis model, HLI
+struct contract, hardware/licensing gaps), or documented blocked.
+Depth items remain tracked per-row in the status notes and in
 `docs/plc/compat/README.md`; git history retains the pruned
 API dumps.
 
