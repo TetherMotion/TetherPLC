@@ -241,6 +241,8 @@ compat/tc3/
   tc3_mcpath.st      Tc3_McCoordinatedMotion linear/dwell path
                       wrappers (4 of the 36 TF5410 APIs):
                       MC_MoveLinearAbsolutePreparation,
+                      MC_MoveCircularAbsolutePreparation (center/
+                      border circle in the axis0/1 plane),
                       MC_MoveDirectPreparation (linear-alias),
                       MC_DwellTimePreparation and MC_MovePath over
                       the in-process tplc-path service + FB_Path
@@ -252,8 +254,8 @@ compat/tc3/
                       switches members to CSP mode and streams
                       interpolated 0x607A targets per scan;
                       trapezoids run rest-to-rest per segment on
-                      the dominant axis. Circular/blending
-                      preparations, blockers, CA moves, track
+                      the dominant axis (arc length for circles).
+                      Blending preparation, blockers, CA moves, track
                       following, compensation and MC_CalcTrafo
                       remain deferred.
   tc3_mc3ptp.st      Tc3_Mc3Ptp wrappers (8 APIs): MC_ReadActualTorque
@@ -592,8 +594,9 @@ tests/compat/
                      expecting mask 0xfff
   tc3_mcpath_case.st  Tc3_McCoordinatedMotion path program (6 packed
                      checks: 2 axes create+power, group membership,
-                     3-segment path prepare, MC_MovePath Busy+Done,
-                     final positions near (4000,3000))
+                     4-segment path prepare (linear/circular/dwell/
+                     linear), MC_MovePath Busy+Done, final positions
+                     near (2000,2000))
   tc3_mcpath.sh      ctest tc3_mcpath: builds tc2_mc2 + tc3_mcgroup
                      + tc3_mcpath as libraries, in-process replay
                      expecting mask 0x3f

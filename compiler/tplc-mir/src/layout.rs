@@ -1417,6 +1417,7 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "F2", lreal());
             push(&mut off, "F3", lreal());
             push(&mut off, "POS", f64arr(16));
+            push(&mut off, "AUXP", f64arr(16));
         }
         /* FB_UaClient — tplc-opcua service bridge (OPC UA client via
         libopen62541). Synchronous op dispatch like FB_NciChan: set

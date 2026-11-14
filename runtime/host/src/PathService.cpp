@@ -1,6 +1,7 @@
 #include "tplc/host/PathService.hpp"
 
 #include <cmath>
+#include <algorithm>
 
 namespace tplc {
 
@@ -31,6 +32,13 @@ PathService::PathService() {
     svc_.path_info = [](void* h, uint32_t p, uint32_t* ns,
                         double* dur) {
         return self(h)->info(h, p, ns, dur);
+    };
+    svc_.path_add_circ = [](void* h, uint32_t p, uint32_t mode,
+                            const double* aux, uint32_t na,
+                            const double* end, uint32_t ne,
+                            double v, double a, double ch) {
+        return self(h)->addCirc(h, p, mode, aux, na, end, ne, v, a,
+                                ch);
     };
 }
 
@@ -109,6 +117,92 @@ double PathService::segDuration(uint32_t type, uint32_t n,
     return 2.0 * tAcc + tCruise;
 }
 
+namespace {
+
+/* Circle geometry in the (axis0, axis1) plane. Fills cx, cy, r and
+   the signed sweep angle (radians, sign = direction). Returns
+   false when the description is degenerate. */
+bool circGeom(uint32_t mode, double ax, double ay, double sx,
+              double sy, double ex, double ey, double choice,
+              double* cx, double* cy, double* r, double* sweep) {
+    double ccx, ccy;
+    if (mode == TPLC_PATH_CIRC_CENTER) {
+        ccx = ax; ccy = ay;
+        const double rs = std::hypot(sx - ccx, sy - ccy);
+        const double re = std::hypot(ex - ccx, ey - ccy);
+        if (rs <= 0.0) return false;
+        /* TwinCAT adjusts slightly unequal radii; reject large
+           mismatches */
+        if (std::fabs(re - rs) > std::max(1.0, 0.05 * rs))
+            return false;
+    } else if (mode == TPLC_PATH_CIRC_BORDER) {
+        /* circumcenter of S, A(border point), E in 2D */
+        const double d = 2.0 * (sx * (ay - ey) + ax * (ey - sy) +
+                                ex * (sy - ay));
+        if (std::fabs(d) < 1e-12) return false;
+        const double a2 = sx * sx + sy * sy;
+        const double b2 = ax * ax + ay * ay;
+        const double c2 = ex * ex + ey * ey;
+        ccx = (a2 * (ay - ey) + b2 * (ey - sy) + c2 * (sy - ay)) / d;
+        ccy = (a2 * (ex - sx) + b2 * (sx - ex) + c2 * (ax - sx)) / d;
+    } else {
+        return false;
+    }
+    const double rr = std::hypot(sx - ccx, sy - ccy);
+    if (rr <= 0.0) return false;
+    double aS = std::atan2(sy - ccy, sx - ccx);
+    double aE = std::atan2(ey - ccy, ex - ccx);
+    double sw;
+    if (choice == 2.0) {           /* clockwise */
+        sw = aS - aE;
+        while (sw <= 0.0) sw += 2.0 * M_PI;
+        sw = -sw;
+        if (sw == 0.0) sw = -2.0 * M_PI;
+    } else {                       /* counter-clockwise */
+        sw = aE - aS;
+        while (sw <= 0.0) sw += 2.0 * M_PI;
+        if (sw == 0.0) sw = 2.0 * M_PI;
+    }
+    *cx = ccx; *cy = ccy; *r = rr; *sweep = sw;
+    return true;
+}
+
+} // namespace
+
+void PathService::recompute(Path& p) {
+    double acc_t = 0.0;
+    for (uint32_t i = 0; i < p.nseg; ++i) {
+        Segment& q = p.segs[i];
+        const double* from = (i == 0) ? p.start.data()
+                                      : p.segs[i - 1].to.data();
+        if (q.type == TPLC_PATH_SEG_CIRC) {
+            double cx, cy, rr, sw;
+            if (circGeom(q.circMode, q.aux[0], q.aux[1], from[0],
+                         from[1], q.to[0], q.to[1], q.circChoice,
+                         &cx, &cy, &rr, &sw)) {
+                const double arc = rr * std::fabs(sw);
+                const double v = q.vel > 0.0 ? q.vel : 1.0;
+                const double a = q.acc > 0.0 ? q.acc : v;
+                const double dAcc = v * v / (2.0 * a);
+                if (2.0 * dAcc >= arc) {
+                    const double vp = std::sqrt(arc * a);
+                    q.dur = 2.0 * vp / a;
+                } else {
+                    q.dur = 2.0 * (v / a) + (arc - 2.0 * dAcc) / v;
+                }
+            } else {
+                q.dur = 0.0;
+            }
+        } else {
+            q.dur = segDuration(q.type, q.n, q.to.data(), from, q.vel,
+                                q.acc, q.dwellMs);
+        }
+        q.t0 = acc_t;
+        acc_t += q.dur;
+    }
+    p.duration = acc_t;
+}
+
 int32_t PathService::create(void*, uint32_t* out) {
     if (out == nullptr) return TPLC_PATH_E_PARAM;
     for (uint32_t i = 0; i < TPLC_PATH_MAX_PATHS; ++i) {
@@ -157,19 +251,11 @@ int32_t PathService::add(void*, uint32_t path, uint32_t type,
             s.to[i] = p->nseg > 0 ? p->segs[p->nseg - 1].to[i]
                                   : (p->started ? p->start[i] : 0.0);
     }
-    /* duration needs the segment start = previous target (or the
-       recorded start positions for segment 0) */
-    std::array<double, TPLC_PATH_MAX_AXES> from{};
-    if (p->nseg == 0) {
-        from = p->start;
-    } else {
-        from = p->segs[p->nseg - 1].to;
-    }
-    s.dur = segDuration(s.type, s.n, s.to.data(), from.data(),
-                            s.vel, s.acc, s.dwellMs);
-    s.t0 = p->duration;
-    p->duration += s.dur;
     p->nseg += 1;
+    /* full recompute keeps CIRC durations (which depend on the
+       segment start) consistent when segments are appended after a
+       circular move */
+    recompute(*p);
     return TPLC_PATH_OK;
 }
 
@@ -182,18 +268,7 @@ int32_t PathService::setStart(void*, uint32_t path, const double* pos,
     for (uint32_t i = 0; i < n; ++i) p->start[i] = pos[i];
     /* recompute durations/t0 in case segments were added before the
        start was known */
-    double acc_t = 0.0;
-    for (uint32_t i = 0; i < p->nseg; ++i) {
-        Segment& s = p->segs[i];
-        std::array<double, TPLC_PATH_MAX_AXES> from{};
-        if (i == 0) from = p->start;
-        else from = p->segs[i - 1].to;
-        s.dur = segDuration(s.type, s.n, s.to.data(), from.data(),
-                            s.vel, s.acc, s.dwellMs);
-        s.t0 = acc_t;
-        acc_t += s.dur;
-    }
-    p->duration = acc_t;
+    recompute(*p);
     p->started = true;
     return TPLC_PATH_OK;
 }
@@ -230,13 +305,67 @@ int32_t PathService::eval(void*, uint32_t path, double t, double* pos,
         prog = trapProgress(dmax, s.vel, s.acc, lt, nullptr);
     }
     const uint32_t n = s.n < cap ? s.n : cap;
-    for (uint32_t i = 0; i < n; ++i) {
-        pos[i] = from[i] + (s.to[i] - from[i]) * prog;
+    if (s.type == TPLC_PATH_SEG_CIRC) {
+        double cx, cy, rr, sw;
+        if (circGeom(s.circMode, s.aux[0], s.aux[1], from[0],
+                     from[1], s.to[0], s.to[1], s.circChoice,
+                     &cx, &cy, &rr, &sw)) {
+            const double arc = rr * std::fabs(sw);
+            prog = trapProgress(arc, s.vel, s.acc, lt, nullptr);
+            const double aS = std::atan2(from[1] - cy, from[0] - cx);
+            const double ang = aS + sw * prog;
+            if (n > 0) pos[0] = cx + rr * std::cos(ang);
+            if (n > 1) pos[1] = cy + rr * std::sin(ang);
+            for (uint32_t i = 2; i < n; ++i) {
+                pos[i] = from[i] + (s.to[i] - from[i]) * prog;
+            }
+        } else {
+            for (uint32_t i = 0; i < n; ++i) {
+                pos[i] = from[i] + (s.to[i] - from[i]) * prog;
+            }
+        }
+    } else {
+        for (uint32_t i = 0; i < n; ++i) {
+            pos[i] = from[i] + (s.to[i] - from[i]) * prog;
+        }
     }
     for (uint32_t i = n; i < cap; ++i) pos[i] = 0.0;
     *seg = idx;
     *done = (t >= p->duration) ? 1 : 0;
     *n_out = s.n;
+    return TPLC_PATH_OK;
+}
+
+int32_t PathService::addCirc(void*, uint32_t path, uint32_t mode,
+                             const double* aux, uint32_t naux,
+                             const double* end, uint32_t nend,
+                             double vel, double acc,
+                             double pathChoice) {
+    Path* p = find(path);
+    if (p == nullptr) return TPLC_PATH_E_STATE;
+    if (p->nseg >= TPLC_PATH_MAX_SEGS) return TPLC_PATH_E_FULL;
+    if ((mode != TPLC_PATH_CIRC_CENTER &&
+         mode != TPLC_PATH_CIRC_BORDER) ||
+        aux == nullptr || end == nullptr || nend == 0 ||
+        nend > TPLC_PATH_MAX_AXES || naux > TPLC_PATH_MAX_AXES)
+        return TPLC_PATH_E_PARAM;
+    Segment& s = p->segs[p->nseg];
+    s = Segment{};
+    s.type = TPLC_PATH_SEG_CIRC;
+    s.circMode = mode;
+    s.circChoice = pathChoice;
+    s.n = nend;
+    s.vel = vel;
+    s.acc = acc;
+    for (uint32_t i = 0; i < nend; ++i) s.to[i] = end[i];
+    const uint32_t na = naux < TPLC_PATH_MAX_AXES ? naux
+                                                 : TPLC_PATH_MAX_AXES;
+    for (uint32_t i = 0; i < na; ++i) s.aux[i] = aux[i];
+    s.dur = 0.0; /* resolved in setStart/eval once start is known */
+    s.t0 = p->duration;
+    p->segs[p->nseg] = s;
+    p->nseg += 1;
+    recompute(*p);
     return TPLC_PATH_OK;
 }
 

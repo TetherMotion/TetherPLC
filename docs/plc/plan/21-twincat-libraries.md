@@ -17526,7 +17526,7 @@ per-parameter prose.
 
 - **Category:** Motion/NC2 · **Tier:** T3
 - **Manual:** `TF5410_TC3_Motion_Collision_Avoidance_EN.pdf` · **API entries:** 36
-- **Status:** PARTIAL — 18/36 APIs implemented: `compat/tc3/tc3_mcgroup.st` over `tplc-mcgroup` + `FB_McGroup` (12 group-admin APIs, ctest `tc3_mcgroup` mask `0xfff`), `MC_GroupStop`/`MC_GroupHalt` per-axis stop (ctest `tc3_mcgroup_stop{,_io}` mask `0x3f`), and the linear/dwell path subset in `compat/tc3/tc3_mcpath.st` over `tplc-path` + `FB_Path` (`MC_MoveLinearAbsolutePreparation`, `MC_MoveDirectPreparation`, `MC_DwellTimePreparation`, `MC_MovePath`; ctest `tc3_mcpath{,_io}` mask `0x3f`). Circular/blending preparations, blockers, CA moves, track following, compensation and `MC_CalcTrafo` remain deferred to the full trajectory engine
+- **Status:** PARTIAL — 19/36 APIs implemented: `compat/tc3/tc3_mcgroup.st` over `tplc-mcgroup` + `FB_McGroup` (12 group-admin APIs, ctest `tc3_mcgroup` mask `0xfff`), `MC_GroupStop`/`MC_GroupHalt` per-axis stop (ctest `tc3_mcgroup_stop{,_io}` mask `0x3f`), and the linear/dwell path subset in `compat/tc3/tc3_mcpath.st` over `tplc-path` + `FB_Path` (`MC_MoveLinearAbsolutePreparation`, `MC_MoveCircularAbsolutePreparation` (center/border modes, 2-axis plane circle), `MC_MoveDirectPreparation`, `MC_DwellTimePreparation`, `MC_MovePath`; ctest `tc3_mcpath{,_io}` mask `0x3f`). Blending preparation, blockers, CA moves, track following, compensation and `MC_CalcTrafo` remain deferred to the full trajectory engine
 - **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
 #### If "bIsControlLoopClosed" is TRUE for all axes and the group is not empty. › Tc3_McCollisionAvoidance › Function Blocks › Motion

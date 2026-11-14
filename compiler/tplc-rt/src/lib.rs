@@ -5396,6 +5396,7 @@ const PT_F1: usize = 48;   // f64
 const PT_F2: usize = 56;   // f64
 const PT_F3: usize = 64;   // f64
 const PT_POS: usize = 72;  // f64[16]
+const PT_AUXP: usize = 200; // f64[16]
 
 // tplc-path service vtable offsets (TplcPathService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -5405,6 +5406,7 @@ const PT_SVC_ADD: usize = 32;
 const PT_SVC_SET_START: usize = 40;
 const PT_SVC_EVAL: usize = 48;
 const PT_SVC_INFO: usize = 56;
+const PT_SVC_ADDCIRC: usize = 64;
 
 /// service lookup for "tplc-path" (9 chars)
 unsafe fn path_service(ctx: *const u8) -> *const u8 {
@@ -5437,6 +5439,10 @@ type FNptEval = unsafe extern "C" fn(
 ) -> i32;
 type FNptInfo =
     unsafe extern "C" fn(*const u8, u32, *mut u32, *mut f64) -> i32;
+type FNptAddCirc = unsafe extern "C" fn(
+    *const u8, u32, u32, *const f64, u32, *const f64, u32, f64,
+    f64, f64,
+) -> i32;
 
 /// `__tplc_rt_FB_Path` — synchronous op dispatch over the tplc-path
 /// path-object table. OP: 0=create, 1=clear, 2=add segment,
@@ -5526,6 +5532,19 @@ pub unsafe extern "C" fn __tplc_rt_FB_Path(this: *mut u8, ctx: *mut u8) -> i32 {
                 wu32(this.add(PT_NSEG), ns);
                 wu64(this.add(PT_F1), dur.to_bits());
             }
+        }
+        6 => {
+            let f: FNptAddCirc =
+                core::mem::transmute(ptfn(svc, PT_SVC_ADDCIRC));
+            fail(this, f(svc, ru32(this.add(PT_HANDLE)),
+                         ru32(this.add(PT_AUX)),
+                         this.add(PT_AUXP) as *const f64,
+                         ru32(this.add(PT_FLAGS)),
+                         this.add(PT_POS) as *const f64,
+                         ru32(this.add(PT_AUX2)),
+                         f64::from_bits(ru64(this.add(PT_F1))),
+                         f64::from_bits(ru64(this.add(PT_F2))),
+                         f64::from_bits(ru64(this.add(PT_F3)))));
         }
         _ => {
             wi32(this.add(PT_STATUS), -1);

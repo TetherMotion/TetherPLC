@@ -27,7 +27,10 @@ private:
         double   dwellMs = 0.0;
         double   dur = 0.0;    // seconds, computed at add
         double   t0 = 0.0;     // cumulative start time
+        uint32_t circMode = 0; // TPLC_PATH_CIRC_* for CIRC segs
+        double   circChoice = 1.0; // 1=CCW, 2=CW
         std::array<double, TPLC_PATH_MAX_AXES> to{};
+        std::array<double, TPLC_PATH_MAX_AXES> aux{};
     };
     struct Path {
         bool     used = false;
@@ -54,6 +57,10 @@ private:
                               const double* to,
                               const double* from, double vel,
                               double acc, double dwellMs);
+    /* recompute every segment's duration and cumulative start
+       time (CIRC durations depend on the segment start, which is
+       only known after set_start) */
+    void recompute(Path& p);
 
     int32_t create(void*, uint32_t*);
     int32_t clear(void*, uint32_t);
@@ -63,6 +70,9 @@ private:
     int32_t eval(void*, uint32_t, double, double*, uint32_t,
                  uint32_t*, int32_t*, uint32_t*);
     int32_t info(void*, uint32_t, uint32_t*, double*);
+    int32_t addCirc(void*, uint32_t, uint32_t, const double*,
+                    uint32_t, const double*, uint32_t, double,
+                    double, double);
 
     TplcPathService svc_{};
     std::array<Path, TPLC_PATH_MAX_PATHS> paths_{};

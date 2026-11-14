@@ -274,3 +274,72 @@ IF active THEN
     Busy := active;
 END_IF;
 END_FUNCTION_BLOCK
+
+// MC_MoveCircularAbsolutePreparation: appends a circular segment.
+// CircMode flattens MC_CIRC_MODE (1=mcCircModeCenter: AuxPoint is
+// the circle center and must be equidistant from start/end;
+// 2=mcCircModeBorder: AuxPoint lies on the circle). The circle is
+// evaluated in the plane of position entries 0/1; entries >=2
+// interpolate linearly. PathChoice: 1=counter-clockwise,
+// 2=clockwise. TransitionMode/TransitionParameter/InvokeId/
+// DynamicConstraints are accepted for signature parity but not
+// modeled.
+FUNCTION_BLOCK MC_MoveCircularAbsolutePreparation
+VAR_INPUT
+    Execute : BOOL;
+    CircMode : UDINT;
+    AuxPoint : ARRAY[0..15] OF LREAL;
+    AuxPointCount : UDINT;
+    EndPoint : ARRAY[0..15] OF LREAL;
+    EndPointCount : UDINT;
+    PathChoice : UDINT := 1;
+    Velocity : LREAL;
+    Acceleration : LREAL;
+    Deceleration : LREAL := 0.0;
+    Jerk : LREAL := 0.0;
+    BufferMode : UDINT := 1;
+    TransitionMode : UDINT := 0;
+    TransitionParameter : ARRAY[0..15] OF LREAL;
+    TransitionParameterCount : UDINT := 0;
+    InvokeId : UDINT := 0;
+END_VAR
+VAR_IN_OUT
+    PathData : UDINT;
+END_VAR
+VAR_OUTPUT
+    Error : BOOL;
+    ErrorId : UDINT;
+END_VAR
+VAR
+    p : FB_Path;
+    exPrev : BOOL;
+    edge : BOOL;
+    i : UDINT;
+END_VAR
+edge := Execute AND NOT exPrev; exPrev := Execute;
+Error := FALSE; ErrorId := 0;
+IF edge THEN
+    p.HANDLE := PathData;
+    IF PathData = 0 THEN
+        p.OP := 0; p();
+        IF p.STATUS = 0 THEN PathData := p.HANDLE; END_IF;
+    END_IF;
+    IF PathData <> 0 AND EndPointCount >= 1 AND EndPointCount <= 16
+       AND CircMode >= 1 AND CircMode <= 2 THEN
+        FOR i := 0 TO 15 DO
+            p.POS[i] := EndPoint[i];
+            p.AUXP[i] := AuxPoint[i];
+        END_FOR;
+        p.OP := 6; p.AUX := CircMode; p.FLAGS := AuxPointCount;
+        p.AUX2 := EndPointCount; p.F3 := PathChoice;
+        p.F1 := Velocity; p.F2 := Acceleration;
+        p.HANDLE := PathData; p();
+        IF p.STATUS <> 0 THEN
+            Error := TRUE;
+            IF p.STATUS < 0 THEN ErrorId := 0 - p.STATUS; END_IF;
+        END_IF;
+    ELSE
+        Error := TRUE; ErrorId := 16#4D01;
+    END_IF;
+END_IF;
+END_FUNCTION_BLOCK

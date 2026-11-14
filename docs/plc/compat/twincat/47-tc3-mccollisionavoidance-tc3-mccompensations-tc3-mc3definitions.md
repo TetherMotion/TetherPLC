@@ -8,7 +8,7 @@
 
 **Integration:** Collision avoidance + axis compensation: motion-planning layer on the axis backend.
 
-**Status:** PARTIAL — 18 of the 36 APIs are implemented.
+**Status:** PARTIAL — 19 of the 36 APIs are implemented.
 
 Group administration in `compat/tc3/tc3_mcgroup.st` over the
 in-process `tplc-mcgroup` service + `FB_McGroup` builtin (ctest
@@ -27,8 +27,15 @@ membership snapshot via `FB_McGroup` OP10 and poll `VEL_ACTUAL`.
 Coordinated paths in `compat/tc3/tc3_mcpath.st` over the in-process
 `tplc-path` service + `FB_Path` builtin (ctest `tc3_mcpath{,_io}`,
 mask `0x3f`): `MC_MoveLinearAbsolutePreparation`,
+`MC_MoveCircularAbsolutePreparation`,
 `MC_MoveDirectPreparation` (flattened alias of the linear absolute
-segment), `MC_DwellTimePreparation` and `MC_MovePath`. Path objects
+segment), `MC_DwellTimePreparation` and `MC_MovePath`.
+`MC_MoveCircularAbsolutePreparation` supports `mcCircModeCenter`
+(AuxPoint = circle center, equidistant check) and
+`mcCircModeBorder` (AuxPoint on the circle, circumcenter solved);
+the arc is evaluated in the plane of position entries 0/1 with
+entries >= 2 interpolated linearly, and `PathChoice` selects
+CW/CCW. Path objects
 hold up to 32 ordered segments (linear trapezoid moves and dwells)
 with up to 16 position values each; `MC_MovePath` captures member
 axis positions at execute, switches members to CSP mode
@@ -43,9 +50,8 @@ service ramps with `Acceleration`, `BufferMode` accepted but every
 Execute edge appends immediately, segment-0 start resolves at
 execute time.
 
-The remaining 18 APIs — circular/blending preparations
-(`MC_MoveCircularAbsolutePreparation`,
-`MC_MoveBlendingPreparation`), blocker control
+The remaining 17 APIs — blending preparation
+(`MC_MoveBlendingPreparation`), blocker control
 (`MC_BlockerPreparation`, `MC_ReleaseBlocker`,
 `MC_GroupReadBlockerStatus`), `MC_CalcTrafo`,
 `MC_SetCoordinateTransformPreparation`,

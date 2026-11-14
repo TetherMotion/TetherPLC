@@ -37,6 +37,19 @@ extern "C" {
 
 #define TPLC_PATH_SEG_LINEAR 1u
 #define TPLC_PATH_SEG_DWELL  3u
+#define TPLC_PATH_SEG_CIRC   2u
+
+/* Circular segment modes (TwinCAT MC_CIRC_MODE subset):
+   TPLC_PATH_CIRC_CENTER — aux[] holds the circle center; it must
+     be (nearly) equidistant from the segment start and end.
+   TPLC_PATH_CIRC_BORDER — aux[] holds a point on the circle; the
+     center is the circumcenter of start/aux/end.
+   The circle is evaluated in the plane of position entries 0 and
+   1; entries >= 2 interpolate linearly. path_choice: 1 =
+   counter-clockwise, 2 = clockwise (TwinCAT
+   MC_CIRC_PATHCHOICE). */
+#define TPLC_PATH_CIRC_CENTER 1u
+#define TPLC_PATH_CIRC_BORDER 2u
 
 #define TPLC_PATH_OK        0
 #define TPLC_PATH_E_PARAM  -1
@@ -74,6 +87,16 @@ typedef struct TplcPathService {
     /* readback: segment count + total duration in seconds */
     int32_t (*path_info)(void* host, uint32_t path, uint32_t* nseg,
                          double* duration);
+    /* append a circular segment (appended at the end of the vtable
+       for ABI compatibility). mode is TPLC_PATH_CIRC_*; aux[]
+       holds the center (CENTER) or a border point (BORDER);
+       end[] holds the absolute target positions; path_choice is
+       1=CCW, 2=CW. vel/acc are trapezoid limits on arc length. */
+    int32_t (*path_add_circ)(void* host, uint32_t path,
+                             uint32_t mode, const double* aux,
+                             uint32_t naux, const double* end,
+                             uint32_t nend, double vel, double acc,
+                             double path_choice);
 } TplcPathService;
 
 #ifdef __cplusplus

@@ -25,10 +25,13 @@ VAR
     addB   : MC_AddAxisToGroup;
     prep1  : MC_MoveLinearAbsolutePreparation;
     prepD  : MC_DwellTimePreparation;
+    prepC  : MC_MoveCircularAbsolutePreparation;
     prep2  : MC_MoveDirectPreparation;
     mvPath : MC_MovePath;
     pos1   : ARRAY[0..15] OF LREAL;
     pos2   : ARRAY[0..15] OF LREAL;
+    auxC   : ARRAY[0..15] OF LREAL;
+    endC   : ARRAY[0..15] OF LREAL;
     dAddA  : BOOL;
     dAddB  : BOOL;
     dPrep1 : BOOL;
@@ -58,7 +61,7 @@ IF axB <> 0 THEN
     rdB.AXIS := axB; rdB.OP := 4; rdB.INDEX := 16#6064; rdB(); pB := rdB.VALUE;
 END_IF;
 
-mvPath(Execute := st = 7, AxesGroup := grp, PathData := pathH);
+mvPath(Execute := st = 8, AxesGroup := grp, PathData := pathH);
 IF mvPath.Busy THEN busySeen := TRUE; END_IF;
 IF mvPath.Done THEN dPath := TRUE; END_IF;
 
@@ -98,8 +101,8 @@ ELSIF st = 3 THEN
         mask := mask + 4; st := 4;                     // bit2
     END_IF;
 ELSIF st = 4 THEN
-    // segment 1: linear to (2000, 1000)
-    pos1[0] := 2000.0; pos1[1] := 1000.0;
+    // segment 1: linear to (1000, 0)
+    pos1[0] := 1000.0; pos1[1] := 0.0;
     prep1(Execute := pulse, Position := pos1, PositionCount := 2,
           Velocity := 20000.0, Acceleration := 50000.0,
           Deceleration := 50000.0, Jerk := 0.0, BufferMode := 1,
@@ -108,15 +111,27 @@ ELSIF st = 4 THEN
     IF NOT prep1.Error THEN dPrep1 := TRUE; END_IF;
     IF dPrep1 THEN st := 5; END_IF;
 ELSIF st = 5 THEN
-    // dwell 300 ms
-    prepD(Execute := pulse, DwellTime := 300, BufferMode := 1,
-          PathData := pathH);
-    IF prepD.Error THEN mask := mask + 256; END_IF;
-    IF NOT prepD.Error THEN dPrepD := TRUE; END_IF;
+    // segment 2: circular, center (0,0), end (0,1000), CCW
+    auxC[0] := 0.0; auxC[1] := 0.0;
+    endC[0] := 0.0; endC[1] := 1000.0;
+    prepC(Execute := pulse, CircMode := 1,
+          AuxPoint := auxC, AuxPointCount := 2,
+          EndPoint := endC, EndPointCount := 2,
+          PathChoice := 1, Velocity := 20000.0,
+          Acceleration := 50000.0, Deceleration := 50000.0,
+          Jerk := 0.0, BufferMode := 1, PathData := pathH);
+    IF prepC.Error THEN mask := mask + 256; END_IF;
+    IF NOT prepC.Error THEN dPrepD := TRUE; END_IF;
     IF dPrepD THEN st := 6; END_IF;
 ELSIF st = 6 THEN
-    // segment 2: linear to (4000, 3000)
-    pos2[0] := 4000.0; pos2[1] := 3000.0;
+    // segment 3: dwell 200 ms
+    prepD(Execute := pulse, DwellTime := 200, BufferMode := 1,
+          PathData := pathH);
+    IF prepD.Error THEN mask := mask + 256; END_IF;
+    IF NOT prepD.Error THEN st := 7; END_IF;
+ELSIF st = 7 THEN
+    // segment 4: linear to (2000, 2000)
+    pos2[0] := 2000.0; pos2[1] := 2000.0;
     prep2(Execute := pulse, Position := pos2, PositionCount := 2,
           Velocity := 20000.0, Acceleration := 50000.0,
           Deceleration := 50000.0, Jerk := 0.0, BufferMode := 1,
@@ -124,23 +139,23 @@ ELSIF st = 6 THEN
     IF prep2.Error THEN mask := mask + 256; END_IF;
     IF NOT prep2.Error THEN dPrep2 := TRUE; END_IF;
     IF dPrep2 THEN
-        // verify 3 segments were prepared
+        // 4 segments prepared on a live path handle
         IF pathH <> 0 THEN mask := mask + 8; END_IF;   // bit3
-        st := 7;
+        st := 8;
     END_IF;
-ELSIF st = 7 THEN
+ELSIF st = 8 THEN
     // path running; wait for Done
     IF busySeen THEN gotBusy := TRUE; END_IF;
     IF dPath THEN
-        // final positions near (4000, 3000), tolerance 300
-        IF ABS(pA - 4000) < 300 AND ABS(pB - 3000) < 300 THEN
+        // final positions near (2000, 2000), tolerance 300
+        IF ABS(pA - 2000) < 300 AND ABS(pB - 2000) < 300 THEN
             gotPos := TRUE;
         END_IF;
         IF gotBusy THEN mask := mask + 16; END_IF;   // bit4
         IF gotPos THEN mask := mask + 32; END_IF;    // bit5
-        st := 8;
+        st := 9;
     END_IF;
-ELSIF st = 8 THEN
+ELSIF st = 9 THEN
     // hold; expect written at final step
 END_IF;
 END_PROGRAM
