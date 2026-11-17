@@ -88,6 +88,16 @@ ST/FBD  FB_ProfinetMaster (libraries/profinet/profinet.st)
   dictionary layout, watchdogs, RT-class negotiation — is staged.
   The 'PN' single-record C-SDU is the seam that AR mapping builds
   on; real devices expect per-submodule IOPS/IOCS records.
+- **AR transport (implemented)**: `runtime/host/src/Dcerpc.cpp`
+  provides the MS-RPCE connection-oriented PDU codec used by
+  PNIO-CM — bind/alter_context/auth3/shutdown/request encoders,
+  response/fault/bind_ack/bind_nak decoders, PNIO interface UUIDs
+  (dea00001–4), and `DcRpcLink`, a UDP transport (port 34964) with
+  per-call_id fragment reassembly. Verified against impacket's
+  MSRPC* structures and a loopback fake. The PNIO AR *content*
+  (FParametersBlock / ARBlockReq / IOCRBlockReq / IODControl NDR
+  marshaling and the Connect→PrmEnd→ApplicationReady opnum
+  sequence, per scapy `pnio_rpc.py` / p-net) remains staged.
 - **DCP coverage**: Identify/Get/Set for the property/IP/DHCP/
   control options; DHCP option subfields and control transactions
   (start/end/signal) are partially mapped.
