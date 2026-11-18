@@ -246,6 +246,11 @@ ProfinetService::ProfinetService() {
                             uint32_t* rl, uint32_t* ps) {
         return self(s)->arExchange(s, p, 4, b, bl, r, rc, rl, ps);
     };
+    svc_.pn_ar_read = [](void* s, uint32_t p, const uint8_t* b,
+                         uint32_t bl, uint8_t* r, uint32_t rc,
+                         uint32_t* rl, uint32_t* ps) {
+        return self(s)->arExchange(s, p, 2, b, bl, r, rc, rl, ps);
+    };
     svc_.pn_ar_service = [](void* s, uint32_t p, uint32_t t,
                             uint32_t* st) {
         return self(s)->arService(s, p, t, st);

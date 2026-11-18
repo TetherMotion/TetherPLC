@@ -338,6 +338,71 @@ PnioControlBlock pnioAppReadyRes(const PnioControlBlock& req);
 PnioControlBlock pnioReleaseReq(const std::array<uint8_t,16>& ar, uint16_t key);
 PnioControlBlock pnioReleaseRes(const PnioControlBlock& req);
 
+/* ---- IODRead records (opnum Read=2 / ReadImplicit=5) ---- */
+
+inline constexpr uint16_t kPnioIndexIm0 = 0xAFF0;
+inline constexpr uint16_t kPnioIndexIm1 = 0xAFF1;
+inline constexpr uint16_t kPnioIndexIm2 = 0xAFF2;
+inline constexpr uint16_t kPnioIndexIm3 = 0xAFF3;
+inline constexpr uint16_t kPnioImSupportedDap = 0x000E; /* I&M1-3 supported */
+
+struct PnioReadRecord {
+    uint16_t seq = 0;
+    std::array<uint8_t, 16> arUuid{};
+    uint32_t api = 0;
+    uint16_t slot = 0, subslot = 0;
+    uint16_t index = 0;
+    uint32_t recordDataLength = 0; /* receive buffer size hint */
+    std::array<uint8_t, 16> targetArUuid{};
+};
+void pnioEncIodReadReq(std::vector<uint8_t>& out, const PnioReadRecord& r);
+
+struct PnioReadResRecord {
+    PnioReadRecord req;           /* echoed identity fields */
+    uint32_t additionalValue1 = 0, additionalValue2 = 0;
+    std::vector<uint8_t> data;    /* record bytes (block header included) */
+};
+bool pnioDecReadRes(const uint8_t* blocks, size_t len,
+                    std::vector<PnioReadResRecord>& out);
+
+/* ---- I&M records ---- */
+
+struct PnioIm0 {
+    uint16_t vendorId = 0;
+    std::string orderId;        /* ≤20 chars, space-padded */
+    std::string serialNumber;   /* ≤16 chars */
+    uint16_t hardwareRevision = 0;
+    char swPrefix = 'V';
+    uint8_t swFunctional = 0, swBugFix = 0, swInternal = 0;
+    uint16_t revisionCounter = 0;
+    uint16_t profileId = 0, profileSpecificType = 0;
+    uint8_t imVersionMajor = 1, imVersionMinor = 1;
+    uint16_t supported = kPnioImSupportedDap;
+};
+/* Encode the 60-byte I&M0 record (block type 0x0020). */
+void pnioEncIm0(std::vector<uint8_t>& out, const PnioIm0& im);
+struct PnioIm0View {
+    uint16_t vendorId = 0;
+    std::string orderId, serialNumber;
+    uint16_t hardwareRevision = 0;
+    char swPrefix = 0;
+    uint8_t swFunctional = 0, swBugFix = 0, swInternal = 0;
+    uint16_t revisionCounter = 0, profileId = 0, profileSpecificType = 0;
+    uint16_t supported = 0;
+};
+/* Parse an I&M0 record body (54 bytes after the 6-byte block header). */
+bool pnioDecIm0(const uint8_t* rec, size_t len, PnioIm0View& v);
+
+/* I&M1: TagFunction(32)+TagLocation(22); I&M2: date(16); I&M3: descriptor(54).
+ * Records are raw ASCII bodies inside block types 0x0021/0x0022/0x0023.
+ * Encode: Im1 uses t.a (≤32) + t.b (≤22); Im2 uses t.a (≤16); Im3 uses t.a (≤54). */
+inline constexpr size_t kIm1Len = 54, kIm2Len = 16, kIm3Len = 54;
+struct PnioImText { std::string a, b; }; /* im1: function+location; im3: descriptor */
+void pnioEncImRecord(std::vector<uint8_t>& out, uint16_t index,
+                     const PnioImText& t);
+bool pnioDecImRecord(const uint8_t* rec, size_t len, uint16_t expectedIndex,
+                     PnioImText& t);
+
 /* ---- F-Parameters block (IODWrite index 0x0100) ---- */
 
 struct PnioFParameters {
@@ -412,6 +477,12 @@ public:
     const std::vector<uint8_t>& lastResBlocks() const { return lastRes_; }
     bool writeRecords(const std::vector<PnioWriteRecord>& records,
                       int timeoutMs = 3000);
+    /* Record read (opnum Read=2): I&M0-3 and other indices. implicit=true
+     * uses ReadImplicit(5) — no AR-uuid check device-side. Returns the
+     * record bytes (block header included) or empty on failure. */
+    bool readRecord(uint16_t index, uint16_t slot, uint16_t subslot,
+                    bool implicit, std::vector<uint8_t>& record,
+                    int timeoutMs = 3000);
     bool prmEnd(int timeoutMs = 3000);
     bool release(int timeoutMs = 3000);
 

@@ -153,6 +153,12 @@ typedef struct TplcProfinetService {
     int32_t (*pn_ar_state)(void* svc, uint32_t port,
                            uint32_t* ar_state, uint16_t* session_key,
                            uint8_t ar_uuid[16]);
+    /* Record read under opnum Read(2): blocks = encoded IODReadReqHeader
+       (pnioEncIodReadReq); res_blocks gets IODReadResHeader + record. */
+    int32_t (*pn_ar_read)(void* svc, uint32_t port,
+                          const uint8_t* blocks, uint32_t len,
+                          uint8_t* res_blocks, uint32_t res_cap,
+                          uint32_t* res_len, uint32_t* pnio_status);
 } TplcProfinetService;
 
 #ifdef __cplusplus

@@ -579,6 +579,157 @@ bool pnioDecFParameters(const uint8_t* data, size_t len, PnioFParameters& f) {
     return true;
 }
 
+/* ================= IODRead records ================= */
+
+void pnioEncIodReadReq(std::vector<uint8_t>& out, const PnioReadRecord& r) {
+    std::vector<uint8_t> body;
+    put16(body, r.seq);
+    putBytes(body, r.arUuid.data(), 16);
+    put32(body, r.api);
+    put16(body, r.slot);
+    put16(body, r.subslot);
+    put16(body, 0);                    /* pad */
+    put16(body, r.index);
+    put32(body, r.recordDataLength);
+    putBytes(body, r.targetArUuid.data(), 16);
+    for (int i = 0; i < 8; ++i) body.push_back(0); /* pad */
+    pnioBlockHeader(out, kBlkIodReadReqHeader, uint16_t(body.size()));
+    out.insert(out.end(), body.begin(), body.end());
+}
+
+bool pnioDecReadRes(const uint8_t* blocks, size_t len,
+                    std::vector<PnioReadResRecord>& out) {
+    const uint8_t* p = blocks;
+    size_t left = len;
+    uint16_t type; const uint8_t* body; size_t blen;
+    while (blockHead(p, left, type, body, blen)) {
+        if (type != kBlkIodReadResHeader) break; /* record data trails as
+            its own block (e.g. I&M0 type 0x0020) — not a res header */
+        PnioCursor c{body, blen, 0};
+        PnioReadResRecord r;
+        uint16_t pad, av1, av2;
+        uint32_t rdl;
+        if (!c.u16(r.req.seq) || !c.uuid(r.req.arUuid) || !c.u32(r.req.api) ||
+            !c.u16(r.req.slot) || !c.u16(r.req.subslot) || !c.u16(pad) ||
+            !c.u16(r.req.index) || !c.u32(rdl) ||
+            !c.u16(av1) || !c.u16(av2))
+            return false;
+        r.additionalValue1 = av1; r.additionalValue2 = av2;
+        /* record data trails the 58-byte fixed body in the block stream
+         * (its own block header included), length = record_data_length */
+        if (rdl && left >= rdl) {
+            r.data.assign(p, p + rdl);
+            p += rdl; left -= rdl;
+        } else if (left) {
+            r.data.assign(p, p + left);
+            left = 0;
+        }
+        out.push_back(std::move(r));
+    }
+    return !out.empty();
+}
+
+/* ================= I&M records ================= */
+
+static void pushPadded(std::vector<uint8_t>& o, const std::string& s,
+                       size_t len) {
+    const size_t n = std::min(s.size(), len);
+    o.insert(o.end(), s.begin(), s.begin() + n);
+    for (size_t i = n; i < len; ++i) o.push_back(' ');
+}
+static std::string trimPadded(const uint8_t* p, size_t n) {
+    while (n && (p[n-1] == ' ' || p[n-1] == '\0')) --n;
+    return std::string(reinterpret_cast<const char*>(p), n);
+}
+
+void pnioEncIm0(std::vector<uint8_t>& out, const PnioIm0& im) {
+    std::vector<uint8_t> body;
+    put16(body, im.vendorId);
+    pushPadded(body, im.orderId, 20);
+    pushPadded(body, im.serialNumber, 16);
+    put16(body, im.hardwareRevision);
+    body.push_back(uint8_t(im.swPrefix));
+    body.push_back(im.swFunctional);
+    body.push_back(im.swBugFix);
+    body.push_back(im.swInternal);
+    put16(body, im.revisionCounter);
+    put16(body, im.profileId);
+    put16(body, im.profileSpecificType);
+    body.push_back(im.imVersionMajor);
+    body.push_back(im.imVersionMinor);
+    put16(body, im.supported);
+    pnioBlockHeader(out, 0x0020, uint16_t(body.size()));
+    out.insert(out.end(), body.begin(), body.end());
+}
+
+bool pnioDecIm0(const uint8_t* rec, size_t len, PnioIm0View& v) {
+    /* rec = full record incl. 6-byte block header */
+    if (len < 60) return false;
+    const uint8_t* b = rec + 6;
+    PnioCursor c{b, 54, 0};
+    uint8_t maj, minr;
+    if (!c.u16(v.vendorId)) return false;
+    const uint8_t* t;
+    if (!c.bytes(20, t)) return false;
+    v.orderId = trimPadded(t, 20);
+    if (!c.bytes(16, t)) return false;
+    v.serialNumber = trimPadded(t, 16);
+    if (!c.u16(v.hardwareRevision)) return false;
+    uint8_t pf, f, bf, inf;
+    if (!c.u8(pf) || !c.u8(f) || !c.u8(bf) || !c.u8(inf)) return false;
+    v.swPrefix = char(pf); v.swFunctional = f; v.swBugFix = bf; v.swInternal = inf;
+    if (!c.u16(v.revisionCounter) || !c.u16(v.profileId) ||
+        !c.u16(v.profileSpecificType)) return false;
+    if (!c.u8(maj) || !c.u8(minr) || !c.u16(v.supported)) return false;
+    return true;
+}
+
+void pnioEncImRecord(std::vector<uint8_t>& out, uint16_t index,
+                     const PnioImText& t) {
+    if (index != kPnioIndexIm1 && index != kPnioIndexIm2 &&
+        index != kPnioIndexIm3) return;
+    const uint16_t btype = index == kPnioIndexIm1 ? 0x0021
+                         : index == kPnioIndexIm2 ? 0x0022 : 0x0023;
+    const size_t bodyLen = index == kPnioIndexIm2 ? kIm2Len : kIm1Len;
+    std::vector<uint8_t> body(bodyLen, ' ');
+    auto put = [&](size_t off, size_t cap, const std::string& s) {
+        const size_t n = std::min(s.size(), cap);
+        if (off + n <= bodyLen) std::memcpy(body.data() + off, s.data(), n);
+    };
+    if (index == kPnioIndexIm1) { put(0, 32, t.a); put(32, 22, t.b); }
+    else put(0, bodyLen, t.a);
+    pnioBlockHeader(out, btype, uint16_t(body.size()));
+    out.insert(out.end(), body.begin(), body.end());
+}
+
+bool pnioDecImRecord(const uint8_t* rec, size_t len, uint16_t expectedIndex,
+                     PnioImText& t) {
+    if (len < 6) return false;
+    const uint16_t type = uint16_t(rec[0] << 8) | rec[1];
+    const uint16_t blen = uint16_t(rec[2] << 8) | rec[3];
+    const uint16_t want = expectedIndex == kPnioIndexIm1 ? 0x0021
+                           : expectedIndex == kPnioIndexIm2 ? 0x0022
+                           : expectedIndex == kPnioIndexIm3 ? 0x0023 : 0;
+    if (!want || type != want || len < 6 + blen - 2) return false;
+    const uint8_t* b = rec + 6;
+    const size_t bl = blen - 2;
+    if (expectedIndex == kPnioIndexIm2) {
+        t.a = trimPadded(b, bl); t.b.clear();
+        return true;
+    }
+    if (expectedIndex == kPnioIndexIm3) {
+        t.a = trimPadded(b, bl); t.b.clear();
+        return true;
+    }
+    if (bl >= 32) {
+        t.a = trimPadded(b, 32);
+        t.b = trimPadded(b + 32, bl - 32 > 22 ? 22 : bl - 32);
+        return true;
+    }
+    t.a = trimPadded(b, bl); t.b.clear();
+    return true;
+}
+
 /* ================= AR client session ================= */
 
 bool PnioArClient::open(DcRpcLink& link, const std::string& host, uint16_t port) {
@@ -708,6 +859,32 @@ bool PnioArClient::writeRecords(const std::vector<PnioWriteRecord>& records,
     if (status != 0) return false;
     std::vector<PnioWriteResRecord> wr;
     return pnioDecWriteRes(resBlocks.data(), resBlocks.size(), wr);
+}
+
+bool PnioArClient::readRecord(uint16_t index, uint16_t slot, uint16_t subslot,
+                              bool implicit, std::vector<uint8_t>& record,
+                              int timeoutMs) {
+    if (state_ == PnioArState::Idle) return false;
+    PnioReadRecord rr;
+    rr.seq = 0;
+    rr.arUuid = cfg_.ar.arUuid;
+    rr.api = 0;
+    rr.slot = slot; rr.subslot = subslot;
+    rr.index = index;
+    rr.recordDataLength = 0x1000;
+    rr.targetArUuid = cfg_.ar.arUuid;
+    std::vector<uint8_t> blocks;
+    pnioEncIodReadReq(blocks, rr);
+    std::vector<uint8_t> resBlocks;
+    uint32_t status = 0;
+    const auto op = implicit ? PnioOpnum::ReadImplicit : PnioOpnum::Read;
+    if (!rpcCall(op, blocks, resBlocks, status, timeoutMs)) return false;
+    if (status != 0) return false;
+    std::vector<PnioReadResRecord> rr2;
+    if (!pnioDecReadRes(resBlocks.data(), resBlocks.size(), rr2) ||
+        rr2.empty()) return false;
+    record = rr2[0].data;
+    return !record.empty();
 }
 
 bool PnioArClient::prmEnd(int timeoutMs) {
