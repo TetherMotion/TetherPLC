@@ -1865,6 +1865,18 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "IOIN", arr(63));
             push(&mut off, "PNCYC", udint());  /* OP8: device cycle counter */
             push(&mut off, "PNSTAT", udint()); /* OP8: DataStatus byte */
+            /* PNIO-CM AR session ops (OP 9..14): UUIDs for Connect,
+               ARBLK carries encoded PNIO blocks in and response blocks
+               out (the service copies input before writing output, so
+               the buffer may alias), ARSTATE/ARKEY/ARPSTAT receive the
+               AR state, session key and NDR pnio_status. */
+            push(&mut off, "DEVOBJ", arr(15));
+            push(&mut off, "ACTUUID", arr(15));
+            push(&mut off, "ARUUID", arr(15));
+            push(&mut off, "ARBLK", arr(511));
+            push(&mut off, "ARSTATE", udint());
+            push(&mut off, "ARKEY", udint());
+            push(&mut off, "ARPSTAT", udint());
         }
         /* FB_Soe — tplc-soe service bridge (EtherCAT SoE mailbox over
         Tether IO ec.soe.* params). Synchronous op dispatch: OP 1=

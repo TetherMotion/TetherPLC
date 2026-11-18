@@ -7641,12 +7641,20 @@ const PN_IOOUT: usize = 148; // u8[64]
 const PN_IOIN: usize = 212; // u8[64]
 const PN_PNCYC: usize = 276; // u32 device cycle counter (OP8)
 const PN_PNSTAT: usize = 280; // u32 DataStatus byte (OP8)
+const PN_DEVOBJ: usize = 284; // u8[16] device object UUID (OP9)
+const PN_ACTUUID: usize = 300; // u8[16] activity UUID (OP9)
+const PN_ARUUID: usize = 316; // u8[16] AR UUID (OP9 in, OP13 out)
+const PN_ARBLK: usize = 332; // u8[512] PNIO blocks in/out (OP9-11,14)
+const PN_ARSTATE: usize = 844; // u32 AR state (OP9,12,13)
+const PN_ARKEY: usize = 848; // u32 session key (OP9,13)
+const PN_ARPSTAT: usize = 852; // u32 NDR pnio_status (OP9-11,14)
 
 // tplc-profinet service vtable offsets (TplcProfinetService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B),
 // pn_state@16, pn_open@24, pn_close@32, pn_identify@40,
 // pn_dcp_get@48, pn_dcp_set@56, pn_io_exchange@64, pn_io_cr@72,
-// pn_port_info@80.
+// pn_port_info@80, pn_ar_connect@88, pn_ar_write@96,
+// pn_ar_control@104, pn_ar_service@112, pn_ar_state@120, pn_ar_read@128.
 const PN_SVC_STATE: usize = 16;
 const PN_SVC_OPEN: usize = 24;
 const PN_SVC_CLOSE: usize = 32;
@@ -7655,6 +7663,12 @@ const PN_SVC_DCPGET: usize = 48;
 const PN_SVC_DCPSET: usize = 56;
 const PN_SVC_IOEX: usize = 64;
 const PN_SVC_IOCR: usize = 72;
+const PN_SVC_ARCONN: usize = 88;
+const PN_SVC_ARWRITE: usize = 96;
+const PN_SVC_ARCTRL: usize = 104;
+const PN_SVC_ARSRV: usize = 112;
+const PN_SVC_ARSTATE: usize = 120;
+const PN_SVC_ARREAD: usize = 128;
 
 /// service lookup for "tplc-profinet" (14 chars)
 unsafe fn profinet_service(ctx: *const u8) -> *const u8 {
@@ -7824,6 +7838,81 @@ pub unsafe extern "C" fn __tplc_rt_FB_Profinet(this: *mut u8, ctx: *mut u8) -> i
                 this.add(PN_PNSTAT) as *mut u32,
             );
             wu32(this.add(PN_DLEN), in_len);
+            set_rc(rc);
+        }
+        /* PNIO-CM AR ops: ARBLK[0..DLEN) carries encoded PNIO blocks
+           in; the service copies input before writing the response, so
+           the same buffer receives res_blocks and DLEN becomes
+           res_len. ARPSTAT receives the NDR pnio_status. */
+        9..=11 | 14 => {
+            let vt = match op {
+                9 => PN_SVC_ARCONN,
+                10 => PN_SVC_ARWRITE,
+                11 => PN_SVC_ARCTRL,
+                _ => PN_SVC_ARREAD,
+            };
+            let blk_len = ru32(this.add(PN_DLEN)).min(512);
+            let mut res_len: u32 = 0;
+            let mut pstat: u32 = 0;
+            let rc = if op == 9 {
+                /* pn_ar_connect(svc, port, dev*, act*, ar*, blocks,
+                   blen, res*, res_cap, res_len*, pnio_status*) */
+                let f: unsafe extern "C" fn(
+                    *const u8, u32, *const u8, *const u8, *const u8,
+                    *const u8, u32, *mut u8, u32, *mut u32, *mut u32,
+                ) -> i32 = core::mem::transmute(
+                    (svc.add(vt) as *const usize).read(),
+                );
+                f(
+                    svc, port,
+                    this.add(PN_DEVOBJ), this.add(PN_ACTUUID),
+                    this.add(PN_ARUUID),
+                    this.add(PN_ARBLK), blk_len,
+                    this.add(PN_ARBLK), 512, &mut res_len, &mut pstat,
+                )
+            } else {
+                /* pn_ar_write/control/read(svc, port, blocks, blen,
+                   res*, res_cap, res_len*, pnio_status*) */
+                let f: unsafe extern "C" fn(
+                    *const u8, u32, *const u8, u32, *mut u8, u32,
+                    *mut u32, *mut u32,
+                ) -> i32 = core::mem::transmute(
+                    (svc.add(vt) as *const usize).read(),
+                );
+                f(
+                    svc, port,
+                    this.add(PN_ARBLK), blk_len,
+                    this.add(PN_ARBLK), 512, &mut res_len, &mut pstat,
+                )
+            };
+            wu32(this.add(PN_DLEN), res_len);
+            wu32(this.add(PN_ARPSTAT), pstat);
+            set_rc(rc);
+        }
+        12 => {
+            /* pn_ar_service(svc, port, timeout_ms, ar_state*) -> i32:
+               pumps one CM datagram; STATUS 1 = AppReady consumed. */
+            let f: unsafe extern "C" fn(*const u8, u32, u32, *mut u32) -> i32 =
+                core::mem::transmute(
+                    (svc.add(PN_SVC_ARSRV) as *const usize).read(),
+                );
+            let rc = f(svc, port, ru32(this.add(PN_XID)),
+                       this.add(PN_ARSTATE) as *mut u32);
+            set_rc(rc);
+        }
+        13 => {
+            /* pn_ar_state(svc, port, ar_state*, session_key*,
+               ar_uuid*) -> i32 */
+            let f: unsafe extern "C" fn(
+                *const u8, u32, *mut u32, *mut u16, *mut u8,
+            ) -> i32 = core::mem::transmute(
+                (svc.add(PN_SVC_ARSTATE) as *const usize).read(),
+            );
+            let mut key: u16 = 0;
+            let rc = f(svc, port,
+                       this.add(PN_ARSTATE) as *mut u32,
+                       &mut key, this.add(PN_ARUUID));
+            wu32(this.add(PN_ARKEY), u32::from(key));
             set_rc(rc);
         }
         _ => {

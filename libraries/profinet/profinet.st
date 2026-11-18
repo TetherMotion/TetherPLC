@@ -26,6 +26,21 @@
 //   8 = IOCR cyclic exchange (XID=frame_id, 0=keep default 0x8000;
 //       IOOUT[0..DLEN) -> IOIN/DLEN, PNCYC=device cycle counter,
 //       PNSTAT=DataStatus byte e.g. 16#35)
+//   9 = PNIO-CM AR Connect (DEVOBJ/ACTUUID/ARUUID u8[16] +
+//       ARBLK[0..DLEN) connect blocks -> ARBLK res blocks/DLEN,
+//       ARSTATE/ARKEY/ARPSTAT filled)
+//   10 = PNIO-CM Write   (ARBLK blocks -> ARBLK res, ARPSTAT)
+//   11 = PNIO-CM Control (ARBLK blocks -> ARBLK res, ARPSTAT;
+//       PrmEnd/AppReady/Release IODControl blocks)
+//   12 = PNIO-CM service (XID=timeout_ms; ARSTATE=3 data exchange
+//       once the device ApplicationReady is consumed)
+//   13 = AR state query (ARSTATE/ARKEY/ARUUID out)
+//   14 = PNIO-CM record Read (ARBLK IODReadReq -> ARBLK
+//       IODReadRes+record, ARPSTAT)
+// AR block payloads are encoded with the PnioCm codec
+// (tplc/host/PnioCm.hpp); ARSTATE: 0 idle 1 connected 2 prmEndSent
+// 3 dataExchange 4 released. The CM session rides UDP/34964 to the
+// port endpoint's host.
 // DCP option/suboption constants: OPT_IP=1 (SUB_MAC=1, SUB_IPPARM=2,
 // SUB_FULLIP=3), OPT_PROP=2 (SUB_VENDOR=1, SUB_NAME=2, SUB_DEVID=3,
 // SUB_ROLE=4, SUB_OPTIONS=5, SUB_ALIAS=6, SUB_INSTANCE=7,
@@ -44,6 +59,10 @@ VAR_INPUT
     DLEN : UDINT := 0;            // write: payload len; read: cap
     OD : ARRAY[0..63] OF BYTE;
     IOOUT : ARRAY[0..63] OF BYTE;
+    DEVOBJ : ARRAY[0..15] OF BYTE;   // OP9: device object UUID
+    ACTUUID : ARRAY[0..15] OF BYTE;  // OP9: activity UUID
+    ARUUID : ARRAY[0..15] OF BYTE;   // OP9 in / OP13 out
+    ARBLK : ARRAY[0..511] OF BYTE;   // OP9-11,14: blocks in/out
 END_VAR
 VAR_OUTPUT
     DONE : BOOL;
@@ -60,6 +79,9 @@ VAR_OUTPUT
     IOIN : ARRAY[0..63] OF BYTE;
     PNCYC : UDINT;
     PNSTAT : UDINT;
+    ARSTATE : UDINT;
+    ARKEY : UDINT;
+    ARPSTAT : UDINT;
 END_VAR
 VAR
     raw : FB_Profinet;
@@ -81,6 +103,14 @@ END_VAR
             raw.OD[i] := OD[i];
             raw.IOOUT[i] := IOOUT[i];
         END_FOR;
+        FOR i := 0 TO 15 DO
+            raw.DEVOBJ[i] := DEVOBJ[i];
+            raw.ACTUUID[i] := ACTUUID[i];
+            raw.ARUUID[i] := ARUUID[i];
+        END_FOR;
+        FOR i := 0 TO 511 DO
+            raw.ARBLK[i] := ARBLK[i];
+        END_FOR;
         raw();
         STATUS := raw.STATUS;
         ERRID := raw.ERRID;
@@ -97,6 +127,17 @@ END_VAR
         END_FOR;
         PNCYC := raw.PNCYC;
         PNSTAT := raw.PNSTAT;
+        FOR i := 0 TO 15 DO
+            DEVOBJ[i] := raw.DEVOBJ[i];
+            ACTUUID[i] := raw.ACTUUID[i];
+            ARUUID[i] := raw.ARUUID[i];
+        END_FOR;
+        FOR i := 0 TO 511 DO
+            ARBLK[i] := raw.ARBLK[i];
+        END_FOR;
+        ARSTATE := raw.ARSTATE;
+        ARKEY := raw.ARKEY;
+        ARPSTAT := raw.ARPSTAT;
         DONE := TRUE;
     END_IF;
     prevExec := EXEC;
