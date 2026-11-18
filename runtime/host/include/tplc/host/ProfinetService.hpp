@@ -57,6 +57,23 @@ private:
     int32_t portInfo(void*, uint32_t port, uint32_t* st,
                      uint32_t* errors, uint32_t* frames);
 
+    /* PNIO-CM AR session ops (UDP/34964 CL DCE/RPC) */
+    int32_t arEnsure(Port* p);
+    int32_t arConnect(void*, uint32_t port,
+                      const uint8_t dev[16], const uint8_t act[16],
+                      const uint8_t aru[16],
+                      const uint8_t* blocks, uint32_t blen,
+                      uint8_t* res, uint32_t resCap, uint32_t* resLen,
+                      uint32_t* pnioStatus);
+    int32_t arExchange(void*, uint32_t port, uint16_t opnum,
+                       const uint8_t* blocks, uint32_t blen,
+                       uint8_t* res, uint32_t resCap, uint32_t* resLen,
+                       uint32_t* pnioStatus);
+    int32_t arService(void*, uint32_t port, uint32_t timeoutMs,
+                      uint32_t* arState);
+    int32_t arState(void*, uint32_t port, uint32_t* arState,
+                    uint16_t* sessionKey, uint8_t arUuid[16]);
+
     TplcProfinetService svc_{};
     std::vector<std::unique_ptr<Port>> ports_;
     bool active_ = false;

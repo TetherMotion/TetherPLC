@@ -19,8 +19,12 @@
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
 #include <tplc/host/ProfinetService.hpp>
+#include <tplc/host/PnioCm.hpp>
+#include <tplc/host/Dcerpc.hpp>
 
+#include <algorithm>
 #include <arpa/inet.h>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
@@ -46,6 +50,10 @@ struct ProfinetService::Port {
     /* IOCR cyclic state */
     uint16_t frameId = 0x8000;
     uint16_t cycle = 0;
+    /* PNIO-CM AR session (UDP/34964, connectionless DCE/RPC) */
+    std::unique_ptr<DcRpcLink> cmLink;
+    host::PnioArClient ar;
+    bool arLinked = false;
 };
 
 namespace {
@@ -220,6 +228,31 @@ ProfinetService::ProfinetService() {
     svc_.pn_port_info = [](void* s, uint32_t p, uint32_t* st,
                            uint32_t* e, uint32_t* f) {
         return self(s)->portInfo(s, p, st, e, f);
+    };
+    svc_.pn_ar_connect = [](void* s, uint32_t p, const uint8_t* d,
+                            const uint8_t* a, const uint8_t* ar,
+                            const uint8_t* b, uint32_t bl,
+                            uint8_t* r, uint32_t rc, uint32_t* rl,
+                            uint32_t* ps) {
+        return self(s)->arConnect(s, p, d, a, ar, b, bl, r, rc, rl, ps);
+    };
+    svc_.pn_ar_write = [](void* s, uint32_t p, const uint8_t* b,
+                          uint32_t bl, uint8_t* r, uint32_t rc,
+                          uint32_t* rl, uint32_t* ps) {
+        return self(s)->arExchange(s, p, 3, b, bl, r, rc, rl, ps);
+    };
+    svc_.pn_ar_control = [](void* s, uint32_t p, const uint8_t* b,
+                            uint32_t bl, uint8_t* r, uint32_t rc,
+                            uint32_t* rl, uint32_t* ps) {
+        return self(s)->arExchange(s, p, 4, b, bl, r, rc, rl, ps);
+    };
+    svc_.pn_ar_service = [](void* s, uint32_t p, uint32_t t,
+                            uint32_t* st) {
+        return self(s)->arService(s, p, t, st);
+    };
+    svc_.pn_ar_state = [](void* s, uint32_t p, uint32_t* st,
+                          uint16_t* sk, uint8_t* au) {
+        return self(s)->arState(s, p, st, sk, au);
     };
 }
 
@@ -559,6 +592,109 @@ int32_t ProfinetService::portInfo(void*, uint32_t port, uint32_t* st,
     if (st) *st = p->pst;
     if (errors) *errors = p->errors;
     if (frames) *frames = p->frames;
+    return TPLC_PN_OK;
+}
+
+/* ---- PNIO-CM AR session ----
+ * CM rides connectionless DCE/RPC on UDP/34964 to the same device host
+ * as the port endpoint. The AR client owns a dedicated DcRpcLink. */
+
+int32_t ProfinetService::arEnsure(Port* p) {
+    if (p->arLinked) return p->ar.isOpen() ? TPLC_PN_OK : TPLC_PN_E_IO;
+    /* CM host = endpoint host, port 34964 */
+    std::string ep = p->endpoint;
+    for (const char* pre : {"udp://", "tcp://"}) {
+        const std::string pr = pre;
+        if (ep.rfind(pr, 0) == 0) { ep = ep.substr(pr.size()); break; }
+    }
+    const size_t colon = ep.rfind(':');
+    if (colon == std::string::npos) return TPLC_PN_E_PARAM;
+    const std::string host = ep.substr(0, colon);
+    p->cmLink = std::make_unique<DcRpcLink>();
+    if (!p->ar.open(*p->cmLink, host, host::kPnioUdpPort)) {
+        p->cmLink.reset();
+        ++p->errors;
+        return TPLC_PN_E_IO;
+    }
+    p->arLinked = true;
+    return TPLC_PN_OK;
+}
+
+int32_t ProfinetService::arConnect(void*, uint32_t port,
+                                   const uint8_t dev[16], const uint8_t act[16],
+                                   const uint8_t aru[16],
+                                   const uint8_t* blocks, uint32_t blen,
+                                   uint8_t* res, uint32_t resCap,
+                                   uint32_t* resLen, uint32_t* pnioStatus) {
+    Port* p = portAt(port);
+    if (!p || !blocks || !blen) return TPLC_PN_E_PARAM;
+    const int32_t rc = arEnsure(p);
+    if (rc != TPLC_PN_OK) return rc;
+    std::array<uint8_t,16> d{}, a{}, ar{};
+    memcpy(d.data(), dev, 16); memcpy(a.data(), act, 16);
+    memcpy(ar.data(), aru, 16);
+    if (!p->ar.connectRaw(d, a, ar, blocks, blen, 3000)) {
+        ++p->errors;
+        if (pnioStatus) *pnioStatus = p->ar.lastStatus();
+        return TPLC_PN_E_DEV;
+    }
+    if (pnioStatus) *pnioStatus = 0;
+    const auto& rb = p->ar.lastResBlocks();
+    if (resLen) *resLen = uint32_t(std::min<size_t>(rb.size(), resCap));
+    if (res && resCap) memcpy(res, rb.data(), std::min<size_t>(rb.size(), resCap));
+    ++p->frames;
+    return TPLC_PN_OK;
+}
+
+int32_t ProfinetService::arExchange(void*, uint32_t port, uint16_t opnum,
+                                    const uint8_t* blocks, uint32_t blen,
+                                    uint8_t* res, uint32_t resCap,
+                                    uint32_t* resLen, uint32_t* pnioStatus) {
+    Port* p = portAt(port);
+    if (!p || !blocks || !blen) return TPLC_PN_E_PARAM;
+    if (!p->arLinked || !p->ar.isOpen()) return TPLC_PN_E_STATE;
+    std::vector<uint8_t> req(blocks, blocks + blen), rb;
+    uint32_t status = 0;
+    const auto op = host::PnioOpnum(opnum);
+    if (!p->ar.rpcCall(op, req, rb, status, 3000)) {
+        ++p->errors;
+        if (pnioStatus) *pnioStatus = status;
+        return TPLC_PN_E_IO;
+    }
+    if (pnioStatus) *pnioStatus = status;
+    if (resLen) *resLen = uint32_t(std::min<size_t>(rb.size(), resCap));
+    if (res && resCap) memcpy(res, rb.data(), std::min<size_t>(rb.size(), resCap));
+    ++p->frames;
+    return status == 0 ? TPLC_PN_OK : TPLC_PN_E_DEV;
+}
+
+int32_t ProfinetService::arService(void*, uint32_t port, uint32_t timeoutMs,
+                                   uint32_t* arState) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_PN_E_PARAM;
+    if (arState) {
+        *arState = uint32_t(p->ar.state());
+        if (!p->arLinked || !p->ar.isOpen()) *arState = 0;
+    }
+    if (!p->arLinked || !p->ar.isOpen()) return TPLC_PN_E_STATE;
+    /* service() consumes one datagram; AppReady → DataExchange */
+    if (p->ar.service(int(timeoutMs))) ++p->frames;
+    if (arState) *arState = uint32_t(p->ar.state());
+    return TPLC_PN_OK;
+}
+
+int32_t ProfinetService::arState(void*, uint32_t port, uint32_t* arState,
+                                 uint16_t* sessionKey, uint8_t arUuid[16]) {
+    Port* p = portAt(port);
+    if (!p) return TPLC_PN_E_PARAM;
+    if (arState) {
+        *arState = p->arLinked ? uint32_t(p->ar.state()) : 0;
+    }
+    if (sessionKey) *sessionKey = p->ar.connectRes().sessionKey;
+    if (arUuid) {
+        const auto& u = p->ar.connectRes().arUuid;
+        memcpy(arUuid, u.data(), 16);
+    }
     return TPLC_PN_OK;
 }
 

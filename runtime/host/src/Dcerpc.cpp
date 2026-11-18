@@ -403,6 +403,18 @@ bool DcRpcLink::recv(std::vector<uint8_t>& out, int timeoutMs) {
     }
 }
 
+bool DcRpcLink::recvDatagram(std::vector<uint8_t>& out, int timeoutMs) {
+    if (fd_ < 0) return false;
+    uint8_t buf[65535];
+    pollfd pfd{fd_, POLLIN, 0};
+    int pr = ::poll(&pfd, 1, timeoutMs);
+    if (pr <= 0) return false;
+    ssize_t n = ::recv(fd_, buf, sizeof buf, 0);
+    if (n <= 0) return false;
+    out.assign(buf, buf + n);
+    return true;
+}
+
 bool DcRpcLink::call(const uint8_t* req, size_t reqLen,
                      std::vector<uint8_t>& resp, int timeoutMs) {
     if (fd_ < 0 || reqLen < 16) return false;

@@ -148,6 +148,11 @@ public:
      * Returns the full PDU bytes (single buffer, frag_len'd). */
     bool recv(std::vector<uint8_t>& out, int timeoutMs);
 
+    /* receive one raw datagram without CO-PDU parsing/reassembly —
+     * for connectionless protocols (PNIO-CM) that share the transport
+     * but not the 16-byte CO header layout. */
+    bool recvDatagram(std::vector<uint8_t>& out, int timeoutMs);
+
     /* allocate the call_id the next request must carry; call() matches
      * responses by it. Encode requests with this id. */
     uint32_t allocCallId() { return nextCall_++; }

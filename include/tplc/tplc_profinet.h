@@ -113,6 +113,46 @@ typedef struct TplcProfinetService {
     int32_t (*pn_port_info)(void* svc, uint32_t port,
                             uint32_t* state, uint32_t* errors,
                             uint32_t* frames);
+
+    /* ---- PNIO-CM AR session (connectionless DCE/RPC, UDP/34964) ----
+       The CM block codec lives in tplc/host/PnioCm.hpp; these ops carry
+       already-encoded PNIO block payloads through the RPC envelope.
+       pnio_status receives the NDR response status u32 (0 = OK). */
+
+    /* Connect: dev_obj/act_uuid/ar_uuid are the 16-byte UUIDs in
+       canonical (printed) byte order; connect_blocks is the encoded
+       ARBlockReq+IOCRBlockReq+ExpectedSubmoduleBlockReq+AlarmCRBlockReq
+       payload. On success res_blocks receives the raw response blocks
+       (ARBlockRes+IOCRBlockRes+AlarmCRBlockRes+ARServerBlockRes) —
+       parse with pnioDecConnectRes. */
+    int32_t (*pn_ar_connect)(void* svc, uint32_t port,
+                             const uint8_t dev_obj[16],
+                             const uint8_t act_uuid[16],
+                             const uint8_t ar_uuid[16],
+                             const uint8_t* connect_blocks,
+                             uint32_t connect_len,
+                             uint8_t* res_blocks, uint32_t res_cap,
+                             uint32_t* res_len, uint32_t* pnio_status);
+    /* Write/Control: send encoded block payloads under opnum
+       Write(3)/Control(4); res_blocks gets the response blocks. */
+    int32_t (*pn_ar_write)(void* svc, uint32_t port,
+                           const uint8_t* blocks, uint32_t len,
+                           uint8_t* res_blocks, uint32_t res_cap,
+                           uint32_t* res_len, uint32_t* pnio_status);
+    int32_t (*pn_ar_control)(void* svc, uint32_t port,
+                             const uint8_t* blocks, uint32_t len,
+                             uint8_t* res_blocks, uint32_t res_cap,
+                             uint32_t* res_len, uint32_t* pnio_status);
+    /* Service: pump one datagram — answers device-initiated
+       ApplicationReady (IODControlReq 0x0112) with Done and advances
+       the AR to data exchange. Returns 1 if an AppReady was consumed. */
+    int32_t (*pn_ar_service)(void* svc, uint32_t port,
+                             uint32_t timeout_ms, uint32_t* ar_state);
+    /* AR state query: 0=idle 1=connected 2=prmEndSent 3=dataExchange
+       4=released; session_key + ar_uuid filled when established. */
+    int32_t (*pn_ar_state)(void* svc, uint32_t port,
+                           uint32_t* ar_state, uint16_t* session_key,
+                           uint8_t ar_uuid[16]);
 } TplcProfinetService;
 
 #ifdef __cplusplus
