@@ -24,6 +24,18 @@ g++ -std=c++23 -I runtime/host/include \
     && ok "smoke build" || { bad "smoke build"; cat "$WORK/build.log"; \
          echo "== $pass pass, $fail fail"; exit 1; }
 
+g++ -std=c++23 -I runtime/host/include \
+    tests/profinet/pnio_cm/pnio_cm_golden.cpp \
+    runtime/host/src/PnioCm.cpp runtime/host/src/Dcerpc.cpp \
+    -o "$WORK/pnio_cm_golden" 2>>"$WORK/build.log" \
+    && ok "golden build" || { bad "golden build"; cat "$WORK/build.log"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+
+"$WORK/pnio_cm_golden" tests/profinet/pnio_cm/golden \
+    >"$WORK/golden.log" 2>&1 \
+    && ok "golden IODRead/I&M decode (real p-net capture)" \
+    || { bad "golden decode"; cat "$WORK/golden.log"; }
+
 python3 tests/profinet/pnio_cm/fake_pnio_cm_device.py "$PORT" \
     >"$WORK/device.log" 2>&1 &
 DEV_PID=$!
