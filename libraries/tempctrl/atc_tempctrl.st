@@ -2226,3 +2226,101 @@ END_VAR
     END_IF;
     PV := x2;
 END_FUNCTION_BLOCK
+
+// ========================= trend recorder ==========================
+// FB_AtcTrend — circular-sample trend buffer for batch capture
+// (autotune curves, profile history, spike forensics).  Records
+// Value every CycleTime into a ring of DEPTH samples (<=512); the
+// ring always keeps the most recent DEPTH samples, so pre-trigger
+// history is free.  On Trig rising edge (when armed) the write index
+// is latched into TrigIdx; recording continues for Post samples then
+// Done pulses — the window Buf[TrigIdx .. TrigIdx+Post) (mod DEPTH)
+// is the triggered capture.
+//
+// Readback: Buf[i] is the sample written i positions ago relative to
+// Wr-1 (i.e. chronological oldest->newest is Wr, Wr+1, ... mod DEPTH).
+// TBuf carries the same layout in seconds since Reset.
+FUNCTION_BLOCK FB_AtcTrend
+VAR_INPUT
+    Execute : BOOL;
+    CycleTime : LREAL;
+    Value : LREAL;
+    Depth : DINT;          // ring capacity request (1..512)
+    PostN : DINT;          // post-trigger samples before Done (>=0)
+    Arm : BOOL;            // re-arm trigger (level)
+    Trig : BOOL;           // trigger input
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    Busy : BOOL;
+    Done : BOOL;
+    Full : BOOL;           // ring wrapped at least once
+    Count : UDINT;         // total samples recorded
+    Wr : DINT;             // next write index (0..DEPTH-1)
+    TrigIdx : DINT;        // ring index of last trigger (-1 none)
+    Left : DINT;           // post-trigger samples remaining
+    Buf : ARRAY[0..511] OF LREAL;
+    TBuf : ARRAY[0..511] OF LREAL;
+END_VAR
+VAR
+    dep : DINT;
+    post : DINT;
+    pos : DINT;
+    cnt : UDINT;
+    t : LREAL;
+    trigSeen : BOOL;
+    armed : BOOL;
+    i : DINT;
+    edge : BOOL;
+END_VAR
+    IF Reset THEN
+        pos := 0;
+        cnt := 0;
+        t := 0.0;
+        TrigIdx := -1;
+        Left := 0;
+        Busy := FALSE;
+        Done := FALSE;
+        Full := FALSE;
+        trigSeen := FALSE;
+        armed := Arm;
+        FOR i := 0 TO 511 DO
+            Buf[i] := 0.0;
+            TBuf[i] := 0.0;
+        END_FOR;
+        RETURN;
+    END_IF;
+    dep := Depth;
+    IF dep < 1 THEN dep := 1; END_IF;
+    IF dep > 512 THEN dep := 512; END_IF;
+    IF PostN < 0 THEN post := 0; ELSE post := PostN; END_IF;
+    /* trigger edge (only while armed) */
+    edge := Trig AND NOT trigSeen;
+    trigSeen := Trig;
+    IF edge AND armed AND TrigIdx < 0 THEN
+        TrigIdx := pos;
+        Left := post;
+        Busy := TRUE;
+        Done := FALSE;
+        armed := FALSE;
+    END_IF;
+    IF Execute AND CycleTime > 0.0 THEN
+        Buf[pos] := Value;
+        TBuf[pos] := t;
+        pos := (pos + 1) MOD dep;
+        cnt := cnt + 1;
+        t := t + CycleTime;
+        IF pos = 0 AND cnt > 0 THEN Full := TRUE; END_IF;
+        IF Busy AND Left > 0 THEN
+            Left := Left - 1;
+            IF Left = 0 THEN
+                Busy := FALSE;
+                Done := TRUE;
+            END_IF;
+        END_IF;
+    END_IF;
+    Wr := pos;
+    Count := cnt;
+    /* outputs for FBD/IDE visibility */
+    TrigIdx := TrigIdx;
+END_FUNCTION_BLOCK
