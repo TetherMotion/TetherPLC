@@ -2324,3 +2324,81 @@ END_VAR
     /* outputs for FBD/IDE visibility */
     TrigIdx := TrigIdx;
 END_FUNCTION_BLOCK
+
+// ======================== gain scheduling ==========================
+// FB_AtcGainSchedule — piecewise-linear gain schedule: maps a
+// scheduling variable X (typically PV or a recipe index) to PID
+// gains through an N-point breakpoint table.  Output feeds
+// FB_AtcPid.Kp/Tn/Tv directly.  X clamps to the end segments;
+// equal-X breakpoints divide by zero -> Err.
+//
+//   TableX[i], TableKp[i], TableTn[i], TableTv[i] for i = 1..N
+//   (N = 2..8, strictly increasing X).
+FUNCTION_BLOCK FB_AtcGainSchedule
+VAR_INPUT
+    Execute : BOOL;
+    X : LREAL;             // scheduling variable
+    NPts : DINT;           // active breakpoints (2..8)
+    TableX : ARRAY[1..8] OF LREAL;
+    TableKp : ARRAY[1..8] OF LREAL;
+    TableTn : ARRAY[1..8] OF LREAL;
+    TableTv : ARRAY[1..8] OF LREAL;
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;
+    Err : BOOL;
+    Kp : LREAL;
+    Tn : LREAL;
+    Tv : LREAL;
+    Seg : DINT;            // segment index the X fell into (1..N-1)
+    Frac : LREAL;          // 0..1 position inside the segment
+END_VAR
+VAR
+    n : DINT;
+    i : DINT;
+    x0 : LREAL;
+    x1 : LREAL;
+    f : LREAL;
+    bad : BOOL;
+END_VAR
+    Done := FALSE;
+    Err := FALSE;
+    IF NOT Execute THEN RETURN; END_IF;
+    n := NPts;
+    IF n < 2 THEN n := 2; END_IF;
+    IF n > 8 THEN n := 8; END_IF;
+    bad := FALSE;
+    FOR i := 2 TO n DO
+        IF TableX[i] <= TableX[i - 1] THEN bad := TRUE; END_IF;
+    END_FOR;
+    IF bad THEN
+        Err := TRUE;
+        RETURN;
+    END_IF;
+    /* locate segment: X <= TableX[1] -> seg 1 frac 0;
+       X >= TableX[n] -> seg n-1 frac 1 */
+    Seg := 1;
+    Frac := 0.0;
+    IF X <= TableX[1] THEN
+        Seg := 1;
+        Frac := 0.0;
+    ELSIF X >= TableX[n] THEN
+        Seg := n - 1;
+        Frac := 1.0;
+    ELSE
+        i := 2;
+        WHILE i <= n AND X > TableX[i] DO
+            i := i + 1;
+        END_WHILE;
+        Seg := i - 1;
+        x0 := TableX[Seg];
+        x1 := TableX[Seg + 1];
+        f := (X - x0) / (x1 - x0);
+        Frac := f;
+    END_IF;
+    i := Seg;
+    Kp := TableKp[i] + (TableKp[i + 1] - TableKp[i]) * Frac;
+    Tn := TableTn[i] + (TableTn[i + 1] - TableTn[i]) * Frac;
+    Tv := TableTv[i] + (TableTv[i + 1] - TableTv[i]) * Frac;
+    Done := TRUE;
+END_FUNCTION_BLOCK
