@@ -2118,3 +2118,111 @@ END_VAR
         IF Execute THEN Done := TRUE; END_IF;
     END_IF;
 END_FUNCTION_BLOCK
+
+// ======================== plant simulator ==========================
+// FB_AtcPlant — reusable thermal plant model for closed-loop testing
+// of controllers and autotuners inside the PLC/simulator (the test
+// cases otherwise inline ad-hoc lag updates).  FOPDT by default;
+// Tau2 > 0 cascades a second lag (SOPDT).  Theta implements a pure
+// transport delay through a 1024-sample ring buffer.
+//
+//   U (0..100 %) -> [dead time Theta] -> K gain -> lag Tau1
+//                -> [lag Tau2] -> PV ; DistU adds a load disturbance
+//                at the plant input, AmbC adds ambient drift toward
+//                Tamb at rate 1/TauAmb.
+//
+// Discrete update (same exponential-Euler form the suite uses):
+//   x += (target - x) * CycleTime / (Tau + CycleTime)
+// NoiseAmp > 0 adds deterministic dither (LCG, reproducible runs).
+FUNCTION_BLOCK FB_AtcPlant
+VAR_INPUT
+    Execute : BOOL;
+    U : LREAL;             // manipulated input (e.g. 0..100 %)
+    K : LREAL;             // process gain (PV units per U unit)
+    Tau1 : LREAL;          // primary time constant (s) > 0
+    Tau2 : LREAL;          // second lag (s); 0 = FOPDT
+    Theta : LREAL;         // dead time (s); 0 = none
+    Pv0 : LREAL;           // initial PV (also RESET value)
+    DistU : LREAL;         // constant load disturbance (U units)
+    Taamb : LREAL;         // ambient temperature
+    TauAmb : LREAL;        // ambient coupling time constant (s); 0 = off
+    NoiseAmp : LREAL;      // deterministic dither amplitude; 0 = off
+    CycleTime : LREAL;
+    Reset : BOOL;
+END_VAR
+VAR_OUTPUT
+    PV : LREAL;
+    Done : BOOL;
+    Err : BOOL;
+END_VAR
+VAR
+    buf : ARRAY[0..1023] OF LREAL;
+    head : DINT;
+    ndly : DINT;
+    x1 : LREAL;
+    x2 : LREAL;
+    uin : LREAL;
+    n : DINT;
+    lcg : UDINT;
+    i : DINT;
+    target : LREAL;
+    dt : LREAL;
+    amb : LREAL;
+END_VAR
+    IF Reset THEN
+        PV := Pv0;
+        x1 := Pv0;
+        x2 := Pv0;
+        uin := Pv0;
+        head := 0;
+        lcg := 12345;
+        Done := FALSE;
+        Err := FALSE;
+        FOR i := 0 TO 1023 DO buf[i] := Pv0; END_FOR;
+        RETURN;
+    END_IF;
+    IF CycleTime <= 0.0 OR Tau1 <= 0.0 OR K = 0.0 THEN
+        Err := TRUE;
+        Done := FALSE;
+        RETURN;
+    END_IF;
+    Err := FALSE;
+    Done := TRUE;
+    dt := CycleTime;
+    ndly := 0;
+    IF Theta > 0.0 THEN
+        ndly := TRUNC(Theta / dt);
+        IF ndly > 1023 THEN ndly := 1023; END_IF;
+    END_IF;
+    /* push current effective input into the delay line */
+    uin := K * U + DistU;
+    buf[head] := uin;
+    head := (head + 1) MOD 1024;
+    /* delayed sample: ndly samples back from the newest write */
+    i := head - 1 - ndly;
+    IF i < 0 THEN i := i + 1024; END_IF;
+    IF i < 0 THEN i := 0; END_IF;
+    target := buf[i];
+    /* lag 1 */
+    dt := dt / (Tau1 + dt);
+    x1 := x1 + (target - x1) * dt;
+    IF Tau2 > 0.0 THEN
+        dt := CycleTime / (Tau2 + CycleTime);
+        x2 := x2 + (x1 - x2) * dt;
+    ELSE
+        x2 := x1;
+    END_IF;
+    /* ambient drift: pull toward Taamb */
+    IF TauAmb > 0.0 AND Taamb <> 0.0 THEN
+        amb := Taamb + (x2 - Taamb) *
+               (1.0 - CycleTime / (TauAmb + CycleTime));
+        x2 := amb;
+    END_IF;
+    /* deterministic dither (Numerical Recipes LCG) */
+    IF NoiseAmp > 0.0 THEN
+        lcg := lcg * 1664525 + 1013904223;
+        n := UDINT_TO_DINT(lcg MOD 2001) - 1000;
+        x2 := x2 + NoiseAmp * DINT_TO_LREAL(n) / 1000.0;
+    END_IF;
+    PV := x2;
+END_FUNCTION_BLOCK
