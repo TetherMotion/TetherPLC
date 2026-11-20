@@ -2402,3 +2402,167 @@ END_VAR
     Tv := TableTv[i] + (TableTv[i + 1] - TableTv[i]) * Frac;
     Done := TRUE;
 END_FUNCTION_BLOCK
+
+// ========================= auto tune ==============================
+// FB_AtcAutoTune — one-shot relay autotune with bumpless PID
+// handoff.  Wraps FB_AtcRelayTune: while tuning, Out carries the
+// relay drive and PidTrack/PidTrackVal tell the caller to hold
+// FB_AtcPid in TrackEn mode tracking the relay output.  On tuner
+// Done the computed Kp/Tn/Tv are exposed for one handoff scan
+// (PidTrack still TRUE), then PidTrack drops so the PID — already
+// tracking the final drive — takes over without a bump.
+//
+//   Caller wiring:
+//     at(Execute:=run, Setpoint:=sp, Actual:=pv, CycleTime:=dt, ...);
+//     pid(Kp:=at.Kp, Tn:=at.Tn, Tv:=at.Tv,
+//         TrackEn:=at.PidTrack, TrackVal:=at.PidTrackVal, ...);
+//     ao := at.Out;   // relay during tune, PID output after Done
+//
+//   Phases: 0 idle -> 1 tuning -> 2 handoff (1 scan) -> 3 done.
+//   Re-tune: pulse Reset, or drop Execute and raise it again.
+//   Abort stops the relay test (phase->0, Done stays FALSE).
+FUNCTION_BLOCK FB_AtcAutoTune
+VAR_INPUT
+    Execute : BOOL;
+    Setpoint : LREAL;
+    Actual : LREAL;
+    CycleTime : LREAL;
+    RelayAmp : LREAL;      // relay half-amplitude (out units) > 0
+    MeanOut : LREAL;       // relay centre
+    Hyst : LREAL;          // hysteresis (deg)
+    OutMin : LREAL;
+    OutMax : LREAL;
+    TuneRule : DINT;       // 0..3 (ZN classic/overshoot/none, TL)
+    MinCyc : DINT;         // periods to collect (0 -> 3, max 6)
+    Abort : BOOL;
+    Reset : BOOL;
+    PidOut : LREAL;        // PID output, passed through after Done
+END_VAR
+VAR_OUTPUT
+    Done : BOOL;           // tuning finished; gains valid
+    Busy : BOOL;           // relay test running
+    Err : BOOL;
+    Out : LREAL;           // plant drive (see header)
+    Kp : LREAL;
+    Tn : LREAL;
+    Tv : LREAL;
+    Ku : LREAL;
+    Tu : LREAL;
+    Amp : LREAL;
+    Cycles : DINT;
+    PidTrack : BOOL;       // -> FB_AtcPid.TrackEn
+    PidTrackVal : LREAL;   // -> FB_AtcPid.TrackVal
+END_VAR
+VAR
+    rt : FB_AtcRelayTune;
+    phase : DINT;          // 0 idle, 1 tuning, 2 handoff, 3 done
+    lastOut : LREAL;       // last actual relay drive
+    wasEx : BOOL;
+    aborted : BOOL;        // Abort seen; blocks auto-restart
+END_VAR
+    Done := FALSE;
+    Err := FALSE;
+    Busy := FALSE;
+    IF Reset THEN
+        phase := 0;
+        lastOut := MeanOut;
+        wasEx := FALSE;
+        aborted := FALSE;
+    END_IF;
+    IF NOT Execute THEN
+        aborted := FALSE;
+    END_IF;
+    IF CycleTime <= 0.0 THEN
+        Err := TRUE;
+    END_IF;
+    // retune on Execute rising edge out of phase 3
+    IF phase = 3 AND wasEx = FALSE AND Execute THEN
+        phase := 1;
+        lastOut := MeanOut;
+        rt(Execute := FALSE, Setpoint := Setpoint,
+           Actual := Actual, RelayAmp := RelayAmp,
+           MeanOut := MeanOut, Hyst := Hyst,
+           OutMin := OutMin, OutMax := OutMax,
+           TuneRule := TuneRule, MinCyc := MinCyc,
+           CycleTime := CycleTime, Abort := FALSE,
+           Reset := TRUE);
+    END_IF;
+    wasEx := Execute;
+    rt(Execute := Execute AND phase = 1, Setpoint := Setpoint,
+       Actual := Actual, RelayAmp := RelayAmp, MeanOut := MeanOut,
+       Hyst := Hyst, OutMin := OutMin, OutMax := OutMax,
+       TuneRule := TuneRule, MinCyc := MinCyc,
+       CycleTime := CycleTime, Abort := Abort,
+       Reset := Reset);
+    IF phase = 1 AND rt.Busy THEN
+        lastOut := rt.Out;
+    END_IF;
+    CASE phase OF
+        0:
+            IF Execute AND NOT Err AND NOT aborted THEN
+                phase := 1;
+                lastOut := MeanOut;
+                rt(Execute := Execute, Setpoint := Setpoint,
+                   Actual := Actual, RelayAmp := RelayAmp,
+                   MeanOut := MeanOut, Hyst := Hyst,
+                   OutMin := OutMin, OutMax := OutMax,
+                   TuneRule := TuneRule, MinCyc := MinCyc,
+                   CycleTime := CycleTime, Abort := FALSE,
+                   Reset := TRUE);
+            END_IF;
+            Out := lastOut;
+            PidTrack := Execute AND NOT Err AND NOT aborted;
+            PidTrackVal := lastOut;
+        1:
+            IF NOT Execute THEN
+                // hold: freeze drive, keep PID tracking
+                Out := lastOut;
+                PidTrack := TRUE;
+                PidTrackVal := lastOut;
+            ELSIF Abort THEN
+                phase := 0;
+                aborted := TRUE;
+                Out := lastOut;
+                PidTrack := TRUE;
+                PidTrackVal := lastOut;
+            ELSIF rt.Done THEN
+                // gains already on rt outputs; one handoff scan
+                Kp := rt.Kp; Tn := rt.Tn; Tv := rt.Tv;
+                Ku := rt.Ku; Tu := rt.Tu; Amp := rt.Amp;
+                Cycles := rt.Cycles;
+                Done := TRUE;
+                Out := lastOut;
+                PidTrack := TRUE;
+                PidTrackVal := lastOut;
+                phase := 2;
+            ELSIF rt.Err THEN
+                Err := TRUE;
+                Out := lastOut;
+                PidTrack := TRUE;
+                PidTrackVal := lastOut;
+                phase := 0;
+            ELSE
+                Out := rt.Out;
+                PidTrack := TRUE;
+                PidTrackVal := rt.Out;
+            END_IF;
+        2:
+            // handoff scan done -> release track next scan
+            Done := TRUE;
+            Out := lastOut;
+            PidTrack := FALSE;
+            PidTrackVal := lastOut;
+            phase := 3;
+        ELSE // 3: done
+            Done := TRUE;
+            Out := PidOut;
+            PidTrack := FALSE;
+            PidTrackVal := lastOut;
+    END_CASE;
+    IF phase = 1 THEN
+        Busy := TRUE;
+        Kp := rt.Kp; Tn := rt.Tn; Tv := rt.Tv;
+        Ku := rt.Ku; Tu := rt.Tu; Amp := rt.Amp;
+        Cycles := rt.Cycles;
+    END_IF;
+END_FUNCTION_BLOCK
