@@ -209,6 +209,17 @@ enum TplcCtlOp {
        frames themselves come back via TRACE_READ.               */
     TPLC_OP_HIST_CONF      = 0x0F10,
     TPLC_OP_HIST_LIST      = 0x0F11,
+    /* mqtt 0x0F20: broker connections + receive journal for the
+       IDE's MQTT history viewer.  STATUS ∅ → {u32 n,
+       {u32 handle, u32 state, u32 journal_count, u32 port,
+       u32 transport, u32 tls, u32 mqtt_version, str host,
+       str client_id}*} for allocated handles only (state 0=down,
+       2=connected); JOURNAL {u32 handle, u32 idx, u32 max} →
+       {i32 total, u32 n, {u64 ts_ms, u32 qos, u32 retain,
+       u32 msgid, str topic, u32 plen, bytes payload}*}; idx is
+       logical from oldest retained, entries oldest→newest.        */
+    TPLC_OP_MQTT_STATUS    = 0x0F20,
+    TPLC_OP_MQTT_JOURNAL   = 0x0F21,
     /* events 0x0E00 */
     TPLC_EV_PROG_TRANSITION = 0x0E01,
     TPLC_EV_FAULT           = 0x0E02,

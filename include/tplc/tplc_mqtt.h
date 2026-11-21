@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-#define TPLC_MQTT_ABI_VERSION 1u
+#define TPLC_MQTT_ABI_VERSION 2u
 /* a connect may produce up to this many concurrent subscriptions */
 #define TPLC_MQTT_SUB_MAX   16u
 #define TPLC_MQTT_HDL_MAX   16u
@@ -130,6 +130,34 @@ typedef struct TplcMqttRx5 {
     uint8_t  correlation_data[128];
 } TplcMqttRx5;
 
+/* one journaled inbound message (see mqtt_journal).  topic/payload
+   are NUL-terminated, truncated to the fixed caps. */
+#define TPLC_MQTT_JOURNAL_DEPTH  64u
+#define TPLC_MQTT_JOURNAL_TOPIC  128u
+#define TPLC_MQTT_JOURNAL_PAYLOAD 256u
+typedef struct TplcMqttJournalEntry {
+    uint64_t ts_ms;                    /* wall-clock ms since epoch */
+    uint32_t qos;
+    uint32_t retain;
+    uint32_t message_id;
+    uint32_t topic_len;
+    uint32_t payload_len;              /* bytes stored (<= PAYLOAD) */
+    char     topic[TPLC_MQTT_JOURNAL_TOPIC];
+    uint8_t  payload[TPLC_MQTT_JOURNAL_PAYLOAD];
+} TplcMqttJournalEntry;
+
+/* connection identity for ctl/UI display — deliberately carries
+   NO credentials (username/password never leave the service). */
+typedef struct TplcMqttConnInfo {
+    char     host[128];        /* connect host (may carry /ws path) */
+    char     client_id[64];
+    uint32_t port;
+    uint32_t transport;        /* cfg: 0 auto 1 tcp 2 ssl 3 ws 4 wss */
+    uint32_t tls;              /* effective TLS active */
+    uint32_t mqtt_version;
+    uint32_t _pad;
+} TplcMqttConnInfo;
+
 /* ---- service vtable ----
  * Returned by getService("tplc-mqtt").  All entries take the service
  * `this` as first arg. */
@@ -190,7 +218,20 @@ typedef struct TplcMqttService {
      * properties (v5 connections only; v3 returns E_PARAM). */
     int32_t (*mqtt_receive5)(void*, uint32_t h, TplcMqttRx5* rx);
 
-    void* reserved[3];
+    /* service-side journal (ABI v2): every message delivered through
+       mqtt_receive/mqtt_receive5 is appended to a per-connection
+       ring (64 entries).  idx is a logical index, 0 = oldest
+       retained entry.  Pass out=NULL to query the retained count;
+       otherwise out receives the entry at idx when idx < count.
+       Returns the retained count (>=0) or a negative error. */
+    int32_t (*mqtt_journal)(void*, uint32_t h, uint32_t idx,
+                            TplcMqttJournalEntry* out);
+
+    /* connection identity (ABI v2): host/port/transport/client_id
+       for UI display; never includes credentials. */
+    int32_t (*mqtt_info)(void*, uint32_t h, TplcMqttConnInfo* out);
+
+    void* reserved[1];
 } TplcMqttService;
 
 /* status / error codes */

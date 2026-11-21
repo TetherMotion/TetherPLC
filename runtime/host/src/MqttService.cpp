@@ -108,6 +108,13 @@ struct Conn {
     uint32_t last_msg_id = 0;
     int32_t  last_error = 0;
 #endif
+    /* per-connection receive journal (ABI v2): every message that
+       mqtt_receive/mqtt_receive5 delivers is appended here so ctl
+       clients can browse broker history even when the PLC program
+       never polls that connection. */
+    TplcMqttJournalEntry journal[TPLC_MQTT_JOURNAL_DEPTH];
+    uint32_t j_head = 0;    /* next write slot */
+    uint32_t j_count = 0;   /* retained entries (<= DEPTH) */
 };
 
 } // namespace
@@ -242,6 +249,35 @@ struct MqttService::Impl {
     Conn conns[TPLC_MQTT_HDL_MAX]{};
 };
 
+/* append one inbound message to a connection's journal ring.
+   Called on the mqtt_receive/mqtt_receive5 success path — i.e. only
+   for messages the PLC actually polled (Paho's sync API has no
+   peek, so consuming into the journal here would steal messages
+   from the program). */
+static void journal_push(Conn& c, const char* topic, int tlen,
+                         const void* payload, int plen,
+                         uint32_t qos, uint32_t retain, uint32_t msgid) {
+    auto& e = c.journal[c.j_head];
+    const auto now = std::chrono::system_clock::now()
+                         .time_since_epoch();
+    e.ts_ms = uint64_t(std::chrono::duration_cast<
+                           std::chrono::milliseconds>(now).count());
+    e.qos = qos;
+    e.retain = retain;
+    e.message_id = msgid;
+    size_t tn = tlen >= 0 ? size_t(tlen) : std::strlen(topic);
+    if (tn >= TPLC_MQTT_JOURNAL_TOPIC) tn = TPLC_MQTT_JOURNAL_TOPIC - 1;
+    if (tn) std::memcpy(e.topic, topic, tn);
+    e.topic[tn] = 0;
+    e.topic_len = uint32_t(tn);
+    size_t pn = plen > 0 ? size_t(plen) : 0;
+    if (pn > TPLC_MQTT_JOURNAL_PAYLOAD) pn = TPLC_MQTT_JOURNAL_PAYLOAD;
+    if (pn) std::memcpy(e.payload, payload, pn);
+    e.payload_len = uint32_t(pn);
+    c.j_head = (c.j_head + 1) % TPLC_MQTT_JOURNAL_DEPTH;
+    if (c.j_count < TPLC_MQTT_JOURNAL_DEPTH) ++c.j_count;
+}
+
 MqttService::MqttService() {
     impl_ = std::make_unique<Impl>();
     svc_.struct_size = sizeof(TplcMqttService);
@@ -282,6 +318,11 @@ MqttService::MqttService() {
         { return self(s)->subscribe5(s, h, f, q, pr); };
     svc_.mqtt_receive5 = [](void* s, uint32_t h, TplcMqttRx5* rx)
         { return self(s)->receive5(s, h, rx); };
+    svc_.mqtt_journal = [](void* s, uint32_t h, uint32_t idx,
+                           TplcMqttJournalEntry* o)
+        { return self(s)->journal(s, h, idx, o); };
+    svc_.mqtt_info = [](void* s, uint32_t h, TplcMqttConnInfo* o)
+        { return self(s)->info(s, h, o); };
 }
 
 MqttService::~MqttService() {
@@ -745,6 +786,8 @@ int32_t MqttService::receive(void*, uint32_t h, TplcMqttRx* rx) {
     uint32_t pn = rx->payload_len < rx->payload_cap ? rx->payload_len
                                                   : rx->payload_cap;
     std::memcpy(rx->payload, msg->payload, pn);
+    journal_push(c, topic, tlen, msg->payload, msg->payloadlen,
+                 rx->qos, rx->retained, rx->message_id);
     MQTTClient_freeMessage(&msg);
     MQTTClient_free(topic);
     return TPLC_MQTT_OK;
@@ -853,12 +896,52 @@ int32_t MqttService::receive5(void*, uint32_t h, TplcMqttRx5* rx) {
         if (ulen && rx->user_properties[ulen - 1] == ';')
             rx->user_properties[ulen - 1] = 0;
     }
+    journal_push(c, topic, tlen, msg->payload, msg->payloadlen,
+                 b->qos, b->retained, b->message_id);
     MQTTClient_freeMessage(&msg);
     MQTTClient_free(topic);
     return TPLC_MQTT_OK;
 #else
     return TPLC_MQTT_E_CONN;
 #endif
+}
+
+int32_t MqttService::journal(void*, uint32_t h, uint32_t idx,
+                             TplcMqttJournalEntry* out) {
+    if (h == 0 || h > TPLC_MQTT_HDL_MAX) return TPLC_MQTT_E_HANDLE;
+    Conn& c = impl_->conns[h - 1];
+    /* idx is logical, 0 = oldest retained: slot = (head - count +
+       idx) mod DEPTH.  out=NULL queries the count only. */
+    if (out && idx < c.j_count) {
+        const uint32_t slot =
+            (c.j_head + TPLC_MQTT_JOURNAL_DEPTH - c.j_count + idx)
+            % TPLC_MQTT_JOURNAL_DEPTH;
+        *out = c.journal[slot];
+    }
+    return int32_t(c.j_count);
+}
+
+int32_t MqttService::info(void*, uint32_t h, TplcMqttConnInfo* out) {
+    if (!out) return TPLC_MQTT_E_PARAM;
+    std::memset(out, 0, sizeof(*out));
+    if (h == 0 || h > TPLC_MQTT_HDL_MAX || !impl_->conns[h - 1].conn)
+        return TPLC_MQTT_E_HANDLE;
+    const Conn& c = impl_->conns[h - 1];
+    const ConnectSpec& s = c.spec;
+    auto cp = [](char* d, size_t cap, const std::string& v) {
+        size_t n = v.size() < cap - 1 ? v.size() : cap - 1;
+        if (n) std::memcpy(d, v.data(), n);
+        d[n] = 0;
+    };
+    cp(out->host, sizeof(out->host), s.host);
+    cp(out->client_id, sizeof(out->client_id), s.client_id);
+    out->port = s.port;
+    out->transport = s.transport;
+    out->mqtt_version = uint32_t(s.version);
+    /* effective TLS: explicit scheme wins; auto follows use_tls */
+    out->tls = (s.transport == 2 || s.transport == 4) ? 1u
+            : (s.transport == 0 ? (s.use_tls ? 1u : 0u) : 0u);
+    return TPLC_MQTT_OK;
 }
 
 int32_t MqttService::isConnected(void*, uint32_t h) {

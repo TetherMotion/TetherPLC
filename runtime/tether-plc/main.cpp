@@ -7,6 +7,7 @@
 #include <tplc/tplc_abi.h>
 #include <tplc/tplc_image.h>
 #include <tplc/tplc_ctl.h>
+#include <tplc/tplc_mqtt.h>
 #include <tplc/host/Module.hpp>
 #include <tplc/pkg/Package.hpp>
 #include <tplc/host/Program.hpp>
@@ -117,6 +118,7 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_EVTLOG_LIST:    case TPLC_OP_EVTLOG_QUERY:
     case TPLC_OP_EVTLOG_STATS:   case TPLC_OP_EVTLOG_HISTORY:
     case TPLC_OP_HIST_LIST:
+    case TPLC_OP_MQTT_STATUS:    case TPLC_OP_MQTT_JOURNAL:
         return tplc::TPLC_ROLE_OBSERVER;
     case TPLC_OP_DBG_WATCH_ADD:
     case TPLC_OP_DBG_WATCH_STREAM:
@@ -4467,6 +4469,99 @@ int main(int argc, char** argv) {
             w.u64(trace_ch[i].off);
             w.u32(trace_ch[i].len);
         }
+        ctl.reply(fd, t, w.data(), w.size(), req);
+    });
+
+    /* mqtt ops (0x0F20): broker connection inventory + the
+       service-side receive journal (ABI v2).  Drives the IDE's
+       MQTT history viewer; entries exist only for messages the
+       program actually polled via mqtt_receive. */
+    auto mqtt_svc = [&]() -> TplcMqttService* {
+        if (!prog) return nullptr;
+        return static_cast<TplcMqttService*>(
+            prog->services().getService("tplc-mqtt", 9));
+    };
+    ctl.on(TPLC_OP_MQTT_STATUS, [&](int fd, uint16_t t,
+                                    const uint8_t*, uint32_t,
+                                    uint64_t req) {
+        auto* svc = mqtt_svc();
+        tplc::CtlServer::W w;
+        uint32_t n = 0;
+        if (svc && svc->mqtt_status && svc->mqtt_journal &&
+            svc->mqtt_info) {
+            for (uint32_t h = 1; h <= TPLC_MQTT_HDL_MAX; ++h) {
+                TplcMqttStatus st{};
+                TplcMqttConnInfo ci{};
+                int32_t jr = svc->mqtt_journal(svc, h, 0, nullptr);
+                /* skip never-allocated handles: journal returns
+                   E_HANDLE and info E_HANDLE for them            */
+                if (svc->mqtt_info(svc, h, &ci) != TPLC_MQTT_OK)
+                    continue;
+                svc->mqtt_status(svc, h, &st);
+                w.u32(h);
+                w.u32(uint32_t(st.state < 0 ? 0 : st.state));
+                w.u32(jr > 0 ? uint32_t(jr) : 0);
+                w.u32(ci.port); w.u32(ci.transport);
+                w.u32(ci.tls);   w.u32(ci.mqtt_version);
+                w.str(ci.host, uint32_t(strnlen(ci.host,
+                                                sizeof ci.host)));
+                w.str(ci.client_id, uint32_t(strnlen(
+                    ci.client_id, sizeof ci.client_id)));
+                ++n;
+            }
+        }
+        /* n was counted while writing — prepend count */
+        tplc::CtlServer::W h2;
+        h2.u32(n);
+        h2.bytes(w.data(), w.size());
+        ctl.reply(fd, t, h2.data(), h2.size(), req);
+    });
+    ctl.on(TPLC_OP_MQTT_JOURNAL, [&](int fd, uint16_t t,
+                                     const uint8_t* p, uint32_t n,
+                                     uint64_t req) {
+        auto* svc = mqtt_svc();
+        if (!svc || !svc->mqtt_journal) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE,
+                           "mqtt service unavailable", req);
+            return;
+        }
+        uint32_t h = 0, idx = 0, maxn = 64;
+        if (n >= 4) memcpy(&h, p, 4);
+        if (n >= 8) memcpy(&idx, p + 4, 4);
+        if (n >= 12) memcpy(&maxn, p + 8, 4);
+        if (h == 0 || h > TPLC_MQTT_HDL_MAX || maxn > 64) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 handle, u32 idx, u32 max<=64}",
+                           req);
+            return;
+        }
+        int32_t total = svc->mqtt_journal(svc, h, 0, nullptr);
+        if (total < 0) {
+            ctl.errorReply(fd, t, TPLC_E_MGMT_STATE,
+                           "bad mqtt handle", req);
+            return;
+        }
+        tplc::CtlServer::W w;
+        w.i32(total);
+        /* entries are buffered separately so the leading count is
+           known before the payload is appended                  */
+        tplc::CtlServer::W body;
+        uint32_t got = 0;
+        for (uint32_t i = 0; i < maxn &&
+             uint64_t(idx) + i < uint64_t(total); ++i) {
+            TplcMqttJournalEntry e{};
+            if (svc->mqtt_journal(svc, h, idx + i, &e) < 0) break;
+            body.u64(e.ts_ms);
+            body.u32(e.qos); body.u32(e.retain);
+            body.u32(e.message_id);
+            body.str(e.topic, uint32_t(strnlen(
+                e.topic, sizeof e.topic)));
+            body.u32(e.payload_len);
+            body.bytes(e.payload, e.payload_len);
+            ++got;
+        }
+        w.u32(got);
+        w.bytes(body.data(), body.size());
         ctl.reply(fd, t, w.data(), w.size(), req);
     });
 
