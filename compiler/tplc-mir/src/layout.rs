@@ -1673,6 +1673,10 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "USERNAME", Type::Str { cap: 63 });
             push(&mut off, "PASSWORD", Type::Str { cap: 127 });
             push(&mut off, "CLIENTID", Type::Str { cap: 63 });
+            /* transport selector (appended): OP1 reads TRANSPORT
+               into TplcMqttConnectCfg.transport — 0=auto, 1=tcp,
+               2=ssl, 3=ws, 4=wss (MQTT over WebSocket[+TLS]). */
+            push(&mut off, "TRANSPORT", udint());
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:

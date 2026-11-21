@@ -43,7 +43,10 @@
 // Inputs (once per bridge): Dev (node/device id, also the HA
 // device ids/name), Host, Port (0->1883 or 8883 for TLS),
 // User/Pass/ClientId broker credentials ('' = anonymous/auto),
-// ConnectMs (0->5000), MqttVer (3|5), KeepAlive (0->60 s),
+// ConnectMs (0->5000), MqttVer (3|5), Transport (0=auto tcp/ssl,
+// 1=tcp, 2=ssl, 3=ws, 4=wss — WebSocket for cloud brokers such as
+// AWS IoT / HiveMQ / EMQX; Host may carry a '/path' suffix for the
+// WS upgrade path, default /mqtt), KeepAlive (0->60 s),
 // Clean, TLS fields (UseTls/TlsInsecure/TlsCaFile/TlsCertFile/
 // TlsKeyFile — ssl:// transport, Paho SSLOptions), last-will
 // fields, BackoffMin/Max (ms, 0->service defaults 1000/30000),
@@ -51,7 +54,7 @@
 //
 // Outputs: Connected, Hdl, State (0 down/1 up), TxCnt/RxCnt,
 // Err/ErrId.  NOTE: secure transport is MQTT over TLS (ssl://);
-// WebSocket (wss://) is not supported by the tplc-mqtt service.
+// wss:// is MQTT over WebSocket+TLS (Transport=4, Paho wss://).
 
 // ---- string helpers ----
 
@@ -247,6 +250,7 @@ VAR_INPUT
     ClientId : STRING[63];    // '' = service auto id
     ConnectMs : UDINT;        // connect timeout ms; 0 -> 5000
     MqttVer : UDINT;          // 3 = MQTT 3.1.1, 5 = MQTT 5
+    Transport : UDINT;       // 0=auto 1=tcp 2=ssl 3=ws 4=wss
     KeepAlive : UDINT;
     Clean : BOOL;
     UseTls : BOOL;
@@ -330,6 +334,7 @@ END_VAR
         ch.CLIENTID := ClientId;
         ch.CONNECTMS := ConnectMs;
         ch.MQTTVER := MqttVer;
+        ch.TRANSPORT := Transport;
         IF UseTls THEN ch.USETLS := 1; ELSE ch.USETLS := 0; END_IF;
         IF TlsInsecure THEN ch.TLSINSECURE := 1;
         ELSE ch.TLSINSECURE := 0; END_IF;

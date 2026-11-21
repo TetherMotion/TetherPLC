@@ -7,6 +7,7 @@ publishes a connection's will when it closes WITHOUT a DISCONNECT
 (ungraceful drop).  UNSUBSCRIBE->UNSUBACK, PINGREQ->PINGRESP.
 Not a real broker — just enough for the client e2e."""
 import socket, ssl, struct, sys, threading, time
+import base64, hashlib
 
 SUBS = {}       # conn -> {topic filter: granted qos} (all connections)
 RETAINED = {}   # topic -> payload
@@ -18,6 +19,129 @@ TLSCTX = [None] # ssl context when --tls
 BOUNCE = [None] # {'topic','delay'} one-shot self-bounce
 RESPONDER = [None]  # topic that triggers a req/resp reply
 INJECT = []         # [{'topic','payload','delay','period','next'}]
+WS_MODE = [False]   # --ws: HTTP upgrade then RFC6455 framing
+
+WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+
+class WsSock:
+    """minimal RFC6455 server-side wrapper around a connected
+    socket: recv() yields application bytes reassembled from
+    (masked) client frames — continuation frames are joined — and
+    sendall() wraps each payload in one unmasked binary frame.
+    Exposes the socket methods handle() uses."""
+    def __init__(self, sock):
+        self._s = sock
+        self._buf = bytearray()
+        self._frag = bytearray()
+        self._eof = False
+
+    def settimeout(self, t): return self._s.settimeout(t)
+    def fileno(self): return self._s.fileno()
+    def close(self):
+        try: self._s.close()
+        except Exception: pass
+    def shutdown(self, h):
+        try: return self._s.shutdown(h)
+        except Exception: return None
+
+    def recv(self, n):
+        while len(self._buf) < n and not self._eof:
+            if not self._fill():
+                break
+        out = bytes(self._buf[:n]); del self._buf[:n]
+        return out
+
+    def sendall(self, data):
+        ln = len(data)
+        if ln < 126:
+            hdr = bytes([0x82, ln])
+        elif ln < 65536:
+            hdr = bytes([0x82, 126]) + struct.pack('>H', ln)
+        else:
+            hdr = bytes([0x82, 127]) + struct.pack('>Q', ln)
+        self._s.sendall(hdr + bytes(data))
+
+    def _pong(self, payload):
+        ln = len(payload)
+        hdr = bytes([0x8A, ln]) if ln < 126 else \
+            bytes([0x8A, 126]) + struct.pack('>H', ln)
+        self._s.sendall(hdr + payload)
+
+    def _fill(self):
+        """read WS frames until application data lands in _buf;
+        control frames (ping/close/pong) handled inline."""
+        while True:
+            h = self._s.recv(2)
+            if len(h) < 2:
+                self._eof = True
+                return False
+            b0, b1 = h[0], h[1]
+            fin = b0 & 0x80
+            op = b0 & 0x0F
+            ln = b1 & 0x7F
+            if ln == 126:
+                e = self._s.recv(2)
+                if len(e) < 2:
+                    self._eof = True; return False
+                ln = struct.unpack('>H', e)[0]
+            elif ln == 127:
+                e = self._s.recv(8)
+                if len(e) < 8:
+                    self._eof = True; return False
+                ln = struct.unpack('>Q', e)[0]
+            key = b''
+            if b1 & 0x80:
+                key = self._s.recv(4)
+                if len(key) < 4:
+                    self._eof = True; return False
+            payload = b''
+            while len(payload) < ln:
+                c = self._s.recv(ln - len(payload))
+                if not c:
+                    self._eof = True; return False
+                payload += c
+            if key:
+                payload = bytes(b ^ key[i & 3]
+                                for i, b in enumerate(payload))
+            if op == 0x8:                       # close
+                self._eof = True
+                return False
+            if op == 0x9:                       # ping -> pong
+                self._pong(payload)
+                continue
+            if op == 0xA:                       # pong — ignore
+                continue
+            self._frag += payload               # data frame(s)
+            if fin:
+                self._buf += self._frag
+                self._frag.clear()
+                return True
+
+def ws_handshake(s):
+    """RFC6455 server handshake: read the HTTP upgrade request,
+    answer 101, return a WsSock for the frame phase."""
+    req = b''
+    while b'\r\n\r\n' not in req:
+        c = s.recv(1)
+        if not c:
+            raise ConnectionError('eof in ws handshake')
+        req += c
+        if len(req) > 8192:
+            raise ConnectionError('ws headers too large')
+    key = None
+    for line in req.decode('latin1').split('\r\n'):
+        if line.lower().startswith('sec-websocket-key:'):
+            key = line.split(':', 1)[1].strip()
+    if not key:
+        raise ConnectionError('ws handshake: no Sec-WebSocket-Key')
+    accept = base64.b64encode(
+        hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+    s.sendall(('HTTP/1.1 101 Switching Protocols\r\n'
+               'Upgrade: websocket\r\n'
+               'Connection: Upgrade\r\n'
+               'Sec-WebSocket-Accept: ' + accept + '\r\n\r\n'
+               ).encode())
+    return WsSock(s)
 
 def read_varint(s):
     mult, val = 1, 0
@@ -397,6 +521,13 @@ def accept_loop(s):
             c, _ = s.accept()
         except Exception:
             return
+        if WS_MODE[0]:
+            try:
+                c = ws_handshake(c)
+            except Exception:
+                try: c.close()
+                except Exception: pass
+                continue
         with LOCK:
             CONNS.add(c)
         threading.Thread(target=handle, args=(c,), daemon=True).start()
@@ -468,6 +599,9 @@ def main():
         print(f'mqtt_broker_fake TLS on {port}', flush=True)
     else:
         print(f'mqtt_broker_fake on {port}', flush=True)
+    # optional WebSocket mode: --ws (combine with --tls for wss://)
+    if '--ws' in sys.argv:
+        WS_MODE[0] = True
     # optional self-bounce: --bounce <topic> <delay_s>
     if '--bounce' in sys.argv:
         i = sys.argv.index('--bounce')

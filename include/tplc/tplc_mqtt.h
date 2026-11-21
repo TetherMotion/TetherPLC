@@ -63,6 +63,15 @@ typedef struct TplcMqttConnectCfg {
     uint32_t topic_alias_max;   /* Topic Alias Maximum */
     uint32_t req_resp_info;     /* Request Response Information */
     uint32_t req_prob_info;     /* Request Problem Information */
+    /* transport selector (added v1 tail padding — sizeof unchanged):
+       0 = auto (use_tls ? ssl : tcp), 1 = tcp, 2 = ssl (TLS),
+       3 = ws (MQTT over WebSocket), 4 = wss (WebSocket over TLS).
+       ws/wss use the Paho ws://wss:// schemes; TLS options apply
+       whenever the effective scheme is ssl or wss.  For ws/wss the
+       host string may carry a '/'-suffixed path (e.g.
+       "broker.example.com/mqtt") which becomes the HTTP upgrade
+       path; empty = Paho default "/mqtt". */
+    uint32_t transport;
 } TplcMqttConnectCfg;
 
 /* ---- MQTT5 publish properties ----

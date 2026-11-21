@@ -32,6 +32,7 @@ VAR_INPUT
     ClientId : STRING[63];
     ConnectTimeoutMs : UDINT;
     MqttVersion : UDINT;      // 3|5
+    Transport : UDINT;       // 0=auto 1=tcp 2=ssl 3=ws 4=wss
     CleanSession : BOOL;
     KeepAlive : UDINT;
     WillTopic : STRING[127];
@@ -67,6 +68,7 @@ END_VAR
         ch.CLIENTID := ClientId;
         ch.CONNECTMS := ConnectTimeoutMs;
         ch.MQTTVER := MqttVersion;
+        ch.TRANSPORT := Transport;
         IF CleanSession THEN ch.CLEAN := 1; ELSE ch.CLEAN := 0; END_IF;
         ch.KEEPALIVE := KeepAlive;
         ch.WILLTOPIC := WillTopic;
@@ -595,6 +597,7 @@ VAR_INPUT
     ClientId : STRING[63];
     ConnectTimeoutMs : UDINT;
     MqttVersion : UDINT;      // 3|5
+    Transport : UDINT;       // 0=auto 1=tcp 2=ssl 3=ws 4=wss
     CleanSession : BOOL;
     KeepAlive : UDINT;
     WillTopic : STRING[127];
@@ -635,6 +638,7 @@ END_VAR
         ch.CLIENTID := ClientId;
         ch.CONNECTMS := ConnectTimeoutMs;
         ch.MQTTVER := MqttVersion;
+        ch.TRANSPORT := Transport;
         IF CleanSession THEN ch.CLEAN := 1; ELSE ch.CLEAN := 0; END_IF;
         ch.KEEPALIVE := KeepAlive;
         ch.WILLTOPIC := WillTopic;

@@ -43,6 +43,8 @@ END_VAR
     br.MqttVer  := 5;                       // or 3 for MQTT 3.1.1
     // TLS (mqtts): br.UseTls := TRUE; br.TlsCaFile := '/etc/ssl/certs/ca.pem';
     //   self-signed test broker: br.TlsInsecure := TRUE;
+    // WebSocket+TLS (wss, e.g. AWS IoT / HiveMQ Cloud / EMQX Cloud):
+    //   br.Transport := 4; br.Port := 443;   // Host may add '/mqtt'
     br.KeepAlive := 60;
     br.Clean    := TRUE;
     br.BackoffMin := 500;

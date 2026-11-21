@@ -83,6 +83,8 @@ struct ConnectSpec {
     uint32_t    topic_alias_max = 0;
     uint32_t    req_resp_info = 0;
     uint32_t    req_prob_info = 0;
+    uint32_t    transport = 0;      /* TplcMqttConnectCfg.transport */
+    uint32_t    connect_timeout_s = 0;
 };
 
 struct Conn {
@@ -153,7 +155,8 @@ int spec_connect(MQTTClient c, const ConnectSpec& s) {
     MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
     opts.keepAliveInterval = int(s.keepalive_s ? s.keepalive_s : 60);
     opts.cleansession = s.clean_session;
-    opts.connectTimeout = 5;
+    opts.connectTimeout = s.connect_timeout_s
+        ? int(s.connect_timeout_s) : 5;
     if (!s.username.empty()) opts.username = s.username.c_str();
     if (!s.password.empty()) opts.password = s.password.c_str();
     MQTTClient_willOptions will;
@@ -301,11 +304,42 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
     for (uint32_t i = 0; i < TPLC_MQTT_HDL_MAX; ++i) {
         if (!impl_->conns[i].conn) {
             MQTTClient c;
-            char uri[128];
-            std::snprintf(uri, sizeof(uri), "%s://%s:%u",
-                          (cfg && cfg->use_tls) ? "ssl" : "tcp",
-                          host, port ? port : (cfg && cfg->use_tls
-                                               ? 8883u : 1883u));
+            /* transport: 0=auto(use_tls), 1=tcp, 2=ssl, 3=ws, 4=wss.
+               TLS options apply whenever the effective scheme is
+               ssl or wss; ws/wss may carry a '/'-suffixed path in
+               the host string (Paho handshake path, default /mqtt). */
+            const uint32_t tr = cfg ? cfg->transport : 0;
+            const char* scheme;
+            bool tls_active;
+            uint32_t dport;
+            switch (tr) {
+            case 1: scheme = "tcp"; tls_active = false;
+                    dport = 1883; break;
+            case 2: scheme = "ssl"; tls_active = true;
+                    dport = 8883; break;
+            case 3: scheme = "ws";  tls_active = false;
+                    dport = 80; break;
+            case 4: scheme = "wss"; tls_active = true;
+                    dport = 443; break;
+            default:
+                tls_active = cfg && cfg->use_tls;
+                scheme = tls_active ? "ssl" : "tcp";
+                dport = tls_active ? 8883u : 1883u;
+                break;
+            }
+            const bool is_ws = tr == 3 || tr == 4;
+            std::string h = host;
+            std::string wpath;
+            const auto slash = h.find('/');
+            if (slash != std::string::npos) {
+                wpath = h.substr(slash);
+                h.resize(slash);
+            }
+            char uri[192];
+            std::snprintf(uri, sizeof(uri), "%s://%s:%u%s",
+                          scheme, h.c_str(),
+                          port ? port : dport,
+                          is_ws ? wpath.c_str() : "");
             std::set<int> fds_before = socket_fds();
             const bool v5 = cfg && cfg->version == 5;
             int rc;
@@ -328,6 +362,9 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
             opts.keepAliveInterval = int(cfg && cfg->keepalive_s
                                             ? cfg->keepalive_s : 60);
             opts.cleansession = cfg ? cfg->clean_session : 1;
+            if (cfg && cfg->connect_timeout_ms)
+                opts.connectTimeout = int(
+                    (cfg->connect_timeout_ms + 999) / 1000);
             if (cfg && cfg->username) opts.username = cfg->username;
             if (cfg && cfg->password) opts.password = cfg->password;
             MQTTClient_willOptions will;
@@ -341,7 +378,7 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
                 opts.will = &will;
             }
             MQTTClient_SSLOptions sslo;
-            if (cfg && cfg->use_tls) {
+            if (tls_active) {
                 sslo = MQTTClient_SSLOptions_initializer;
                 sslo.trustStore = cfg->tls_ca_file;
                 sslo.keyStore = cfg->tls_cert_file;
@@ -394,8 +431,11 @@ int32_t MqttService::connect(void*, const char* host, uint32_t port,
                         cfg->will_payload + cfg->will_payload_len);
                 cn.spec.will_qos = cfg->will_qos;
                 cn.spec.will_retain = cfg->will_retain;
-                cn.spec.use_tls = cfg->use_tls;
+                cn.spec.use_tls = tls_active ? 1 : 0;
                 cn.spec.tls_insecure = cfg->tls_insecure;
+                cn.spec.transport = tr;
+                cn.spec.connect_timeout_s = cfg->connect_timeout_ms
+                    ? (cfg->connect_timeout_ms + 999) / 1000 : 0;
                 if (cfg->tls_ca_file) cn.spec.tls_ca_file = cfg->tls_ca_file;
                 if (cfg->tls_cert_file)
                     cn.spec.tls_cert_file = cfg->tls_cert_file;

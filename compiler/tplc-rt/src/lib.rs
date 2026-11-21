@@ -6560,6 +6560,8 @@ const MQ_PASSWORD_LEN: usize = 3308;
 const MQ_PASSWORD: usize = 3309;
 const MQ_CLIENTID_LEN: usize = 3436;
 const MQ_CLIENTID: usize = 3437;
+// TRANSPORT udint appended @3500 -> TplcMqttConnectCfg.transport@124
+const MQ_TRANSPORT: usize = 3500;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -6633,13 +6635,13 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
         1 => {
             let mut buf = [0u8; 64];
             uacstr(this, MQ_HOST_LEN, MQ_HOST, 63, buf.as_mut_ptr());
-            // TplcMqttConnectCfg (104B): clean@0 i32, keepalive@4 u32,
+            // TplcMqttConnectCfg (128B): clean@0 i32, keepalive@4 u32,
             // version@8 u32, timeout@12 u32, username@16 ptr,
             // password@24 ptr, client_id@32 ptr, will_topic@40 ptr,
             // will_payload@48 ptr, will_payload_len@56 u32,
             // will_qos@60 u32, will_retain@64 u32, use_tls@68 u32,
             // tls_insecure@72 u32, tls_ca@80 ptr, tls_cert@88 ptr,
-            // tls_key@96 ptr
+            // tls_key@96 ptr, m5 props@104..120, transport@124 u32
             let mut cfg = [0u8; 128];
             let cfgp = cfg.as_mut_ptr();
             let wi = |off: usize, v: i32| {
@@ -6652,6 +6654,7 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             wi(8, if mver == 5 { 5 } else { 3 });
             let cms = ru32(this.add(MQ_CONNECTMS));
             wi(12, if cms > 0 { cms as i32 } else { 5000 });
+            wi(124, ru32(this.add(MQ_TRANSPORT)) as i32);
             // username/password/client_id — stack buffers stay alive
             // through the synchronous connect call
             let mut ubuf = [0u8; 64];
