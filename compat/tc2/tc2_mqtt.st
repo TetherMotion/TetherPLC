@@ -27,6 +27,11 @@ VAR_INPUT
     Execute : BOOL;
     HostName : STRING[63];
     Port : UDINT;
+    UserName : STRING[63];
+    Password : STRING[127];
+    ClientId : STRING[63];
+    ConnectTimeoutMs : UDINT;
+    MqttVersion : UDINT;      // 3|5
     CleanSession : BOOL;
     KeepAlive : UDINT;
     WillTopic : STRING[127];
@@ -57,6 +62,11 @@ END_VAR
         ch.OP := 1;
         ch.HOST := HostName;
         ch.PORT := Port;
+        ch.USERNAME := UserName;
+        ch.PASSWORD := Password;
+        ch.CLIENTID := ClientId;
+        ch.CONNECTMS := ConnectTimeoutMs;
+        ch.MQTTVER := MqttVersion;
         IF CleanSession THEN ch.CLEAN := 1; ELSE ch.CLEAN := 0; END_IF;
         ch.KEEPALIVE := KeepAlive;
         ch.WILLTOPIC := WillTopic;
@@ -580,6 +590,11 @@ VAR_INPUT
     Execute : BOOL;
     HostName : STRING[63];
     Port : UDINT;
+    UserName : STRING[63];
+    Password : STRING[127];
+    ClientId : STRING[63];
+    ConnectTimeoutMs : UDINT;
+    MqttVersion : UDINT;      // 3|5
     CleanSession : BOOL;
     KeepAlive : UDINT;
     WillTopic : STRING[127];
@@ -615,6 +630,11 @@ END_VAR
         ch.OP := 1;
         ch.HOST := HostName;
         ch.PORT := Port;
+        ch.USERNAME := UserName;
+        ch.PASSWORD := Password;
+        ch.CLIENTID := ClientId;
+        ch.CONNECTMS := ConnectTimeoutMs;
+        ch.MQTTVER := MqttVersion;
         IF CleanSession THEN ch.CLEAN := 1; ELSE ch.CLEAN := 0; END_IF;
         ch.KEEPALIVE := KeepAlive;
         ch.WILLTOPIC := WillTopic;

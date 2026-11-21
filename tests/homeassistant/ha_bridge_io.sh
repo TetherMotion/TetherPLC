@@ -73,5 +73,14 @@ else
     tail -20 "$WORK/sim.log"
 fi
 
+# credentials must reach the wire in the CONNECT packet
+if grep -q "CONNECT cid='ha-bridge-e2e' user='plcuser' has_pass=True" \
+        "$SRV_LOG"; then
+    ok "CONNECT carries username/password/client_id"
+else
+    bad "CONNECT carries username/password/client_id"
+    grep CONNECT "$SRV_LOG" | tail -5
+fi
+
 echo "== $pass pass, $fail fail"
 [ $fail -eq 0 ]

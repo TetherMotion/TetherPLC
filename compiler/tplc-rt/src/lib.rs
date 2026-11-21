@@ -6550,6 +6550,16 @@ const MQ_M5RXUPROPS: usize = 2853;
 const MQ_M5RXCORRDLEN: usize = 3108;
 const MQ_M5RXCORR_LEN: usize = 3112;
 const MQ_M5RXCORR: usize = 3113;
+// Connect extras (appended): CONNECTMS@3240,
+// USERNAME Str[63] len@3244 data@3245, PASSWORD Str[127]
+// len@3308 data@3309, CLIENTID Str[63] len@3436 data@3437.
+const MQ_CONNECTMS: usize = 3240;
+const MQ_USERNAME_LEN: usize = 3244;
+const MQ_USERNAME: usize = 3245;
+const MQ_PASSWORD_LEN: usize = 3308;
+const MQ_PASSWORD: usize = 3309;
+const MQ_CLIENTID_LEN: usize = 3436;
+const MQ_CLIENTID: usize = 3437;
 
 // tplc-mqtt service vtable offsets (TplcMqttService):
 // struct_size@0 u32, abi@4 u32, host@8 ptr(8B), then fn ptrs.
@@ -6640,8 +6650,34 @@ pub unsafe extern "C" fn __tplc_rt_FB_Mqtt(this: *mut u8, ctx: *mut u8) -> i32 {
             wi(4, ru32(this.add(MQ_KEEPALIVE)) as i32);
             let mver = ru32(this.add(MQ_MQTTVER));
             wi(8, if mver == 5 { 5 } else { 3 });
-            wi(12, 5000);   // connect timeout ms
-            // username/password/client_id ptrs left null
+            let cms = ru32(this.add(MQ_CONNECTMS));
+            wi(12, if cms > 0 { cms as i32 } else { 5000 });
+            // username/password/client_id — stack buffers stay alive
+            // through the synchronous connect call
+            let mut ubuf = [0u8; 64];
+            let mut pbuf2 = [0u8; 128];
+            let mut cbuf = [0u8; 64];
+            if *this.add(MQ_USERNAME_LEN) > 0 {
+                uacstr(this, MQ_USERNAME_LEN, MQ_USERNAME, 63,
+                       ubuf.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (ubuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(16), 8);
+            }
+            if *this.add(MQ_PASSWORD_LEN) > 0 {
+                uacstr(this, MQ_PASSWORD_LEN, MQ_PASSWORD, 127,
+                       pbuf2.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (pbuf2.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(24), 8);
+            }
+            if *this.add(MQ_CLIENTID_LEN) > 0 {
+                uacstr(this, MQ_CLIENTID_LEN, MQ_CLIENTID, 63,
+                       cbuf.as_mut_ptr());
+                core::ptr::copy_nonoverlapping(
+                    (cbuf.as_ptr() as usize).to_le_bytes().as_ptr(),
+                    cfgp.add(32), 8);
+            }
             let mut wbuf = [0u8; 128];
             let mut pbuf = [0u8; 256];
             if *this.add(MQ_WILLTOPIC_LEN) > 0 {

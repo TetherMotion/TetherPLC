@@ -35,6 +35,10 @@ END_VAR
         br.Dev := 'plc1';
         br.Host := '127.0.0.1';
         br.Port := 11883;
+        br.User := 'plcuser';
+        br.Pass := 'testpass';
+        br.ClientId := 'ha-bridge-e2e';
+        br.ConnectMs := 3000;
         br.KeepAlive := 60;
         br.Clean := TRUE;
         br.BackoffMin := 500;

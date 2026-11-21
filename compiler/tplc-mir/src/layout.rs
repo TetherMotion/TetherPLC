@@ -1666,6 +1666,13 @@ pub fn builtin_fb_layout(name: &str) -> Option<FbLayout> {
             push(&mut off, "M5RXUPROPS", Type::Str { cap: 255 });
             push(&mut off, "M5RXCORR_LEN", udint());
             push(&mut off, "M5RXCORR", Type::Str { cap: 127 });
+            /* connect extras (appended): OP1 reads CONNECTMS into the
+               cfg timeout, USERNAME/PASSWORD/CLIENTID into the
+               username/password/client_id ptrs. */
+            push(&mut off, "CONNECTMS", udint());
+            push(&mut off, "USERNAME", Type::Str { cap: 63 });
+            push(&mut off, "PASSWORD", Type::Str { cap: 127 });
+            push(&mut off, "CLIENTID", Type::Str { cap: 63 });
         }
         /* FB_EcSync — tplc-ecsync service bridge (EtherCAT DC sync
         state over Tether IO ec.dc.* params). Synchronous op dispatch:

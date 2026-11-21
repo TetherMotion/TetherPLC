@@ -35,7 +35,14 @@ END_VAR
     br.CycleTime := ct;
     br.Dev      := 'boiler';               // topic root: tether/boiler/...
     br.Host     := '192.168.1.10';         // <-- YOUR BROKER IP
-    br.Port     := 1883;
+    br.Port     := 1883;                    // 8883 for TLS
+    br.User     := '';                      // broker username
+    br.Pass     := '';
+    br.ClientId := 'tether-boiler';
+    br.ConnectMs:= 5000;
+    br.MqttVer  := 5;                       // or 3 for MQTT 3.1.1
+    // TLS (mqtts): br.UseTls := TRUE; br.TlsCaFile := '/etc/ssl/certs/ca.pem';
+    //   self-signed test broker: br.TlsInsecure := TRUE;
     br.KeepAlive := 60;
     br.Clean    := TRUE;
     br.BackoffMin := 500;

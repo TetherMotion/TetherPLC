@@ -107,22 +107,42 @@ def parse_will(body):
         if level == 5:
             pos = skip_props(body, pos)    # connect properties
         cid_len = struct.unpack('>H', body[pos:pos+2])[0]
-        pos += 2 + cid_len                 # client id
-        if not (flags & 0x04):
-            return {'will': None, 'version': level}
-        if level == 5:
-            pos = skip_props(body, pos)    # will properties
-        wt_len = struct.unpack('>H', body[pos:pos+2])[0]
         pos += 2
-        will_topic = body[pos:pos+wt_len].decode()
-        pos += wt_len
-        wm_len = struct.unpack('>H', body[pos:pos+2])[0]
-        pos += 2
-        will_msg = body[pos:pos+wm_len]
-        return {'will': {'topic': will_topic, 'payload': will_msg,
-                         'qos': (flags >> 3) & 3,
-                         'retain': (flags >> 5) & 1},
-                'version': level}
+        client_id = body[pos:pos+cid_len].decode(errors='replace')
+        pos += cid_len
+        will = None
+        if flags & 0x04:
+            if level == 5:
+                pos = skip_props(body, pos)    # will properties
+            wt_len = struct.unpack('>H', body[pos:pos+2])[0]
+            pos += 2
+            will_topic = body[pos:pos+wt_len].decode()
+            pos += wt_len
+            wm_len = struct.unpack('>H', body[pos:pos+2])[0]
+            pos += 2
+            will_msg = body[pos:pos+wm_len]
+            pos += wm_len
+            will = {'topic': will_topic, 'payload': will_msg,
+                    'qos': (flags >> 3) & 3,
+                    'retain': (flags >> 5) & 1}
+        user = pw = ''
+        if flags & 0x80:
+            ul = struct.unpack('>H', body[pos:pos+2])[0]
+            pos += 2
+            user = body[pos:pos+ul].decode(errors='replace')
+            pos += ul
+        if flags & 0x40:
+            pl = struct.unpack('>H', body[pos:pos+2])[0]
+            pos += 2
+            pw = body[pos:pos+pl].decode(errors='replace')
+            pos += pl
+        out = {'will': will, 'version': level,
+               'client_id': client_id, 'user': user, 'pass': pw}
+        if user or pw or client_id:
+            # never log the password value — only that one was sent
+            print('CONNECT cid=%r user=%r has_pass=%s' %
+                  (client_id, user, bool(pw)), flush=True)
+        return out
     except Exception:
         return {'will': None, 'version': 4}
 

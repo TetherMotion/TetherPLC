@@ -41,14 +41,17 @@
 // homeassistant/<kind>/<Dev>/<ObjId>/config on every connect.
 //
 // Inputs (once per bridge): Dev (node/device id, also the HA
-// device ids/name), Host, Port (0->1883), KeepAlive (0->60 s),
-// Clean, TLS fields, last-will fields, BackoffMin/Max (ms,
-// 0->service defaults 1000/30000), HbS heartbeat seconds
-// (0=publish-on-change only).
+// device ids/name), Host, Port (0->1883 or 8883 for TLS),
+// User/Pass/ClientId broker credentials ('' = anonymous/auto),
+// ConnectMs (0->5000), MqttVer (3|5), KeepAlive (0->60 s),
+// Clean, TLS fields (UseTls/TlsInsecure/TlsCaFile/TlsCertFile/
+// TlsKeyFile — ssl:// transport, Paho SSLOptions), last-will
+// fields, BackoffMin/Max (ms, 0->service defaults 1000/30000),
+// HbS heartbeat seconds (0=publish-on-change only).
 //
 // Outputs: Connected, Hdl, State (0 down/1 up), TxCnt/RxCnt,
-// Err/ErrId.  NOTE: FB_Mqtt exposes no username/password — MQTT
-// auth is not supported (use TLS or a trusted LAN broker).
+// Err/ErrId.  NOTE: secure transport is MQTT over TLS (ssl://);
+// WebSocket (wss://) is not supported by the tplc-mqtt service.
 
 // ---- string helpers ----
 
@@ -239,6 +242,11 @@ VAR_INPUT
     Dev : STRING[31];
     Host : STRING[63];
     Port : UDINT;
+    User : STRING[63];        // broker username ('' = anonymous)
+    Pass : STRING[127];       // broker password
+    ClientId : STRING[63];    // '' = service auto id
+    ConnectMs : UDINT;        // connect timeout ms; 0 -> 5000
+    MqttVer : UDINT;          // 3 = MQTT 3.1.1, 5 = MQTT 5
     KeepAlive : UDINT;
     Clean : BOOL;
     UseTls : BOOL;
@@ -317,6 +325,11 @@ END_VAR
             IF WillRetain THEN ch.WILLRETAIN := 1;
             ELSE ch.WILLRETAIN := 0; END_IF;
         END_IF;
+        ch.USERNAME := User;
+        ch.PASSWORD := Pass;
+        ch.CLIENTID := ClientId;
+        ch.CONNECTMS := ConnectMs;
+        ch.MQTTVER := MqttVer;
         IF UseTls THEN ch.USETLS := 1; ELSE ch.USETLS := 0; END_IF;
         IF TlsInsecure THEN ch.TLSINSECURE := 1;
         ELSE ch.TLSINSECURE := 0; END_IF;
