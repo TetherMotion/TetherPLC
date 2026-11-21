@@ -2566,3 +2566,172 @@ END_VAR
         Cycles := rt.Cycles;
     END_IF;
 END_FUNCTION_BLOCK
+
+// =========================== recipe ==============================
+// FB_AtcRecipe — batch recipe sequencer tying the temp-control
+// blocks into one object: optional relay autotune phase, then a
+// FB_AtcProfile run, with FB_AtcTrend recording PV throughout.
+//
+//   Configure segments member-wise before START:
+//     rcp.SEG[1].KIND := 2; rcp.SEG[1].TGT := 150.0; ...
+//     rcp.nseg := 4;
+//   (SEG/nseg are internal members — reachable like any FB state.)
+//
+//   Phases: 0 idle -> 1 autotune (if AutoTune) -> 2 profile -> 3
+//   done.  Outputs Kp/Tn/Tv carry preset gains (AutoTune=FALSE) or
+//   the autotuned values; PidTrack/PidTrackVal pass through the
+//   autotune handoff so the caller wires FB_AtcPid unchanged.
+//   Out carries the plant drive: relay output while tuning,
+//   PidOut afterwards — wire plant.U := rcp.Out unconditionally.
+//   Trend internals reachable as rcp.tr.Buf / rcp.tr.TrigIdx.
+FUNCTION_BLOCK FB_AtcRecipe
+VAR_INPUT
+    Execute : BOOL;
+    START : BOOL;          // level; begins on rising edge in idle
+    HOLD : BOOL;           // passed to profile (pauses ramps/dwells)
+    RESET : BOOL;
+    PV : LREAL;            // process value
+    CycleTime : LREAL;
+    AutoTune : BOOL;       // run autotune ph before profile
+    SP_Tune : LREAL;       // autotune setpoint
+    RelayAmp : LREAL;
+    MeanOut : LREAL;
+    Hyst : LREAL;
+    OutMin : LREAL;
+    OutMax : LREAL;
+    TuneRule : DINT;
+    MinCyc : DINT;
+    AbortTune : BOOL;
+    PresetKp : LREAL;      // gains used when AutoTune = FALSE
+    PresetTn : LREAL;
+    PresetTv : LREAL;
+    TrendEn : BOOL;
+    TrendDepth : DINT;     // 1..512
+    PostN : DINT;
+    TrigSeg : DINT;        // segment index that triggers trend (0=off)
+    PidOut : LREAL;        // PID output passthrough
+END_VAR
+VAR_OUTPUT
+    SP : LREAL;
+    Kp : LREAL;
+    Tn : LREAL;
+    Tv : LREAL;
+    Out : LREAL;           // plant drive (see header)
+    Busy : BOOL;
+    Done : BOOL;
+    Err : BOOL;
+    Phase : DINT;          // 0 idle 1 tune 2 profile 3 done
+    SegIdx : DINT;
+    SegTime : LREAL;
+    EV : DWORD;
+    RateNow : LREAL;
+    PidTrack : BOOL;
+    PidTrackVal : LREAL;
+    TrendTrigIdx : DINT;
+    TrendDone : BOOL;
+END_VAR
+VAR
+    prof : FB_AtcProfile;
+    aut : FB_AtcAutoTune;
+    tr : FB_AtcTrend;
+    SEG : ARRAY[1..32] OF ST_AtcSeg;
+    nseg : DINT;
+    ph : DINT;
+    i : DINT;
+    trRst : BOOL;         // pulse: (re)arm trend on profile entry
+END_VAR
+    Done := FALSE;
+    Err := FALSE;
+    Busy := FALSE;
+    IF RESET THEN
+        ph := 0;
+        trRst := TRUE;
+        tr(Execute := FALSE, CycleTime := CycleTime, Value := PV,
+           Depth := 1, PostN := 0, Arm := FALSE, Trig := FALSE,
+           Reset := TRUE);
+    END_IF;
+    IF CycleTime <= 0.0 THEN
+        Err := TRUE;
+    END_IF;
+    // push segment table into the profile block (array call-args do
+    // not bind in the MIR, so copy member-wise every scan)
+    FOR i := 1 TO 32 DO
+        prof.SEG[i].KIND := SEG[i].KIND;
+        prof.SEG[i].TGT := SEG[i].TGT;
+        prof.SEG[i].P1 := SEG[i].P1;
+        prof.SEG[i].P2 := SEG[i].P2;
+        prof.SEG[i].EV := SEG[i].EV;
+    END_FOR;
+    aut(Execute := Execute AND ph = 1, Setpoint := SP_Tune,
+        Actual := PV, CycleTime := CycleTime,
+        RelayAmp := RelayAmp, MeanOut := MeanOut, Hyst := Hyst,
+        OutMin := OutMin, OutMax := OutMax, TuneRule := TuneRule,
+        MinCyc := MinCyc, Abort := AbortTune, Reset := FALSE,
+        PidOut := PidOut);
+    prof(RUN := ph = 2, HOLD := HOLD,
+         RESET := FALSE, PvStart := TRUE, PV := PV,
+         CycleTime := CycleTime, NUM_SEG := nseg);
+    IF TrendEn AND ph = 2 THEN
+        tr(Execute := TRUE, CycleTime := CycleTime, Value := PV,
+           Depth := TrendDepth, PostN := PostN, Arm := TRUE,
+           Trig := TrigSeg > 0 AND prof.SegIdx = TrigSeg,
+           Reset := trRst);
+        trRst := FALSE;
+    END_IF;
+    SegIdx := prof.SegIdx;
+    SegTime := prof.SegTime;
+    EV := prof.EV;
+    RateNow := prof.RateNow;
+    TrendTrigIdx := tr.TrigIdx;
+    TrendDone := tr.Done;
+    CASE ph OF
+        0:
+            Kp := PresetKp; Tn := PresetTn; Tv := PresetTv;
+            PidTrack := FALSE; PidTrackVal := 0.0;
+            SP := PV;
+            Out := PidOut;
+            IF Execute AND START AND NOT Err THEN
+                IF nseg < 1 THEN
+                    Err := TRUE;
+                ELSIF AutoTune THEN
+                    ph := 1;
+                ELSE
+                    ph := 2;
+                    trRst := TRUE;
+                END_IF;
+            END_IF;
+        1:
+            Kp := aut.Kp; Tn := aut.Tn; Tv := aut.Tv;
+            PidTrack := aut.PidTrack;
+            PidTrackVal := aut.PidTrackVal;
+            SP := SP_Tune;
+            Out := aut.Out;
+            IF aut.Err THEN
+                Err := TRUE;
+                ph := 0;
+            ELSIF aut.Done THEN
+                ph := 2;
+                trRst := TRUE;
+            END_IF;
+            Busy := TRUE;
+        2:
+            // gains stay at whatever phase 1 left (autotuned) or the
+            // presets — do not overwrite here
+            PidTrack := FALSE; PidTrackVal := 0.0;
+            SP := prof.SP;
+            Out := PidOut;
+            IF prof.Err THEN
+                Err := TRUE;
+                ph := 0;
+            ELSIF prof.Done THEN
+                ph := 3;
+            END_IF;
+            Busy := TRUE;
+        ELSE // 3 done
+            Done := TRUE;
+            SP := prof.SP;
+            Out := PidOut;
+            PidTrack := FALSE; PidTrackVal := 0.0;
+    END_CASE;
+    Phase := ph;
+END_FUNCTION_BLOCK
