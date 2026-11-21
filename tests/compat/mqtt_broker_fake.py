@@ -17,6 +17,7 @@ SRV = [None]    # listener socket
 TLSCTX = [None] # ssl context when --tls
 BOUNCE = [None] # {'topic','delay'} one-shot self-bounce
 RESPONDER = [None]  # topic that triggers a req/resp reply
+INJECT = []         # [{'topic','payload','delay','period','next'}]
 
 def read_varint(s):
     mult, val = 1, 0
@@ -398,6 +399,41 @@ def bounce(b):
             pass
     print('mqtt_broker_fake bounced', flush=True)
 
+def inject_armed(inj):
+    """True once any connection holds a subscription filter matching
+    the inject topic — i.e. the subscriber is ready to receive it.
+    Gates the delay countdown so injects fire relative to subscriber
+    readiness, not broker start (sim replay is not real-time)."""
+    with LOCK:
+        return any(topic_match(f, inj['topic'])
+                   for fs in SUBS.values() for f in fs)
+
+def inject_loop():
+    """fire scheduled publishes: each entry {'topic','payload',
+    'delay','period','next','armed'}; the delay counts from the
+    moment a matching subscription appears.  period>0 reschedules,
+    else one-shot."""
+    while True:
+        now = time.time()
+        fired = False
+        for inj in INJECT:
+            if inj.get('done'):
+                continue
+            if not inj['armed']:
+                if inject_armed(inj):
+                    inj['armed'] = True
+                    inj['next'] = now + inj['delay']
+                continue
+            if now >= inj['next']:
+                publish_to(inj['topic'], inj['payload'].encode(), qos=0)
+                print('INJECT ->', inj['topic'], inj['payload'], flush=True)
+                if inj['period'] > 0:
+                    inj['next'] = now + inj['period']
+                else:
+                    inj['done'] = True
+                fired = True
+        time.sleep(0.01 if fired else 0.05)
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 11883
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -421,6 +457,28 @@ def main():
     # optional req/resp responder: --responder <request-topic>
     if '--responder' in sys.argv:
         RESPONDER[0] = sys.argv[sys.argv.index('--responder') + 1]
+    # optional timed injections: --inject <topic>|<payload>|<delay_s>
+    # [|<period_s>]  (repeatable; period 0/absent = fire once)
+    i = 0
+    while i < len(sys.argv):
+        if sys.argv[i] == '--inject' and i + 1 < len(sys.argv):
+            spec = sys.argv[i + 1].split('|')
+            if len(spec) >= 3:
+                INJECT.append({
+                    'topic': spec[0],
+                    'payload': spec[1],
+                    'delay': float(spec[2]),
+                    'period': float(spec[3]) if len(spec) > 3 else 0.0,
+                    'next': float('inf'),
+                    'armed': False,
+                    'done': False,
+                })
+            i += 2
+        else:
+            i += 1
+    if INJECT:
+        threading.Thread(target=inject_loop, daemon=True).start()
+        print(f'mqtt_broker_fake {len(INJECT)} inject(s)', flush=True)
     SRV[0] = s
     accept_loop(s)
 
