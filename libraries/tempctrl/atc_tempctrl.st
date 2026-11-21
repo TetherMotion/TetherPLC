@@ -2568,7 +2568,7 @@ END_VAR
 END_FUNCTION_BLOCK
 
 // =========================== recipe ==============================
-// FB_AtcRecipe — batch recipe sequencer tying the temp-control
+// FB_AtcBatch — batch recipe sequencer tying the temp-control
 // blocks into one object: optional relay autotune phase, then a
 // FB_AtcProfile run, with FB_AtcTrend recording PV throughout.
 //
@@ -2584,7 +2584,7 @@ END_FUNCTION_BLOCK
 //   Out carries the plant drive: relay output while tuning,
 //   PidOut afterwards — wire plant.U := rcp.Out unconditionally.
 //   Trend internals reachable as rcp.tr.Buf / rcp.tr.TrigIdx.
-FUNCTION_BLOCK FB_AtcRecipe
+FUNCTION_BLOCK FB_AtcBatch
 VAR_INPUT
     Execute : BOOL;
     START : BOOL;          // level; begins on rising edge in idle

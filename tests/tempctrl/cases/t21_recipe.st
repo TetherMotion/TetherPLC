@@ -1,4 +1,4 @@
-// t21_recipe.st — FB_AtcRecipe: preset-gain profile run with trend.
+// t21_recipe.st — FB_AtcBatch: preset-gain profile run with trend.
 // 4 segments: RAMP 20->60 @5deg/s (PvStart), DWELL 60 for 20 s,
 // RAMP ->30 @5deg/s, END.  PID (preset Kp=3,Tn=12) regulates
 // FB_AtcPlant; trend triggers on segment 2.
@@ -8,7 +8,7 @@
 PROGRAM T21
 VAR
     flags AT %QB0 : BYTE;
-    rcp : FB_AtcRecipe;
+    rcp : FB_AtcBatch;
     pid : FB_AtcPid;
     plant : FB_AtcPlant;
     cyc : DINT;
