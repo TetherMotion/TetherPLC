@@ -213,9 +213,9 @@ int main(int argc, char** argv) {
     /* fleet topology: default two-coupler fleet, a line-based
        --fleet FILE, or --fleet auto / --scan resolving the chain
        from the bus itself (EK1100/ELxxxx per discovered slave).   */
-    std::vector<tether::examples::FleetSlaveInfo> infos;
+    std::vector<tether::ethercat::beckhoff::FleetSlaveInfo> infos;
     if (scanOnly || fleetPath == "auto") {
-        namespace d = tether::examples::detail;
+        namespace d = tether::ethercat::beckhoff::detail;
         auto found = fm.master().discovery().discover({
             EtherCAT::DiscoveryOption::VendorId,
             EtherCAT::DiscoveryOption::ProductCode,
@@ -313,10 +313,10 @@ int main(int argc, char** argv) {
             "(%zu couplers, %zu modules)\n",
             found.size(), sr.couplers, sr.modules);
     } else if (fleetPath.empty()) {
-        infos = tether::examples::fleetInfos();
+        infos = tether::ethercat::beckhoff::fleetInfos();
     } else {
         std::string ferr;
-        infos = tether::examples::detail::fleetInfosFromFile(
+        infos = tether::ethercat::beckhoff::detail::fleetInfosFromFile(
             fleetPath, &ferr);
         if (infos.empty()) {
             std::fprintf(stderr, "tplc-ec-pump: %s\n",
@@ -403,7 +403,7 @@ int main(int argc, char** argv) {
                   tx,rx} — tx/rx are PDO payload bytes, so a pdo=
                   channel is valid for %I iff tx>0, %Q iff rx>0.   */
     {
-        namespace d = tether::examples::detail;
+        namespace d = tether::ethercat::beckhoff::detail;
         const std::string ftext = d::fleetTextFromInfos(infos);
         const auto fp = std::filesystem::path(simdir) / ".fleet";
         if (FILE* f = std::fopen(
