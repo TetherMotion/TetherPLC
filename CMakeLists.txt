@@ -293,21 +293,25 @@ target_link_libraries(tplc-image PRIVATE tplc_image)
 # `tplc ctl`, which accepts the same <sock> <op> [args] order.
 set(TPLC_BIN "" CACHE FILEPATH "path to the Rust tplc binary")
 if(NOT TPLC_BIN)
-  foreach(cand "${CMAKE_SOURCE_DIR}/compiler/target/debug/tplc"
-               "${CMAKE_SOURCE_DIR}/compiler/target/release/tplc")
-    if(EXISTS "${cand}")
-      set(TPLC_BIN "${cand}")
-      break()
-    endif()
-  endforeach()
+  set(TPLC_BIN "${CMAKE_SOURCE_DIR}/compiler/target/debug/tplc")
 endif()
-if(TPLC_BIN AND EXISTS "${TPLC_BIN}")
-  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/tplc-ctl"
-       CONTENT "#!/bin/sh\nexec \"${TPLC_BIN}\" ctl \"\$@\"\n")
-  file(CHMOD "${CMAKE_BINARY_DIR}/tplc-ctl"
-       PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-                   GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-endif()
+# Always emit the shim: it probes debug/release tplc at *runtime*, so it
+# works regardless of whether the Rust tools were built before or after
+# this configure ran (CI builds C++ first, cargo second).
+file(WRITE "${CMAKE_BINARY_DIR}/tplc-ctl"
+"#!/bin/sh
+# tplc-ctl compat shim — forwards to `tplc ctl` (Rust CLI).
+for p in \"${TPLC_BIN}\" \\
+         \"${CMAKE_SOURCE_DIR}/compiler/target/debug/tplc\" \\
+         \"${CMAKE_SOURCE_DIR}/compiler/target/release/tplc\"; do
+  [ -x \"\$p\" ] && exec \"\$p\" ctl \"\$@\"
+done
+echo \"tplc-ctl: tplc binary not found — run 'cargo build -p tplc' first\" >&2
+exit 127
+")
+file(CHMOD "${CMAKE_BINARY_DIR}/tplc-ctl"
+     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                 GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
 # ------------------------------------------------------------------ #
 # tplc-io: tether_io server exposing the ctl.sock surface.

@@ -3,6 +3,8 @@
  * Apache-2.0 OR MPL-2.0 */
 #include <tplc/host/SoeService.hpp>
 
+#if defined(TPLC_HAVE_TETHER_IO)
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -226,3 +228,43 @@ int32_t SoeService::writeAxPark(void* s, uint32_t slave, uint32_t park) {
 }
 
 } // namespace tplc
+
+#else /* !TPLC_HAVE_TETHER_IO */
+
+namespace tplc {
+
+struct SoeService::Impl {};
+
+SoeService::SoeService(ClockFn, void*) {}
+SoeService::~SoeService() = default;
+
+void SoeService::syncTime() {}
+
+int32_t SoeService::read(void*, uint32_t, TplcSoeState*) {
+    return TPLC_SOE_E_NOEP;
+}
+int32_t SoeService::writeOp(void*, uint32_t, uint16_t, uint32_t) {
+    return TPLC_SOE_E_NOEP;
+}
+int32_t SoeService::writePassword(void*, uint32_t, uint32_t) {
+    return TPLC_SOE_E_NOEP;
+}
+int32_t SoeService::writeCmdCtrl(void*, uint32_t, uint32_t) {
+    return TPLC_SOE_E_NOEP;
+}
+int32_t SoeService::execCommand(void*, uint32_t, uint32_t) {
+    return TPLC_SOE_E_NOEP;
+}
+int32_t SoeService::reset(void*, uint32_t) {
+    return TPLC_SOE_E_NOEP;
+}
+int32_t SoeService::writeAxCtrl(void*, uint32_t, uint32_t) {
+    return TPLC_SOE_E_NOEP;
+}
+int32_t SoeService::writeAxPark(void*, uint32_t, uint32_t) {
+    return TPLC_SOE_E_NOEP;
+}
+
+} // namespace tplc
+
+#endif /* TPLC_HAVE_TETHER_IO */

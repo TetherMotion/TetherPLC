@@ -6,6 +6,8 @@
 
 #include <tplc/host/CanopenService.hpp>
 
+#if defined(TPLC_HAVE_TETHER_IO)
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -268,3 +270,30 @@ int32_t CanopenService::sdoWrite(void*, uint16_t slave, uint16_t index,
 }
 
 } // namespace tplc
+
+#else /* !TPLC_HAVE_TETHER_IO */
+
+namespace tplc {
+
+struct CanopenService::Impl {};
+
+CanopenService::CanopenService() {}
+CanopenService::~CanopenService() = default;
+
+int32_t CanopenService::state(void*) {
+    return TPLC_CO_E_STATE;
+}
+int32_t CanopenService::sdoRead(void*, uint16_t, uint16_t, uint8_t,
+                                uint8_t*, uint32_t, uint32_t*,
+                                uint32_t*) {
+    return TPLC_CO_E_NOEP;
+}
+int32_t CanopenService::sdoWrite(void*, uint16_t, uint16_t, uint8_t,
+                                 const uint8_t*, uint32_t, uint8_t,
+                                 uint32_t*) {
+    return TPLC_CO_E_NOEP;
+}
+
+} // namespace tplc
+
+#endif /* TPLC_HAVE_TETHER_IO */

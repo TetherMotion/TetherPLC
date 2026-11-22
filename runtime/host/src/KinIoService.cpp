@@ -394,7 +394,7 @@ namespace tplc {
 
 struct KinIoService::Impl {};
 
-KinIoService::KinIoService(ClockFn, void*) = default;
+KinIoService::KinIoService(ClockFn, void*) {}
 KinIoService::~KinIoService() = default;
 void KinIoService::syncTime() {}
 bool KinIoService::selectObj(uint32_t) { return false; }

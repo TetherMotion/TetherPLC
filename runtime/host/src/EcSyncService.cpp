@@ -3,6 +3,8 @@
  * OR MPL-2.0 */
 #include <tplc/host/EcSyncService.hpp>
 
+#if defined(TPLC_HAVE_TETHER_IO)
+
 #include <cstdlib>
 #include <cstring>
 
@@ -126,3 +128,24 @@ int32_t EcSyncService::setSync(void*, uint32_t enable) {
 }
 
 } // namespace tplc
+
+#else /* !TPLC_HAVE_TETHER_IO */
+
+namespace tplc {
+
+struct EcSyncService::Impl {};
+
+EcSyncService::EcSyncService() {}
+EcSyncService::~EcSyncService() = default;
+
+int32_t EcSyncService::status(void*, TplcEcsyncStatus* out) {
+    if (!out) return TPLC_ECSYNC_E_PARAM;
+    return TPLC_ECSYNC_E_NOEP;
+}
+int32_t EcSyncService::setSync(void*, uint32_t) {
+    return TPLC_ECSYNC_E_NOEP;
+}
+
+} // namespace tplc
+
+#endif /* TPLC_HAVE_TETHER_IO */

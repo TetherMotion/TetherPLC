@@ -347,7 +347,7 @@ namespace tplc {
 
 struct KinService::Impl {};
 
-KinService::KinService(ClockFn, void*) = default;
+KinService::KinService(ClockFn, void*) {}
 KinService::~KinService() = default;
 
 int32_t KinService::configure(void*, uint32_t, int32_t, uint32_t,

@@ -308,7 +308,7 @@ namespace tplc {
 /* Keep Impl complete so the unique_ptr member destructs cleanly. */
 struct MotionIoService::Impl {};
 
-MotionIoService::MotionIoService() = default;
+MotionIoService::MotionIoService(ClockFn, void*) {}
 MotionIoService::~MotionIoService() = default;
 
 int32_t MotionIoService::axisCreate(void*, const TPLC_MotionAxisCfg*,

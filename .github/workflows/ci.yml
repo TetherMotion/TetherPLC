@@ -4,50 +4,193 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Sibling Tether checkout the C++ build slices tether_io sources from
+  # (tplc-io, tplc_host tether-io services). Pinned to the Tether commit
+  # this repo was last verified against — bump deliberately.
+  TETHER_REF: 9617c1435f76502105a7eaebcd2adf0a3fc49bd8
 
 jobs:
   linux-x86_64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: TetherPLC
+
+      - name: Checkout Tether (tether_io sources)
+        uses: actions/checkout@v4
+        with:
+          repository: TetherMotion/Tether
+          ref: ${{ env.TETHER_REF }}
+          path: Tether
+
+      # Only the submodules the sliced tether_io build needs.
+      - name: Tether submodules
+        run: git -C Tether submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
+
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Configure + build (C/C++)
+        working-directory: TetherPLC
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
           cmake --build build -j8
 
+      # tplc's build.rs incrementally builds the C++ tool targets; with
+      # build/ already configured+built this is a fast no-op. tplcc is
+      # excluded from default-members (needs LLVM 21) — the llvm job
+      # below covers it.
+      - name: Cargo build (Rust tools)
+        working-directory: TetherPLC
+        run: cargo build -j8
+
+      # Runs after cargo build so the build/tplc-ctl shim resolves.
       - name: CTest
+        working-directory: TetherPLC
         run: ctest --test-dir build --output-on-failure
 
-      - name: Cargo test (compiler crates)
-        run: cargo test --workspace
-        working-directory: compiler
+      - name: Cargo test (default workspace members)
+        working-directory: TetherPLC
+        run: cargo test -j8
 
       # doc 15 §6: license gate — GPL-family in shipped deps fails CI
       - name: License manifest gate
+        working-directory: TetherPLC
         run: python3 tools/license_manifest.py --check --manifest /dev/null
 
   linux-aarch64-qemu:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: TetherPLC
 
+      - name: Checkout Tether (tether_io sources)
+        uses: actions/checkout@v4
+        with:
+          repository: TetherMotion/Tether
+          ref: ${{ env.TETHER_REF }}
+          path: Tether
+
+      - name: Tether submodules
+        run: git -C Tether submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
+
+      # qemu-user provides /usr/bin/qemu-aarch64 (CMAKE_CROSSCOMPILING_
+      # EMULATOR); qemu-user-binfmt registers binfmt_misc so tests that
+      # fork/exec aarch64 binaries work. (qemu-user-static is a virtual
+      # package on ubuntu 26.04 — provided by qemu-user-binfmt.)
       - name: Install cross toolchain + qemu
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-                                  qemu-user-static
+                                  qemu-user qemu-user-binfmt
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      # The build/tplc-ctl shim forwards ctl ops to the Rust tplc; the
+      # ctl/shell tests need an aarch64 tplc (runs under qemu binfmt).
+      # TPLC_BIN below points the shim at this cross-built binary.
+      - name: Cargo build tplc (aarch64)
+        working-directory: TetherPLC
+        env:
+          TPLC_SKIP_NATIVE_BUILD: "1"
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build -p tplc --target aarch64-unknown-linux-gnu -j8
 
       - name: Configure + build (aarch64)
+        working-directory: TetherPLC
         run: |
           cmake -B build-aarch64 \
             -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DTPLC_BIN="$PWD/compiler/target/aarch64-unknown-linux-gnu/debug/tplc"
           cmake --build build-aarch64 -j8
 
       # CTest runs each test via qemu-aarch64 (CMAKE_CROSSCOMPILING_EMULATOR);
       # tests that fork/exec tether-plc rely on binfmt_misc from
-      # qemu-user-static (registered by the package's postinst).
+      # qemu-user-binfmt (registered by the package's postinst).
       - name: CTest (qemu-aarch64)
+        working-directory: TetherPLC
         run: ctest --test-dir build-aarch64 --output-on-failure
+
+  # Heavy lane: tplcc needs LLVM 21 (inkwell llvm21-1 + the rusty ST
+  # frontend). Builds the full workspace incl. tplcc and runs the
+  # end-to-end script suites that need real compiled packages.
+  linux-x86_64-llvm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: TetherPLC
+
+      - name: Checkout Tether (tether_io sources)
+        uses: actions/checkout@v4
+        with:
+          repository: TetherMotion/Tether
+          ref: ${{ env.TETHER_REF }}
+          path: Tether
+
+      - name: Tether submodules
+        run: git -C Tether submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # LLVM 21 via apt.llvm.org (same path inkwell's own CI uses for
+      # >=19). llvm-sys 211 wants LLVM_SYS_211_PREFIX; inkwell links
+      # libLLVM dynamically so tests also need its lib dir on
+      # LD_LIBRARY_PATH at runtime.
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lsb-release wget software-properties-common gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get update
+          sudo apt-get install -y libllvm-21-dev llvm-21-dev llvm-21-runtime \
+                                 libpolly-21-dev
+          sudo update-alternatives --install /usr/bin/llvm-config llvm-config \
+            /usr/bin/llvm-config-21 100 || true
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/lib/llvm-21/lib" >> "$GITHUB_ENV"
+
+      - name: Configure + build (C/C++)
+        working-directory: TetherPLC
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build -j8
+
+      # tplcc + tplc in debug — the e2e scripts accept debug binaries
+      # (ops/e2e defaults to release paths, override via env below).
+      - name: Cargo build (tplcc + tplc)
+        working-directory: TetherPLC
+        run: cargo build -p tplcc -p tplc -j8
+
+      - name: Cargo test --workspace (incl. tplcc + LLVM JIT)
+        working-directory: TetherPLC
+        run: cargo test --workspace -j8
+
+      - name: e2e — Atc_Ops library
+        working-directory: TetherPLC
+        env:
+          TPLCC: ${{ github.workspace }}/TetherPLC/compiler/target/debug/tplcc
+          PKG: ${{ github.workspace }}/TetherPLC/compiler/target/debug/tplc
+        run: bash tests/ops/e2e.sh
+
+      - name: e2e — package library
+        working-directory: TetherPLC
+        run: bash tests/pkg/library.sh
+
+      - name: e2e — tempctrl profiles
+        working-directory: TetherPLC
+        run: bash tests/tempctrl/e2e.sh
+
+      - name: e2e — tplc serve /ws
+        working-directory: TetherPLC
+        run: bash tests/serve/e2e.sh

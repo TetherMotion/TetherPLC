@@ -3,6 +3,8 @@
  * Apache-2.0 OR MPL-2.0 */
 #include <tplc/host/EcDiagService.hpp>
 
+#if defined(TPLC_HAVE_TETHER_IO)
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -164,3 +166,25 @@ int32_t EcDiagService::ack(void*, uint32_t slave, uint32_t newest_acked) {
 }
 
 } // namespace tplc
+
+#else /* !TPLC_HAVE_TETHER_IO */
+
+namespace tplc {
+
+struct EcDiagService::Impl {};
+
+EcDiagService::EcDiagService() {}
+EcDiagService::~EcDiagService() = default;
+
+int32_t EcDiagService::read(void*, uint32_t, TplcEcDiagEntry*,
+                            uint32_t, uint32_t*, TplcEcDiagInfo* info) {
+    if (!info) return TPLC_ECDIAG_E_PARAM;
+    return TPLC_ECDIAG_E_NOEP;
+}
+int32_t EcDiagService::ack(void*, uint32_t, uint32_t) {
+    return TPLC_ECDIAG_E_NOEP;
+}
+
+} // namespace tplc
+
+#endif /* TPLC_HAVE_TETHER_IO */

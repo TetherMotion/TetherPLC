@@ -255,7 +255,7 @@ namespace tplc {
 
 struct NciIoService::Impl {};
 
-NciIoService::NciIoService() = default;
+NciIoService::NciIoService(ClockFn, void*) {}
 NciIoService::~NciIoService() = default;
 
 int32_t NciIoService::loadText(void*, uint32_t, const char*, uint32_t) {

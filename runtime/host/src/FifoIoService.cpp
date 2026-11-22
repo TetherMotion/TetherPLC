@@ -220,7 +220,7 @@ namespace tplc {
 
 struct FifoIoService::Impl {};
 
-FifoIoService::FifoIoService() = default;
+FifoIoService::FifoIoService(ClockFn, void*) {}
 FifoIoService::~FifoIoService() = default;
 
 int32_t FifoIoService::integrate(void*, uint32_t, uint32_t, uint32_t) {
