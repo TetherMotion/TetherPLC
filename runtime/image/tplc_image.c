@@ -38,6 +38,19 @@ static void seq_write_end(uint64_t* seq) {
     __atomic_add_fetch(seq, 1, __ATOMIC_RELEASE);
 }
 
+/* Backoff between seqlock retries: exponential 4µs→500µs cap. A writer
+ * preempted mid-copy (QEMU, loaded hosts) holds the seq odd for a whole
+ * scheduling quantum — instant retries exhaust MAX_TRIES in
+ * microseconds and fault the scan. Bounded sleep still fails a truly
+ * dead writer, just ~100ms later instead of never succeeding. */
+static void seq_backoff(uint32_t tries) {
+    uint64_t ns = 4000ull << (tries < 7 ? tries : 7);
+    if (ns > 500000ull) ns = 500000ull;
+    struct timespec ts = { (time_t)(ns / 1000000000ull),
+                           (long)(ns % 1000000000ull) };
+    nanosleep(&ts, NULL);
+}
+
 /* Read one stable epoch+payload under seqlock.
  * Returns 0 on success, TPLC_E_IMG_SEQ_EXHAUSTED on bound hit,
  * TPLC_E_IMG_EPOCH on observed epoch change mid-read. */
@@ -51,6 +64,7 @@ static int seq_read(TplcImage* img, uint64_t* seq, uint8_t* area,
         if (s1 & 1u) {                      /* write in progress */
             if (++tries >= TPLC_IMAGE_MAX_TRIES)
                 goto exhausted;
+            seq_backoff(tries);
             continue;
         }
         e1 = tplc_img_load_u64(&img->hdr->image_epoch);
@@ -65,6 +79,7 @@ static int seq_read(TplcImage* img, uint64_t* seq, uint8_t* area,
         }
         if (++tries >= TPLC_IMAGE_MAX_TRIES)
             goto exhausted;
+        seq_backoff(tries);
     }
 exhausted:
     __atomic_add_fetch(retry_ctr, 1, __ATOMIC_RELAXED);

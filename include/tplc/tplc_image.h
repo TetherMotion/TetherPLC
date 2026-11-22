@@ -28,7 +28,7 @@ extern "C" {
 #define TPLC_IMAGE_VERSION 1u
 #define TPLC_IMAGE_HDRSIZE 256u
 #define TPLC_IMAGE_MAX_REGION_BYTES (64u * 1024u) /* v1 cap per area   */
-#define TPLC_IMAGE_MAX_TRIES 8u                    /* seqlock bound    */
+#define TPLC_IMAGE_MAX_TRIES 256u                   /* seqlock bound    */
 
 typedef struct TplcImageHeader {
     uint64_t magic;                     /* TPLC_IMAGE_MAGIC           */

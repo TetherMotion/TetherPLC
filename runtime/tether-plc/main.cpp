@@ -3136,11 +3136,17 @@ int main(int argc, char** argv) {
             }
             for (int tries = 0; tries < 64 && rc != 0; ++tries) {
                 const uint64_t s1 = tplc_img_load_u64(&img.hdr->out_seq);
-                if (s1 & 1u) continue;
-                std::atomic_thread_fence(std::memory_order_acquire);
-                memcpy(buf.data(), img.out_area + off, len);
-                std::atomic_thread_fence(std::memory_order_acquire);
-                rc = (tplc_img_load_u64(&img.hdr->out_seq) == s1) ? 0 : -1;
+                if (!(s1 & 1u)) {
+                    std::atomic_thread_fence(std::memory_order_acquire);
+                    memcpy(buf.data(), img.out_area + off, len);
+                    std::atomic_thread_fence(std::memory_order_acquire);
+                    rc = (tplc_img_load_u64(&img.hdr->out_seq) == s1) ? 0 : -1;
+                }
+                /* same starvation guard as tplc_image.c seq_read — a
+                   preempted writer needs wall-clock, not 64 instant tries */
+                if (rc != 0)
+                    std::this_thread::sleep_for(
+                        std::chrono::microseconds(50 * (tries + 1)));
             }
         } else {
             ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
