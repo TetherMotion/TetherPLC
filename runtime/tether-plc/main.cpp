@@ -350,6 +350,7 @@ static void sha256_file(int fd, uint8_t out[32]) {
 struct DeployUpload {
     bool        active = false;
     uint64_t    id = 0, size = 0, received = 0;
+    uint64_t    last_ns = 0;   /* idle timeout: drop stalled uploads */
     uint8_t     sha[32]{};
     uint8_t     mode = 0;
     int         fd = -1;
@@ -4856,6 +4857,7 @@ int main(int argc, char** argv) {
         up.fd = ufd; up.tmp_path = tp;
         static uint64_t up_ctr = 0;
         up.id = ++up_ctr; up.active = true; up.received = 0;
+        up.last_ns = mono_ns();
         tplc::CtlServer::W w;
         w.u64(up.id); w.u32(64 * 1024);       /* max_chunk */
         ctl.reply(fd, t, w.data(), w.size(), req);
@@ -4888,6 +4890,7 @@ int main(int argc, char** argv) {
             return;
         }
         up.received += dlen;
+        up.last_ns = mono_ns();
         ctl.replyEmpty(fd, t, req);
     });
     ctl.on(TPLC_OP_DEPLOY_COMMIT, [&](int fd, uint16_t t,
@@ -5173,6 +5176,11 @@ int main(int argc, char** argv) {
     };
 
     while (!g_stop) {
+        /* a deploy upload whose client went away (ws drop, crash,
+           test timeout) would otherwise wedge DEPLOY_BEGIN forever —
+           drop it after 30 s without a chunk                        */
+        if (up.active && mono_ns() - up.last_ns > 30ull * 1000000000ull)
+            up.drop();
         uint64_t now = mono_ns();
         if (sim_mode && prog) {
             uint64_t sn = tplc_image_sim_now(&img);
