@@ -136,35 +136,39 @@ cmake --build build --target package   # or cpack -G DEB
 
 ## Quickstart — first program in 5 minutes
 
-### The easy way — `tplc`
+The normal workflow is **project-based**: `tplc` keeps each project in
+its own directory (`.tplc/project.json` manifest + sources + an
+integrated git repo — no database) and auto-detects it from any
+subdirectory.
 
-`tplc` is the single user-facing entrypoint: it compiles, creates the
-process image, spawns the runtime, the I/O service and the web backend,
-and serves the WebUI — no manual orchestration:
+### 1 — Build `tplc`
 
 ```bash
 cargo build --release -p tplc          # → compiler/target/release/tplc
-
-./compiler/target/release/tplc dev oven.st
-# compile → image → tether-plc → tplc-io → webserver, all managed:
-#   http://127.0.0.1:8089 serves the WebUI + API
-#   tplc ctl --session main status     inspect the running PLC
-#   tplc down                          shut the stack down
 ```
 
-Other composites: `tplc run oven.st` (compile → image → realtime PLC,
-Ctrl-C stops), `tplc sim oven.st --steps oven.steps` (deterministic
-replay), `tplc serve` (HTTP/WebSocket backend + WebUI static files —
-the WebSocket backend), `tplc ctl <op>` (native ctl client), `tplc doctor` (tool resolution check).
-`tplc cc …` reaches `tplcc` verbatim (incl. `tplc cc serve` for the
-compile daemon); `tplc image|bridge|io|pump` pass through to the
-runtime tools. Everything below documents the underlying pieces `tplc`
-orchestrates.
+### 2 — Create a project
 
-### Write
+```bash
+./compiler/target/release/tplc new oven
+cd oven
+# → .tplc/project.json   project manifest (sources, libs, image sizes…)
+# → src/main.st          starter ST program
+# → .gitignore           build/, .tplc/cache/, *.o, *.so
+# → .git/                repo with one "scaffold" commit
+```
+
+`tplc new` also works as `tplc init` inside an existing directory.
+Multiple projects = multiple directories; `tplc projects` lists the
+recent ones.
+
+### 3 — Write the program
+
+Edit `src/main.st` (ST shown; FBD/LD projects are edited in the browser
+IDE and stored in the manifest's `ui` member):
 
 ```st
-// oven.st — blink a %Q output at 1 Hz using the task clock
+// src/main.st — blink a %Q output at 1 Hz using the task clock
 PROGRAM Oven
 VAR
     tick AT %QX0.0 : BOOL;
@@ -179,25 +183,72 @@ END_PROGRAM
 ```
 
 `AT %QX0.0` places the var in the process image (see
-[`docs/plc/process-image.md`](docs/plc/process-image.md)).
+[`docs/plc/process-image.md`](docs/plc/process-image.md)). Add more
+`.st` files under `src/` and list them in the manifest's `sources`
+(`tplc project set sources=src/main.st,src/extra.st`), or just pass
+files on the command line — explicit sources override the manifest.
 
-### Compile
+### 4 — Run the dev stack
+
+```bash
+./compiler/target/release/tplc dev
+# inside the project dir the manifest sources are picked up
+automatically; compile → image → tether-plc → tplc-io → webserver:
+#   http://127.0.0.1:8089  WebUI (auto-detected ../TetherWebUI/dist)
+#   tplc ctl status        inspect the running PLC
+#   tplc down              shut the stack down
+```
+
+`tplc dev` reuses a live runtime if one is already up, and names the
+session/image/ctl socket after the project (`oven`). From a subdirectory
+it still finds the project; `--project /path` targets another one.
+
+### 5 — Version it
+
+```bash
+tplc git status            # "M src/main.st" / "?? new.st" / …
+tplc git diff              # unified diff vs HEAD
+tplc git commit wip        # stage everything + commit (manual commits)
+tplc git log               # history
+tplc git branch            # current branch
+```
+
+Or use the IDE's **Project** pane — manifest editor, file tree, git
+status/diff/commit/log and a recent-projects picker, all over the same
+backend.
+
+### Other composites
+
+| Command | What it does |
+|---|---|
+| `tplc run [src…]` | compile → image → realtime `tether-plc`; Ctrl-C stops |
+| `tplc sim [src…] --steps f` | deterministic step replay (CI/tests) |
+| `tplc serve` | HTTP + `/ws` backend + WebUI static files only |
+| `tplc ctl <op>` | native ctl client (`tplc ctl` lists ops) |
+| `tplc doctor` | tool resolution check |
+| `tplc cc …` | `tplcc` verbatim (incl. `tplc cc serve` compile daemon) |
+| `tplc image\|bridge\|io\|pump` | pass-throughs to the runtime tools |
+
+## Under the hood — the manual pipeline
+
+Everything in this section is what `tplc dev`/`run`/`sim` orchestrate for
+you — useful when scripting CI or driving the runtime directly.
 
 ```bash
 TPLCC=compiler/target/release/tplcc
 
 # single program → signed-capable .tplc package (default task 10 ms)
-$TPLCC build oven.st -o oven.tplc
+$TPLCC build src/main.st -o app.tplc
 
 # slower scan, e.g. 100 ms for temperature loops
-$TPLCC build oven.st --task-period-ns 100000000 -o oven.tplc
+$TPLCC build src/main.st --task-period-ns 100000000 -o app.tplc
 
 # with libraries (compiled once as --library, linked with --lib)
 $TPLCC build --library --name Atc_TempCtrl libraries/tempctrl/atc_tempctrl.st -o /tmp/atc.tplc
 $TPLCC build myapp.st --lib /tmp/atc.tplc -o myapp.tplc
 
-$TPLCC info oven.tplc     # package manifest/sections
-$TPLCC blocks             # FBD block catalog (--json for tooling)
+$TPLCC info app.tplc     # package manifest/sections
+$TPLCC blocks            # FBD block catalog (--json for tooling)
 ```
 
 ### Run — deterministic sim (tests/CI)
@@ -269,48 +320,49 @@ compile + live monitor + deploy.
 
 ---
 
-## Projects & workspaces
+## Projects & workspaces — reference
 
-`tplc` manages self-contained project directories — no database, just
-files plus an integrated git repository per project.
+Quickstart steps 2 and 5 cover the basics; this is the full reference.
+Each project is a self-contained directory — no database, just files
+plus an integrated git repository (one repo per project, `git2`-backed,
+manual commits; only the scaffold commit is automatic).
 
 ```bash
-tplc new oven                    # scaffold ./oven/ (.tplc/project.json,
-                                 #   src/main.st, .gitignore) + initial commit
-cd oven && tplc project          # show manifest (pretty JSON)
-tplc project path                # print the project root
-tplc project set name=oven2 sources=src/a.st,src/b.st   # edit fields
-
-# manifest sources are auto-detected: inside a project dir,
-#   tplc run / tplc sim / tplc dev / tplc serve
-# compile .tplc/project.json's `sources` into build/app.tplc and name
-# the session/image/ctl socket after the project (`oven`).
-# --project /path overrides discovery; discovery also works from any
-# subdirectory (walks up to .tplc/project.json).
-
-# version management (git2 — one repo per project, manual commits;
-# only the scaffold commit is automatic)
-tplc git status                  # "M path" / "?? path" entries
-tplc git diff [path]             # unified diff (worktree vs HEAD)
-tplc git commit <message>        # stage all + commit
-tplc git log [n]                 # recent commits (default 20)
-tplc git branch                  # current branch
-tplc projects                    # recently opened project roots
+tplc project            # show manifest (pretty JSON); `tplc project` with
+                        #   no subcommand inside a project prints it
+tplc project path       # print the discovered project root
+tplc project set K=V …  # edit manifest fields without a text editor
+                        #   (name description sources libs taskPeriodNs
+                        #    imageIn imageOut deployMap)
 ```
 
-`.tplc/project.json` fields: `name`, `description`, `version`,
-`sources` (ST files), `libs` (library dirs), `taskPeriodNs`,
-`imageIn`/`imageOut` (process-image bytes), `deployMap`, plus an
-opaque `ui` member where the WebUI persists its FBD/ST/curve/tune
-working document — unknown keys round-trip untouched.
+**Discovery rules** — `tplc run|sim|dev|serve` (and the `/ws`
+`project_*` ops) look for `.tplc/project.json` starting at the cwd and
+walking up; `--project /path` (CLI) or `project_open` (WS) targets a
+specific directory. When a manifest is found, its `sources` are
+compiled into `<project>/build/app.tplc` and the session/image/ctl
+socket are named after the project; explicit source arguments override
+the manifest.
 
-The same operations are exposed to the browser IDE over the `/ws`
-meta channel (`project_get/save/open`, `project_files`,
-`project_file_get/put/delete`, `projects`, `git_status/diff/commit/
-log/branch`). In the IDE, the **Project** pane shows the manifest,
-file tree, git status/commit UI and log, and a recent-projects
-picker. The IDE document still falls back to `localStorage` when no
-backend project is open.
+**Git** — all commits are manual (`tplc git commit <msg>` stages
+everything first). `tplc git diff [path]` diffs worktree vs HEAD;
+`tplc git log [n]` defaults to 20 entries.
+
+`.tplc/project.json` fields: `name`, `description`, `version`,
+`sources` (ST files, relative to the project root), `libs` (library
+dirs), `taskPeriodNs`, `imageIn`/`imageOut` (process-image bytes),
+`deployMap`, plus an opaque `ui` member where the WebUI persists its
+FBD/ST/curve/tune working document — unknown keys round-trip
+untouched, so newer schemas stay forward-compatible.
+
+**Browser IDE** — the same operations are exposed over the `/ws` meta
+channel: `project_get/save/open`, `project_files`,
+`project_file_get/put/delete`, `projects` (recent roots), and
+`git_status/diff/commit/log/branch`. The IDE's **Project** pane shows
+the manifest editor, file tree, git status/diff/commit UI, log, and a
+recent-projects picker; the IDE document itself is stored in
+`manifest.ui`. When no backend project is open the IDE falls back to
+browser `localStorage` (`tether.plc.project.v1`).
 
 ---
 
