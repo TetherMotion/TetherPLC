@@ -43,8 +43,15 @@
 #include "tether/io/TcpTransport.hpp"
 
 #include <arpa/inet.h>
+#include <net/if.h>
+#include <sys/socket.h>
+#if defined(__linux__)
+#include <linux/if_packet.h>
+#include <linux/if_ether.h>
+#endif
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdarg>
@@ -206,7 +213,36 @@ int main(int argc, char** argv) {
     const bool linkOk = iface.empty() ? fm.open(peer, port)
                                       : fm.openIface(iface);
     if (!linkOk) {
-        std::fprintf(stderr, "tplc-ec-pump: link open failed\n");
+        if (!iface.empty()) {
+            if (::if_nametoindex(iface.c_str()) == 0) {
+                std::fprintf(stderr,
+                    "tplc-ec-pump: no such interface '%s'\n", iface.c_str());
+            } else {
+                /* The link only reports bool — probe AF_PACKET ourselves to
+                   tell "needs CAP_NET_RAW" apart from a bind failure.      */
+#if defined(__linux__)
+                int probe = ::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC,
+                                     htons(ETH_P_ALL));
+                const int e = (probe < 0) ? errno : 0;
+                if (probe >= 0) ::close(probe);
+                if (e == EPERM || e == EACCES) {
+                    std::fprintf(stderr,
+                        "tplc-ec-pump: raw EtherCAT on '%s' needs CAP_NET_RAW — "
+                        "run 'sudo setcap cap_net_raw+ep %s' or use EtherCAT/UDP\n",
+                        iface.c_str(), argv[0]);
+                } else
+#endif
+                {
+                    std::fprintf(stderr,
+                        "tplc-ec-pump: link open failed on '%s'\n",
+                        iface.c_str());
+                }
+            }
+        } else {
+            std::fprintf(stderr,
+                "tplc-ec-pump: link open failed for %s:%u\n",
+                peer.c_str(), (unsigned)port);
+        }
         return 1;
     }
 

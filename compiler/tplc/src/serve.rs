@@ -469,24 +469,26 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
         "--fleet-out".into(),
         fleet_out.to_string_lossy().into_owned(),
     ]);
-    let mut out = Command::new(&pump)
-        .args(&args)
-        .output()
-        .map_err(|e| format!("tplc-ec-pump spawn failed: {e}"))?;
-    // A stale resolved binary (e.g. an old packaged pump reached via PATH
-    // before build/ existed) rejects new args — re-resolve once and retry.
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if !out.status.success() && stderr.contains("unknown arg") {
+    let mut out = Command::new(&pump).args(&args).output();
+    // A stale resolved binary (an old pump reached via PATH/bindir before
+    // build/ existed) rejects newer args, and a rebuilt tree can leave the
+    // cached path dangling — in both cases re-resolve once and retry.
+    let stale = match &out {
+        Err(_) => true,
+        Ok(o) => {
+            !o.status.success()
+                && String::from_utf8_lossy(&o.stderr).contains("unknown arg")
+        }
+    };
+    if stale {
         if let Some(fresh) = cfg.tools.find("tplc-ec-pump") {
             if fresh != pump {
                 pump = fresh;
-                out = Command::new(&pump)
-                    .args(&args)
-                    .output()
-                    .map_err(|e| format!("tplc-ec-pump spawn failed: {e}"))?;
+                out = Command::new(&pump).args(&args).output();
             }
         }
     }
+    let out = out.map_err(|e| format!("tplc-ec-pump spawn failed ({e})"))?;
     let fleet = std::fs::read_to_string(&fleet_out).unwrap_or_default();
     Ok(serde_json::json!({
         "exit": out.status.code().unwrap_or(-1),
@@ -557,7 +559,32 @@ fn do_iface_list(_cfg: &ServeCfg, _req: &serde_json::Value) -> serde_json::Value
     serde_json::json!({
         "ifaces": ifaces,
         "auto": if phys.len() == 1 { phys[0] } else { "" },
+        "raw_capable": raw_link_capable(),
     })
+}
+
+/// Raw EtherCAT (AF_PACKET) needs CAP_NET_RAW — probe once so the UI can
+/// show the setcap hint before the user runs a doomed raw-NIC scan.
+/// Non-Linux hosts report false (they have no raw transport anyway).
+#[cfg(unix)]
+fn raw_link_capable() -> bool {
+    // ETH_P_ALL = 0x0003, AF_PACKET = 17, SOCK_RAW = 3, SOCK_CLOEXEC = 0o2000000
+    let fd = unsafe {
+        libc::socket(17, 3 | 0o2000000, (0x0003u16).to_be() as i32)
+    };
+    if fd >= 0 {
+        unsafe { libc::close(fd) };
+        true
+    } else {
+        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        // EPERM/EACCES → no CAP_NET_RAW; other errors (e.g. EMFILE) don't
+        // prove the cap is missing, so treat them as capable.
+        e != 1 && e != 13
+    }
+}
+#[cfg(not(unix))]
+fn raw_link_capable() -> bool {
+    false
 }
 
 /// `sim_run` — compile the posted sources to a package, then run
