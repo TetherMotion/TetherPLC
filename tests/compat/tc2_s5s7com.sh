@@ -19,6 +19,7 @@ cd "$(dirname "$0")/../.."
 
 TPLCC=${TPLCC:-./compiler/target/debug/tplcc}
 BUILD=${BUILD:-./build}
+[ -x "$TPLCC" ] || { echo "SKIP: no tplcc"; exit 77; }
 pass=0; fail=0
 ok()  { echo "PASS $1"; pass=$((pass+1)); }
 bad() { echo "FAIL $1"; fail=$((fail+1)); }

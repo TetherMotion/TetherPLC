@@ -15,10 +15,15 @@ const TASK_STAT_SIZE: usize = 136; /* TplcCtlTaskStat: name[64]+…  */
 /* ---------------- arg helpers ---------------- */
 
 fn parse_u64(s: &str) -> u64 {
-    s.parse().unwrap_or(0)
+    // 0x… → hex (strtoul base-0); otherwise decimal
+    if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(h, 16).unwrap_or(0)
+    } else {
+        s.parse().unwrap_or(0)
+    }
 }
 fn parse_u32(s: &str) -> u32 {
-    s.parse().unwrap_or(0)
+    parse_u64(s) as u32
 }
 
 /// 32-hex → raw 16B uuid; otherwise u16 len + bytes (path|uuid form).
@@ -222,7 +227,10 @@ fn print_reply(op_code: u16, pl: &[u8], csv_mode: bool) {
                 let plc_st = r.u32();
                 let master_hb = r.u64();
                 let plc_hb = r.u64();
-                let version = cstr_name(&pl[32..96.min(pl.len())], PROG_NAME_MAX);
+                let version = cstr_name(
+                    &pl[40..(40 + PROG_NAME_MAX).min(pl.len())],
+                    PROG_NAME_MAX,
+                );
                 println!("runtime    {}  proto {}  uptime {} s", version, proto, uptime);
                 println!("programs   {} ({} running)", prog_count, running);
                 println!("master_st  {}  hb {}", master_st, master_hb);
