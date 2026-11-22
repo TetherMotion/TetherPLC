@@ -256,6 +256,6 @@ CAP_NET_ADMIN is unavailable).
 - Multi-program scheduling (descriptor supports it; driver is
   single-program).
 - ControlProxy curated ctl client in the bridge (ops work via
-  `tplc-ctl` meanwhile), real EtherCAT/Modbus transports (sim only),
+  `tplc ctl` meanwhile), real EtherCAT/Modbus transports (sim only),
   overrun-policy config (skip is hardcoded), freewheel guard/slice
   enforcement.

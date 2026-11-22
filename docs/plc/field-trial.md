@@ -35,7 +35,7 @@ RestartSec=200ms
 
 - [ ] dedicated `tplc` user exists (not root, not the master user)
 - [ ] `--authz <file>` maps ctl uids to roles; verify observer
-      cannot force (`tplc-ctl ... force` → `error 401`)
+      cannot force (`tplc ctl ... force` → `error 401`)
 - [ ] `--hang-timeout-ms` set deliberately (default bounds the
       stall→fault→_exit window at ~2x)
 - [ ] `--retain <store>` configured if the program uses RETAIN;
@@ -58,11 +58,11 @@ RestartSec=200ms
 ## During the trial
 
 - [ ] `tplc-image dump` shows `plc_status run`, heartbeats advancing
-- [ ] `tplc-ctl prog` shows expected epoch, no growing
+- [ ] `tplc ctl prog` shows expected epoch, no growing
       `max_late`/`overruns` trend
 - [ ] swap workflow rehearsed on a non-critical instance first:
       stop→prepare→start, or hot `swap` with lineage check
 - [ ] journal tail reviewed after any denied op — denials are
       recorded with uid
-- [ ] collect `tplc-ctl task` stats + evidence.sh output for the
+- [ ] collect `tplc ctl task` stats + evidence.sh output for the
       trial record

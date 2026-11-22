@@ -77,3 +77,6 @@ Cargo.lock.bak
 core
 core.*
 *.tplc
+
+__pycache__/
+*.pyc

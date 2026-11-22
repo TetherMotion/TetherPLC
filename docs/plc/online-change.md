@@ -117,8 +117,8 @@ runtimes.
 
 ## 7. IDE surface
 
-Build → deploy → `PROG_SWAP` is exposed in the deploy pane; the proxy
-`/events` stream pushes `PROG_TRANSITION` so status refreshes on commit
+Build → deploy → `PROG_SWAP` is exposed in the deploy pane; the
+`/ws` event stream pushes `PROG_TRANSITION` so status refreshes on commit
 rather than on poll. Compile-side, `--change-against` runs when the IDE
 (or CI) builds a package destined to replace a specific running one —
 the deployed package's LAYD is fetched via `PROG_LAYOUT` (0x0309) to

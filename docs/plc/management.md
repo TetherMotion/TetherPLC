@@ -63,7 +63,7 @@ last_late_ns overruns exec_max_ns exec_avg_ns`.
 `program_uuid from_state to_state reason(0 op,1 fault,2 rollback)
 ts_ns epoch` — a client can run the §2 state machine purely from
 events. Emitted on start/stop/kill/unload/prepare/swap/rollback and
-the fault path. `TPLC_EV_FAULT` carries the fault rc. `tplc-ctl
+the fault path. `TPLC_EV_FAULT` carries the fault rc. `tplc ctl
 events [SEC]` subscribes to all categories and dumps frames.
 
 ## Epoch discipline (doc 16 §5)

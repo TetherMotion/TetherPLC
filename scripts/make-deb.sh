@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # make-deb.sh — build a .deb of the TetherPLC toolchain.
 #
-# Packages: tplcc/tplc-pkg (Rust compiler), tether-plc + tether-plc-sim
-# + tplc-* (C++ runtime/control), tether-plc-bridge (deploy-map I/O
+# Packages: tplc/tplcc/tplc-pkg (Rust toolchain + unified entrypoint),
+# tether-plc + tether-plc-sim + tplc-* (C++ runtime/services),
+# tether-plc-bridge (deploy-map I/O
 # bridge), tplc-ec-pump (EtherCAT fleet pump, with its Tether shared
 # libs under /usr/lib/tetherplc), the Atc_TempCtrl + Tc2/Tc3 compat
 # library sources, and a prebuilt atc_tempctrl.tplc package.
 #
 # Prerequisites:
 #   cmake --build build -j8          # C++ binaries (RelWithDebInfo ok)
-#   cargo build --release -p tplcc -p tplc-pkg --manifest-path compiler/Cargo.toml
+#   cargo build --release -p tplcc -p tplc-pkg -p tplc --manifest-path compiler/Cargo.toml
 #   ../Tether built (lib/*.so)       # for tplc-ec-pump; set
 #                                    # TETHER_BUILD_LIB=/path/to/lib to override,
 #                                    # or SKIP_ECPUMP=1 to omit it
@@ -29,10 +30,10 @@ BIN=build
 RUST=compiler/target/release
 TETHER_LIB=${TETHER_BUILD_LIB:-../Tether/build/lib}
 
-for b in tplcc tplc-pkg; do
+for b in tplcc tplc-pkg tplc; do
     [ -x "$RUST/$b" ] || { echo "missing $RUST/$b — cargo build --release first" >&2; exit 1; }
 done
-for b in tether-plc tether-plc-sim tplc-io tplc-ctl tplc-ctl-proxy tplc-image \
+for b in tether-plc tether-plc-sim tplc-io tplc-image \
          tplc-io-probe tplc-io-cli tether-plc-bridge; do
     [ -x "$BIN/$b" ] || { echo "missing $BIN/$b — cmake --build build first" >&2; exit 1; }
 done
@@ -51,10 +52,10 @@ mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/usr/share/$PKG" \
          "$ROOT/usr/share/doc/$PKG" "$ROOT/usr/share/$PKG/lib"
 
 # --- binaries (stripped copies; build/ keeps the originals) -------------
-for b in tplcc tplc-pkg; do
+for b in tplcc tplc-pkg tplc; do
     strip -o "$ROOT/usr/bin/$b" "$RUST/$b"
 done
-for b in tether-plc tether-plc-sim tplc-io tplc-ctl tplc-ctl-proxy \
+for b in tether-plc tether-plc-sim tplc-io \
          tplc-image tplc-io-probe tplc-io-cli tether-plc-bridge; do
     strip -o "$ROOT/usr/bin/$b" "$BIN/$b"
 done
@@ -80,19 +81,20 @@ WRAP
     echo "packaged tplc-ec-pump + Tether libs"
 fi
 
-# --- IDE proxy wrapper: sane defaults for the installed layout -----------
-cat > "$ROOT/usr/bin/tplc-proxy" <<'WRAP'
+# --- IDE backend wrapper: sane defaults for the installed layout --------
+cat > "$ROOT/usr/bin/tplc-ide" <<'WRAP'
 #!/bin/sh
-# TetherPLC IDE proxy with installed paths: tplcc for /compile,
-# library dirs for /blocks + /libsrc. Extra args pass through.
-exec tplc-ctl-proxy \
+# TetherPLC IDE backend (`tplc serve`, /ws + static WebUI) with the
+# installed library dirs for the blocks/libsrc meta-ops. Extra args
+# pass through (e.g. --ctl /path/to/ctl.sock --port N).
+exec tplc serve \
     --tplcc "$(command -v tplcc)" \
     --libdir /usr/share/tetherplc/libraries/tempctrl \
     --libdir /usr/share/tetherplc/compat/tc2 \
     --libdir /usr/share/tetherplc/compat/tc3 \
     "$@"
 WRAP
-chmod 755 "$ROOT/usr/bin/tplc-proxy"
+chmod 755 "$ROOT/usr/bin/tplc-ide"
 
 # --- library sources ------------------------------------------------------
 mkdir -p "$ROOT/usr/share/$PKG/libraries/tempctrl" \
@@ -122,12 +124,13 @@ cp docs/plc/atc-tempctrl.md docs/plc/atc-ops.md docs/plc/toolchain.md \
 cat > "$ROOT/usr/share/doc/$PKG/README" <<'DOC'
 TetherPLC — IEC 61131-3 toolchain + EtherCAT temperature-control runtime
 
-Binaries:  tplcc (compiler), tplc-pkg (package verify/sign),
+Binaries:  tplc (unified entrypoint: dev/run/sim/serve/ctl),
+           tplcc (compiler), tplc-pkg (package verify/sign),
            tether-plc (runtime), tether-plc-sim (simulator),
-           tplc-io / tplc-ctl / tplc-ctl-proxy / tplc-image (services),
+           tplc-io / tplc-image (services),
            tether-plc-bridge (deploy-map EtherCAT I/O bridge),
            tplc-ec-pump (EtherCAT fleet pump, bundled Tether libs),
-           tplc-proxy (WebUI proxy wrapper with installed libdirs)
+           tplc-ide (WebUI backend wrapper with installed libdirs)
 
 Libraries: /usr/share/tetherplc/libraries/tempctrl/*.st
            /usr/share/tetherplc/compat/{tc2,tc3}/*.st

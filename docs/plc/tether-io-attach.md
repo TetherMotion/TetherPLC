@@ -6,7 +6,7 @@
 
 > Status: implemented. A standalone `tplc-io` process bridges a live
 > `tether-plc` `ctl.sock` into a `tether_io` server over TCP, and
-> `tplc-ctl-proxy --tplc-io host:port` exposes a `/tether-io`
+> `tplc serve --tplc-io host:port` exposes a `/tether-io`
 > WebSocket endpoint that byte-pipes browser sessions to the provider
 > (see "Browser gateway" below).
 
@@ -105,7 +105,7 @@ Tether's committed `SchemaValue` encode/decode API.
 
 ## Browser gateway
 
-`tplc-ctl-proxy --tplc-io host:port` serves `GET /tether-io` as a
+`tplc serve --tplc-io host:port` serves `GET /tether-io` as a
 WebSocket endpoint. After the RFC 6455 upgrade it forks a bridge
 child that translates between the browser's message-oriented
 WebSocket framing and the provider's SLIP-framed TCP stream:
@@ -140,7 +140,7 @@ function protocol unchanged — `DataHub` in TetherWebUI obtains live
 ## Determinism
 
 The provider holds no locks into the scan loop; `ctl.sock` op
-dispatch is bounded work per request, identical to local `tplc-ctl`
+dispatch is bounded work per request, identical to local `tplc ctl`
 invocations. `maxClients = 8` caps concurrent sessions.
 
 ## Limits

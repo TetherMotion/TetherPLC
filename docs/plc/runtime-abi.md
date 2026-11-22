@@ -130,8 +130,8 @@ Status: as-built. Deviations from the original plan: `docs/plc/DECISIONS.md`.
   implements ping/status/prog.{status,list,start,stop}/task.stats/
   image.stats/rt.{status,shutdown}; fault → `plc_status=fault` +
   `last_fault_code` per runtime-abi.md §4.6.
-- `tools/tplc-ctl` + `tools/ctl_client.h` — client CLI and shared
-  client helper (hello, framed send/recv).
+- `tplc ctl` (Rust) + `tools/ctl_client.h` — client CLI and
+  shared client helper (hello, framed send/recv).
 - `tests/runtime/ctl_smoke.cpp` — 27 checks across a real process
   boundary: the test plays master (image creator), forks `tether-plc`,
   and verifies %I→%Q data flow, ctl ops, stop/start gating (outputs

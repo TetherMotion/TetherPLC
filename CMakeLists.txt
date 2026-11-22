@@ -287,11 +287,27 @@ set_target_properties(tether-plc-sim PROPERTIES
 add_executable(tplc-image tools/tplc_image_tool.c)
 target_link_libraries(tplc-image PRIVATE tplc_image)
 
-add_executable(tplc-ctl tools/tplc_ctl.c)
-target_link_libraries(tplc-ctl PRIVATE tplc_image)
-target_include_directories(tplc-ctl PRIVATE tools)
-
-add_executable(tplc-ctl-proxy tools/tplc_ctl_proxy.cpp)
+# The C++ tplc-ctl client and tplc-ctl-proxy were retired: `tplc ctl`
+# (Rust, compiler/tplc) and `tplc serve`'s /ws endpoint replace them.
+# Shell tests keep invoking $BUILD/tplc-ctl — this shim forwards to
+# `tplc ctl`, which accepts the same <sock> <op> [args] order.
+set(TPLC_BIN "" CACHE FILEPATH "path to the Rust tplc binary")
+if(NOT TPLC_BIN)
+  foreach(cand "${CMAKE_SOURCE_DIR}/compiler/target/debug/tplc"
+               "${CMAKE_SOURCE_DIR}/compiler/target/release/tplc")
+    if(EXISTS "${cand}")
+      set(TPLC_BIN "${cand}")
+      break()
+    endif()
+  endforeach()
+endif()
+if(TPLC_BIN AND EXISTS "${TPLC_BIN}")
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/tplc-ctl"
+       CONTENT "#!/bin/sh\nexec \"${TPLC_BIN}\" ctl \"\$@\"\n")
+  file(CHMOD "${CMAKE_BINARY_DIR}/tplc-ctl"
+       PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                   GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+endif()
 
 # ------------------------------------------------------------------ #
 # tplc-io: tether_io server exposing the ctl.sock surface.
@@ -598,16 +614,16 @@ add_test(NAME module_scan COMMAND module_scan
 add_test(NAME sandbox_enforce COMMAND bash
   ${CMAKE_SOURCE_DIR}/tests/scan/sandbox_enforce.sh
   $<TARGET_FILE:tether-plc> $<TARGET_FILE:tplc-image>
-  $<TARGET_FILE:tplc-ctl>
+  ${CMAKE_BINARY_DIR}/tplc-ctl
   $<TARGET_FILE:sandbox_probe> $<TARGET_FILE:stub_v1>)
-add_dependencies(sandbox_probe tether-plc tplc-image tplc-ctl)
+add_dependencies(sandbox_probe tether-plc tplc-image)
 set_tests_properties(sandbox_enforce PROPERTIES SKIP_RETURN_CODE 77)
 
 # doc 15 §5 acceptance: role-gated ops, durable journal, rate limit
 add_test(NAME authz_audit COMMAND bash
   ${CMAKE_SOURCE_DIR}/tests/scan/authz_audit.sh
   $<TARGET_FILE:tether-plc> $<TARGET_FILE:tplc-image>
-  $<TARGET_FILE:tplc-ctl> $<TARGET_FILE:stub_v1>)
+  ${CMAKE_BINARY_DIR}/tplc-ctl $<TARGET_FILE:stub_v1>)
 set_tests_properties(authz_audit PROPERTIES SKIP_RETURN_CODE 77)
 
 # doc 15 §2 acceptance: safety channels deny force/write, reads stay open
@@ -692,11 +708,11 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(mixed_fbd_st PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 120 RESOURCE_LOCK plc_scan)
 
-  # ctl proxy compile path: browser src frame → tplcc → package
-  add_test(NAME ctl_proxy_compile
-    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/proxy/e2e.sh)
-  set_tests_properties(ctl_proxy_compile PROPERTIES
-    SKIP_RETURN_CODE 77 TIMEOUT 180)
+  # tplc serve /ws: compile/catalog meta-ops + degraded ctl path
+  add_test(NAME serve_ws
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/serve/e2e.sh)
+  set_tests_properties(serve_ws PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 300)
 
   # device blocks: EK-style terminals alias located vars, DI→logic→DO
   add_test(NAME device_blocks
@@ -1667,7 +1683,7 @@ if(NOT CMAKE_CROSSCOMPILING)
   add_test(NAME od_surface COMMAND bash
     ${CMAKE_SOURCE_DIR}/tests/scan/od_surface.sh
     $<TARGET_FILE:tether-plc> $<TARGET_FILE:tplc-image>
-    $<TARGET_FILE:tplc-ctl> $<TARGET_FILE:stub_v1>)
+    ${CMAKE_BINARY_DIR}/tplc-ctl $<TARGET_FILE:stub_v1>)
   set_tests_properties(od_surface PROPERTIES
     SKIP_RETURN_CODE 77 RESOURCE_LOCK plc_scan)
 

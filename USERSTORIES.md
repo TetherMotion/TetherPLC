@@ -3,7 +3,7 @@
 135 end-to-end user stories describing how engineers, operators,
 integrators, and maintenance teams use the TetherPLC ecosystem:
 the `tplcc`/`tplc-pkg` toolchain, the `tether-plc` runtime, the
-`tether-plc-bridge`/`tplc-ctl` control plane, `tplc-ec-pump` EtherCAT
+`tether-plc-bridge`/`tplc ctl` control plane, `tplc-ec-pump` EtherCAT
 I/O, the TetherWebUI browser IDE (ST/FBD/LD editors, curve editor,
 autotune editor, deploy-map editor, watch/force/debug), the
 `atc_tempctrl` temperature library, the Tc2/Tc3 compatibility

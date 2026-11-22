@@ -8,7 +8,7 @@ refresh this page).
 
 - `tests/perf/evidence.sh` builds a `LINT` pair program via `tplcc`,
   runs it under `tether-plc` on a SHM image, and samples the
-  `tplc-ctl prog` task stats (`runs`, `late`, `max_late`).
+  `tplc ctl prog` task stats (`runs`, `late`, `max_late`).
 - Watchdog latency uses `tests/perf/hang_spin.c`, a valid ABI module
   whose task spins without cooperative checkpoints. The monitor's
   log line reports its own measured `stale_ms`; the script also polls

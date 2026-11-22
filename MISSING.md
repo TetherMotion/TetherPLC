@@ -163,8 +163,8 @@ lines with zero tooling feedback.
 
 ### M7. Packaging & docs (medium)
 
-- `scripts/make-deb.sh` ships `tplcc`, `tether-plc`, `tplc-io`,
-  `tplc-ctl`, `tplc-ctl-proxy`, `tplc-image`, probes — but **not**
+- `scripts/make-deb.sh` ships `tplc`, `tplcc`, `tether-plc`, `tplc-io`,
+  `tplc-image`, probes — but **not**
   `tether-plc-bridge` or `tplc-ec-pump`, the two binaries that actually
   move image↔PDO data. `apt install` alone cannot run the I/O path.
 - `tplc-ec-pump` builds only when `TETHER_DIR` points at a Tether

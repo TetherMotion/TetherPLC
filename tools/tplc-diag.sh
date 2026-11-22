@@ -5,22 +5,22 @@
 #
 #   tplc-diag.sh <ctl-socket> [-o out.tar.gz]
 #
-# Requires tplc-ctl on PATH or TPLC_CTL=/path/to/tplc-ctl.
+# Requires `tplc` on PATH or TPLC=/path/to/tplc (uses `tplc ctl`).
 set -uo pipefail
 
 SOCK=${1:-}
 OUT=""
 [ "${2:-}" = "-o" ] && OUT=${3:-}
-CTL=${TPLC_CTL:-}
-if [ -z "$CTL" ]; then
-    for c in tplc-ctl "$(dirname "$0")/../build/tplc-ctl" \
-             "$(dirname "$0")/tplc-ctl"; do
+TPLC=${TPLC:-${TPLC_CTL:-}}
+if [ -z "$TPLC" ]; then
+    for c in tplc "$(dirname "$0")/../compiler/target/debug/tplc" \
+             "$(dirname "$0")/../compiler/target/release/tplc"; do
         if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then
-            CTL=$c; break
+            TPLC=$c; break
         fi
     done
 fi
-[ -n "$CTL" ] || { echo "tplc-ctl not found (set TPLC_CTL)" >&2; exit 2; }
+[ -n "$TPLC" ] || { echo "tplc not found (set TPLC)" >&2; exit 2; }
 [ -n "$SOCK" ] || { echo "usage: $0 <ctl-socket> [-o out.tar.gz]" >&2; exit 2; }
 
 TS=$(date +%Y%m%d-%H%M%S)
@@ -29,7 +29,7 @@ trap 'rm -rf "$DIR"' EXIT
 
 dump() { # name, ctl args...
     local f="$DIR/$1"; shift
-    "$CTL" "$SOCK" "$@" >"$f" 2>&1 || echo "(unavailable: $?)" >>"$f"
+    "$TPLC" ctl "$SOCK" "$@" >"$f" 2>&1 || echo "(unavailable: $?)" >>"$f"
 }
 
 # manifest

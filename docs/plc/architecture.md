@@ -159,7 +159,8 @@ events. `management.md`.
 | Bridge (image server, map runner) | C++ | `runtime/bridge/`, `runtime/tether-plc-bridge/` | `io-mapping.md` |
 | `tplc-io` standalone tether_io provider | C++ | `runtime/tplc-io/` | `tether-io-attach.md` |
 | L2 sim (`tether-plc-sim`) | C++ | `runtime/tether-plc-sim/` | `simulation.md` |
-| ctl client + proxy, oracle adapters | C/C++/py | `tools/` | `testing.md` |
+| `tplc` umbrella (ctl client, `/ws` backend, orchestration) | Rust | `compiler/tplc/` | `toolchain.md` |
+| Oracle adapters | C/C++/py | `tools/` | `testing.md` |
 | Web IDE | TS/Lit | TetherWebUI repo | `web-ide.md` |
 
 ## 6. Wire & ABI surfaces

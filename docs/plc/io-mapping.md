@@ -71,7 +71,7 @@ and signedness before encoding.
    `mon.ts`'s `probeKeys`/`varKeys` helpers produce the exact catalog
    names from a `Pou` + block/wire — one module owns the naming
    contract (`src/plc/mon.ts`).
-3. `EV_PROG_TRANSITION`/`EV_FAULT` over `/events` trigger a coalesced
+3. `EV_PROG_TRANSITION`/`EV_FAULT` over `/ws` trigger a coalesced
    status refresh, so a swap is reflected without waiting for a poll.
 
 ## 5. Force path (scalar writes)

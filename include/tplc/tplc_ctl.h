@@ -1,6 +1,7 @@
 /* tplc_ctl.h — control-channel wire protocol (plan doc 04 Appendix I).
- * SOCK_STREAM UDS framing shared by tether-plc (server), tplc-ctl
- * (client CLI), and tests. C-visible; P0 op subset implemented.
+ * SOCK_STREAM UDS framing shared by tether-plc (server), the `tplc`
+ * umbrella binary (`tplc ctl` client, `tplc serve` /ws bridge), and
+ * tests. C-visible; P0 op subset implemented.
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 #ifndef TPLC_CTL_H
 #define TPLC_CTL_H

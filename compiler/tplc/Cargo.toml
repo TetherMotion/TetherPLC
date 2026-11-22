@@ -1,0 +1,13 @@
+[package]
+name = "tplc"
+description = "tplc — unified TetherPLC user-facing CLI: compiler, runtime, sim, ctl, IDE backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sha2 = { version = "0.10", features = ["oid"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+git2 = "0.20"

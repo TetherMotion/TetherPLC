@@ -18,7 +18,7 @@ sudo apt install ./tetherplc_*_amd64.deb
 ```
 
 Binaries land in `/usr/bin`: `tplcc`, `tplc-pkg`, `tether-plc`,
-`tether-plc-sim`, `tether-plc-bridge`, `tplc-ec-pump`, `tplc-proxy`.
+`tether-plc-sim`, `tether-plc-bridge`, `tplc-ec-pump`, `tplc serve`.
 
 ## 2. Fleet description
 
@@ -126,8 +126,8 @@ tether-plc-bridge --validate cell.map --bus /tmp/tplc_sim/.bus
 
 The WebUI **io-map** card does the same graphically: *generate from
 bindings*, *validate*, *save for deploy* — the saved map is injected
-as a `DEPLOY_MAP` section during build/deploy (`/pkgmap` on the
-proxy). `safe=zero` on output channels defines the fault-state policy.
+as a `DEPLOY_MAP` section during build/deploy (the `pkgmap` meta-op
+over `/ws`). `safe=zero` on output channels defines the fault-state policy.
 
 ## 5. Run
 
@@ -141,7 +141,7 @@ tether-plc-bridge --image /dev/shm/tplc_cell --map cell.map \
     --plc tether-plc --image /dev/shm/tplc_cell \
          --package cell.tplc --ctl /tmp/tplc_cell.ctl
 
-# 3. (WebUI path) tplc-proxy serves /compile /blocks /pkgmap for the IDE
+# 3. (WebUI path) tplc serve serves compile/blocks/libsrc/pkgmap meta-ops over /ws for the IDE
 ```
 
 `plc.image.*` catalog signals expose every channel live; `dbg-write`

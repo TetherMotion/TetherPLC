@@ -1,5 +1,5 @@
 /* ctl_client.h — minimal control-channel client helper (header-only).
- * Used by tplc-ctl and tests. SPDX-License-Identifier:
+ * Used by tether-plc-sim and tests. SPDX-License-Identifier:
  * Apache-2.0 OR MPL-2.0 */
 #ifndef TPLC_CTL_CLIENT_H
 #define TPLC_CTL_CLIENT_H

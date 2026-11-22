@@ -23,16 +23,18 @@ PlcIde (Lit element, src/plc/plc-ide.ts)
  ├── tune.ts       autotune model + ST handoff codegen
  ├── temp-tune.ts  <temp-tune> graphical autotune editor
  ├── plcopen.ts    PLCopen XML import/export (DOM port of plcopen-io)
- ├── build.ts      /compile client, source-frame encode, diag mapping
+ ├── build.ts      compile/pkgmap meta-op client, diag mapping
  ├── mon.ts        catalog naming contract + scalar force encoder
- ├── ctl.ts        PlcCtl — ctl wire protocol over POST /ctl + /events
+ ├── ctl.ts        PlcCtl — ctl wire protocol over /ws
+├── ws.ts         PlcWs — /ws socket: binary ctl frames + JSON meta-ops
  └── hub.ts        DataHub — binds catalog keys, polls bound values
 ```
 
 One `<plc-ide>` element hosts a pane switcher (explorer / ST / FBD /
 curves / tasks / watch / deploy) over a shared `PlcProject`. Everything
-compiles through the proxy (`toolchain.md` §3) — there is no compile or
-runtime logic in the browser beyond model validation.
+compiles through `tplc serve`'s `/ws` meta-ops (`toolchain.md` §3) —
+there is no compile or runtime logic in the browser beyond model
+validation.
 
 ## 2. Project model
 
@@ -77,9 +79,9 @@ multi-select + optional `selWire`, `pending` (wire being dragged),
   operator/builtin set mirrors exactly what `fbd-lower` accepts
   (`op_kind` + `builtin_sig`), so any palette entry compiles. Library
   pins come from `stiface.ts` (attached sources) or `catalog.ts`
-  (`GET /blocks` on the ctl proxy — `tplcc blocks --json` over every
+  (`blocks` meta-op on `tplc serve` — `tplcc blocks --json` over every
   `--libdir`); placing a catalog block fires `need-libsrc`, the IDE
-  fetches `GET /libsrc` and stores the source in `stSources`, so the
+  fetches the `libsrc` meta-op and stores the source in `stSources`, so the
   project stays self-contained.
 - **Device blocks (`kind: 'device'`)** — fieldbus terminals such as
   Beckhoff EK modules. The palette's Devices group offers templates
@@ -118,7 +120,7 @@ multi-select + optional `selWire`, `pending` (wire being dragged),
   package TYPC table and recursively expands STRUCT/FUNCTION_BLOCK
   members into those dotted catalog entries (see
   `tether-io-attach.md`); the browser reaches them through the
-  proxy's `/tether-io` WebSocket→SLIP bridge. Operator outputs are
+  `tplc serve`'s `/tether-io` WebSocket→SLIP bridge. Operator outputs are
   scan temporaries (not exported) and stay blank. The IDE binds
   **all** `plc.*` params/signals, so member keys are polled alongside
   program vars.
@@ -239,14 +241,14 @@ in the vectors suite.
 ## 5. Compile + diagnostics
 
 Toolbar `check` → `compileProject(sources, build=false)` →
-`POST /compile`. `projectSources` emits **both** surfaces for a mixed
+the `compile` meta-op. `projectSources` emits **both** surfaces for a mixed
 project — `project.fbd.json` plus every non-empty `<pou>.st` — because
 `tplcc` compiles them as one module (see `fbd-model.md` § "Mixed FBD +
 ST"). FBD-authored POUs whose body lives in an `stSource` (empty
 networks) are dropped from the emitted JSON: they are editor
 bookkeeping, and the ST decl is the implementation; a POU with both
 networks and an ST body stays in and produces the duplicate-impl diag.
-The proxy writes each file into a temp dir and invokes `tplcc check` /
+`tplc serve` writes each file into a temp dir and invokes `tplcc check` /
 `tplcc build` on all of them.
 
 The problems strip renders diags severity-colored and clickable: St
@@ -264,12 +266,13 @@ value and, when `entryWritable` (flag `0x02`), a force input + set
 button → `mon.writeScalar` (alias-resolved schema, scalar-only —
 `io-mapping.md` §5). Canvas overlays read the same `values` map.
 
-## 7. Runtime events (`/events` SSE)
+## 7. Runtime events (/ws binary frames)
 
-`GET /events` on the proxy forks a child holding its own greeted UDS
-session with `SET_NOTIFY(0xFFFFFFFF)`, pumping each ctl frame as
-`data:{type,flags,req,payload:b64}`. `PlcCtl.events(cb)` filters to
-`0x0E00`-range types and decodes payloads. The IDE opens it once the
+Unsolicited `F_EVENT` ctl frames arrive as binary `/ws` messages —
+the raw 16-byte-header ctl frame, same as replies. Each `/ws` client
+holds its own greeted UDS session with `SET_NOTIFY(0xFFFFFFFF)`.
+`PlcCtl.events(cb)` filters to `0x0E00`-range types and decodes
+payloads. The IDE opens it once the
 ctl channel is healthy and coalesces refreshes (150 ms) so a restarting
 fault loop can't storm the poll path:
 
@@ -279,7 +282,7 @@ fault loop can't storm the poll path:
 ## 8. Deploy console
 
 `PlcCtl` speaks the ctl wire protocol (16B header + LE payload) through
-`POST /ctl`: program/rt/retain status parsers, chunked `.tplc` deploy
+`/ws` binary frames: program/rt/retain status parsers, chunked `.tplc` deploy
 (SHA-256 + progress), start/stop/rollback, retain flush/clear/dump
 (dump downloads the raw region as `.bin`). The deploy pane shows
 prog + rt + retain cards plus the event-driven refresh; the ctl URL is
@@ -300,8 +303,8 @@ count, retain dirty bytes, and swap/quarantine state.
 
 `TetherWebUI/e2e/live-stack.sh` boots a real `tether-plc` (shm image +
 pre-deployed `LiveDemo` package + ctl socket) plus `tplc-io` (dynamic
-`plc.*` catalog over TCP) behind `tplc-ctl-proxy` on `:8090`
-(`--socket` = the runtime ctl.sock for `/health`, `/ctl`, `/events`;
+`plc.*` catalog over TCP) behind `tplc serve` on `:8090`
+(`--ctl` = the runtime ctl.sock for `/ws` + `/health`;
 `--tplc-io` bridges `/tether-io` WebSocket→SLIP so the browser's
 `DataHub` reaches live values). `e2e/plc-live.spec.ts` then drives the
 real scan loop from the browser: cycle counters advance, `stop`/`start`
@@ -315,7 +318,7 @@ canvas. The stack spawns automatically when `tether-plc`, `tplc-image`,
 
 ## 9. What is deliberately not here
 
-- No compile logic in the browser — `/compile` is always server-side
+- No compile logic in the browser — the `compile` meta-op is always server-side
   (`tplcc serve` or `tplcc --json`).
 - No variable writes outside the catalog force path — there is no
   `dbg.*` plane yet (plan 12 keeps suspend/step/trace).

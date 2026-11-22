@@ -38,9 +38,10 @@ or the browser IDE ([TetherWebUI](https://github.com/TetherMotion/TetherWebUI)).
 ## Repository layout
 
 ```
-compiler/            Rust workspace — tplcc (ST/FBD/LD → LLVM), tplc-pkg,
-                     tplc-mir/tplc-st/tplc-codegen/tplc-rt, fbd-model,
-                     plcopen-io, fbd-lower
+compiler/            Rust workspace — tplc (unified entrypoint: dev stack,
+                     ctl client, HTTP/WebUI backend), tplcc (ST/FBD/LD →
+                     LLVM), tplc-pkg, tplc-mir/tplc-st/tplc-codegen/
+                     tplc-rt, fbd-model, plcopen-io, fbd-lower
 runtime/
   image/             tplc_image — shared-memory process image (C)
   host/              runtime services + CtlServer (alarms, historian, MQTT, …)
@@ -119,8 +120,10 @@ Useful options:
 | `TPLC_SQLITE3_LIBRARY`, `TPLC_SODIUM_LIBSODIUM`, `TPLC_SECCOMP_LIBSECCOMP` | auto | point at non-standard installs |
 
 Binaries land in `build/`: `tether-plc`, `tether-plc-sim`,
-`tether-plc-bridge`, `tplc-image`, `tplc-ctl`, `tplc-ctl-proxy`,
-`tplc-io`, `tplc-io-cli`, `tplc-io-probe`, `tplc-ec-pump`.
+`tether-plc-bridge`, `tplc-image`,
+`tplc-io`, `tplc-io-cli`, `tplc-io-probe`, `tplc-ec-pump`
+(`tplc-ctl` there is a shim forwarding to `tplc ctl`). The Rust
+`tplc` entrypoint builds via `cargo build -p tplc`.
 
 ### 3. Debian package (optional)
 
@@ -132,6 +135,31 @@ cmake --build build --target package   # or cpack -G DEB
 ---
 
 ## Quickstart — first program in 5 minutes
+
+### The easy way — `tplc`
+
+`tplc` is the single user-facing entrypoint: it compiles, creates the
+process image, spawns the runtime, the I/O service and the web backend,
+and serves the WebUI — no manual orchestration:
+
+```bash
+cargo build --release -p tplc          # → compiler/target/release/tplc
+
+./compiler/target/release/tplc dev oven.st
+# compile → image → tether-plc → tplc-io → webserver, all managed:
+#   http://127.0.0.1:8089 serves the WebUI + API
+#   tplc ctl --session main status     inspect the running PLC
+#   tplc down                          shut the stack down
+```
+
+Other composites: `tplc run oven.st` (compile → image → realtime PLC,
+Ctrl-C stops), `tplc sim oven.st --steps oven.steps` (deterministic
+replay), `tplc serve` (HTTP/WebSocket backend + WebUI static files —
+the WebSocket backend), `tplc ctl <op>` (native ctl client), `tplc doctor` (tool resolution check).
+`tplc cc …` reaches `tplcc` verbatim (incl. `tplc cc serve` for the
+compile daemon); `tplc image|bridge|io|pump` pass through to the
+runtime tools. Everything below documents the underlying pieces `tplc`
+orchestrates.
 
 ### Write
 
@@ -200,44 +228,89 @@ This is how all `tests/compat` e2e scripts drive the PLC headlessly.
 ```bash
 ./build/tplc-image create /oven 64 64
 ./build/tether-plc --image /oven --package oven.tplc --ctl /tmp/oven.ctl
-# runs forever; Ctrl-C or `tplc-ctl /tmp/oven.ctl rt-shutdown` stops
+# runs forever; Ctrl-C or `tplc ctl /tmp/oven.ctl rt-shutdown` stops
 ```
 
 `--package` extracts the module and runs it; `--module x.so` runs a
 pre-extracted module directly. Process image is POSIX shm —
 `tplc-image dump /oven` peeks at `%I`/`%Q`/`%M` live.
 
-### Control it — `tplc-ctl`
+### Control it — `tplc ctl`
 
 ```bash
-./build/tplc-ctl /tmp/oven.ctl status          # runtime state
-./build/tplc-ctl /tmp/oven.ctl prog            # program status
-./build/tplc-ctl /tmp/oven.ctl dbg-state       # symbol → image offsets
-./build/tplc-ctl /tmp/oven.ctl watch 0:1       # live var watches
-./build/tplc-ctl /tmp/oven.ctl map-get         # deploy map in package
-./build/tplc-ctl /tmp/oven.ctl events 60       # eventlog tail
-./build/tplc-ctl /tmp/oven.ctl deploy new.tplc # package swap
-# … break/force/trace/retain/shadow/od — full list: `tplc-ctl` with no args
+tplc ctl /tmp/oven.ctl status          # runtime state
+tplc ctl /tmp/oven.ctl prog            # program status
+tplc ctl /tmp/oven.ctl dbg-state       # symbol → image offsets
+tplc ctl /tmp/oven.ctl watch 0:1       # live var watches
+tplc ctl /tmp/oven.ctl map-get         # deploy map in package
+tplc ctl /tmp/oven.ctl events 60       # eventlog tail
+tplc ctl /tmp/oven.ctl deploy new.tplc # package swap
+# … break/force/trace/retain/shadow/od — full list: `tplc ctl` with no args
 ```
 
 Full op list: [`include/tplc/tplc_ctl.h`](include/tplc/tplc_ctl.h) and
 [`docs/plc/debugging.md`](docs/plc/debugging.md). Roles: observer /
 engineer / security — set at `HELLO`.
 
-### Control it — HTTP proxy (for the WebUI / scripts)
+### Web backend — `tplc serve` (WebSocket)
 
 ```bash
-./build/tplc-ctl-proxy --socket /tmp/oven.ctl --port 8089 \
+tplc serve --ctl /tmp/oven.ctl --port 8089 \
     --tplcc compiler/target/release/tplcc --tplc-io 127.0.0.1:43770
-# POST /ctl          one ctl frame round-trip (octet-stream)
-# POST /compile      compile ST/FBD sources → package
-# GET  /blocks       FBD block catalog JSON
-# GET  /tether-io    WebSocket → tplc-io provider (live values)
-# GET  /health       liveness
+# GET /ws            one WebSocket: binary ctl frames + JSON meta-ops
+#                    (compile/blocks/libsrc/pkgmap), F_EVENT pushes
+# GET /tether-io     WebSocket → tplc-io provider (live values)
+# GET /health        liveness
+# GET /*             static WebUI (auto-detected ../TetherWebUI/dist)
 ```
 
 Point TetherWebUI's dev proxy at this and the browser IDE gets
 compile + live monitor + deploy.
+
+---
+
+## Projects & workspaces
+
+`tplc` manages self-contained project directories — no database, just
+files plus an integrated git repository per project.
+
+```bash
+tplc new oven                    # scaffold ./oven/ (.tplc/project.json,
+                                 #   src/main.st, .gitignore) + initial commit
+cd oven && tplc project          # show manifest (pretty JSON)
+tplc project path                # print the project root
+tplc project set name=oven2 sources=src/a.st,src/b.st   # edit fields
+
+# manifest sources are auto-detected: inside a project dir,
+#   tplc run / tplc sim / tplc dev / tplc serve
+# compile .tplc/project.json's `sources` into build/app.tplc and name
+# the session/image/ctl socket after the project (`oven`).
+# --project /path overrides discovery; discovery also works from any
+# subdirectory (walks up to .tplc/project.json).
+
+# version management (git2 — one repo per project, manual commits;
+# only the scaffold commit is automatic)
+tplc git status                  # "M path" / "?? path" entries
+tplc git diff [path]             # unified diff (worktree vs HEAD)
+tplc git commit <message>        # stage all + commit
+tplc git log [n]                 # recent commits (default 20)
+tplc git branch                  # current branch
+tplc projects                    # recently opened project roots
+```
+
+`.tplc/project.json` fields: `name`, `description`, `version`,
+`sources` (ST files), `libs` (library dirs), `taskPeriodNs`,
+`imageIn`/`imageOut` (process-image bytes), `deployMap`, plus an
+opaque `ui` member where the WebUI persists its FBD/ST/curve/tune
+working document — unknown keys round-trip untouched.
+
+The same operations are exposed to the browser IDE over the `/ws`
+meta channel (`project_get/save/open`, `project_files`,
+`project_file_get/put/delete`, `projects`, `git_status/diff/commit/
+log/branch`). In the IDE, the **Project** pane shows the manifest,
+file tree, git status/commit UI and log, and a recent-projects
+picker. The IDE document still falls back to `localStorage` when no
+backend project is open.
 
 ---
 
@@ -337,7 +410,7 @@ $TPLCC build --library --name MqttEvents   libraries/mqtt/mqtt_events.st -o even
 | `compat/tc2`, `compat/tc3` | TwinCAT-style wrapper FBs |
 
 `$TPLCC blocks --json` lists every FB/FUNCTION with pin signatures —
-this is what the WebUI palette and `tplc-ctl-proxy /blocks` serve.
+this is what the WebUI palette and the `blocks` meta-op serve.
 
 ---
 

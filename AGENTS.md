@@ -18,13 +18,28 @@ Two halves:
   runtime-contract layers; `tplc-pkg` writes packages; `fbd-model`,
   `fbd-lower`, `plcopen-io` are the graphical-language crates; `tplc`
   is the umbrella binary. Built with **cargo + LLVM 21**.
+  `tplc` also owns **project workspaces**: `tplc new <dir>`
+  scaffolds a self-contained project (`.tplc/project.json` manifest,
+  `src/`, `.gitignore`, initial git commit via `git2` — no database).
+  `run`/`sim`/`dev`/`serve` auto-discover the project by walking up to
+  `.tplc/project.json` (`--project` overrides) and compile the
+  manifest's `sources` into `build/app.tplc`, naming the
+  session/image/ctl socket after the project. `tplc git
+  status|diff|commit|log|branch` + `tplc projects` expose the
+  per-project repo; `tplc serve` mirrors the same ops over `/ws`
+  meta (`project_*`, `git_*`, `projects`) for the WebUI Project
+  pane. The IDE document round-trips through `manifest.ui`; the
+  browser `localStorage` copy is only a fallback when no project is
+  open.
 - **`runtime/` + `include/tplc/` + `tests/`** — C/C++20. `tether-plc`
   is the realtime runtime executable; `tether-plc-sim` is the
   deterministic step replay used by tests; `tether-plc-bridge` joins
   the process image to file/IO transports; `tplc-ec-pump` is the
   EtherCAT master pump; `tplc-io*` are the Tether IO server/client
-  tools; `tplc-image`/`tplc-ctl`/`tplc-ctl-proxy` are image and
-  control-channel tools. Host services (alarms, historian, MQTT, …)
+  tools; `tplc-image` is the process-image tool. The control channel
+  is driven by `tplc` (Rust, `compiler/tplc/`): `tplc ctl` is the
+  client CLI, `tplc serve` the `/ws` browser backend, `tplc dev` the
+  unified dev stack. Host services (alarms, historian, MQTT, …)
   live under `runtime/host/`; the C ABI surface is `include/tplc/*.h`.
 
 **Sibling dependency:** `tplc-io`/`tplc-ec-pump` need a Tether
@@ -60,9 +75,10 @@ cmake --build build --target tether-plc tether-plc-sim -j8
 ```
 
 Key outputs in `build/`: `tether-plc`, `tether-plc-sim`,
-`tether-plc-bridge`, `tplc-image`, `tplc-ctl`, `tplc-ctl-proxy`,
-`tplc-io`, `tplc-io-probe`, `tplc-io-cli`, `tplc-ec-pump`.
-Compiler binaries: `compiler/target/{release,debug}/tplcc`.
+`tether-plc-bridge`, `tplc-image`, `tplc-io`, `tplc-io-probe`,
+`tplc-io-cli`, `tplc-ec-pump`, plus a `tplc-ctl` shim that forwards
+to the Rust `tplc ctl` for legacy test invocations.
+Compiler binaries: `compiler/target/{release,debug}/tplcc` and `tplc`.
 
 ## Test Commands
 
@@ -111,8 +127,8 @@ $TPLCC build oven.st -o /tmp/q.tplc
     --ctl /tmp/tplc_q.ctl
 
 # 4. inspect/control
-./build/tplc-ctl /tmp/tplc_q.ctl status
-./build/tplc-ctl-proxy --socket /tmp/tplc_q.ctl --port 8080   # browser IDE backend
+./compiler/target/debug/tplc ctl /tmp/tplc_q.ctl status
+./compiler/target/debug/tplc serve --ctl /tmp/tplc_q.ctl --port 8080   # browser IDE backend
 ```
 
 ## Architecture Essentials
@@ -158,7 +174,7 @@ runtime/
 tests/              ctest suite + standalone *_io.sh e2e scripts
 docs/plc/           as-built specs (architecture.md is the doc map)
 examples/           demo .st programs (ha_demo.st etc.)
-tools/              tplc-image, tplc-ctl, tplc-ctl-proxy sources
+tools/              tplc-image source, ctl_client.h, oracle adapters
 schema/ packaging/ scripts/   package schema, deb packaging, misc
 ```
 
