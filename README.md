@@ -83,10 +83,13 @@ docs/                architecture, per-topic specs, design goals
   `TPLC_NO_WEBUI_BUILD=1` opts out). `--webui <dir>` / `TPLC_WEBUI`
   point at any built dist; a sibling `../TetherWebUI` checkout is the
   fallback when the submodule isn't initialized.
-- **Optional — sibling Tether checkout** at `../Tether` (or set
-  `-DTETHER_DIR=`): required for `tplc-io`, `tplc-io-cli`,
-  `tplc-io-probe` and `tplc-ec-pump` (EtherCAT fleet pump, tether_io
-  transport). Without it those targets are skipped cleanly.
+- **Optional — Tether submodule** at `Tether/` (init with
+  `git submodule update --init --recursive`): required for `tplc-io`,
+  `tplc-io-cli`, `tplc-io-probe` and `tplc-ec-pump` (EtherCAT fleet
+  pump, tether_io transport). `tplc-ec-pump` additionally needs
+  Tether's own build tree (`cmake -B Tether/build && cmake --build
+  Tether/build`). Without the submodule those targets are skipped
+  cleanly.
 - **Optional libraries** (all auto-fetched or gracefully disabled):
   libpaho-mqtt3c(s) for MQTT (**ON by default** — FetchContent builds
   paho.mqtt.c v1.3.14 with TLS if not installed), libsqlite3, libsodium,
@@ -129,7 +132,7 @@ Useful options:
 | `TPLC_ENABLE_MQTT` | ON | MQTT client service (Paho; FetchContent fallback builds it) |
 | `TPLC_ENABLE_OPCUA` | ON | OPC UA server service (needs open62541) |
 | `TPLC_ENABLE_IEC61850` | ON | IEC 61850 service (FetchContent fallback) |
-| `TETHER_DIR` | `../Tether` | Tether checkout → enables `tplc-io*`, `tplc-ec-pump` |
+| `TETHER_DIR` | `Tether/` (submodule) | Tether checkout → enables `tplc-io*`, `tplc-ec-pump` |
 | `TPLC_SQLITE3_LIBRARY`, `TPLC_SODIUM_LIBSODIUM`, `TPLC_SECCOMP_LIBSECCOMP` | auto | point at non-standard installs |
 
 Binaries land in `build/`: `tether-plc`, `tether-plc-sim`,
@@ -416,7 +419,7 @@ EL1014        # second coupler segment → el1014.c2
 
 ```bash
 # emulated bus (Tether's beckhoff_slave_chain) — no hardware needed
-../Tether/build/bin/beckhoff_slave_chain --port 47820 --io-port 43771 &
+Tether/build/bin/beckhoff_slave_chain --port 47820 --io-port 43771 &
 ./build/tplc-ec-pump --peer 127.0.0.1 --port 47820 \
     --simdir /tmp/tplc_sim --fleet cell.fleet --io-port 43770 --hz 500 &
 ./build/tether-plc-bridge --image /cell --map map.txt \
@@ -492,7 +495,7 @@ TPLCC=compiler/target/release/tplcc bash tests/compat/mqtt_journal_ctl.sh
 TPLCC=compiler/target/release/tplcc bash tests/homeassistant/ha_bridge_io.sh
 TPLCC=compiler/target/release/tplcc bash tests/tempctrl/run.sh   # vector suite
 
-# EtherCAT fleet e2e (needs ../Tether built)
+# EtherCAT fleet e2e (needs the Tether/ submodule built)
 TPLCC=compiler/target/release/tplcc bash tests/ec/fleet_e2e.sh
 ```
 

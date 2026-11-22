@@ -24,8 +24,8 @@ tether-plc ── ctl.sock ── tplc-io ── TCP (SLIP-framed) ── tether
 - `tplc-io` compiles Tether's `tether_io` sources into a local
   static lib (`tplc_tether_io`): `Protocol`, `Registry`, `Session*`,
   `Server`, `TcpTransport`, `TetherIOClient`, logging, BLAKE3,
-  libSLIPspeed. `TETHER_DIR` points at a Tether checkout; the
-  provider and tests are skipped when unset. `WsTransport` and the
+  libSLIPspeed. `TETHER_DIR` points at the `Tether/` submodule; the
+  provider and tests are skipped when it isn't initialized. `WsTransport` and the
   serial transport are compiled out (`TETHER_IO_TRANSPORT_WS=0`,
   `TETHER_IO_TRANSPORT_SERIAL=0`).
 - Wire framing is SLIP-over-TCP (`SlipFramedTransport` clientside),

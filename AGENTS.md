@@ -43,10 +43,13 @@ Two halves:
   unified dev stack. Host services (alarms, historian, MQTT, …)
   live under `runtime/host/`; the C ABI surface is `include/tplc/*.h`.
 
-**Sibling dependency:** `tplc-io`/`tplc-ec-pump` need a Tether
-checkout — CMake auto-detects `../Tether` (or `-DTETHER_DIR=`). The
+**Submodule dependency:** `tplc-io`/`tplc-ec-pump` need the `Tether/`
+git submodule at the repo root (`git submodule update --init
+--recursive`; CMake auto-detects it, `-DTETHER_DIR=` overrides). The
 EtherCAT stack, fleet catalog (`tether/ethercat/BeckhoffFleet.hpp`),
-and `tether_io` protocol all come from there. **Tether is
+and `tether_io` protocol all come from there. Tether's own build
+tree (`Tether/build`) provides the shared libs `tplc-ec-pump` links
+and the `build/bin/*` servers the e2e scripts drive. **Tether is
 library-only for new code — never add executables to it**; PLC-facing
 tools belong here.
 

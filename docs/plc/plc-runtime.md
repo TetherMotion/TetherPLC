@@ -142,7 +142,7 @@ driver process:
 
 `tplc-ec-pump` is a master-side transport for the bridge's `sim`
 simdir contract, proven against the emulated Beckhoff fleet in the
-sibling Tether checkout (`examples/beckhoff_slave_chain` +
+Tether submodule (`examples/beckhoff_slave_chain` +
 `examples/ethercat_fleet_probe` helpers):
 
 - Connects as EtherCAT master over a virtual link — `UdpEthercatLink`

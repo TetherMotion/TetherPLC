@@ -11,7 +11,7 @@
 # Prerequisites:
 #   cmake --build build -j8          # C++ binaries (RelWithDebInfo ok)
 #   cargo build --release -p tplcc -p tplc-pkg -p tplc   # from repo root
-#   ../Tether built (lib/*.so)       # for tplc-ec-pump; set
+#   Tether/ submodule built (lib/*.so)  # for tplc-ec-pump; set
 #                                    # TETHER_BUILD_LIB=/path/to/lib to override,
 #                                    # or SKIP_ECPUMP=1 to omit it
 #   dpkg-deb                          # Debian/Ubuntu packaging tool
@@ -28,7 +28,7 @@ ARCH=amd64
 ROOT=$OUT/${PKG}_${VER}_${ARCH}
 BIN=build
 RUST=compiler/target/release
-TETHER_LIB=${TETHER_BUILD_LIB:-../Tether/build/lib}
+TETHER_LIB=${TETHER_BUILD_LIB:-Tether/build/lib}
 
 for b in tplcc tplc; do
     [ -x "$RUST/$b" ] || { echo "missing $RUST/$b — cargo build --release first" >&2; exit 1; }

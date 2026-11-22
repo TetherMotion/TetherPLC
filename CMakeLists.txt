@@ -324,19 +324,12 @@ file(CHMOD "${CMAKE_BINARY_DIR}/tplc-ctl"
 
 # ------------------------------------------------------------------ #
 # tplc-io: tether_io server exposing the ctl.sock surface.
-# Compiles a sliced tether_io_protocol from a sibling Tether checkout
+# Compiles a sliced tether_io_protocol from the Tether submodule
 # (server + TCP + schema + streaming; no client/ws/serial). Skipped
-# silently when Tether is not checked out next to this repo.
+# silently when the submodule is not initialized.
 # ------------------------------------------------------------------ #
-set(TETHER_DIR "" CACHE PATH "Tether source checkout (for tether_io)")
-if(NOT TETHER_DIR)
-  foreach(cand "${CMAKE_SOURCE_DIR}/../Tether" "$ENV{TETHER_DIR}")
-    if(EXISTS "${cand}/include/tether/io/Server.hpp")
-      set(TETHER_DIR "${cand}")
-      break()
-    endif()
-  endforeach()
-endif()
+set(TETHER_DIR "${CMAKE_SOURCE_DIR}/Tether" CACHE PATH
+    "Tether source checkout (for tether_io; the Tether/ submodule)")
 
 if(EXISTS "${TETHER_DIR}/include/tether/io/Server.hpp" AND
    EXISTS "${TETHER_DIR}/dependencies/libSLIPspeed/include" AND
@@ -405,7 +398,7 @@ if(EXISTS "${TETHER_DIR}/include/tether/io/Server.hpp" AND
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
   message(STATUS "tplc-io: tether_io provider enabled (TETHER_DIR=${TETHER_DIR})")
 else()
-  message(STATUS "tplc-io: skipped (set TETHER_DIR to a Tether checkout)")
+  message(STATUS "tplc-io: skipped (init the Tether/ submodule)")
 endif()
 
 # tplc_host: enable the IO-backed tplc-motion backend (MotionIoService)
@@ -440,9 +433,9 @@ endif()
 # ------------------------------------------------------------------ #
 # tplc-ec-pump: EtherCAT master pump bridging the emulated Beckhoff
 # fleet's PDO entries to the bridge simdir transport.  Includes the
-# fleet/master helpers from the sibling Tether checkout's examples/
-# and links its shared component libraries, so it needs a configured
-# Tether build tree (build/include + build/lib).
+# fleet/master helpers from the Tether submodule's examples/ and links
+# its shared component libraries, so it needs a configured Tether
+# build tree inside the submodule (Tether/build: include + lib).
 # ------------------------------------------------------------------ #
 set(TETHER_BUILD_DIR "${TETHER_DIR}/build" CACHE PATH
     "Tether build tree (for tplc-ec-pump)")
@@ -475,7 +468,7 @@ if(_ec_pump_ok AND TARGET tplc_tether_io)
     BUILD_RPATH "${TETHER_BUILD_DIR}/lib")
   message(STATUS "tplc-ec-pump: EtherCAT fleet pump enabled (TETHER_DIR=${TETHER_DIR})")
 elseif(TETHER_DIR)
-  message(STATUS "tplc-ec-pump: skipped (build Tether first or set TETHER_BUILD_DIR)")
+  message(STATUS "tplc-ec-pump: skipped (init Tether/ submodule and build Tether/build)")
 endif()
 
 # ------------------------------------------------------------------ #
@@ -1768,7 +1761,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     SKIP_RETURN_CODE 77 TIMEOUT 900)
 
   # EtherCAT fleet e2e: TetherPLC master + PLC against the emulated
-  # Beckhoff chain (sibling Tether beckhoff_slave_chain over UDP or a
+  # Beckhoff chain (Tether submodule's beckhoff_slave_chain over UDP or a
   # veth pair); Tether IO stimuli/observations on both endpoints
   if(TARGET tplc-ec-pump AND TARGET tplc-io-cli)
     add_test(NAME ec_fleet_e2e

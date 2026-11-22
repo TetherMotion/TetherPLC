@@ -8,10 +8,6 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # Sibling Tether checkout the C++ build slices tether_io sources from
-  # (tplc-io, tplc_host tether-io services). Pinned to the Tether commit
-  # this repo was last verified against — bump deliberately.
-  TETHER_REF: 9995934ba5f64e86de9ccb44004e2b5b950ee503
 
 jobs:
   linux-x86_64:
@@ -20,17 +16,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: TetherPLC
-
-      - name: Checkout Tether (tether_io sources)
-        uses: actions/checkout@v5
-        with:
-          repository: TetherMotion/Tether
-          ref: ${{ env.TETHER_REF }}
-          path: Tether
+          submodules: true
 
       # Only the submodules the sliced tether_io build needs.
       - name: Tether submodules
-        run: git -C Tether submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
+        working-directory: TetherPLC/Tether
+        run: git submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -68,16 +59,11 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: TetherPLC
-
-      - name: Checkout Tether (tether_io sources)
-        uses: actions/checkout@v5
-        with:
-          repository: TetherMotion/Tether
-          ref: ${{ env.TETHER_REF }}
-          path: Tether
+          submodules: true
 
       - name: Tether submodules
-        run: git -C Tether submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
+        working-directory: TetherPLC/Tether
+        run: git submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
 
       # qemu-user provides /usr/bin/qemu-aarch64 (CMAKE_CROSSCOMPILING_
       # EMULATOR); qemu-user-binfmt registers binfmt_misc so tests that
@@ -132,16 +118,11 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: TetherPLC
-
-      - name: Checkout Tether (tether_io sources)
-        uses: actions/checkout@v5
-        with:
-          repository: TetherMotion/Tether
-          ref: ${{ env.TETHER_REF }}
-          path: Tether
+          submodules: true
 
       - name: Tether submodules
-        run: git -C Tether submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
+        working-directory: TetherPLC/Tether
+        run: git submodule update --init dependencies/libSLIPspeed dependencies/blake3 dependencies/eigen
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -201,18 +182,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           path: TetherPLC
-
-      - name: Checkout Tether (tether_io sources + slave chain)
-        uses: actions/checkout@v5
-        with:
-          repository: TetherMotion/Tether
-          ref: ${{ env.TETHER_REF }}
-          path: Tether
+          submodules: true
 
       # Full submodule set — the slave-chain example needs more than
       # the sliced tether_io set (fmt/expected shims, argparse, ...).
       - name: Tether submodules
-        run: git -C Tether submodule update --init
+        working-directory: TetherPLC/Tether
+        run: git submodule update --init
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -242,10 +218,10 @@ jobs:
         run: cargo build -p tplcc -p tplc -j8
 
       # Emulated Beckhoff chain the ec/* scripts drive via UDP — the
-      # sibling checkout layout puts it at ../Tether/build/bin which is
-      # exactly where the scripts' TETHER_BIN default looks.
+      # submodule layout puts it at Tether/build/bin which is exactly
+      # where the scripts' TETHER_BIN default looks.
       - name: Build Tether beckhoff_slave_chain
-        working-directory: Tether
+        working-directory: TetherPLC/Tether
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
           cmake --build build --target beckhoff_slave_chain -j8

@@ -8,7 +8,7 @@
 #
 # Processes: beckhoff_slave_chain (Tether), tplc-ec-pump (master+pump
 # +IO), tether-plc-bridge + tether-plc (PLC).  Skips (77) when the
-# sibling Tether checkout/build, tplcc, or build tree is missing.
+# Tether submodule/build, tplcc, or build tree is missing.
 #
 # Transport: UDP by default.  Set EC_IFACE=<base> (e.g. veth-tplc-ec)
 # to run the same scenario over raw L2 frames on a veth pair
@@ -19,7 +19,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 BUILD=${BUILD:-build}
-TETHER_DIR=${TETHER_DIR:-../Tether}
+TETHER_DIR=${TETHER_DIR:-Tether}
 TETHER_BIN=${TETHER_BIN:-$TETHER_DIR/build/bin/beckhoff_slave_chain}
 IMG=/tplc_ec_fleet_e2e
 SHM=/dev/shm$IMG

@@ -10,7 +10,7 @@ set -u
 cd "$(dirname "$0")/../.."
 TPLCC=${TPLCC:-compiler/target/debug/tplcc}
 BUILD=${BUILD:-./build}
-TETHER_DIR=${TETHER_DIR:-../Tether}
+TETHER_DIR=${TETHER_DIR:-Tether}
 SRV=${EC_SERVER:-$TETHER_DIR/build/bin/tether_io_ec_server}
 PORT=${EC_PORT:-14231}
 [ -x "$TPLCC" ] || { echo "tplcc missing: $TPLCC" >&2; exit 77; }

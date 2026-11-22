@@ -1,3 +1,6 @@
 [submodule "TetherWebUI"]
 	path = TetherWebUI
 	url = https://github.com/TetherMotion/TetherWebUI.git
+[submodule "Tether"]
+	path = Tether
+	url = https://github.com/TetherMotion/Tether.git

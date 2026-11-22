@@ -21,7 +21,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 BUILD=${BUILD:-build}
-TETHER_DIR=${TETHER_DIR:-../Tether}
+TETHER_DIR=${TETHER_DIR:-Tether}
 TETHER_BIN=${TETHER_BIN:-$TETHER_DIR/build/bin/beckhoff_slave_chain}
 WORK=$(mktemp -d)
 CTL=$WORK/ctl.sock

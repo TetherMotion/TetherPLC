@@ -167,8 +167,9 @@ lines with zero tooling feedback.
   `tplc-image`, probes — but **not**
   `tether-plc-bridge` or `tplc-ec-pump`, the two binaries that actually
   move image↔PDO data. `apt install` alone cannot run the I/O path.
-- `tplc-ec-pump` builds only when `TETHER_DIR` points at a Tether
-  checkout (examples headers) — not packaged at all.
+- `tplc-ec-pump` builds only when the `Tether/` submodule is
+  initialized and its `build/` tree provides the shared libs — not
+  packaged at all.
 - No single quickstart tying the story together: device blocks →
   deploy map → pump `.bus` catalog → bridge → live `plc.image.*`
   monitoring. The pieces are documented separately
