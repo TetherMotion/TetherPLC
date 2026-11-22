@@ -3,12 +3,12 @@
 # library packages carry kind="library" manifests, POU object code,
 # and ST sources; --lib pulls a package's ST_SOURCES into a program
 # build. Rejections: PROGRAM / VAR_GLOBAL / TASK in library mode.
-# Requires: tplcc, tplc-pkg (both under compiler/target/debug; skip 77).
+# Requires: tplcc, tplc (both under compiler/target/debug; skip 77).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 TPLCC=${TPLCC:-compiler/target/debug/tplcc}
-PKG=${PKG:-compiler/target/debug/tplc-pkg}
+PKG=${PKG:-compiler/target/debug/tplc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -17,7 +17,7 @@ ok()  { pass=$((pass+1)); echo "PASS $1"; }
 bad() { fail=$((fail+1)); echo "FAIL $1"; }
 
 [ -x "$TPLCC" ] || { echo "SKIP no tplcc"; exit 77; }
-[ -x "$PKG" ]   || { echo "SKIP no tplc-pkg"; exit 77; }
+[ -x "$PKG" ]   || { echo "SKIP no tplc pkg"; exit 77; }
 
 LIB_ST="$WORK/libmath.st"
 cat > "$LIB_ST" <<'EOF'
@@ -48,9 +48,9 @@ EOF
          echo "== $pass pass, $fail fail"; exit 1; }
 ok "tplcc build --library package built"
 
-"$PKG" verify "$WORK/libmath.tplc" >/dev/null 2>&1 \
-    && ok "tplc-pkg verify library" \
-    || bad "tplc-pkg verify library"
+"$PKG" pkg verify "$WORK/libmath.tplc" >/dev/null 2>&1 \
+    && ok "tplc pkg verify library" \
+    || bad "tplc pkg verify library"
 
 INFO=$("$TPLCC" info "$WORK/libmath.tplc" 2>/dev/null)
 echo "$INFO" | grep -q '"kind":"library"' \
@@ -116,9 +116,9 @@ EOF
          echo "== $pass pass, $fail fail"; exit 1; }
 ok "program build with --lib succeeded"
 
-"$PKG" verify "$WORK/demo.tplc" >/dev/null 2>&1 \
-    && ok "tplc-pkg verify consumer" \
-    || bad "tplc-pkg verify consumer"
+"$PKG" pkg verify "$WORK/demo.tplc" >/dev/null 2>&1 \
+    && ok "tplc pkg verify consumer" \
+    || bad "tplc pkg verify consumer"
 
 INFO2=$("$TPLCC" info "$WORK/demo.tplc" 2>/dev/null)
 echo "$INFO2" | grep -q '"name":"Demo"' \

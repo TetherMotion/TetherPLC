@@ -108,8 +108,8 @@ print(f"PASS ws ctl degraded: F_ERROR '{msg}'")
 PY
 [ $? -eq 0 ] && ok "ws meta-ops + degraded ctl" || bad "ws meta-ops"
 
-if [ -s "$W/out.tplc" ] && ./compiler/target/debug/tplc-pkg verify "$W/out.tplc" >"$W/verify.log" 2>&1; then
-    ok "package verifies (tplc-pkg)"
+if [ -s "$W/out.tplc" ] && ./compiler/target/debug/tplc pkg verify "$W/out.tplc" >"$W/verify.log" 2>&1; then
+    ok "package verifies (tplc pkg)"
 else
     bad "package verify"; cat "$W/verify.log" 2>/dev/null | tail -3
 fi

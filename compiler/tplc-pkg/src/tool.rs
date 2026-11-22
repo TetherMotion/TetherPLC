@@ -1,55 +1,16 @@
-//! `tplc-pkg` — inspect, verify, and generate `.tplc` packages.
+//! Package inspection helpers shared by `tplc pkg` (dump/verify/gen).
 //!
-//! Usage:
-//!   tplc-pkg dump <file.tplc>       — header + TOC + per-section info
-//!   tplc-pkg verify <file.tplc>     — parse + hash verification only
-//!   tplc-pkg gen <out.tplc>         — write the deterministic conformance
-//!                                     fixture (fixed uuid/content)
+//! Ported from the retired `tplc-pkg` binary — the crate is now a pure
+//! library; `tplc` is the only executable front-end.
 
-use std::process::ExitCode;
-use tplc_pkg::*;
+use crate::*;
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 {
-        eprintln!("usage: {} <dump|verify|gen> <file.tplc>", args[0]);
-        return ExitCode::from(2);
-    }
-    if args[1] == "gen" {
-        return gen(&args[2]);
-    }
-    let data = match std::fs::read(&args[2]) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("{}: {}", args[2], e);
-            return ExitCode::from(1);
-        }
-    };
-    match Package::parse(&data) {
-        Ok(pkg) => {
-            if args[1] == "dump" {
-                dump(&pkg);
-                if let Ok(m) = pkg.manifest_json() {
-                    println!("\nmanifest:\n{}", m);
-                }
-            } else {
-                println!(
-                    "{}: OK ({} bytes, {} sections)",
-                    args[2],
-                    data.len(),
-                    pkg.toc().len()
-                );
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("{}: verify failed: {} ({})", args[2], e, e.code());
-            ExitCode::from(1)
-        }
-    }
+pub fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
-fn dump(pkg: &Package) {
+/// Print header + TOC + per-section info plus the manifest JSON.
+pub fn dump(pkg: &Package) {
     let h = &pkg.header;
     println!("package uuid : {}", h.uuid_str());
     println!("format       : v{}", h.format_version);
@@ -76,17 +37,16 @@ fn dump(pkg: &Package) {
             s.flags
         );
     }
+    if let Ok(m) = pkg.manifest_json() {
+        println!("\nmanifest:\n{}", m);
+    }
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{:02x}", x)).collect()
-}
-
-/// Deterministic fixture identical in structure to `build_sample()` in the
-/// test suite — fixed uuid and content so golden files diff cleanly.
-fn fixture_bytes() -> Vec<u8> {
+/// Deterministic fixture identical in structure to `build_sample()` in
+/// the test suite — fixed uuid and content so golden files diff cleanly.
+pub fn fixture_bytes() -> Result<Vec<u8>> {
     let mut w = PackageWriter::new();
-    w.uuid_str("018c2f7e-9a3b-7c4d-8e5f-1234567890ab").unwrap();
+    w.uuid_str("018c2f7e-9a3b-7c4d-8e5f-1234567890ab")?;
     w.add_section(
         SectionType::Manifest,
         br#"{"schema":"tplc.manifest.v1","name":"fixture_pkg","package_uuid":"018c2f7e-9a3b-7c4d-8e5f-1234567890ab","abi_version":1,"layout_hash":"aa"}"#
@@ -94,28 +54,23 @@ fn fixture_bytes() -> Vec<u8> {
         true,
         1,
         0,
-    )
-    .unwrap();
+    )?;
     w.add_section(
         SectionType::IrBitcode,
         b"FAKE-BC-PLACEHOLDER".to_vec(),
         true,
         1,
         0,
-    )
-    .unwrap();
+    )?;
     w.add_section(
         SectionType::TargetObj,
         vec![0x7f, b'E', b'L', b'F'],
         true,
         1,
         0,
-    )
-    .unwrap();
-    w.add_section(SectionType::Symmap, b"SMAP-STUB".to_vec(), true, 1, 0)
-        .unwrap();
-    w.add_section(SectionType::TypeCatalog, b"TCAT-STUB".to_vec(), true, 1, 0)
-        .unwrap();
+    )?;
+    w.add_section(SectionType::Symmap, b"SMAP-STUB".to_vec(), true, 1, 0)?;
+    w.add_section(SectionType::TypeCatalog, b"TCAT-STUB".to_vec(), true, 1, 0)?;
     let layd = Layd {
         version: 1,
         total_size: 64,
@@ -154,8 +109,7 @@ fn fixture_bytes() -> Vec<u8> {
             },
         ],
     };
-    w.add_section(SectionType::LayoutDesc, layd.encode(), true, 1, 0)
-        .unwrap();
+    w.add_section(SectionType::LayoutDesc, layd.encode(), true, 1, 0)?;
     let migd = Migd {
         predecessor_layout_hash: [0xA1; 32],
         predecessor_version: b"v1".to_vec(),
@@ -187,29 +141,13 @@ fn fixture_bytes() -> Vec<u8> {
             }],
         },
     };
-    w.add_section(SectionType::MigrateDesc, migd.encode(), false, 1, 0)
-        .unwrap();
+    w.add_section(SectionType::MigrateDesc, migd.encode(), false, 1, 0)?;
     w.add_section(
         SectionType::Toolchain,
         b"tplc-pkg 0.1 (fixture)".to_vec(),
         false,
         1,
         0,
-    )
-    .unwrap();
-    w.build().unwrap()
-}
-
-fn gen(path: &str) -> ExitCode {
-    let bytes = fixture_bytes();
-    match std::fs::write(path, &bytes) {
-        Ok(()) => {
-            println!("{}: wrote {} bytes (8 sections)", path, bytes.len());
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("{}: {}", path, e);
-            ExitCode::from(1)
-        }
-    }
+    )?;
+    w.build()
 }

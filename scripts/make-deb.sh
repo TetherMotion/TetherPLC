@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # make-deb.sh — build a .deb of the TetherPLC toolchain.
 #
-# Packages: tplc/tplcc/tplc-pkg (Rust toolchain + unified entrypoint),
+# Packages: tplc/tplcc (Rust toolchain + unified entrypoint),
 # tether-plc + tether-plc-sim + tplc-* (C++ runtime/services),
 # tether-plc-bridge (deploy-map I/O
 # bridge), tplc-ec-pump (EtherCAT fleet pump, with its Tether shared
@@ -30,7 +30,7 @@ BIN=build
 RUST=compiler/target/release
 TETHER_LIB=${TETHER_BUILD_LIB:-../Tether/build/lib}
 
-for b in tplcc tplc-pkg tplc; do
+for b in tplcc tplc; do
     [ -x "$RUST/$b" ] || { echo "missing $RUST/$b — cargo build --release first" >&2; exit 1; }
 done
 for b in tether-plc tether-plc-sim tplc-io tplc-image \
@@ -52,7 +52,7 @@ mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/usr/share/$PKG" \
          "$ROOT/usr/share/doc/$PKG" "$ROOT/usr/share/$PKG/lib"
 
 # --- binaries (stripped copies; build/ keeps the originals) -------------
-for b in tplcc tplc-pkg tplc; do
+for b in tplcc tplc; do
     strip -o "$ROOT/usr/bin/$b" "$RUST/$b"
 done
 for b in tether-plc tether-plc-sim tplc-io \
@@ -125,7 +125,7 @@ cat > "$ROOT/usr/share/doc/$PKG/README" <<'DOC'
 TetherPLC — IEC 61131-3 toolchain + EtherCAT temperature-control runtime
 
 Binaries:  tplc (unified entrypoint: dev/run/sim/serve/ctl),
-           tplcc (compiler), tplc-pkg (package verify/sign),
+           tplcc (compiler),
            tether-plc (runtime), tether-plc-sim (simulator),
            tplc-io / tplc-image (services),
            tether-plc-bridge (deploy-map EtherCAT I/O bridge),
@@ -140,7 +140,7 @@ Libraries: /usr/share/tetherplc/libraries/tempctrl/*.st
 Quick start:
   tplcc build my_program.st --lib /usr/share/tetherplc/lib/atc_tempctrl.tplc \
       -o my_program.tplc
-  tplc-pkg verify my_program.tplc
+  tplc pkg verify my_program.tplc
 DOC
 gzip -9 "$ROOT/usr/share/doc/$PKG/"*.md 2>/dev/null || true
 

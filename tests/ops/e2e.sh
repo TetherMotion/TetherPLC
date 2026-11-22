@@ -5,7 +5,7 @@ set -u
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
 TPLCC=${TPLCC:-$ROOT/compiler/target/release/tplcc}
-PKG=${PKG:-$ROOT/compiler/target/release/tplc-pkg}
+PKG=${PKG:-$ROOT/compiler/target/release/tplc}
 LIB_ST=libraries/tempctrl/atc_ops.st
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -24,9 +24,9 @@ bad() { echo "FAIL $*"; fail=$((fail+1)); }
     && ok "tplcc build --library Atc_Ops" \
     || bad "tplcc build --library failed"
 
-"$PKG" verify "$WORK/atc_ops.tplc" >/dev/null 2>&1 \
-    && ok "tplc-pkg verify atc_ops.tplc" \
-    || bad "tplc-pkg verify atc_ops.tplc"
+"$PKG" pkg verify "$WORK/atc_ops.tplc" >/dev/null 2>&1 \
+    && ok "tplc pkg verify atc_ops.tplc" \
+    || bad "tplc pkg verify atc_ops.tplc"
 
 INFO=$("$TPLCC" info "$WORK/atc_ops.tplc" 2>/dev/null)
 echo "$INFO" | grep -q '"name":"Atc_Ops"' \

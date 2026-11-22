@@ -17,7 +17,7 @@ sudo apt install ./tetherplc_*_amd64.deb
 # or from source: cargo build --release -p tplcc && cmake --build build -j8
 ```
 
-Binaries land in `/usr/bin`: `tplcc`, `tplc-pkg`, `tether-plc`,
+Binaries land in `/usr/bin`: `tplcc`, `tplc`, `tether-plc`,
 `tether-plc-sim`, `tether-plc-bridge`, `tplc-ec-pump`, `tplc serve`.
 
 ## 2. Fleet description

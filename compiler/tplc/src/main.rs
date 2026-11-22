@@ -43,10 +43,12 @@ USAGE:
   tplc git <status|log|diff|commit|branch> [args]   project git
   tplc projects                         recently opened projects
   tplc fbd-schema                       print the fbd.v1 JSON Schema
+  tplc pkg <dump|verify|gen|args…>      .tplc package inspect/fixture;
+                                        other args → `tplcc pkg`
   tplc doctor                           check tool resolution
   tplc cc <args…>                       tplcc passthrough (e.g. `tplc cc serve`)
   tplc image|bridge|io|pump <args…>     runtime tool passthrough
-  tplc check|build|info|vectors|sign|pkg|blocks|src <args…>   tplcc ops
+  tplc check|build|info|vectors|sign|blocks|src <args…>   tplcc ops
 
 OPTIONS (run/sim/dev):
   --name NAME        session/image/socket name (default: main, or the
@@ -112,6 +114,7 @@ fn dispatch(args: &[String]) -> i32 {
         "project" => cmd_project(rest),
         "git" => cmd_git(rest),
         "projects" | "recent" => cmd_projects(),
+        "pkg" => cmd_pkg(rest, &tools),
         "fbd-schema" | "schema" => {
             println!("{}", fbd_model::schema_json());
             0
@@ -122,7 +125,7 @@ fn dispatch(args: &[String]) -> i32 {
         "pump" | "ec-pump" => tools::run_tool(&tools, "tplc-ec-pump", rest),
         "cc" => tools::run_tool(&tools, "tplcc", rest),
         // tplcc subcommand passthrough
-        "check" | "build" | "info" | "vectors" | "sign" | "pkg" | "blocks" | "src" => {
+        "check" | "build" | "info" | "vectors" | "sign" | "blocks" | "src" => {
             let mut a = vec![cmd.clone()];
             a.extend_from_slice(rest);
             tools::run_tool(&tools, "tplcc", &a)
@@ -596,6 +599,70 @@ fn cmd_git(args: &[String]) -> i32 {
         other => {
             eprintln!("tplc git: unknown subcommand `{other}` (status|log|diff|commit|branch)");
             2
+        }
+    }
+}
+
+/// `tplc pkg <dump|verify|gen> …` — native .tplc package tools
+/// (tplc-pkg lib); anything else forwards to `tplcc pkg` (add-section).
+fn cmd_pkg(args: &[String], tools: &Tools) -> i32 {
+    let sub = args.first().map(|s| s.as_str()).unwrap_or("");
+    match sub {
+        "dump" | "verify" | "gen" => {
+            if args.len() < 2 {
+                eprintln!("usage: tplc pkg {sub} <file.tplc>");
+                return 2;
+            }
+            let path = &args[1];
+            if sub == "gen" {
+                return match tplc_pkg::tool::fixture_bytes() {
+                    Ok(bytes) => match std::fs::write(path, &bytes) {
+                        Ok(()) => {
+                            println!("{}: wrote {} bytes (8 sections)", path, bytes.len());
+                            0
+                        }
+                        Err(e) => {
+                            eprintln!("{}: {e}", path);
+                            1
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("tplc pkg gen: {e} ({})", e.code());
+                        1
+                    }
+                };
+            }
+            let data = match std::fs::read(path) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("{}: {}", path, e);
+                    return 1;
+                }
+            };
+            match tplc_pkg::Package::parse(&data) {
+                Ok(pkg) => {
+                    if sub == "dump" {
+                        tplc_pkg::tool::dump(&pkg);
+                    } else {
+                        println!(
+                            "{}: OK ({} bytes, {} sections)",
+                            path,
+                            data.len(),
+                            pkg.toc().len()
+                        );
+                    }
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{}: verify failed: {} ({})", path, e, e.code());
+                    1
+                }
+            }
+        }
+        _ => {
+            let mut a = vec!["pkg".to_string()];
+            a.extend_from_slice(args);
+            tools::run_tool(tools, "tplcc", &a)
         }
     }
 }

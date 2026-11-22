@@ -9,12 +9,12 @@
 # cascade + Smith predictor loops, and the ramp/soak/loop profile
 # programmer.
 #
-# Requires: tplcc, tplc-pkg (skip 77 otherwise).
+# Requires: tplcc, tplc (skip 77 otherwise).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 TPLCC=${TPLCC:-compiler/target/debug/tplcc}
-PKG=${PKG:-compiler/target/debug/tplc-pkg}
+PKG=${PKG:-compiler/target/debug/tplc}
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -23,7 +23,7 @@ ok()  { pass=$((pass+1)); echo "PASS $1"; }
 bad() { fail=$((fail+1)); echo "FAIL $1"; }
 
 [ -x "$TPLCC" ] || { echo "SKIP no tplcc"; exit 77; }
-[ -x "$PKG" ]   || { echo "SKIP no tplc-pkg"; exit 77; }
+[ -x "$PKG" ]   || { echo "SKIP no tplc pkg"; exit 77; }
 
 LIB_ST=libraries/tempctrl/atc_tempctrl.st
 
@@ -39,9 +39,9 @@ LIB_ST=libraries/tempctrl/atc_tempctrl.st
          echo "== $pass pass, $fail fail"; exit 1; }
 ok "tplcc build --library Atc_TempCtrl"
 
-"$PKG" verify "$WORK/atc_tempctrl.tplc" >/dev/null 2>&1 \
-    && ok "tplc-pkg verify library" \
-    || bad "tplc-pkg verify library"
+"$PKG" pkg verify "$WORK/atc_tempctrl.tplc" >/dev/null 2>&1 \
+    && ok "tplc pkg verify library" \
+    || bad "tplc pkg verify library"
 
 INFO=$("$TPLCC" info "$WORK/atc_tempctrl.tplc" 2>/dev/null)
 echo "$INFO" | grep -q '"kind":"library"' \
@@ -91,9 +91,9 @@ EOF
     && ok "consumer build --lib" \
     || bad "consumer build --lib"
 
-"$PKG" verify "$WORK/consumer.tplc" >/dev/null 2>&1 \
-    && ok "tplc-pkg verify consumer" \
-    || bad "tplc-pkg verify consumer"
+"$PKG" pkg verify "$WORK/consumer.tplc" >/dev/null 2>&1 \
+    && ok "tplc pkg verify consumer" \
+    || bad "tplc pkg verify consumer"
 
 # --- semantic suite --------------------------------------------------
 # each cases/tNN_*.st is concatenated with the library and driven by

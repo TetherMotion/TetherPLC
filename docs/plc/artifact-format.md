@@ -49,7 +49,8 @@ Wire constants + error codes shared by both implementations:
   `validate_for_load`, `manifest_json`.
 - `sections` module — `Layd`/`Migd` encode+decode, byte-identical to
   `tests/abi/desc_formats.h` (the C modules parse these buffers).
-- `tplc-pkg` bin — `dump`, `verify`, `gen` (deterministic fixture).
+- `tplc pkg` — `dump`, `verify`, `gen` (deterministic fixture); the
+  crate is a pure library (`tplc_pkg::tool`).
 - Tests: 10 cases — round-trip, LAYD-in-package, MIGD round-trip,
   payload/header/TOC tamper detection, sorted-TOC rejection,
   unknown-required rejection, unknown-optional pass.
@@ -149,5 +150,4 @@ Wire constants + error codes shared by both implementations:
 
 - `cargo test -p tplc-pkg` → 10 tests.
 - `ctest -R pkg_conformance` → 25 checks, golden fixture + tampering.
-- Fixture regeneration: `cargo run -p tplc-pkg --bin tplc-pkg -- gen
-  tests/pkg/fixtures/sample.tplc`.
+- Fixture regeneration: `tplc pkg gen tests/pkg/fixtures/sample.tplc`.

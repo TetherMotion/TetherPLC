@@ -8,7 +8,7 @@
 //! `TPLC_SKIP_NATIVE_BUILD=1` to skip entirely (e.g. docs.rs, cross
 //! builds, or when only hacking on the Rust side).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// CMake targets `tplc` shells out to (see tools.rs). Optional-service

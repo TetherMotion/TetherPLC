@@ -9,6 +9,7 @@ pub mod error;
 pub mod format;
 pub mod reader;
 pub mod sections;
+pub mod tool;
 pub mod writer;
 
 pub use error::{PkgError, Result};

@@ -211,7 +211,7 @@ scripts/make-deb.sh                      # → build/deb/tetherplc_0.1.0-1_amd64
 sudo apt install ./build/deb/tetherplc_*.deb
 ```
 
-The package installs to `/usr/bin` (`tplc`, `tplcc`, `tplc-pkg`,
+The package installs to `/usr/bin` (`tplc`, `tplcc`,
 `tether-plc`, `tether-plc-sim`, `tplc-io`, `tplc-image`,
 `tplc-io-*`, `tether-plc-bridge`, `tplc-ide`) and
 `/usr/share/tetherplc` (`libraries/tempctrl`, `compat/{tc2,tc3}`,

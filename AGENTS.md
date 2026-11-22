@@ -15,7 +15,8 @@ Two halves:
 - **`compiler/`** — Rust workspace. `tplcc` is the CLI
   (ST/FBD/LD → LLVM IR → `.tplc` package); `tplc-mir` is the middle
   IR; `tplc-st`/`tplc-codegen`/`tplc-rt` are frontend/lowering/
-  runtime-contract layers; `tplc-pkg` writes packages; `fbd-model`,
+  runtime-contract layers; `tplc-pkg` is the .tplc package library;
+  `fbd-model`,
   `fbd-lower`, `plcopen-io` are the graphical-language crates; `tplc`
   is the umbrella binary. Built with **cargo + LLVM 21**.
   `tplc` also owns **project workspaces**: `tplc new <dir>`

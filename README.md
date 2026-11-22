@@ -95,7 +95,7 @@ tools `tplc` orchestrates (set `TPLC_SKIP_NATIVE_BUILD=1` to skip that):
 
 ```bash
 cargo build --release -p tplcc -p tplc-pkg -p tplc -j8
-# → compiler/target/release/{tplcc,tplc-pkg,tplc}  (target dir unchanged)
+# → compiler/target/release/{tplcc,tplc}  (target dir unchanged)
 # → build/{tether-plc,tether-plc-sim,tether-plc-bridge,tplc-image,tplc-io*,tplc-ec-pump}
 ```
 
