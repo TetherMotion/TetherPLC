@@ -11,7 +11,7 @@ env:
   # Sibling Tether checkout the C++ build slices tether_io sources from
   # (tplc-io, tplc_host tether-io services). Pinned to the Tether commit
   # this repo was last verified against — bump deliberately.
-  TETHER_REF: 9617c1435f76502105a7eaebcd2adf0a3fc49bd8
+  TETHER_REF: 9995934ba5f64e86de9ccb44004e2b5b950ee503
 
 jobs:
   linux-x86_64:
