@@ -562,10 +562,16 @@
         "period_ns"
       ],
       "properties": {
+        "kind": {
+          "description": "\"cyclic\" (default) | \"freewheeling\" | \"event\"",
+          "default": "cyclic",
+          "type": "string"
+        },
         "name": {
           "type": "string"
         },
         "period_ns": {
+          "description": "cyclic period; ignored for event/freewheeling tasks",
           "type": "integer",
           "format": "uint64",
           "minimum": 0.0
@@ -582,6 +588,37 @@
           "items": {
             "type": "string"
           }
+        },
+        "trigger": {
+          "description": "required when kind == \"event\"",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TaskTrigger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "TaskTrigger": {
+      "description": "task scheduling kind — \"cyclic\" (default) | \"freewheeling\" | \"event\"",
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "signal": {
+          "description": "sym name (\"PROG.var\"/\"var\"/\"GVL.var\") or image bit (\"%IX<b>.<bit>\"/\"%QX<b>.<bit>\"); unused for \"manual\"",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "\"rise\" | \"level\" | \"manual\"",
+          "type": "string"
         }
       }
     },

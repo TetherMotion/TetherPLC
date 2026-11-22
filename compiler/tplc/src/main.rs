@@ -42,6 +42,7 @@ USAGE:
   tplc project [show|path|set K=V]      project manifest
   tplc git <status|log|diff|commit|branch> [args]   project git
   tplc projects                         recently opened projects
+  tplc fbd-schema                       print the fbd.v1 JSON Schema
   tplc doctor                           check tool resolution
   tplc cc <args…>                       tplcc passthrough (e.g. `tplc cc serve`)
   tplc image|bridge|io|pump <args…>     runtime tool passthrough
@@ -111,6 +112,10 @@ fn dispatch(args: &[String]) -> i32 {
         "project" => cmd_project(rest),
         "git" => cmd_git(rest),
         "projects" | "recent" => cmd_projects(),
+        "fbd-schema" | "schema" => {
+            println!("{}", fbd_model::schema_json());
+            0
+        }
         "image" => tools::run_tool(&tools, "tplc-image", rest),
         "bridge" => tools::run_tool(&tools, "tether-plc-bridge", rest),
         "io" => tools::run_tool(&tools, "tplc-io", rest),

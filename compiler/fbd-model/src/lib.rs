@@ -13,3 +13,12 @@ mod nodeid;
 pub use canon::{from_json, to_canonical_json, ModelError};
 pub use model::*;
 pub use nodeid::IdAlloc;
+
+/// JSON Schema (draft-07, schemars) for the `fbd.v1` document —
+/// `tplc fbd-schema` prints this; the result is checked in as
+/// `schema/fbd.v1.json` and drives the WebUI's TS types.
+#[cfg(feature = "schema")]
+pub fn schema_json() -> String {
+    let s = schemars::schema_for!(FbdProject);
+    serde_json::to_string_pretty(&s).unwrap()
+}
