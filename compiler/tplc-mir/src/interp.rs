@@ -356,7 +356,10 @@ impl<'a> Rt<'a> {
                 };
                 if off == u64::MAX {
                     self.fault = Some(TPLC_TASK_E_PANIC);
-                } else if off + to.size() > self.blob.len() as u64 {
+                } else if off
+                    .checked_add(to.size())
+                    .map_or(true, |end| end > self.blob.len() as u64)
+                {
                     self.fault = Some(TPLC_TASK_E_BOUNDS);
                 }
                 (if off == u64::MAX { 0 } else { off }, to)
@@ -374,14 +377,14 @@ impl<'a> Rt<'a> {
                             .members
                             .get(name.as_str())
                             .unwrap_or_else(|| panic!("{fbname} has no member {name}"));
-                        (off + *moff, mty.clone())
+                        (off.wrapping_add(*moff), mty.clone())
                     }
                     Type::Struct { fields, .. } => {
                         let mut o = 0u64;
                         for (n, t) in &fields {
                             o = (o + t.align() - 1) & !(t.align() - 1);
                             if n == name {
-                                return (off + o, t.clone());
+                                return (off.wrapping_add(o), t.clone());
                             }
                             o += t.size();
                         }
@@ -394,7 +397,12 @@ impl<'a> Rt<'a> {
                 let (off, ty) = self.resolve(ctx, inner);
                 if let Type::Array { elem, lo, .. } = ty {
                     let idx = self.eval(ctx, idx_e).as_i64() - lo;
-                    (off + elem.size() * idx as u64, *elem)
+                    // wrapping: matches release-mode / C unsigned wrap —
+                    // debug builds must not panic on OOB-style indices
+                    (
+                        off.wrapping_add(elem.size().wrapping_mul(idx as u64)),
+                        *elem,
+                    )
                 } else {
                     panic!("index on non-array")
                 }

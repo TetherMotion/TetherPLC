@@ -116,8 +116,11 @@ jobs:
       # CTest runs each test via qemu-aarch64 (CMAKE_CROSSCOMPILING_EMULATOR);
       # tests that fork/exec tether-plc rely on binfmt_misc from
       # qemu-user-binfmt (registered by the package's postinst).
+      # QEMU_LD_PREFIX covers binfmt entries that lack an explicit -L.
       - name: CTest (qemu-aarch64)
         working-directory: TetherPLC
+        env:
+          QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
         run: ctest --test-dir build-aarch64 --output-on-failure
 
   # Heavy lane: tplcc needs LLVM 21 (inkwell llvm21-1 + the rusty ST
