@@ -267,7 +267,7 @@ endif()
 # ------------------------------------------------------------------ #
 # Runtime binary
 # ------------------------------------------------------------------ #
-add_executable(tether-plc runtime/tether-plc/main.cpp)
+add_executable(tether-plc runtime/tether-plc/main.cpp runtime/tether-plc/support.cpp)
 target_link_libraries(tether-plc PRIVATE tplc_host tplc_image tplc_pkg)
 set_target_properties(tether-plc PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -374,7 +374,14 @@ if(EXISTS "${TETHER_DIR}/include/tether/io/Server.hpp" AND
   set_target_properties(tplc_tether_io PROPERTIES
     CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 
-  add_executable(tplc-io runtime/tplc-io/main.cpp)
+  add_executable(tplc-io
+    runtime/tplc-io/main.cpp
+    runtime/tplc-io/plumbing.cpp
+    runtime/tplc-io/ctl_json.cpp
+    runtime/tplc-io/schema.cpp
+    runtime/tplc-io/status.cpp
+    runtime/tplc-io/typc.cpp
+    runtime/tplc-io/registry.cpp)
   target_link_libraries(tplc-io PRIVATE tplc_tether_io)
   target_include_directories(tplc-io PRIVATE runtime/tplc-io)
   set_target_properties(tplc-io PROPERTIES
