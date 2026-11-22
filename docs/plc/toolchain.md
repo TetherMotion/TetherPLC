@@ -206,7 +206,7 @@ binaries, library sources, a prebuilt `atc_tempctrl.tplc`, and a
 
 ```bash
 cmake --build build -j8
-(cd compiler && cargo build --release -p tplcc -p tplc-pkg -p tplc -j8)
+cargo build --release -p tplcc -p tplc-pkg -p tplc -j8   # from repo root
 scripts/make-deb.sh                      # → build/deb/tetherplc_0.1.0-1_amd64.deb
 sudo apt install ./build/deb/tetherplc_*.deb
 ```

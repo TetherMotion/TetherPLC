@@ -1,0 +1,5 @@
+# Keep cargo artifacts where they always were (compiler/target) so the
+# ~140 test/tooling scripts referencing compiler/target/{release,debug}
+# and tplc's tool resolution keep working unchanged.
+[build]
+target-dir = "compiler/target"

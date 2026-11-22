@@ -56,9 +56,9 @@ tools belong here.
 
 ```bash
 # Compiler (Rust) — release for real use, debug is fine for tests
-cd compiler && cargo build --release -p tplcc -p tplc-pkg -j8 && cd ..
+cargo build --release -p tplcc -p tplc-pkg -j8   # from repo root
 # or the debug binaries tests default to:
-cd compiler && cargo build -p tplcc -j8 && cd ..
+cargo build -p tplcc -j8
 
 # Runtime (C/C++) — configure once
 cmake -B build
@@ -157,7 +157,9 @@ $TPLCC build oven.st -o /tmp/q.tplc
 ## Repo Layout
 
 ```
-compiler/           Rust workspace (see compiler/Cargo.toml members)
+compiler/           Rust crate sources (workspace root is the repo
+                    toplevel Cargo.toml; artifacts stay in
+                    compiler/target via .cargo/config.toml)
 include/tplc/       C ABI headers — one per service/domain
 libraries/          ST library sources (built with --library):
                     tempctrl, mqtt, homeassistant, canopen, iolink,

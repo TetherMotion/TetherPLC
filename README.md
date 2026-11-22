@@ -87,12 +87,16 @@ docs/                architecture, per-topic specs, design goals
 
 ## Build from source
 
-### 1. Compiler (Rust)
+### 1. Compiler (Rust) — one command builds everything
+
+The Cargo workspace lives at the repo root; crates are under
+`compiler/`. `cargo build` also drives the CMake build for the runtime
+tools `tplc` orchestrates (set `TPLC_SKIP_NATIVE_BUILD=1` to skip that):
 
 ```bash
-cd compiler
-cargo build --release        # tplcc, tplc-pkg and all compiler crates
-# binaries: compiler/target/release/{tplcc,tplc-pkg}
+cargo build --release -p tplcc -p tplc-pkg -p tplc -j8
+# → compiler/target/release/{tplcc,tplc-pkg,tplc}  (target dir unchanged)
+# → build/{tether-plc,tether-plc-sim,tether-plc-bridge,tplc-image,tplc-io*,tplc-ec-pump}
 ```
 
 `tplcc` needs LLVM 21 visible to `llvm-sys`. If it isn't on the default
@@ -470,7 +474,7 @@ this is what the WebUI palette and the `blocks` meta-op serve.
 
 ```bash
 # unit + conformance (C/C++ and Rust)
-cd compiler && cargo test -j8 && cd ..
+cargo test -j8               # default workspace members (LLVM-free set)
 ctest --test-dir build --output-on-failure
 
 # compat e2e — each script spins fake brokers / sim replay

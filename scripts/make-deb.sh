@@ -10,7 +10,7 @@
 #
 # Prerequisites:
 #   cmake --build build -j8          # C++ binaries (RelWithDebInfo ok)
-#   cargo build --release -p tplcc -p tplc-pkg -p tplc --manifest-path compiler/Cargo.toml
+#   cargo build --release -p tplcc -p tplc-pkg -p tplc   # from repo root
 #   ../Tether built (lib/*.so)       # for tplc-ec-pump; set
 #                                    # TETHER_BUILD_LIB=/path/to/lib to override,
 #                                    # or SKIP_ECPUMP=1 to omit it

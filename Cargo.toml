@@ -1,0 +1,43 @@
+# TetherPLC workspace — Rust crates live under compiler/, the C++
+# runtime under runtime//tools/ (built by CMake into build/). `cargo
+# build` at the repo root builds the Rust side; the `tplc` crate's
+# build.rs additionally drives the CMake build for the runtime tools
+# it orchestrates (set TPLC_SKIP_NATIVE_BUILD=1 to opt out).
+[workspace]
+resolver = "2"
+members = [
+    "compiler/tplc-pkg",
+    "compiler/tplc-mir",
+    "compiler/tplc-st",
+    "compiler/tplc-codegen",
+    "compiler/tplc-rt",
+    "compiler/tplcc",
+    "compiler/fbd-model",
+    "compiler/plcopen-io",
+    "compiler/fbd-lower",
+    "compiler/tplc",
+]
+# LLVM-free default build: tplcc needs the 'rusty' frontend + 'llvm'
+# backend; heavy crates are built explicitly (CI light lane skips them).
+default-members = [
+    "compiler/tplc-pkg",
+    "compiler/tplc-mir",
+    "compiler/tplc-st",
+    "compiler/tplc-codegen",
+    "compiler/tplc-rt",
+    "compiler/fbd-model",
+    "compiler/plcopen-io",
+    "compiler/fbd-lower",
+    "compiler/tplc",
+]
+# spikes/ are standalone roots (excluded from the workspace — they pull
+# heavy eval-time deps like ruSTy+LLVM-21 that CI must not build).
+exclude = ["compiler/spikes/rusty-parse", "compiler/spikes/rusty-mir"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MPL-2.0"
+
+[profile.release]
+debug = true
