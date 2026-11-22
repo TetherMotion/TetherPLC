@@ -306,7 +306,7 @@ fn cmd_serve(tools: &Tools, args: &[String]) -> i32 {
         };
     }
     if cfg.webui.is_none() && !no_webui {
-        cfg.webui = detect_webui_dir();
+        cfg.webui = ensure_webui_dir();
     }
     if cfg.libdirs.is_empty() {
         cfg.libdirs = default_libdirs();
@@ -329,13 +329,9 @@ fn resolve_serve_project(dir: Option<&str>) -> Option<std::path::PathBuf> {
     }
 }
 
-pub(crate) fn detect_webui_dir() -> Option<String> {
-    if let Ok(d) = std::env::var("TPLC_WEBUI") {
-        if !d.is_empty() && std::path::Path::new(&d).join("index.html").exists() {
-            return Some(d);
-        }
-    }
-    // <repo>/../TetherWebUI/dist and cwd-relative variants
+/// Candidate TetherWebUI dist dirs: `<…>/TetherWebUI/dist` walked up
+/// from cwd and the executable dir (same order as detection).
+fn webui_candidates() -> Vec<std::path::PathBuf> {
     let mut starts = Vec::new();
     if let Ok(c) = std::env::current_dir() {
         starts.push(c);
@@ -345,17 +341,146 @@ pub(crate) fn detect_webui_dir() -> Option<String> {
             starts.push(d.to_path_buf());
         }
     }
+    let mut out = Vec::new();
     for s in starts {
         let mut d = Some(s.as_path());
         for _ in 0..8 {
             let Some(dir) = d else { break };
-            for rel in ["../TetherWebUI/dist", "TetherWebUI/dist", "../../TetherWebUI/dist"] {
-                let p = dir.join(rel);
-                if p.join("index.html").exists() {
-                    return Some(p.display().to_string());
-                }
+            for rel in ["../TetherWebUI", "TetherWebUI", "../../TetherWebUI"] {
+                out.push(dir.join(rel).join("dist"));
             }
             d = dir.parent();
+        }
+    }
+    out
+}
+
+/* ---------------- WebUI auto-build ----------------------------------
+   `cargo run -- dev` should just work: when a sibling TetherWebUI
+   checkout is found, its dist/ is (re)built when missing or stale —
+   any source newer than dist/index.html triggers `npm run build`
+   (with `npm install` first when node_modules is absent).
+   TPLC_NO_WEBUI_BUILD=1 opts out (CI/minimal environments). */
+
+/// Newest mtime under `dir` (recursive, capped so pathological trees
+/// like node_modules can't stall startup).
+fn newest_mtime(dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    let mut newest: Option<std::time::SystemTime> = None;
+    let mut stack = vec![dir.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > 50_000 {
+                return newest;
+            }
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if let Ok(m) = e.metadata() {
+                if let Ok(t) = m.modified() {
+                    if newest.is_none_or(|n| t > n) {
+                        newest = Some(t);
+                    }
+                }
+            }
+        }
+    }
+    newest
+}
+
+/// True when dist/index.html is missing or older than any source the
+/// build depends on (src/, public/, index.html, configs).
+fn webui_stale(root: &std::path::Path, dist: &std::path::Path) -> bool {
+    let Some(stamp) = dist
+        .join("index.html")
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+    else {
+        return true; // no dist at all
+    };
+    for sub in ["src", "public"] {
+        if let Some(t) = newest_mtime(&root.join(sub)) {
+            if t > stamp {
+                return true;
+            }
+        }
+    }
+    for f in ["index.html", "package.json", "package-lock.json",
+              "vite.config.ts", "vite.config.js", "tsconfig.json"] {
+        if let Some(t) = root
+            .join(f)
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+        {
+            if t > stamp {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Run `npm install` (when needed) + `npm run build` in `root`.
+/// Inherits stdio so the user sees progress/errors.
+fn build_webui(root: &std::path::Path) -> bool {
+    use std::process::Command;
+    if !root.join("node_modules").is_dir() {
+        eprintln!("tplc: WebUI node_modules missing — npm install …");
+        let ok = Command::new("npm")
+            .arg("install")
+            .current_dir(root)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            eprintln!("tplc: WebUI npm install failed");
+            return false;
+        }
+    }
+    eprintln!("tplc: building WebUI (npm run build in {}) …", root.display());
+    let ok = Command::new("npm")
+        .args(["run", "build"])
+        .current_dir(root)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        eprintln!("tplc: WebUI build failed — serving whatever dist exists");
+    }
+    ok
+}
+
+/// Like detect_webui_dir() but builds a sibling TetherWebUI checkout
+/// when dist/ is missing or stale.  Honors TPLC_WEBUI verbatim and
+/// TPLC_NO_WEBUI_BUILD=1 as an opt-out.
+pub(crate) fn ensure_webui_dir() -> Option<String> {
+    if let Ok(d) = std::env::var("TPLC_WEBUI") {
+        if !d.is_empty() && std::path::Path::new(&d).join("index.html").exists() {
+            return Some(d);
+        }
+    }
+    let autobuild = std::env::var("TPLC_NO_WEBUI_BUILD")
+        .map(|v| v != "1")
+        .unwrap_or(true);
+    for dist in webui_candidates() {
+        let Some(root) = dist.parent().map(|p| p.to_path_buf()) else {
+            continue;
+        };
+        let buildable = root.join("package.json").is_file();
+        let have_dist = dist.join("index.html").exists();
+        if buildable && autobuild && (!have_dist || webui_stale(&root, &dist)) {
+            build_webui(&root);
+            if dist.join("index.html").exists() {
+                return Some(dist.display().to_string());
+            }
+        }
+        // Built or not, an existing dist is better than nothing.
+        if dist.join("index.html").exists() {
+            return Some(dist.display().to_string());
         }
     }
     None

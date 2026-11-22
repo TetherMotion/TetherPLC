@@ -695,7 +695,7 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
     let webui = if d.no_webui {
         None
     } else {
-        d.webui.clone().or_else(crate::detect_webui_dir)
+        d.webui.clone().or_else(crate::ensure_webui_dir)
     };
     println!("tplc dev: stack up");
     println!("  webui   {}", webui.as_deref().unwrap_or("(api only)"));
