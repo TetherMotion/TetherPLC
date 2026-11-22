@@ -1427,9 +1427,10 @@ fn handle_conn(mut cfd: TcpStream, cfg: &ServeCfg, cache: &Arc<Mutex<(String, bo
                 // hint instead of a bare "not found".
                 reply_str(&mut cfd, 200, "OK",
                           "tplc serve — api only (no WebUI bundle found).\n\
-                           Set --webui <dir> or TPLC_WEBUI to a built\n\
-                           TetherWebUI dist/ to serve the IDE. Ops run\n\
-                           over ws://<host>:<port>/ws\n",
+                           Clone https://github.com/TetherMotion/TetherWebUI\n\
+                           next to tplc (it auto-builds), or set --webui\n\
+                           <dir> / TPLC_WEBUI to a built dist/.\n\
+                           Ops run over ws://<host>:<port>/ws\n",
                           "text/plain");
             } else {
                 reply_str(&mut cfd, 404, "Not Found", "not found", "text/plain");

@@ -162,6 +162,19 @@ fn doctor(tools: &Tools) -> i32 {
     // webui hint
     if let Ok(d) = std::env::var("TPLC_WEBUI") {
         println!("  webui dir           {d}");
+    } else {
+        let cands = webui_candidates();
+        if let Some(dist) = cands.iter().find(|d| d.join("index.html").exists()) {
+            println!("  webui dir           {} (auto)", dist.display());
+        } else if cands.iter().any(|d| {
+            d.parent()
+                .map(|r| r.join("package.json").is_file())
+                .unwrap_or(false)
+        }) {
+            println!("  webui dir           TetherWebUI checkout found, dist/ not built (tplc dev/serve builds it)");
+        } else {
+            println!("  webui dir           no TetherWebUI checkout found — IDE unavailable");
+        }
     }
     if missing == 0 {
         0
@@ -454,26 +467,38 @@ fn build_webui(root: &std::path::Path) -> bool {
     ok
 }
 
-/// Like detect_webui_dir() but builds a sibling TetherWebUI checkout
-/// when dist/ is missing or stale.  Honors TPLC_WEBUI verbatim and
-/// TPLC_NO_WEBUI_BUILD=1 as an opt-out.
+/// Builds a sibling TetherWebUI checkout's dist/ when missing or
+/// stale.  Honors TPLC_WEBUI verbatim and TPLC_NO_WEBUI_BUILD=1 as
+/// an opt-out; prints a notification when nothing can be served.
 pub(crate) fn ensure_webui_dir() -> Option<String> {
     if let Ok(d) = std::env::var("TPLC_WEBUI") {
-        if !d.is_empty() && std::path::Path::new(&d).join("index.html").exists() {
-            return Some(d);
+        if !d.is_empty() {
+            if std::path::Path::new(&d).join("index.html").exists() {
+                return Some(d);
+            }
+            eprintln!("tplc: TPLC_WEBUI={d} has no index.html — ignoring it");
         }
     }
     let autobuild = std::env::var("TPLC_NO_WEBUI_BUILD")
         .map(|v| v != "1")
         .unwrap_or(true);
+    // First TetherWebUI *source* tree seen (has package.json) — used
+    // for the "found but unbuilt/failed" notification below.
+    let mut checkout: Option<std::path::PathBuf> = None;
+    let mut build_failed = false;
     for dist in webui_candidates() {
         let Some(root) = dist.parent().map(|p| p.to_path_buf()) else {
             continue;
         };
         let buildable = root.join("package.json").is_file();
+        if checkout.is_none() && buildable {
+            checkout = Some(root.clone());
+        }
         let have_dist = dist.join("index.html").exists();
         if buildable && autobuild && (!have_dist || webui_stale(&root, &dist)) {
-            build_webui(&root);
+            if !build_webui(&root) {
+                build_failed = true;
+            }
             if dist.join("index.html").exists() {
                 return Some(dist.display().to_string());
             }
@@ -481,6 +506,31 @@ pub(crate) fn ensure_webui_dir() -> Option<String> {
         // Built or not, an existing dist is better than nothing.
         if dist.join("index.html").exists() {
             return Some(dist.display().to_string());
+        }
+    }
+    // Nothing to serve — say why, and how to get the IDE.
+    match &checkout {
+        None => eprintln!(
+            "tplc: no TetherWebUI checkout found — the IDE will not be served.\n  \
+             Clone it next to this repo:\n    \
+             git clone https://github.com/TetherMotion/TetherWebUI\n  \
+             tplc will detect and build it automatically, or point\n  \
+             --webui / TPLC_WEBUI at a built dist/."
+        ),
+        Some(root) => {
+            let why = if !autobuild {
+                "auto-build disabled (TPLC_NO_WEBUI_BUILD=1)"
+            } else if build_failed {
+                "`npm run build` failed (see output above)"
+            } else {
+                "build ran but produced no dist/index.html"
+            };
+            eprintln!(
+                "tplc: TetherWebUI checkout at {} has no built dist/ — {why}.\n  \
+                 Run `npm install && npm run build` there, or point\n  \
+                 --webui / TPLC_WEBUI at a built dist/.",
+                root.display()
+            );
         }
     }
     None
