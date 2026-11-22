@@ -728,6 +728,14 @@ if(NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(serve_ws PROPERTIES
     SKIP_RETURN_CODE 77 TIMEOUT 300)
 
+  # bus_scan stale-pump recovery: resolved binary predating --scan must
+  # be retried (same path included — the file may be rebuilt mid-scan)
+  # and reported as a stale build, not a bare arg-parse error
+  add_test(NAME serve_stale_pump
+    COMMAND bash ${CMAKE_SOURCE_DIR}/tests/serve/stale_pump_e2e.sh)
+  set_tests_properties(serve_stale_pump PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 60)
+
   # device blocks: EK-style terminals alias located vars, DI→logic→DO
   add_test(NAME device_blocks
     COMMAND bash ${CMAKE_SOURCE_DIR}/tests/device/e2e.sh)

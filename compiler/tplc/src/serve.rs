@@ -494,6 +494,9 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
     // A stale resolved binary (an old pump reached via PATH/bindir before
     // build/ existed) rejects newer args, and a rebuilt tree can leave the
     // cached path dangling — in both cases re-resolve once and retry.
+    // Retry even when re-resolution returns the same path: the file at it
+    // may have been rebuilt mid-scan, and "the resolved path itself holds
+    // a stale binary" is exactly the case this recovers from.
     let stale = match &out {
         Err(_) => true,
         Ok(o) => {
@@ -503,10 +506,22 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
     };
     if stale {
         if let Some(fresh) = cfg.tools.find("tplc-ec-pump") {
-            if fresh != pump {
-                pump = fresh;
-                out = spawn(&pump, via_runec);
-            }
+            pump = fresh;
+            out = spawn(&pump, via_runec);
+        }
+    }
+    // After all retries a pump that still rejects --scan is just an old
+    // build sitting at the resolved path — say so instead of surfacing
+    // a bare arg-parse error that looks like a bug in the scan itself.
+    if let Ok(o) = &out {
+        if !o.status.success()
+            && String::from_utf8_lossy(&o.stderr).contains("unknown arg")
+        {
+            return Err(format!(
+                "tplc-ec-pump at {} is a stale build that doesn't support \
+                 --scan — rebuild it:\n  cmake --build build --target tplc-ec-pump --parallel 8",
+                pump.display()
+            ));
         }
     }
     // Permission retry: the route probe said "direct" but the run still
