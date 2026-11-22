@@ -369,7 +369,8 @@ if(EXISTS "${TETHER_DIR}/include/tether/io/Server.hpp" AND
   target_compile_definitions(tplc_tether_io PUBLIC
     TETHER_IO_TRANSPORT_WS=0 TETHER_IO_TRANSPORT_SERIAL=0)
   target_compile_definitions(tplc_tether_io PRIVATE
-    BLAKE3_NO_SSE2 BLAKE3_NO_SSE41 BLAKE3_NO_AVX2 BLAKE3_NO_AVX512)
+    BLAKE3_NO_SSE2 BLAKE3_NO_SSE41 BLAKE3_NO_AVX2 BLAKE3_NO_AVX512
+    BLAKE3_USE_NEON=0)
   set_target_properties(tplc_tether_io PROPERTIES
     CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON)
 
