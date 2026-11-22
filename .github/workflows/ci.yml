@@ -180,21 +180,75 @@ jobs:
         working-directory: TetherPLC
         run: cargo test --workspace -j8
 
-      - name: e2e — Atc_Ops library
+      # Standalone e2e scripts live in the linux-x86_64-e2e lane below.
+
+  # e2e lane (x86_64 only): every standalone tests/**/*.sh script via
+  # tests/e2e_all.sh — rc 77 counts as SKIP (missing prerequisite).
+  # Builds Tether's emulated beckhoff_slave_chain so tests/ec/* run for
+  # real instead of skipping. aarch64/qemu is covered by ctest only —
+  # the e2e scripts are not emulator-safe.
+  linux-x86_64-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: TetherPLC
+
+      - name: Checkout Tether (tether_io sources + slave chain)
+        uses: actions/checkout@v5
+        with:
+          repository: TetherMotion/Tether
+          ref: ${{ env.TETHER_REF }}
+          path: Tether
+
+      # Full submodule set — the slave-chain example needs more than
+      # the sliced tether_io set (fmt/expected shims, argparse, ...).
+      - name: Tether submodules
+        run: git -C Tether submodule update --init
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 21
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lsb-release wget software-properties-common gnupg
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          sudo apt-get update
+          sudo apt-get install -y libllvm21 llvm-21-dev llvm-21-runtime \
+                                 libpolly-21-dev
+          sudo update-alternatives --install /usr/bin/llvm-config llvm-config \
+            /usr/bin/llvm-config-21 100 || true
+          echo "LLVM_SYS_211_PREFIX=/usr/lib/llvm-21" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=/usr/lib/llvm-21/lib" >> "$GITHUB_ENV"
+
+      - name: Configure + build (C/C++)
+        working-directory: TetherPLC
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build -j8
+
+      - name: Cargo build (tplcc + tplc)
+        working-directory: TetherPLC
+        run: cargo build -p tplcc -p tplc -j8
+
+      # Emulated Beckhoff chain the ec/* scripts drive via UDP — the
+      # sibling checkout layout puts it at ../Tether/build/bin which is
+      # exactly where the scripts' TETHER_BIN default looks.
+      - name: Build Tether beckhoff_slave_chain
+        working-directory: Tether
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build --target beckhoff_slave_chain -j8
+
+      # Excluded from the "all" sweep: sanitizers.sh is a build-variant
+      # suite (three fresh cmake build dirs — a different gate class,
+      # not e2e) and perf/evidence.sh is a manual doc-refresh tool, not
+      # a pass/fail gate (its own header says "not a ctest gate").
+      - name: e2e — all standalone scripts
         working-directory: TetherPLC
         env:
-          TPLCC: ${{ github.workspace }}/TetherPLC/compiler/target/debug/tplcc
-          PKG: ${{ github.workspace }}/TetherPLC/compiler/target/debug/tplc
-        run: bash tests/ops/e2e.sh
-
-      - name: e2e — package library
-        working-directory: TetherPLC
-        run: bash tests/pkg/library.sh
-
-      - name: e2e — tempctrl profiles
-        working-directory: TetherPLC
-        run: bash tests/tempctrl/e2e.sh
-
-      - name: e2e — tplc serve /ws
-        working-directory: TetherPLC
-        run: bash tests/serve/e2e.sh
+          E2E_EXCLUDE: 'sanitizers\.sh|perf/evidence\.sh'
+        run: bash tests/e2e_all.sh
