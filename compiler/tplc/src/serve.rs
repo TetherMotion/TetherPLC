@@ -472,6 +472,70 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
     }))
 }
 
+/// `iface_list` — enumerate host NICs from /sys/class/net so the WebUI can
+/// offer a real dropdown for the raw-EtherCAT transport instead of a
+/// free-text field. Mirrors EtherCAT::HAL::resolveInterface: `auto` is the
+/// interface name iff exactly one physical Ethernet NIC exists (the
+/// "auto-select the sole physical interface" rule the Tether examples use).
+/// Non-Linux hosts get an empty list — the UI falls back to free text.
+fn do_iface_list(_cfg: &ServeCfg, _req: &serde_json::Value) -> serde_json::Value {
+    let mut ifaces: Vec<serde_json::Value> = Vec::new();
+    let base = std::path::Path::new("/sys/class/net");
+    if let Ok(rd) = std::fs::read_dir(base) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let dir = e.path();
+            let read = |f: &str| -> String {
+                std::fs::read_to_string(dir.join(f))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default()
+            };
+            let arphrd: u32 = read("type").parse().unwrap_or(0);
+            let virt = std::fs::canonicalize(&dir)
+                .map(|p| p.to_string_lossy().contains("/devices/virtual/"))
+                .unwrap_or(false);
+            let wireless =
+                dir.join("wireless").exists() || dir.join("phy80211").exists();
+            let kind = if arphrd == 772 {
+                "loopback"
+            } else if wireless {
+                "wireless"
+            } else if !virt && arphrd == 1 {
+                "ethernet"
+            } else {
+                "virtual"
+            };
+            ifaces.push(serde_json::json!({
+                "name": name,
+                "kind": kind,
+                "state": read("operstate"),
+                "mac": read("address"),
+                "mtu": read("mtu"),
+            }));
+        }
+    }
+    let rank = |v: &serde_json::Value| match v["kind"].as_str().unwrap_or("") {
+        "ethernet" => 0,
+        "wireless" => 1,
+        "virtual" => 2,
+        _ => 3,
+    };
+    ifaces.sort_by(|a, b| {
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")))
+    });
+    let phys: Vec<&str> = ifaces
+        .iter()
+        .filter(|v| v["kind"] == "ethernet")
+        .filter_map(|v| v["name"].as_str())
+        .collect();
+    serde_json::json!({
+        "ifaces": ifaces,
+        "auto": if phys.len() == 1 { phys[0] } else { "" },
+    })
+}
+
 /// `sim_run` — compile the posted sources to a package, then run
 /// `tether-plc-sim --steps` against it. Returns the sim's combined
 /// output (step results + trace) and exit code; the pass/fail verdict
@@ -955,6 +1019,13 @@ fn handle_tetherio(mut cfd: TcpStream, head: String, upstream: String) {
  *     → {"id":N,"ok":true,"data":…}  or  {"id":N,"ok":false,"error":"…"}
  */
 
+/// `Upgrade:` header presence, case-insensitively — HTTP field names are
+/// case-insensitive (RFC 9110 §5.1); browsers send `Upgrade:` but node's
+/// undici WebSocket lowercases to `upgrade:`.
+fn wants_ws_upgrade(head: &str) -> bool {
+    head.lines().any(|l| l.to_lowercase().starts_with("upgrade:"))
+}
+
 fn ws_accept(head: &str) -> Option<String> {
     let key = head
         .lines()
@@ -1284,6 +1355,7 @@ fn meta_dispatch(
             Ok(v) => serde_json::json!({"ok": true, "data": v}),
             Err(e) => fail(&e),
         },
+        "iface_list" => serde_json::json!({"ok": true, "data": do_iface_list(cfg, req)}),
         "sim_run" => match do_sim_run(cfg, req) {
             Ok(v) => serde_json::json!({"ok": true, "data": v}),
             Err(e) => fail(&e),
@@ -1546,7 +1618,7 @@ fn handle_conn(mut cfd: TcpStream, cfg: &ServeCfg, cache: &Arc<Mutex<(String, bo
             reply_str(&mut cfd, 200, "OK", body, "text/plain");
         }
         ("GET", "/ws") => {
-            if !head.contains("Upgrade:") {
+            if !wants_ws_upgrade(&head) {
                 reply_str(&mut cfd, 400, "Bad Request", "websocket upgrade required", "text/plain");
             } else {
                 handle_ws(cfd, head, cfg, cache);
@@ -1555,7 +1627,7 @@ fn handle_conn(mut cfd: TcpStream, cfg: &ServeCfg, cache: &Arc<Mutex<(String, bo
         ("GET", "/tether-io") => {
             if cfg.tplc_io.is_none() {
                 reply_str(&mut cfd, 404, "Not Found", "tether-io bridge not configured", "text/plain");
-            } else if !head.contains("Upgrade:") {
+            } else if !wants_ws_upgrade(&head) {
                 reply_str(&mut cfd, 400, "Bad Request", "websocket upgrade required", "text/plain");
             } else {
                 handle_tetherio(cfd, head, cfg.tplc_io.clone().unwrap_or_default());
