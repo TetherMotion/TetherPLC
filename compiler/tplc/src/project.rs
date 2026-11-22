@@ -293,6 +293,31 @@ pub fn init(dir: &Path, name: Option<&str>) -> Result<Project, String> {
     Ok(proj)
 }
 
+/// Adopt `dir` as a workspace without scaffolding: loads an existing
+/// manifest or writes a minimal one (name = dirname, empty sources).
+/// Unlike `init` this never creates `src/`, `.gitignore`, or git
+/// history — used when an existing directory is simply *opened* as the
+/// workspace (`tplc dev` with no project anywhere).
+pub fn adopt(dir: &Path) -> Result<Project, String> {
+    if !dir.is_dir() {
+        return Err(format!("{}: not a directory", dir.display()));
+    }
+    let root = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let mpath = root.join(TPL_DIR).join(MANIFEST_NAME);
+    if mpath.is_file() {
+        return load(&root);
+    }
+    let mut manifest = Manifest::default();
+    manifest.name = default_name(&root);
+    let proj = Project {
+        root: root.clone(),
+        manifest,
+    };
+    proj.save().map_err(|e| e.to_string())?;
+    record_recent(&root);
+    Ok(proj)
+}
+
 /* ---------------- recent projects (UI convenience only) ----------- */
 
 fn recent_path() -> PathBuf {

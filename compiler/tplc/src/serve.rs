@@ -1422,6 +1422,15 @@ fn handle_conn(mut cfd: TcpStream, cfg: &ServeCfg, cache: &Arc<Mutex<(String, bo
         ("GET", _) => {
             if let Some(w) = &cfg.webui {
                 serve_static(&mut cfd, w, &path);
+            } else if path == "/" || path.is_empty() {
+                // API-only mode (no webui bundle): give browsers a
+                // hint instead of a bare "not found".
+                reply_str(&mut cfd, 200, "OK",
+                          "tplc serve — api only (no WebUI bundle found).\n\
+                           Set --webui <dir> or TPLC_WEBUI to a built\n\
+                           TetherWebUI dist/ to serve the IDE. Ops run\n\
+                           over ws://<host>:<port>/ws\n",
+                          "text/plain");
             } else {
                 reply_str(&mut cfd, 404, "Not Found", "not found", "text/plain");
             }

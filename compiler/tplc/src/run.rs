@@ -557,6 +557,32 @@ fn free_port() -> u16 {
 pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
     let (mut d, mut pos) = parse_dev(args);
     let proj = apply_project(&mut d.run, &mut pos);
+
+    // No project discovered and none requested → open the cwd as the
+    // workspace so the WebUI file/git panes have a root.  Manifest-only
+    // adopt (no scaffold, no git writes, no auto-compiled program) —
+    // an explicit `--project` that failed does not fall back to cwd.
+    let proj = match (proj, d.run.project.is_none()) {
+        (Some(p), _) => Some(p),
+        (None, false) => None,
+        (None, true) => {
+            let cwd =
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            match crate::project::adopt(&cwd) {
+                Ok(p) => {
+                    eprintln!(
+                        "tplc dev: no project found — opened {} as workspace",
+                        p.root.display()
+                    );
+                    Some(p)
+                }
+                Err(e) => {
+                    eprintln!("tplc dev: workspace {}: {e}", cwd.display());
+                    None
+                }
+            }
+        }
+    };
     let o = &d.run;
 
     // 1. package (compile if sources given)
