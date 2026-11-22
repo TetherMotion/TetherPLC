@@ -62,50 +62,10 @@ fn tail(log: &str, n: usize) -> String {
         .join("\n")
 }
 
-/// Serialize cmake invocations on a build dir — `cargo build`'s build.rs
-/// racing a manual `cmake --build` (or a second cargo) on the same dir
-/// corrupts the dep graph / produces sporadic failures. O_EXCL lockfile
-/// with stale-lock takeover; giving up waits builds anyway (the failure
-/// is then reported like any other).
-struct CmakeLock(PathBuf);
-impl CmakeLock {
-    fn acquire(dir: &std::path::Path) -> Option<CmakeLock> {
-        let path = dir.join(".tplc-cmake.lock");
-        let start = std::time::Instant::now();
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(_) => return Some(CmakeLock(path)),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let stale = std::fs::metadata(&path)
-                        .and_then(|m| m.modified())
-                        .map(|t| {
-                            t.elapsed().unwrap_or_default()
-                                > std::time::Duration::from_secs(30 * 60)
-                        })
-                        .unwrap_or(false);
-                    if stale {
-                        let _ = std::fs::remove_file(&path);
-                        continue;
-                    }
-                    if start.elapsed() > std::time::Duration::from_secs(600) {
-                        return None;
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                }
-                Err(_) => return None,
-            }
-        }
-    }
-}
-impl Drop for CmakeLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
+// Serialize cmake invocations on a build dir — shared implementation
+// (`include!` because build scripts can't use crate modules); serve's
+// ecpump auto-rebuild recovery uses the same lock file.
+include!("src/cmake_lock.rs");
 
 fn main() {
     if std::env::var_os("TPLC_SKIP_NATIVE_BUILD").is_some() {
@@ -118,7 +78,7 @@ fn main() {
     let build = root.join("build");
 
     // Serialize with any other cmake invocations on this build dir.
-    let _lock = CmakeLock::acquire(&build);
+    let _lock = CmakeLock::acquire(&build, std::time::Duration::from_secs(600));
 
     // 1. configure once
     if !build.join("CMakeCache.txt").is_file() {
