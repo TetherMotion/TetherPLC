@@ -17,6 +17,7 @@ use crate::ctl::{op, Ctl};
 use crate::tools::Tools;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1383,13 +1384,10 @@ fn ctl_error_frame(req_type: u16, req: u64, msg: &str) -> Vec<u8> {
 fn handle_ws(mut cfd: TcpStream, head: String, cfg: &ServeCfg, cache: &Arc<Mutex<(String, bool)>>) {
     // ctl backend is best-effort: meta-ops (compile/blocks/…) work
     // without a runtime; ctl frames get a synthesized F_ERROR reply.
-    let mut uds = uds_connect(&cfg.ctl_sock, 2000);
-    if let Some(s) = uds.as_mut() {
-        s.set_read_timeout(None).ok();
-        if !ctl_hello(s, "tplc-webui") || !ctl_notify_all(s) {
-            uds = None;
-        }
-    }
+    // Handshake + meta worker come up FIRST — uds_connect retries a
+    // missing ctl socket for up to 2s and must not stall the ws upgrade
+    // or the meta-ops that never needed the runtime (iface_list took a
+    // 2s+ hit on every connect before this reorder).
     if !ws_handshake(&mut cfd, &head) {
         return;
     }
@@ -1421,36 +1419,57 @@ fn handle_ws(mut cfd: TcpStream, head: String, cfg: &ServeCfg, cache: &Arc<Mutex
         });
     }
 
-    // UDS → WS: every ctl frame (replies + F_EVENT pushes) → binary msg
-    if let Some(uds0) = uds.as_ref() {
-        let mut uds_r = match uds0.try_clone() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-        uds_r.set_read_timeout(None).ok();
+    /* ctl UDS connects in the background — set OnceLock when the retry
+       budget resolves either way. ctl-frame writers wait on it (same
+       ≤2s semantics as before); meta-ops and the ws upgrade don't. */
+    let uds_slot = Arc::new(std::sync::OnceLock::<Mutex<Option<UnixStream>>>::new());
+    {
+        let slot = uds_slot.clone();
+        let sock = cfg.ctl_sock.clone();
         let w = cfd_w.clone();
         std::thread::spawn(move || {
-            let mut hdr = [0u8; 16];
-            loop {
-                if !read_full(&mut uds_r, &mut hdr) {
-                    break;
-                }
-                let len = u32::from_le_bytes(hdr[4..8].try_into().unwrap()) as usize;
-                if len > 8 * 1024 * 1024 {
-                    break;
-                }
-                let mut fr = hdr.to_vec();
-                fr.resize(16 + len, 0);
-                if len > 0 && !read_full(&mut uds_r, &mut fr[16..]) {
-                    break;
-                }
-                let mut g = w.lock().unwrap();
-                if !ws_send_frame(&mut g, 0x2, &fr) {
-                    break;
+            let mut uds = uds_connect(&sock, 2000);
+            if let Some(s) = uds.as_mut() {
+                s.set_read_timeout(None).ok();
+                if !ctl_hello(s, "tplc-webui") || !ctl_notify_all(s) {
+                    uds = None;
                 }
             }
-            // ctl went away — drop the ws too so the client reconnects
-            let _ = uds_r.shutdown(std::net::Shutdown::Both);
+            // UDS → WS: every ctl frame (replies + F_EVENT pushes) →
+            // binary msg — spawned once the stream exists.
+            if let Some(uds0) = uds {
+                if let Ok(mut uds_r) = uds0.try_clone() {
+                    uds_r.set_read_timeout(None).ok();
+                    let w2 = w.clone();
+                    std::thread::spawn(move || {
+                        let mut hdr = [0u8; 16];
+                        loop {
+                            if !read_full(&mut uds_r, &mut hdr) {
+                                break;
+                            }
+                            let len =
+                                u32::from_le_bytes(hdr[4..8].try_into().unwrap()) as usize;
+                            if len > 8 * 1024 * 1024 {
+                                break;
+                            }
+                            let mut fr = hdr.to_vec();
+                            fr.resize(16 + len, 0);
+                            if len > 0 && !read_full(&mut uds_r, &mut fr[16..]) {
+                                break;
+                            }
+                            let mut g = w2.lock().unwrap();
+                            if !ws_send_frame(&mut g, 0x2, &fr) {
+                                break;
+                            }
+                        }
+                        // ctl went away — drop the ws too so the client reconnects
+                        let _ = uds_r.shutdown(std::net::Shutdown::Both);
+                    });
+                }
+                let _ = slot.set(Mutex::new(Some(uds0)));
+            } else {
+                let _ = slot.set(Mutex::new(None));
+            }
         });
     }
 
@@ -1485,7 +1504,10 @@ fn handle_ws(mut cfd: TcpStream, head: String, cfg: &ServeCfg, cache: &Arc<Mutex
                         }
                     }
                 } else if msg.len() >= 16 {
-                    let wrote = match uds.as_mut() {
+                    // wait (bounded by the connect budget) for the ctl
+                    // backend — the connect thread sets the slot whether
+                    // it landed a stream or exhausted retries.
+                    let wrote = match uds_slot.wait().lock().unwrap().as_mut() {
                         Some(u) => u.write_all(&msg).is_ok(),
                         None => false,
                     };
@@ -1507,8 +1529,10 @@ fn handle_ws(mut cfd: TcpStream, head: String, cfg: &ServeCfg, cache: &Arc<Mutex
             break;
         }
     }
-    if let Some(u) = uds.as_mut() {
-        let _ = u.shutdown(std::net::Shutdown::Both);
+    if let Some(mu) = uds_slot.get() {
+        if let Some(u) = mu.lock().unwrap().take() {
+            let _ = u.shutdown(std::net::Shutdown::Both);
+        }
     }
 }
 
