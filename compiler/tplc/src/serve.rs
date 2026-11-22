@@ -40,6 +40,15 @@ pub struct ServeCfg {
     pub pkgs_for_io: Vec<String>, // --pkg args when tplc spawns tplc-io itself
     pub spawn_io: bool,
     pub io_port_hint: u16,
+    /// tether-plc-sim binary for the `sim_run` meta-op.
+    pub sim: Option<PathBuf>,
+    /// tether-plc binary — sim_run passes it via --plc.
+    pub plc: Option<PathBuf>,
+    /// tplc-ec-pump binary for the `bus_scan` meta-op.
+    pub ecpump: Option<PathBuf>,
+    /// ecpump artifact dir (.fleet/.topology/.bus) — also the sim workdir.
+    /// Default: <project>/.tplc/sim, else a temp dir.
+    pub simdir: PathBuf,
 }
 
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -415,7 +424,133 @@ fn do_pkgmap(cfg: &ServeCfg, pkg_b64: &str, map_text: &str) -> Result<Vec<u8>, S
     })
 }
 
-/* ---------------- blocks + libsrc (WS meta-ops) ---------------- */
+/* ---------------- bus scan + sim run (WS meta-ops) ---------------- */
+
+/// `bus_scan` — spawn `tplc-ec-pump --scan` against a peer/iface; the
+/// discovered fleet lands in <simdir>/.fleet for GET /bus to serve.
+/// Needs a link target from the request — EtherCAT discovery is
+/// environment-gated, so failures return the pump's own error text.
+fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let Some(pump) = &cfg.ecpump else {
+        return Err("tplc-ec-pump binary not found".into());
+    };
+    let peer = req.get("peer").and_then(|v| v.as_str()).unwrap_or("");
+    let iface = req.get("iface").and_then(|v| v.as_str()).unwrap_or("");
+    let port = req.get("port").and_then(|v| v.as_u64()).unwrap_or(34980);
+    let hz = req.get("hz").and_then(|v| v.as_u64()).unwrap_or(500);
+    if peer.is_empty() && iface.is_empty() {
+        return Err(
+            "bus scan needs a link: {peer,port} for a UDP slave chain, or {iface} for a raw NIC"
+                .into(),
+        );
+    }
+    let _ = std::fs::create_dir_all(&cfg.simdir);
+    let fleet_out = cfg.simdir.join(".fleet");
+    let mut args: Vec<String> = if !iface.is_empty() {
+        vec!["--iface".into(), iface.into()]
+    } else {
+        vec!["--peer".into(), peer.into(), "--port".into(), port.to_string()]
+    };
+    args.extend([
+        "--simdir".into(),
+        cfg.simdir.to_string_lossy().into_owned(),
+        "--hz".into(),
+        hz.to_string(),
+        "--scan".into(),
+        "--fleet-out".into(),
+        fleet_out.to_string_lossy().into_owned(),
+    ]);
+    let out = Command::new(pump)
+        .args(&args)
+        .output()
+        .map_err(|e| format!("tplc-ec-pump spawn failed: {e}"))?;
+    let fleet = std::fs::read_to_string(&fleet_out).unwrap_or_default();
+    Ok(serde_json::json!({
+        "exit": out.status.code().unwrap_or(-1),
+        "stderr": String::from_utf8_lossy(&out.stderr),
+        "fleet": fleet,
+    }))
+}
+
+/// `sim_run` — compile the posted sources to a package, then run
+/// `tether-plc-sim --steps` against it. Returns the sim's combined
+/// output (step results + trace) and exit code; the pass/fail verdict
+/// is the sim's own "N pass, M fail" trailer.
+fn do_sim_run(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let Some(sim) = &cfg.sim else {
+        return Err("tether-plc-sim binary not found".into());
+    };
+    let plc = cfg.plc.clone().unwrap_or_else(|| PathBuf::from("tether-plc"));
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    for f in req
+        .get("files")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .take(64)
+    {
+        files.push((
+            sanitize_name(f.get("name").and_then(|v| v.as_str()).unwrap_or("")),
+            f.get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .as_bytes()
+                .to_vec(),
+        ));
+    }
+    files.retain(|(n, _)| !n.is_empty());
+    if files.is_empty() {
+        return Err("no sources to simulate".into());
+    }
+    let compiled = do_compile(cfg, &files, true);
+    let pkg_b64 = compiled.get("package").and_then(|v| v.as_str()).unwrap_or("");
+    if pkg_b64.is_empty() {
+        return Ok(serde_json::json!({
+            "exit": -1,
+            "compile": compiled.get("compile").cloned().unwrap_or(serde_json::Value::Null),
+            "output": "compile failed — see diagnostics",
+        }));
+    }
+    let dir = std::env::temp_dir().join(format!("tplc_sim_{}_{}", std::process::id(), unique()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let pkg = dir.join("prog.tplc");
+    let steps = dir.join("steps.txt");
+    std::fs::write(&pkg, b64d(pkg_b64)).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &steps,
+        req.get("steps").and_then(|v| v.as_str()).unwrap_or(""),
+    )
+    .map_err(|e| e.to_string())?;
+    let image = format!("/tplc_sim_{}_{}", std::process::id(), unique());
+    let in_sz = req.get("in").and_then(|v| v.as_u64()).unwrap_or(64);
+    let out_sz = req.get("out").and_then(|v| v.as_u64()).unwrap_or(64);
+    let out = Command::new(sim)
+        .arg("--image")
+        .arg(&image)
+        .arg("--package")
+        .arg(&pkg)
+        .arg("--steps")
+        .arg(&steps)
+        .arg("--plc")
+        .arg(&plc)
+        .arg("--in")
+        .arg(in_sz.to_string())
+        .arg("--out")
+        .arg(out_sz.to_string())
+        .output()
+        .map_err(|e| format!("tether-plc-sim spawn failed: {e}"))?;
+    /* sim creates a POSIX shm at /dev/shm/<name> — best-effort cleanup;
+       the spawned tether-plc unlinks on exit when it gets there first */
+    let _ =
+        std::fs::remove_file(std::path::Path::new("/dev/shm").join(image.trim_start_matches('/')));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(serde_json::json!({
+        "exit": out.status.code().unwrap_or(-1),
+        "output": format!("{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)),
+    }))
+}
 
 fn collect_lib_files(dir: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -1145,6 +1280,14 @@ fn meta_dispatch(
                 Err(e) => fail(&e),
             }
         }
+        "bus_scan" => match do_bus_scan(cfg, req) {
+            Ok(v) => serde_json::json!({"ok": true, "data": v}),
+            Err(e) => fail(&e),
+        },
+        "sim_run" => match do_sim_run(cfg, req) {
+            Ok(v) => serde_json::json!({"ok": true, "data": v}),
+            Err(e) => fail(&e),
+        },
         _ => {
             if op.starts_with("project") || op.starts_with("git_") || op == "projects" {
                 project_meta(cfg, op, req).unwrap_or_else(|| fail("unknown op"))
@@ -1419,6 +1562,26 @@ fn handle_conn(mut cfd: TcpStream, cfg: &ServeCfg, cache: &Arc<Mutex<(String, bo
                 return;
             }
         }
+        ("GET", "/bus") => {
+            /* ecpump artifact dump for the Discovery section:
+               .topology (JSON per-slave), .fleet (canonical text —
+               reusable as --fleet FILE), .bus (tx/rx pdo catalog).
+               Missing files come back null — the section renders
+               whatever the pump last published. */
+            let rd = |name: &str| -> serde_json::Value {
+                match std::fs::read_to_string(cfg.simdir.join(name)) {
+                    Ok(s) if !s.is_empty() => serde_json::Value::String(s),
+                    _ => serde_json::Value::Null,
+                }
+            };
+            let body = serde_json::json!({
+                "simdir": cfg.simdir.to_string_lossy(),
+                "topology": rd(".topology"),
+                "fleet": rd(".fleet"),
+                "bus": rd(".bus"),
+            });
+            reply_str(&mut cfd, 200, "OK", &body.to_string(), "application/json");
+        }
         ("GET", _) => {
             if let Some(w) = &cfg.webui {
                 serve_static(&mut cfd, w, &path);
@@ -1548,6 +1711,10 @@ pub fn serve(tools: &Tools, cfg: &ServeCfg) -> i32 {
                     pkgs_for_io: cfg.pkgs_for_io.clone(),
                     spawn_io: false,
                     io_port_hint: 0,
+                    sim: cfg.sim.clone(),
+                    plc: cfg.plc.clone(),
+                    ecpump: cfg.ecpump.clone(),
+                    simdir: cfg.simdir.clone(),
                 };
                 let cache = cache.clone();
                 std::thread::spawn(move || handle_conn(s, &cfg2, &cache));

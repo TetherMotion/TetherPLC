@@ -710,6 +710,10 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
     }
     println!("  tplc ctl --session {} status · tplc down --session {}", o.name, o.name);
 
+    let simdir = proj
+        .as_ref()
+        .map(|p| p.root.join(".tplc").join("sim"))
+        .unwrap_or_else(|| std::env::temp_dir().join("tplc-sim"));
     let rc = crate::serve::serve(tools, &crate::serve::ServeCfg {
         project_root: std::sync::Arc::new(std::sync::Mutex::new(
             proj.map(|p| p.root),
@@ -726,6 +730,10 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
         pkgs_for_io: pkg.iter().map(|p| p.display().to_string()).collect(),
         spawn_io: d.io && io_upstream.is_none() && runtime_up,
         io_port_hint: d.io_port,
+        sim: tools.find("tether-plc-sim"),
+        plc: tools.find("tether-plc"),
+        ecpump: tools.find("tplc-ec-pump"),
+        simdir,
     });
 
     // teardown children we spawned

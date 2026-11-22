@@ -156,6 +156,9 @@ enum TplcCtlOp {
     TPLC_OP_RETAIN_DUMP    = 0x0604,
     /* image 0x0700 */
     TPLC_OP_IMAGE_STATS    = 0x0701,  /* P0 */
+    TPLC_OP_IMAGE_READ     = 0x0702,  /* P0 {u8 region,u64 off,u32 len}:
+                                        region 0=%I (seqlock latched),
+                                        1=%Q, 2=%M → raw image bytes */
     /* shadow run 0x0800 (doc 19): candidate program(s) on identical
        inputs; their %Q lands in private regions, never the image.
        Up to MAX_SHADOWS candidates may be loaded at once; every op

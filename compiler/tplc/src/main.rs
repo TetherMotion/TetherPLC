@@ -271,6 +271,10 @@ fn cmd_serve(tools: &Tools, args: &[String]) -> i32 {
         pkgs_for_io: vec![],
         spawn_io: false,
         io_port_hint: 0,
+        sim: tools.find("tether-plc-sim"),
+        plc: tools.find("tether-plc"),
+        ecpump: tools.find("tplc-ec-pump"),
+        simdir: std::path::PathBuf::new(),
     };
     let mut no_webui = false;
     let mut ctl_set = false;
@@ -298,6 +302,7 @@ fn cmd_serve(tools: &Tools, args: &[String]) -> i32 {
             "--pkg" => cfg.pkgs_for_io.push(val(&mut i)),
             "--io" => cfg.spawn_io = true,
             "--io-port" => cfg.io_port_hint = val(&mut i).parse().unwrap_or(0),
+            "--simdir" => cfg.simdir = std::path::PathBuf::from(val(&mut i)),
             "--help" | "-h" => {
                 eprintln!("tplc serve [--ctl SOCK] [--port N] [--bind A] [--webui DIR] [--tplc-io HP] [--libdir D]… [--io]");
                 return 0;
@@ -323,6 +328,15 @@ fn cmd_serve(tools: &Tools, args: &[String]) -> i32 {
     }
     if cfg.libdirs.is_empty() {
         cfg.libdirs = default_libdirs();
+    }
+    if cfg.simdir.as_os_str().is_empty() {
+        cfg.simdir = cfg
+            .project_root
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|r| r.join(".tplc").join("sim"))
+            .unwrap_or_else(|| std::env::temp_dir().join("tplc-sim"));
     }
     serve::serve(tools, &cfg)
 }

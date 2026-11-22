@@ -109,6 +109,7 @@ static int op_min_role(uint16_t t) {
     case TPLC_OP_TRACE_READ:     case TPLC_OP_DBG_WATCH_GET:
     case TPLC_OP_DBG_WATCH_LIST: case TPLC_OP_RETAIN_STATUS:
     case TPLC_OP_RETAIN_DUMP:    case TPLC_OP_IMAGE_STATS:
+    case TPLC_OP_IMAGE_READ:
     case TPLC_OP_RT_STATUS:      case TPLC_OP_PKG_LIST:
     case TPLC_OP_PKG_INFO:       case TPLC_OP_MAP_GET:
     case TPLC_OP_JOURNAL_TAIL:   case TPLC_OP_SHADOW_STATUS:
@@ -3102,6 +3103,56 @@ int main(int argc, char** argv) {
         is.in_size     = tplc_image_in_size(&img);
         is.out_size    = tplc_image_out_size(&img);
         ctl.reply(fd, t, &is, sizeof is, req);
+    });
+    /* IMAGE_READ {u8 region, u64 off, u32 len} → raw image bytes.
+       region 0 = %I (seqlock-latched like the plc's own latch),
+       1 = %Q (manual seqlock read — the plc is the %Q *writer*, so
+       there is no library read op on this side). For IDE live views. */
+    ctl.on(TPLC_OP_IMAGE_READ, [&](int fd, uint16_t t,
+                                   const uint8_t* p, uint32_t n,
+                                   uint64_t req) {
+        if (n != 13) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u8 region, u64 off, u32 len}", req);
+            return;
+        }
+        const uint8_t region = p[0];
+        uint64_t off; uint32_t len;
+        memcpy(&off, p + 1, 8); memcpy(&len, p + 9, 4);
+        if (len > 4096) len = 4096;
+        std::vector<uint8_t> buf(len);
+        int rc = -1;
+        if (region == 0) {
+            for (int tries = 0; tries < 64 && rc != 0; ++tries)
+                rc = tplc_image_latch_inputs(&img, buf.data(), off, len);
+        } else if (region == 1) {
+            /* seqlock read of out_area — same discipline as
+               tplc_image.c's seq_read (odd seq = write in flight) */
+            const uint64_t out_size = tplc_img_load_u64(&img.hdr->out_size);
+            if (off + len > out_size) {
+                ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                               "range outside %Q", req);
+                return;
+            }
+            for (int tries = 0; tries < 64 && rc != 0; ++tries) {
+                const uint64_t s1 = tplc_img_load_u64(&img.hdr->out_seq);
+                if (s1 & 1u) continue;
+                std::atomic_thread_fence(std::memory_order_acquire);
+                memcpy(buf.data(), img.out_area + off, len);
+                std::atomic_thread_fence(std::memory_order_acquire);
+                rc = (tplc_img_load_u64(&img.hdr->out_seq) == s1) ? 0 : -1;
+            }
+        } else {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "region must be 0 (%I) or 1 (%Q)", req);
+            return;
+        }
+        if (rc != 0) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_ACCESS,
+                           "image read failed (seqlock exhausted)", req);
+            return;
+        }
+        ctl.reply(fd, t, buf.data(), len, req);
     });
     ctl.on(TPLC_OP_RETAIN_STATUS, [&](int fd, uint16_t t,
                                       const uint8_t*, uint32_t,
