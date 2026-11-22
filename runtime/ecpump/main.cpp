@@ -149,6 +149,71 @@ struct PendingSignal {
     SchemaRef    ref;
 };
 
+/* ---- fleet scan/text helpers ---------------------------------------------
+   The Beckhoff catalog lives in Tether's examples/common under
+   tether::examples; mapping discovered slaves <-> fleet text is
+   pump-side.                                                              */
+
+struct ScanSlave {
+    uint32_t vendor  = 0;
+    uint32_t product = 0;
+};
+
+struct FleetScanResult {
+    std::string text;
+    size_t      couplers = 0;
+    size_t      modules  = 0;
+    struct Unknown {
+        uint32_t vendor, product;
+    };
+    std::vector<Unknown> unknown;
+};
+
+bool fleetIsCouplerProduct(uint32_t product) {
+    return product == beckhoff_ids::kEK1100Product;
+}
+
+const tether::examples::detail::FleetModuleType*
+fleetModuleForProduct(uint32_t product) {
+    size_t n = 0;
+    const auto* cat = tether::examples::detail::fleetModuleCatalog(n);
+    for (size_t i = 0; i < n; ++i)
+        if (cat[i].product == product) return &cat[i];
+    return nullptr;
+}
+
+FleetScanResult fleetTextFromScan(const std::vector<ScanSlave>& slaves) {
+    FleetScanResult r;
+    for (const auto& s : slaves) {
+        if (fleetIsCouplerProduct(s.product)) {
+            r.text += "EK1100\n";
+            ++r.couplers;
+        } else if (const auto* t = fleetModuleForProduct(s.product)) {
+            r.text += t->name;
+            r.text += '\n';
+            ++r.modules;
+        } else {
+            r.unknown.push_back({s.vendor, s.product});
+        }
+    }
+    return r;
+}
+
+std::string fleetTextFromInfos(const std::vector<FleetSlaveInfo>& infos) {
+    std::string out;
+    for (const auto& inf : infos) {
+        if (inf.isCoupler) {
+            out += "EK1100\n";
+            continue;
+        }
+        if (const auto* t = fleetModuleForProduct(inf.productCode)) {
+            out += t->name;
+            out += '\n';
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -253,9 +318,9 @@ int main(int argc, char** argv) {
     /* fleet topology: default two-coupler fleet, a line-based
        --fleet FILE, or --fleet auto / --scan resolving the chain
        from the bus itself (EK1100/ELxxxx per discovered slave).   */
-    std::vector<tether::ethercat::beckhoff::FleetSlaveInfo> infos;
+    std::vector<FleetSlaveInfo> infos;
     if (scanOnly || fleetPath == "auto") {
-        namespace d = tether::ethercat::beckhoff::detail;
+        namespace d = tether::examples::detail;
         auto found = fm.master().discovery().discover({
             EtherCAT::DiscoveryOption::VendorId,
             EtherCAT::DiscoveryOption::ProductCode,
@@ -267,16 +332,15 @@ int main(int argc, char** argv) {
             fm.close();
             return 1;
         }
-        std::vector<d::FleetScanSlave> ss;
+        std::vector<ScanSlave> ss;
         ss.reserve(found.size());
         for (const auto& s : found) {
-            d::FleetScanSlave e;
+            ScanSlave e;
             e.vendor  = s.vendor_id.value_or(0);
             e.product = s.product_code.value_or(0);
-            e.name    = s.device_name.value_or("");
             ss.push_back(std::move(e));
         }
-        const auto sr = d::fleetTextFromScan(ss);
+        const auto sr = fleetTextFromScan(ss);
         if (scanOnly) {
             /* table on stderr, fleet text on stdout so
                `tplc-ec-pump --scan > fleet.txt` just works       */
@@ -289,10 +353,10 @@ int main(int argc, char** argv) {
                 const auto& id = ss[i];
                 const char* part = "?";
                 char unk[80];
-                if (d::fleetIsCouplerProduct(id.product)) {
+                if (fleetIsCouplerProduct(id.product)) {
                     part = "EK1100 (coupler)";
                 } else if (const auto* t =
-                           d::fleetModuleForProduct(id.product)) {
+                           fleetModuleForProduct(id.product)) {
                     part = t->name;
                 } else {
                     std::snprintf(unk, sizeof unk,
@@ -353,10 +417,10 @@ int main(int argc, char** argv) {
             "(%zu couplers, %zu modules)\n",
             found.size(), sr.couplers, sr.modules);
     } else if (fleetPath.empty()) {
-        infos = tether::ethercat::beckhoff::fleetInfos();
+        infos = fleetInfos();
     } else {
         std::string ferr;
-        infos = tether::ethercat::beckhoff::detail::fleetInfosFromFile(
+        infos = tether::examples::detail::fleetInfosFromFile(
             fleetPath, &ferr);
         if (infos.empty()) {
             std::fprintf(stderr, "tplc-ec-pump: %s\n",
@@ -443,8 +507,7 @@ int main(int argc, char** argv) {
                   tx,rx} — tx/rx are PDO payload bytes, so a pdo=
                   channel is valid for %I iff tx>0, %Q iff rx>0.   */
     {
-        namespace d = tether::ethercat::beckhoff::detail;
-        const std::string ftext = d::fleetTextFromInfos(infos);
+        const std::string ftext = fleetTextFromInfos(infos);
         const auto fp = std::filesystem::path(simdir) / ".fleet";
         if (FILE* f = std::fopen(
                 (fp.string() + ".tmp").c_str(), "wb")) {
