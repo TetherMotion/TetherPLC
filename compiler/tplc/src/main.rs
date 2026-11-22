@@ -274,6 +274,7 @@ fn cmd_serve(tools: &Tools, args: &[String]) -> i32 {
         sim: tools.find("tether-plc-sim"),
         plc: tools.find("tether-plc"),
         ecpump: tools.find("tplc-ec-pump"),
+        tools: tools.clone(),
         simdir: std::path::PathBuf::new(),
     };
     let mut no_webui = false;

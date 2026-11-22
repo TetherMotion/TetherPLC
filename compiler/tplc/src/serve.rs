@@ -47,6 +47,10 @@ pub struct ServeCfg {
     pub plc: Option<PathBuf>,
     /// tplc-ec-pump binary for the `bus_scan` meta-op.
     pub ecpump: Option<PathBuf>,
+    /// Tool resolver — meta-ops re-resolve lazily so binaries built
+    /// after the session started (or a stale cached path) are picked
+    /// up without restarting `tplc serve`/`dev`.
+    pub tools: Tools,
     /// ecpump artifact dir (.fleet/.topology/.bus) — also the sim workdir.
     /// Default: <project>/.tplc/sim, else a temp dir.
     pub simdir: PathBuf,
@@ -432,9 +436,13 @@ fn do_pkgmap(cfg: &ServeCfg, pkg_b64: &str, map_text: &str) -> Result<Vec<u8>, S
 /// Needs a link target from the request — EtherCAT discovery is
 /// environment-gated, so failures return the pump's own error text.
 fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Value, String> {
-    let Some(pump) = &cfg.ecpump else {
-        return Err("tplc-ec-pump binary not found".into());
-    };
+    // cfg.ecpump is resolved once at session start; re-resolve lazily so a
+    // pump built (or fixed) mid-session is picked up without a restart.
+    let mut pump = cfg
+        .ecpump
+        .clone()
+        .or_else(|| cfg.tools.find("tplc-ec-pump"))
+        .ok_or_else(|| "tplc-ec-pump binary not found".to_string())?;
     let peer = req.get("peer").and_then(|v| v.as_str()).unwrap_or("");
     let iface = req.get("iface").and_then(|v| v.as_str()).unwrap_or("");
     let port = req.get("port").and_then(|v| v.as_u64()).unwrap_or(34980);
@@ -461,14 +469,29 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
         "--fleet-out".into(),
         fleet_out.to_string_lossy().into_owned(),
     ]);
-    let out = Command::new(pump)
+    let mut out = Command::new(&pump)
         .args(&args)
         .output()
         .map_err(|e| format!("tplc-ec-pump spawn failed: {e}"))?;
+    // A stale resolved binary (e.g. an old packaged pump reached via PATH
+    // before build/ existed) rejects new args — re-resolve once and retry.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("unknown arg") {
+        if let Some(fresh) = cfg.tools.find("tplc-ec-pump") {
+            if fresh != pump {
+                pump = fresh;
+                out = Command::new(&pump)
+                    .args(&args)
+                    .output()
+                    .map_err(|e| format!("tplc-ec-pump spawn failed: {e}"))?;
+            }
+        }
+    }
     let fleet = std::fs::read_to_string(&fleet_out).unwrap_or_default();
     Ok(serde_json::json!({
         "exit": out.status.code().unwrap_or(-1),
         "stderr": String::from_utf8_lossy(&out.stderr),
+        "pump": pump.to_string_lossy(),
         "fleet": fleet,
     }))
 }
@@ -1810,6 +1833,7 @@ pub fn serve(tools: &Tools, cfg: &ServeCfg) -> i32 {
                     sim: cfg.sim.clone(),
                     plc: cfg.plc.clone(),
                     ecpump: cfg.ecpump.clone(),
+                    tools: cfg.tools.clone(),
                     simdir: cfg.simdir.clone(),
                 };
                 let cache = cache.clone();

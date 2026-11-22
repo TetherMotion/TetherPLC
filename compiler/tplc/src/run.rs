@@ -733,6 +733,7 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
         sim: tools.find("tether-plc-sim"),
         plc: tools.find("tether-plc"),
         ecpump: tools.find("tplc-ec-pump"),
+        tools: tools.clone(),
         simdir,
     });
 
