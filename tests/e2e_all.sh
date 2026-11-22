@@ -11,17 +11,28 @@
 # Env: E2E_TIMEOUT=<sec>   per-script timeout (default 600)
 #      E2E_EXCLUDE=<regex> scripts matching are skipped up front
 #      E2E_ONLY=<regex>     run only matching scripts
+#      E2E_SHARD=<i/n>     run only the i-th of n shards (1-based, by
+#                          sorted index) — lets CI matrix jobs split
+#                          the sweep across parallel runners
 set -u
 cd "$(dirname "$0")/.."
 
 TIMEOUT=${E2E_TIMEOUT:-600}
 EXCLUDE=${E2E_EXCLUDE:-}
 ONLY=${E2E_ONLY:-}
+SHARD=${E2E_SHARD:-}
+SHARD_I=0; SHARD_N=1
+if [ -n "$SHARD" ]; then
+    SHARD_I=${SHARD%%/*}; SHARD_N=${SHARD##*/}
+fi
 
 pass=0; fail=0; skip=0
 failed=()
+idx=0
 while IFS= read -r t; do
     [ "$t" = "tests/e2e_all.sh" ] && continue
+    idx=$((idx+1))
+    [ $((idx % SHARD_N)) -ne $((SHARD_I % SHARD_N)) ] && continue
     rel=${t#tests/}
     if [ -n "$ONLY" ] && ! echo "$rel" | grep -qE "$ONLY"; then continue; fi
     if [ -n "$EXCLUDE" ] && echo "$rel" | grep -qE "$EXCLUDE"; then
