@@ -10,18 +10,21 @@
 //! route for the web IDE.
 
 use inkwell::context::Context;
+use inkwell::module::Linkage;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tplc_codegen::llvm_emit::{
     emit_bitcode, emit_library_for_target, emit_object, emit_program_for_target, host_triple,
-    set_target,
+    set_target, target_machine,
 };
 use tplc_mir::desc;
 use tplc_mir::ir::{AtRegion, IoBind, Pou, PouKind, Prov, Type};
 use tplc_mir::layout::layout_program;
 use tplc_pkg::format::SectionType;
 use tplc_pkg::writer::PackageWriter;
+
+mod libs;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -774,14 +777,34 @@ fn serve_check(s: &mut std::os::unix::net::UnixStream) -> String {
 
 fn cmd_check(args: &[String]) -> ExitCode {
     let mut json_mode = false;
+    let mut lib_pkgs: Vec<String> = Vec::new();
+    let mut libdirs: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
-    for a in args {
-        match a.as_str() {
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
             "--json" => json_mode = true,
+            "--lib" => {
+                lib_pkgs.push(args[i + 1].clone());
+                i += 1;
+            }
+            "--libdir" => {
+                libdirs.push(args[i + 1].clone());
+                i += 1;
+            }
             f => files.push(f.into()),
         }
+        i += 1;
     }
-    let srcs = read_srcs(&files);
+    let mut srcs = read_srcs(&files);
+    if !libdirs.is_empty() {
+        libs::resolve(&libdirs, &mut srcs, &mut lib_pkgs);
+    }
+    for lp in &lib_pkgs {
+        let mut ls = lib_sources(lp);
+        ls.extend(srcs);
+        srcs = ls;
+    }
     let (mut out, eff) = compile_srcs(&srcs);
     let mut diags = std::mem::take(&mut out.diags);
     if !diags.iter().any(|d| d.severity == tplc_st::Severity::Error) {
@@ -1076,6 +1099,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     let mut library_mode = false;
     let mut lib_name: Option<String> = None;
     let mut lib_pkgs: Vec<String> = Vec::new();
+    let mut libdirs: Vec<String> = Vec::new();
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut files: Vec<String> = Vec::new();
     let mut i = 0;
@@ -1123,6 +1147,10 @@ fn cmd_build(args: &[String]) -> ExitCode {
                 lib_pkgs.push(args[i + 1].clone());
                 i += 1;
             }
+            "--libdir" => {
+                libdirs.push(args[i + 1].clone());
+                i += 1;
+            }
             f => files.push(f.into()),
         }
         i += 1;
@@ -1132,12 +1160,42 @@ fn cmd_build(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let mut srcs = read_srcs(&files);
+    /* --libdir DIR: auto-resolve undeclared library-prefixed
+    references from the libdir index — .st files merge, .tplc packages
+    join lib_pkgs. The system determines what the project uses; the
+    user never "attaches" a library. */
+    if !libdirs.is_empty() {
+        let rep = libs::resolve(&libdirs, &mut srcs, &mut lib_pkgs);
+        for p in &rep.pulled {
+            eprintln!("tplcc: lib: pulled {p}");
+        }
+    }
     /* --lib <pkg.tplc>: pull the package's ST_SOURCES section into the
-    compilation — the source-inclusion path for library packages
-    (manifest kind "library"; program packages work too, their
-    PROGRAM would just join the module) */
+    compilation — needed for sema/layout either way (source text is the
+    header; bitcode is the body). kind="library" packages whose
+    bitcode was built for THIS target additionally take the
+    precompiled-link path: their POU bodies link from IrBitcode and
+    unreferenced ones are dropped by globaldce. */
+    let eff_triple = target.clone().unwrap_or_else(host_triple);
+    let mut lib_bitcode: Vec<Vec<u8>> = Vec::new();
+    let mut extern_pous: std::collections::HashSet<String> = std::collections::HashSet::new();
     for lp in &lib_pkgs {
         let mut ls = lib_sources(lp);
+        if let Some(meta) = libs::pkg_meta(std::path::Path::new(lp)) {
+            if meta.kind == "library" {
+                if meta.triple == eff_triple {
+                    if let Some(bc) = libs::pkg_bitcode(std::path::Path::new(lp)) {
+                        extern_pous.extend(meta.pous);
+                        lib_bitcode.push(bc);
+                    }
+                } else if !meta.triple.is_empty() {
+                    eprintln!(
+                        "tplcc: warning: {lp} is a library built for {} — falling back to source inclusion (rebuild for {eff_triple} to link precompiled)",
+                        meta.triple
+                    );
+                }
+            }
+        }
         ls.extend(srcs);
         srcs = ls;
     }
@@ -1456,7 +1514,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     so the ABI context offsets match the target's data layout.
     The package's target_obj is a monolithic object for non-host
     targets (the .so link is native-only) */
-    let triple = target.unwrap_or_else(host_triple);
+    let triple = eff_triple.clone();
     if pic_blob && triple == host_triple() {
         eprintln!("tplcc: --pic-blob requires a foreign --target (host builds link a .so)");
         return ExitCode::FAILURE;
@@ -1475,6 +1533,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         mig_emit.as_ref(),
         task_period_ns,
         &triple,
+        &extern_pous,
     ) {
         Ok(m) => m,
         Err(e) => {
@@ -1484,7 +1543,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
     };
     if let Err(e) = llmod.verify() {
         if json_mode {
-            println!("{}", stage_failure_json("verify", &e.to_string()));
+            println!("{}", stage_failure_json("verify", e.to_string().as_str()));
         }
         eprintln!("tplcc: LLVM verify failed: {e}");
         return ExitCode::FAILURE;
@@ -1493,6 +1552,66 @@ fn cmd_build(args: &[String]) -> ExitCode {
     if let Err(e) = set_target(&llmod, &triple) {
         eprintln!("tplcc: bad target triple {triple}: {e}");
         return ExitCode::FAILURE;
+    }
+
+    /* precompiled library link: each library package's IrBitcode
+    module joins this one — its __tplc_pou_* bodies satisfy the extern
+    declarations emit left for library POUs (emit_program_for_target
+    skips their codegen). Unreferenced library POUs are then dropped
+    by globaldce, so the .so carries only the POUs the program
+    actually calls — compile libraries once, link only what's used. */
+    if !lib_bitcode.is_empty() {
+        for bc in &lib_bitcode {
+            /* inkwell's memory-buffer ctors require a trailing NUL
+            (one-past-end sentinel, not part of the buffer) */
+            let mut bc_nul = bc.clone();
+            bc_nul.push(0);
+            let buf = inkwell::memory_buffer::MemoryBuffer::create_from_memory_range_copy(
+                &bc_nul, "tplc_lib",
+            );
+            let libm =
+                match inkwell::module::Module::parse_bitcode_from_buffer(&buf, &lctx) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("tplcc: library bitcode parse: {e:?}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+            /* tplc_abi_version is defined in both modules — demote the
+            library copy so the linker doesn't see a duplicate strong
+            definition (globaldce removes it as unreferenced). */
+            if let Some(f) = libm.get_function("tplc_abi_version") {
+                f.set_linkage(Linkage::Internal);
+            }
+            if let Err(e) = llmod.link_in_module(libm) {
+                eprintln!("tplcc: library bitcode link: {e:?}");
+                return ExitCode::FAILURE;
+            }
+        }
+        /* Internalize every defined __tplc_* function so unreferenced
+        library POUs die in globaldce — the exports map already hides
+        them at .so level; this removes the code outright. */
+        for f in llmod.get_functions() {
+            let n = f.get_name().to_str().unwrap_or_default();
+            if n.starts_with("__tplc_") && f.get_first_basic_block().is_some() {
+                f.set_linkage(Linkage::Internal);
+            }
+        }
+        let tm = match target_machine(&triple) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("tplcc: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        if let Err(e) = llmod.run_passes(
+            "globaldce",
+            &tm,
+            inkwell::passes::PassBuilderOptions::create(),
+        ) {
+            eprintln!("tplcc: globaldce: {e:?}");
+            return ExitCode::FAILURE;
+        }
     }
     let tmp = std::env::temp_dir().join("tplcc_build");
     std::fs::create_dir_all(&tmp).unwrap();
@@ -1725,23 +1844,7 @@ fn lib_sources(path: &str) -> Vec<(String, String)> {
         .section(SectionType::StSources)
         .unwrap_or_else(|| panic!("tplcc: --lib {path}: no ST_SOURCES section"));
     let text = String::from_utf8_lossy(&sec.data);
-    let mut out = Vec::new();
-    let mut name: Option<String> = None;
-    let mut cur = String::new();
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("==== ") {
-            if let Some(n) = name.take() {
-                out.push((n, std::mem::take(&mut cur)));
-            }
-            name = Some(rest.trim().to_string());
-        } else {
-            cur.push_str(line);
-            cur.push('\n');
-        }
-    }
-    if let Some(n) = name {
-        out.push((n, cur));
-    }
+    let out = libs::split_st_sources(&text);
     if out.is_empty() {
         panic!("tplcc: --lib {path}: empty ST_SOURCES section");
     }
@@ -1875,8 +1978,17 @@ fn build_library_pkg(
     } else {
         ""
     };
+    let pous_json = format!(
+        ",\"pous\":[{}]",
+        module_ref
+            .pous
+            .iter()
+            .map(|p| format!("\"{}\"", p.name.to_uppercase()))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
     let manifest = format!(
-        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"kind\":\"library\",\"target_triple\":\"{triple}\"{checked_json}{objfmt_json}}}"
+        "{{\"schema\":\"tplc.manifest.v1\",\"name\":\"{name}\",\"version\":\"{prog_version}\",\"package_uuid\":\"{uuid_str}\",\"abi_version\":1,\"kind\":\"library\",\"target_triple\":\"{triple}\"{checked_json}{objfmt_json}{pous_json}}}"
     );
     let src_bundle: String = srcs
         .iter()

@@ -785,6 +785,61 @@ fn cmd_git(args: &[String]) -> i32 {
 fn cmd_pkg(args: &[String], tools: &Tools) -> i32 {
     let sub = args.first().map(|s| s.as_str()).unwrap_or("");
     match sub {
+        "get" => {
+            /* tplc pkg get <file.tplc> <SECTION> [out] — write one
+            section's raw bytes to [out] or stdout. Section is named
+            by its enum name (case-insensitive: IrBitcode, StSources…)
+            or `0x<hex>` type id. */
+            if args.len() < 3 {
+                eprintln!("usage: tplc pkg get <file.tplc> <section> [out]");
+                return 2;
+            }
+            let data = match std::fs::read(&args[1]) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("{}: {e}", &args[1]);
+                    return 1;
+                }
+            };
+            let want = args[2].to_uppercase();
+            let type_id = want
+                .strip_prefix("0X")
+                .and_then(|h| u32::from_str_radix(h, 16).ok());
+            let pkg = match tplc_pkg::Package::parse(&data) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}: verify failed: {} ({})", &args[1], e, e.code());
+                    return 1;
+                }
+            };
+            let sec = pkg.sections().find(|s| {
+                if let Some(t) = type_id {
+                    s.section_type == t
+                } else {
+                    s.known_type()
+                        .map(|t| format!("{t:?}").to_uppercase() == want)
+                        .unwrap_or(false)
+                }
+            });
+            let Some(sec) = sec else {
+                eprintln!("{}: no section named {}", &args[1], &args[2]);
+                return 1;
+            };
+            match args.get(3) {
+                Some(out) => match std::fs::write(out, sec.data) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{out}: {e}");
+                        1
+                    }
+                },
+                None => {
+                    use std::io::Write;
+                    let _ = std::io::stdout().write_all(sec.data);
+                    0
+                }
+            }
+        }
         "dump" | "verify" | "gen" => {
             if args.len() < 2 {
                 eprintln!("usage: tplc pkg {sub} <file.tplc>");

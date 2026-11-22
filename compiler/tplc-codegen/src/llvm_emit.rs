@@ -3429,6 +3429,7 @@ pub fn emit_program<'ctx>(
         migrate,
         task_period_ns,
         "",
+        &Default::default(),
     )
     .expect("host target machine")
 }
@@ -3449,6 +3450,7 @@ pub fn emit_program_for_target<'ctx>(
     migrate: Option<&MigrateEmit>,
     task_period_ns: u64,
     triple: &str,
+    extern_pous: &std::collections::HashSet<String>,
 ) -> Result<LlvmModule<'ctx>, String> {
     let abi = abi_offsets_for_triple(triple)?;
     let module = lctx.create_module("tplc_program");
@@ -3628,6 +3630,14 @@ pub fn emit_program_for_target<'ctx>(
 
     // per-POU fns — each PROGRAM gets its own var scope
     for pou in &mir.pous {
+        /* precompiled-library POUs emit as declarations only — the
+        bodies arrive via link_in_module from the package's IrBitcode;
+        codegenning them here would duplicate the definition at
+        link time. Call sites still resolve the extern decl via
+        pou_fn's lazy declaration. */
+        if extern_pous.contains(&pou.name.to_uppercase()) {
+            continue;
+        }
         let sc: Ctx = match pou.kind {
             PouKind::Program => pou_scope(layout, &pou.name),
             PouKind::FunctionBlock => {

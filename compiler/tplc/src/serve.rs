@@ -318,6 +318,12 @@ fn do_compile(cfg: &ServeCfg, files: &[(String, Vec<u8>)], build: bool) -> serde
     } else {
         vec!["check".into(), "--json".into()]
     };
+    /* auto-resolve library refs from the configured libdirs — same
+    automagic the WebUI's projectLibRefs does client-side */
+    for d in &cfg.libdirs {
+        args.push("--libdir".into());
+        args.push(d.clone());
+    }
     let mut ok = true;
     for (name, content) in files {
         let p = dir.join(name);

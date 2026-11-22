@@ -41,10 +41,40 @@ fn run_capture(cmd: &mut Command) -> (bool, String) {
         Ok(o) => {
             let mut log = String::from_utf8_lossy(&o.stdout).into_owned();
             log.push_str(&String::from_utf8_lossy(&o.stderr));
+            // A silent failure is undecipherable — name the exit status
+            // (signal kills show as `signal: N`) so it is diagnosable.
+            if !o.status.success() && log.trim().is_empty() {
+                log = format!("(cmake exited {} with no output)", o.status);
+            }
             (o.status.success(), log)
         }
         Err(e) => (false, format!("spawn failed: {e}")),
     }
+}
+
+/// Append a failed cmake invocation to build/.tplc-build.log — cargo
+/// replays build-script warnings from cache, so the warning stream can
+/// show a stale failure long after the run that produced it; this file
+/// is the ground truth of what cmake actually did, when.
+fn log_cmake_failure(build: &std::path::Path, what: &str, log: &str) {
+    use std::io::Write;
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(build.join(".tplc-build.log"))
+    else {
+        return;
+    };
+    let _ = writeln!(
+        f,
+        "=== [{}] {} ===\n{}\n",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        what,
+        tail(log, 40)
+    );
 }
 
 /// The scan path needs a pump whose arg surface includes --scan. The
@@ -96,6 +126,28 @@ fn main() {
     }
     let build = root.join("build");
 
+    // Rerun policy — cargo's default "any package file changed" scan
+    // watches compiler/tplc ONLY, but the C++ tool sources live outside
+    // the package: editing runtime/ecpump/main.cpp never reran this
+    // script, so cmake never ran and the binary stayed stale. That is
+    // the original root cause of "unknown arg --scan". Track the C++
+    // inputs explicitly. A missing CMakeCache.txt counts as changed,
+    // so fresh checkouts always run the configure+build below.
+    // NOTE: cargo ignores rerun-if-changed paths given absolute and
+    // outside the package dir — everything here is `..`-relative to
+    // compiler/tplc (verified: absolute paths did not trigger reruns).
+    println!("cargo:rerun-if-changed=../../runtime");
+    println!("cargo:rerun-if-changed=../../include");
+    println!("cargo:rerun-if-changed=../../cmake");
+    println!("cargo:rerun-if-changed=../../CMakeLists.txt");
+    println!("cargo:rerun-if-changed=../../build/CMakeCache.txt");
+    // …and the pump binary itself: deleted or replaced-with-stale
+    // counts as changed → build.rs reruns → the freshness gate below
+    // probes and force-relinks. Self-stabilizing (one extra no-op
+    // cmake run after each relink, then steady state).
+    println!("cargo:rerun-if-changed=../../build/tplc-ec-pump");
+    println!("cargo:rerun-if-env-changed=TPLC_SKIP_NATIVE_BUILD");
+
     // Serialize with any other cmake invocations on this build dir.
     let _lock = CmakeLock::acquire(&build, std::time::Duration::from_secs(600));
 
@@ -127,6 +179,7 @@ fn main() {
     args.push("8".into());
     let (batch_ok, batch_log) = run_capture(Command::new("cmake").args(&args));
     if !batch_ok {
+        log_cmake_failure(&build, "tool batch build", &batch_log);
         // batch failed — build targets individually, report the misses
         // with the real error tail so the warning is actionable.
         let mut missing = Vec::new();
@@ -142,6 +195,7 @@ fn main() {
             }
         }
         if !missing.is_empty() {
+            log_cmake_failure(&build, "per-target builds", &last_log);
             println!(
                 "cargo:warning=tplc: C++ tools not built: {} — `tplc doctor` reports what is missing; last cmake output:\n{}",
                 missing.join(", "),
@@ -155,8 +209,11 @@ fn main() {
     //    backup, copied artifact, clock skew) makes make skip the
     //    relink and leaves a stale binary that lacks --scan. Probe the
     //    actual arg surface; if stale/missing, remove the file (forces
-    //    a real relink) and build once more. This is the compile-time
-    //    guarantee serve relies on — runtime never rebuilds.
+    //    a real relink) and build once more. A "No rule to make target"
+    //    means the build dir predates the pump's configure-time deps
+    //    (Tether libs) — reconfigure picks them up, then retry.
+    //    This is the compile-time guarantee serve relies on — runtime
+    //    never rebuilds.
     let pump = build.join("tplc-ec-pump");
     if !pump_supports_scan(&pump) {
         if pump.is_file() {
@@ -165,10 +222,35 @@ fn main() {
             );
             let _ = std::fs::remove_file(&pump);
         }
-        let (ok, log) = run_capture(Command::new("cmake")
-            .arg("--build").arg(&build)
-            .arg("--target").arg("tplc-ec-pump")
-            .arg("--parallel").arg("8"));
+        let pump_build = |build: &std::path::Path| {
+            run_capture(Command::new("cmake")
+                .arg("--build").arg(build)
+                .arg("--target").arg("tplc-ec-pump")
+                .arg("--parallel").arg("8"))
+        };
+        let (mut ok, mut log) = pump_build(&build);
+        if !ok {
+            log_cmake_failure(&build, "tplc-ec-pump target build", &log);
+            // A configure-drift failure (missing target, stale cache)
+            // is recoverable: re-run configure, then build once more.
+            let (cok, clog) = run_capture(Command::new("cmake")
+                .arg("-S").arg(&root)
+                .arg("-B").arg(&build));
+            if !cok {
+                log_cmake_failure(&build, "cmake reconfigure", &clog);
+            } else {
+                let r = pump_build(&build);
+                ok = r.0;
+                log = r.1;
+                if !ok {
+                    log_cmake_failure(
+                        &build,
+                        "tplc-ec-pump post-reconfigure build",
+                        &log,
+                    );
+                }
+            }
+        }
         if !ok || !pump_supports_scan(&pump) {
             println!(
                 "cargo:warning=tplc: tplc-ec-pump still stale/missing after forced rebuild — last cmake output:\n{}",

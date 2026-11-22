@@ -213,6 +213,11 @@ fn ensure_package(tools: &Tools, o: &RunOpts, pos: &[String]) -> Result<PathBuf,
     for l in &o.libs {
         cmd.arg("--lib").arg(l);
     }
+    // installed libraries auto-resolve: scan for undeclared FB_*/F_*
+    // refs and pull what satisfies them — no manual attach needed
+    for d in crate::default_libdirs() {
+        cmd.arg("--libdir").arg(d);
+    }
     cmd.args(&o.tplcc_args);
     let st = cmd.status().map_err(|e| format!("tplcc spawn: {e}"))?;
     if !st.success() || !pkg.exists() {
