@@ -15,7 +15,6 @@
 //!   tplc image|bridge|io|pump …   runtime tool passthrough
 //!   tplc check|build|info|…       tplcc subcommand passthrough
 
-mod cmake_lock;
 #[allow(dead_code)] // ABI mirror of include/tplc/tplc_ctl.h
 mod ctl;
 mod ctlcmd;

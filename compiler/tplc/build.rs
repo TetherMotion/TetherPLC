@@ -47,6 +47,25 @@ fn run_capture(cmd: &mut Command) -> (bool, String) {
     }
 }
 
+/// The scan path needs a pump whose arg surface includes --scan. The
+/// probe is the binary's own --help usage: fresh exits 0 printing the
+/// usage line with [--scan]; stale predates fleet autodiscovery and
+/// rejects --help outright ("unknown arg" — which must not count as a
+/// --scan match: "unknown arg --scan" contains the substring too).
+/// Also false when the binary is missing/crashes.
+fn pump_supports_scan(pump: &std::path::Path) -> bool {
+    match Command::new(pump).arg("--help").output() {
+        Ok(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+            s.push_str(&String::from_utf8_lossy(&o.stderr));
+            o.status.success()
+                && s.contains("--scan")
+                && !s.contains("unknown arg")
+        }
+        Err(_) => false,
+    }
+}
+
 /// Last meaningful lines of a build log for warnings.
 fn tail(log: &str, n: usize) -> String {
     log.lines()
@@ -107,29 +126,54 @@ fn main() {
     args.push("--parallel".into());
     args.push("8".into());
     let (batch_ok, batch_log) = run_capture(Command::new("cmake").args(&args));
-    if batch_ok {
-        return;
-    }
-
-    // batch failed — build targets individually, report the misses with
-    // the real error tail so the warning is actionable.
-    let mut missing = Vec::new();
-    let mut last_log = batch_log;
-    for t in TOOLS {
-        let (ok, log) = run_capture(Command::new("cmake")
-            .arg("--build").arg(&build)
-            .arg("--target").arg(t)
-            .arg("--parallel").arg("8"));
-        if !ok {
-            missing.push(*t);
-            last_log = log;
+    if !batch_ok {
+        // batch failed — build targets individually, report the misses
+        // with the real error tail so the warning is actionable.
+        let mut missing = Vec::new();
+        let mut last_log = batch_log;
+        for t in TOOLS {
+            let (ok, log) = run_capture(Command::new("cmake")
+                .arg("--build").arg(&build)
+                .arg("--target").arg(t)
+                .arg("--parallel").arg("8"));
+            if !ok {
+                missing.push(*t);
+                last_log = log;
+            }
+        }
+        if !missing.is_empty() {
+            println!(
+                "cargo:warning=tplc: C++ tools not built: {} — `tplc doctor` reports what is missing; last cmake output:\n{}",
+                missing.join(", "),
+                tail(&last_log, 15)
+            );
         }
     }
-    if !missing.is_empty() {
-        println!(
-            "cargo:warning=tplc: C++ tools not built: {} — `tplc doctor` reports what is missing; last cmake output:\n{}",
-            missing.join(", "),
-            tail(&last_log, 15)
-        );
+
+    // 3. Pump freshness gate — cmake "success" does not prove the
+    //    binary got relinked: a file NEWER than its objects (restored
+    //    backup, copied artifact, clock skew) makes make skip the
+    //    relink and leaves a stale binary that lacks --scan. Probe the
+    //    actual arg surface; if stale/missing, remove the file (forces
+    //    a real relink) and build once more. This is the compile-time
+    //    guarantee serve relies on — runtime never rebuilds.
+    let pump = build.join("tplc-ec-pump");
+    if !pump_supports_scan(&pump) {
+        if pump.is_file() {
+            println!(
+                "cargo:warning=tplc: tplc-ec-pump binary is stale (no --scan) — forcing relink"
+            );
+            let _ = std::fs::remove_file(&pump);
+        }
+        let (ok, log) = run_capture(Command::new("cmake")
+            .arg("--build").arg(&build)
+            .arg("--target").arg("tplc-ec-pump")
+            .arg("--parallel").arg("8"));
+        if !ok || !pump_supports_scan(&pump) {
+            println!(
+                "cargo:warning=tplc: tplc-ec-pump still stale/missing after forced rebuild — last cmake output:\n{}",
+                tail(&log, 15)
+            );
+        }
     }
 }

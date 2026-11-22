@@ -510,78 +510,18 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
             out = spawn(&pump, via_runec);
         }
     }
-    // Still rejecting --scan → the binary at the resolved path is a
-    // stale build (a failed cargo/cmake step leaves the old file in
-    // place). Heal it ourselves rather than just diagnosing: rebuild the
-    // target under the same lock build.rs takes — which also waits out
-    // any cargo cmake already in flight — then re-resolve and retry.
-    let still_stale = matches!(&out, Ok(o) if !o.status.success()
-        && String::from_utf8_lossy(&o.stderr).contains("unknown arg"));
-    // Once per serve session: a persistent stale pump gets one cmake
-    // rebuild attempt. If it fails (broken source, no toolchain) later
-    // scans go straight to the diagnostic instead of each paying for a
-    // doomed multi-minute build inside the serialized meta worker. A
-    // manual rebuild fixing the binary makes the next spawn succeed
-    // before this path is ever reached again.
-    static REBUILD_TRIED: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
-    if still_stale
-        && !REBUILD_TRIED.swap(true, std::sync::atomic::Ordering::SeqCst)
-    {
-        if let Some(root) = cfg.tools.repo_root() {
-            let build = root.join("build");
-            if build.join("CMakeCache.txt").is_file() {
-                // Either we take the lock and build, or another builder
-                // holds it and finishes first — re-resolve+retry covers
-                // the binary it produces either way.
-                let _lock = crate::cmake_lock::CmakeLock::acquire(
-                    &build,
-                    std::time::Duration::from_secs(120),
-                );
-                let rebuild = || {
-                    Command::new("cmake")
-                        .arg("--build")
-                        .arg(&build)
-                        .arg("--target")
-                        .arg("tplc-ec-pump")
-                        .arg("--parallel")
-                        .arg("8")
-                        .output()
-                };
-                let _ = rebuild();
-                if let Some(fresh) = cfg.tools.find("tplc-ec-pump") {
-                    pump = fresh;
-                    out = spawn(&pump, via_runec);
-                }
-                // A stale file NEWER than its objects fools make into
-                // skipping the relink (restored/copied binary). If the
-                // retry still rejects --scan and the pump lives in this
-                // build dir, remove it so make must relink, then retry.
-                let stubborn = matches!(&out, Ok(o) if !o.status.success()
-                    && String::from_utf8_lossy(&o.stderr)
-                        .contains("unknown arg"));
-                if stubborn && pump.starts_with(&build) {
-                    let _ = std::fs::remove_file(&pump);
-                    let _ = rebuild();
-                    if let Some(fresh) = cfg.tools.find("tplc-ec-pump") {
-                        pump = fresh;
-                        out = spawn(&pump, via_runec);
-                    }
-                }
-                drop(_lock);
-            }
-        }
-    }
-    // After all recovery a pump that still rejects --scan stays a stale
+    // After all retries a pump that still rejects --scan stays a stale
     // build — say so instead of surfacing a bare arg-parse error that
-    // looks like a bug in the scan itself.
+    // looks like a bug in the scan itself. Rebuilding is a compile-time
+    // concern (build.rs verifies freshness after cmake), not something
+    // to attempt inside the serialized meta worker.
     if let Ok(o) = &out {
         if !o.status.success()
             && String::from_utf8_lossy(&o.stderr).contains("unknown arg")
         {
             return Err(format!(
                 "tplc-ec-pump at {} is a stale build that doesn't support \
-                 --scan and auto-rebuild failed — rebuild manually:\n  cmake --build build --target tplc-ec-pump --parallel 8",
+                 --scan — rebuild it:\n  cmake --build build --target tplc-ec-pump --parallel 8",
                 pump.display()
             ));
         }
