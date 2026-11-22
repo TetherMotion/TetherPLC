@@ -575,22 +575,27 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
     let ctl = o.ctl.clone().unwrap_or_else(|| default_ctl(&o.name));
     let image = o.image.clone().unwrap_or_else(|| default_image(&o.name));
 
-    // 2. runtime: reuse if ctl already answers, else spawn
+    // 2. runtime: reuse if ctl already answers, else spawn — only
+    // when there is a program to run. No package → serve-only dev
+    // mode: the webserver still comes up (compile/catalog/project
+    // meta-ops work; ctl frames get synthesized backend-down errors).
     let mut spawned_pids: Vec<u32> = vec![];
     let mut rt_child: Option<Child> = None;
     let mut rt_pid = 0u32;
+    let mut runtime_up = false;
     if crate::ctl::Ctl::probe(&ctl) {
         eprintln!("tplc: reusing runtime on {ctl}");
+        runtime_up = true;
     } else {
         let _ = std::fs::remove_file(&ctl);
-        match ensure_image(tools, &image, o.in_size, o.out_size) {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("tplc dev: {e}");
-                return 1;
-            }
-        }
         if let Some(pkg) = &pkg {
+            match ensure_image(tools, &image, o.in_size, o.out_size) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("tplc dev: {e}");
+                    return 1;
+                }
+            }
             match spawn_rt(tools, &image, pkg, &ctl, &o.plc_args) {
                 Ok(mut c) => {
                     rt_pid = c.id();
@@ -601,6 +606,7 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
                         return 1;
                     }
                     rt_child = Some(c);
+                    runtime_up = true;
                 }
                 Err(e) => {
                     eprintln!("tplc dev: {e}");
@@ -608,16 +614,17 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
                 }
             }
         } else {
-            eprintln!("tplc dev: no package — nothing to run (pass sources or a .tplc)");
-            // still allow serve-only attach below if ctl appears? no runtime → bail
-            return 2;
+            eprintln!(
+                "tplc dev: no program to run — serve-only mode \
+                 (pass sources or a .tplc, or open a project)"
+            );
         }
     }
 
     // 3. tplc-io provider
     let mut io_upstream = d.tplc_io_upstream.clone();
     let mut io_child: Option<Child> = None;
-    if d.io && io_upstream.is_none() {
+    if d.io && io_upstream.is_none() && runtime_up {
         if let Some(io_bin) = tools.find("tplc-io") {
             let port = if d.io_port != 0 { d.io_port } else { free_port() };
             let mut cmd = Command::new(&io_bin);
@@ -691,7 +698,7 @@ pub fn cmd_dev(tools: &Tools, args: &[String]) -> i32 {
         webui,
         packages: d.packages.clone(),
         pkgs_for_io: pkg.iter().map(|p| p.display().to_string()).collect(),
-        spawn_io: d.io && io_upstream.is_none(),
+        spawn_io: d.io && io_upstream.is_none() && runtime_up,
         io_port_hint: d.io_port,
     });
 
