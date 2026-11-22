@@ -662,6 +662,8 @@ impl P {
                     priority: Self::attr(e, "priority")
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0),
+                    kind: "cyclic".into(),
+                    trigger: None,
                 });
             }
             "program" if self.in_adddata => {
