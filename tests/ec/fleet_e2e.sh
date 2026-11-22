@@ -71,8 +71,11 @@ if [ -n "$EC_IFACE" ]; then
         if command -v runec >/dev/null; then PRIV=(runec)
         elif sudo -n true 2>/dev/null; then PRIV=(sudo -n)
         else
-            echo "SKIP: cannot create veth (need CAP_NET_ADMIN: root, runec,"
-            echo "  'sudo -n', or 'sudo setcap cap_net_admin+ep $IPBIN')"
+            echo "SKIP: cannot create veth pair — CAP_NET_ADMIN needed."
+            echo "Options: (a) install runec (github.com/ulikoehler/runec:"
+            echo "  make && sudo make install) so this test self-elevates;"
+            echo "  (b) run the test via sudo; (c) sudo setcap"
+            echo "  cap_net_admin+ep $IPBIN"
             exit 77
         fi
         "${PRIV[@]:-env}" "$IPBIN" link del "$VETH_SLAVE" 2>/dev/null
@@ -89,8 +92,10 @@ if [ -n "$EC_IFACE" ]; then
     if [ "$(id -u)" != 0 ] && [ ${#PRIV[@]} -eq 0 ]; then
         for b in "$TETHER_BIN" "$BUILD/tplc-ec-pump"; do
             getcap "$b" 2>/dev/null | grep -q cap_net_raw || {
-                echo "SKIP: $b lacks cap_net_raw — 'sudo setcap cap_net_raw+ep $b',"
-                echo "  or run via runec/root/sudo"; exit 77
+                echo "SKIP: $b lacks cap_net_raw —"
+                echo "  (a) install runec (github.com/ulikoehler/runec),"
+                echo "  (b) run via sudo,"
+                echo "  (c) sudo setcap cap_net_raw+ep $b"; exit 77
             }
         done
     fi

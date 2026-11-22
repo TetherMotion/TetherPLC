@@ -227,8 +227,12 @@ int main(int argc, char** argv) {
                 if (probe >= 0) ::close(probe);
                 if (e == EPERM || e == EACCES) {
                     std::fprintf(stderr,
-                        "tplc-ec-pump: raw EtherCAT on '%s' needs CAP_NET_RAW — "
-                        "run 'sudo setcap cap_net_raw+ep %s' or use EtherCAT/UDP\n",
+                        "tplc-ec-pump: raw EtherCAT on '%s' needs CAP_NET_RAW —\n"
+                        "  (a) install runec (github.com/ulikoehler/runec): "
+                        "make && sudo make install\n"
+                        "  (b) run this binary via sudo\n"
+                        "  (c) sudo setcap cap_net_raw+ep %s\n"
+                        "  or use EtherCAT/UDP (no privileges needed)\n",
                         iface.c_str(), argv[0]);
                 } else
 #endif

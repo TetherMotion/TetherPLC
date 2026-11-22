@@ -469,7 +469,28 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
         "--fleet-out".into(),
         fleet_out.to_string_lossy().into_owned(),
     ]);
-    let mut out = Command::new(&pump).args(&args).output();
+    // Raw NIC scans need CAP_NET_RAW on the spawned pump. Work out the
+    // route up front — direct (serve privileged or file cap on the
+    // binary), via runec, or impossible — and explain the options
+    // instead of running a doomed scan.
+    let runec = crate::tools::which_on_path("runec");
+    let via_runec = if !iface.is_empty() {
+        match raw_cap_route(&pump, runec.as_deref()) {
+            RawCapRoute::Direct => false,
+            RawCapRoute::Runec => true,
+            RawCapRoute::Missing => return Err(raw_cap_guidance(&pump, iface)),
+        }
+    } else {
+        false
+    };
+    let spawn = |pump: &std::path::Path, runec: bool| {
+        if runec {
+            Command::new("runec").arg(pump).args(&args).output()
+        } else {
+            Command::new(pump).args(&args).output()
+        }
+    };
+    let mut out = spawn(&pump, via_runec);
     // A stale resolved binary (an old pump reached via PATH/bindir before
     // build/ existed) rejects newer args, and a rebuilt tree can leave the
     // cached path dangling — in both cases re-resolve once and retry.
@@ -484,8 +505,18 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
         if let Some(fresh) = cfg.tools.find("tplc-ec-pump") {
             if fresh != pump {
                 pump = fresh;
-                out = Command::new(&pump).args(&args).output();
+                out = spawn(&pump, via_runec);
             }
+        }
+    }
+    // Permission retry: the route probe said "direct" but the run still
+    // hit CAP_NET_RAW (e.g. the file cap was wiped by a relink) —
+    // escalate via runec when it's installed.
+    if !via_runec {
+        let perm_denied = matches!(&out, Ok(o) if !o.status.success()
+            && String::from_utf8_lossy(&o.stderr).contains("CAP_NET_RAW"));
+        if perm_denied && runec.is_some() {
+            out = spawn(&pump, true);
         }
     }
     let out = out.map_err(|e| format!("tplc-ec-pump spawn failed ({e})"))?;
@@ -563,12 +594,22 @@ fn do_iface_list(cfg: &ServeCfg, _req: &serde_json::Value) -> serde_json::Value 
     })
 }
 
-/// Raw EtherCAT (AF_PACKET) needs CAP_NET_RAW — probe once so the UI can
-/// show the setcap hint before the user runs a doomed raw-NIC scan.
-/// "Capable" means either this process can open AF_PACKET (serve running
-/// privileged) or the resolved pump binary carries a cap_net_raw file
-/// cap (the setcap install path — children of an unprivileged serve get
-/// nothing from the parent). Non-Linux hosts report false.
+/// How a spawned pump can get CAP_NET_RAW for a raw-NIC scan.
+#[derive(Clone, Copy, PartialEq)]
+enum RawCapRoute {
+    /// This process (or the pump's file cap) already provides it.
+    Direct,
+    /// runec is on PATH — wrap the spawn to inherit ambient caps.
+    Runec,
+    /// No route — explain options to the user.
+    Missing,
+}
+
+/// Raw EtherCAT (AF_PACKET) needs CAP_NET_RAW. "Capable" means any of:
+/// this process can open AF_PACKET (privileged serve), the resolved pump
+/// binary carries a cap_net_raw file cap (setcap install), or runec is
+/// installed (serve wraps the spawn — children of an unprivileged serve
+/// get nothing from the parent). Non-Linux hosts report false.
 #[cfg(unix)]
 fn raw_link_capable(cfg: &ServeCfg) -> bool {
     if af_packet_probe() {
@@ -581,7 +622,42 @@ fn raw_link_capable(cfg: &ServeCfg) -> bool {
     else {
         return false;
     };
-    file_cap_net_raw(&pump)
+    raw_cap_route(&pump, crate::tools::which_on_path("runec").as_deref())
+        != RawCapRoute::Missing
+}
+
+#[cfg(unix)]
+fn raw_cap_route(
+    pump: &std::path::Path,
+    runec: Option<&std::path::Path>,
+) -> RawCapRoute {
+    if af_packet_probe() || file_cap_net_raw(pump) {
+        RawCapRoute::Direct
+    } else if runec.is_some() {
+        RawCapRoute::Runec
+    } else {
+        RawCapRoute::Missing
+    }
+}
+
+/// User-facing explanation when no CAP_NET_RAW route exists — the two
+/// supported fixes (install runec / run serve under sudo) plus the
+/// file-cap alternative and the privilege-free UDP path.
+#[cfg(unix)]
+fn raw_cap_guidance(pump: &std::path::Path, iface: &str) -> String {
+    format!(
+        "raw EtherCAT scan on '{iface}' needs CAP_NET_RAW (AF_PACKET) and no \
+privilege route is available on this host.\n\
+Options:\n\
+  (a) install runec (recommended — setuid helper that grants just \
+CAP_NET_RAW/CAP_NET_ADMIN/CAP_SYS_NICE):\n\
+      git clone https://github.com/ulikoehler/runec && cd runec\n\
+      sudo apt install build-essential libcap-dev && make && sudo make install\n\
+  (b) start 'tplc serve' via sudo so spawned masters inherit privileges\n\
+  (c) sudo setcap cap_net_raw+ep {pump}\n\
+or switch to EtherCAT/UDP — it needs no elevated privileges.",
+        pump = pump.display()
+    )
 }
 
 /// Try to open an AF_PACKET socket — succeeds iff this process has
@@ -614,7 +690,7 @@ fn file_cap_net_raw(path: &std::path::Path) -> bool {
     let n = unsafe {
         libc::getxattr(
             cpath.as_ptr(),
-            b"security.capability\0".as_ptr().cast(),
+            c"security.capability".as_ptr(),
             buf.as_mut_ptr().cast(),
             buf.len(),
         )

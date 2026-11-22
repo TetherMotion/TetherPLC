@@ -28,7 +28,7 @@ fn is_exe(p: &Path) -> bool {
     p.is_file()
 }
 
-fn which_on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn which_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         let c = dir.join(name);
