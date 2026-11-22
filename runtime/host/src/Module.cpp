@@ -72,6 +72,11 @@ Result<Module> Module::open(const std::string& path, uint32_t host_caps) {
         (decltype(m.sym_.get_vars))dlsym(h, "tplc_get_vars");
     dlerror(); /* optional — library packages have no var table */
 
+    dlerror();
+    m.sym_.get_task_events =
+        (decltype(m.sym_.get_task_events))dlsym(h, "tplc_get_task_events");
+    dlerror(); /* optional — no event tasks in most modules */
+
     /* ABI version gate (doc 02 §1.2: exact match in v1) */
     if (m.sym_.abi_version() != TPLC_ABI_VERSION)
         return Result<Module>::Err(TPLC_E_ABI_MISMATCH,
@@ -108,7 +113,16 @@ Result<Module> Module::open(const std::string& path, uint32_t host_caps) {
         if (t.kind == TPLC_TASK_CYCLIC && t.period_ns == 0)
             return Result<Module>::Err(TPLC_E_HOST_DESC,
                                        "cyclic task without period");
-        if (t.kind == TPLC_TASK_EVENT || t.kind == TPLC_TASK_RESERVED_SFC)
+        if (t.kind == TPLC_TASK_EVENT) {
+            /* EVENT tasks require the trigger table export; the
+               scheduler treats a missing entry as manual-only      */
+            if (!(d->abi_ext & TPLC_EXT_EVENT_TASKS) ||
+                !m.sym_.get_task_events)
+                return Result<Module>::Err(
+                    TPLC_E_ABI_EXT_UNMET,
+                    "event task without tplc_get_task_events");
+        }
+        if (t.kind == TPLC_TASK_RESERVED_SFC)
             return Result<Module>::Err(TPLC_E_ABI_EXT_UNMET,
                                        "task kind not implemented in v1");
     }

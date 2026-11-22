@@ -10,7 +10,7 @@ use std::io::Write;
 
 const PROG_NAME_MAX: usize = 64;
 const PROG_STATUS_SIZE: usize = 336;
-const TASK_STAT_SIZE: usize = 104;
+const TASK_STAT_SIZE: usize = 136; /* TplcCtlTaskStat: name[64]+…  */
 
 /* ---------------- arg helpers ---------------- */
 
@@ -178,17 +178,17 @@ fn print_prog_status(pl: &[u8]) {
     let tstates = ["idle", "sched", "susp"];
     for i in 0..n {
         let t = &pl[PROG_STATUS_SIZE + i * TASK_STAT_SIZE..];
-        let tname = cstr_name(&t[0..32], 32);
-        let kind = t[32];
-        let tstate = t[33];
-        let period = u64::from_le_bytes(t[40..48].try_into().unwrap());
-        let runs = u64::from_le_bytes(t[48..56].try_into().unwrap());
-        let late = u64::from_le_bytes(t[56..64].try_into().unwrap());
-        let last_late = i32::from_le_bytes(t[76..80].try_into().unwrap());
-        let faults = u64::from_le_bytes(t[64..72].try_into().unwrap());
-        let overruns = u64::from_le_bytes(t[80..88].try_into().unwrap());
-        let exec_max = u64::from_le_bytes(t[88..96].try_into().unwrap());
-        let exec_avg = u64::from_le_bytes(t[96..104].try_into().unwrap());
+        let tname = cstr_name(&t[0..64], 64);
+        let kind = t[64];
+        let tstate = t[65];
+        let period = u64::from_le_bytes(t[72..80].try_into().unwrap());
+        let runs = u64::from_le_bytes(t[80..88].try_into().unwrap());
+        let late = u64::from_le_bytes(t[88..96].try_into().unwrap());
+        let last_late = i32::from_le_bytes(t[108..112].try_into().unwrap());
+        let faults = u64::from_le_bytes(t[96..104].try_into().unwrap());
+        let overruns = u64::from_le_bytes(t[112..120].try_into().unwrap());
+        let exec_max = u64::from_le_bytes(t[120..128].try_into().unwrap());
+        let exec_avg = u64::from_le_bytes(t[128..136].try_into().unwrap());
         println!(
             "  task {:<8} kind {} state {:<5} period {} ns  runs {}  late {} (max {} ns)  faults {}",
             tname,
@@ -1176,6 +1176,11 @@ pub fn run(sock: &str, args: &[String]) -> i32 {
             let nn = arg2.map(parse_u32).unwrap_or(1);
             pre.extend_from_slice(&ti.to_le_bytes());
             pre.extend_from_slice(&nn.to_le_bytes());
+        }
+        "event" => {
+            need!(arg.is_some(), "event <task_idx>");
+            op_code = op::TASK_EVENT;
+            pre.extend_from_slice(&parse_u32(arg.unwrap()).to_le_bytes());
         }
         "resolve" => {
             need!(arg.is_some(), "resolve <name>");

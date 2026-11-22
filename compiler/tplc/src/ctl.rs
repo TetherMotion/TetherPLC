@@ -41,6 +41,7 @@ pub mod op {
     pub const TASK_SUSPEND: u16 = 0x0402;
     pub const TASK_RESUME: u16 = 0x0403;
     pub const TASK_STEP: u16 = 0x0404;
+    pub const TASK_EVENT: u16 = 0x0405;
     pub const DBG_RESOLVE: u16 = 0x0501;
     pub const DBG_READ: u16 = 0x0502;
     pub const DBG_WRITE: u16 = 0x0503;

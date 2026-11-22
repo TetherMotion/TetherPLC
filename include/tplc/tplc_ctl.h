@@ -60,6 +60,8 @@ enum TplcCtlOp {
     TPLC_OP_TASK_SUSPEND   = 0x0402,  /* P6 {u32 task_idx}          */
     TPLC_OP_TASK_RESUME    = 0x0403,  /* P6 {u32 task_idx}          */
     TPLC_OP_TASK_STEP      = 0x0404,  /* P6 {u32 task_idx, u32 n}   */
+    TPLC_OP_TASK_EVENT     = 0x0405,  /* P6 {u32 task_idx} — manual
+                                         fire of an EVENT task      */
     /* debug 0x0500 */
     TPLC_OP_DBG_RESOLVE    = 0x0501,  /* P6 {u16 nlen,name}; -410
                                          unknown, -411 removed by

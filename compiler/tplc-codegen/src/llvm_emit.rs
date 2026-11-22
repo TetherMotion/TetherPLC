@@ -2614,7 +2614,9 @@ impl<'ctx> Gen<'ctx> {
                 lctx.const_struct(
                     &[
                         lctx.const_string(&name_b, false).into(),
-                        lctx.i8_type().const_int(0, false).into(), // CYCLIC
+                        lctx.i8_type()
+                            .const_int(t.kind as u64, false)
+                            .into(), // TplcTaskKind
                         lctx.i8_type().const_int(3, false).into(), // ENABLED|WATCHDOGGED
                         lctx.i8_type().const_int(t.priority as u64, false).into(),
                         lctx.i8_type().const_zero().into(),
@@ -2737,7 +2739,18 @@ impl<'ctx> Gen<'ctx> {
             &[
                 lctx.i32_type().const_int(224, false).into(),
                 lctx.i32_type().const_int(1, false).into(), // ABI v1
-                lctx.i32_type().const_zero().into(),        // abi_ext
+                // abi_ext: TPLC_EXT_EVENT_TASKS (1<<1) when the module
+                // exports event-task triggers
+                lctx.i32_type()
+                    .const_int(
+                        if tasks.iter().any(|t| t.kind == TaskKind::Event) {
+                            2
+                        } else {
+                            0
+                        },
+                        false,
+                    )
+                    .into(),
                 lctx.i32_type().const_int(has_migrate as u64, false).into(), // flags bit0: has_migrate
                 lctx.const_string(&uuid, false).into(),
                 lctx.const_string(&layout_hash, false).into(),
@@ -2883,6 +2896,75 @@ impl<'ctx> Gen<'ctx> {
         self.b
             .build_return(Some(&g_vars.as_pointer_value()))
             .unwrap();
+
+        // -- TplcTaskEvent[N] + tplc_get_task_events (event tasks only)
+        let ev_tasks: Vec<&TaskDecl> = tasks
+            .iter()
+            .filter(|t| t.kind == TaskKind::Event)
+            .collect();
+        if !ev_tasks.is_empty() {
+            let ev_ty = lctx.struct_type(
+                &[
+                    lctx.i8_type().array_type(32).into(),  // task name
+                    lctx.i8_type().into(),                 // trig
+                    lctx.i8_type().array_type(7).into(),   // _pad
+                    lctx.i8_type().array_type(48).into(),  // signal
+                ],
+                false,
+            );
+            let ev_consts: Vec<_> = ev_tasks
+                .iter()
+                .map(|t| {
+                    let (tt, sig) = t
+                        .trig
+                        .clone()
+                        .unwrap_or((TaskTrig::Manual, String::new()));
+                    let mut tn = [0u8; 32];
+                    let tb = t.name.as_bytes();
+                    tn[..tb.len().min(32)].copy_from_slice(&tb[..tb.len().min(32)]);
+                    let mut sn = [0u8; 48];
+                    let sb = sig.as_bytes();
+                    sn[..sb.len().min(48)].copy_from_slice(&sb[..sb.len().min(48)]);
+                    lctx.const_struct(
+                        &[
+                            lctx.const_string(&tn, false).into(),
+                            lctx.i8_type().const_int(tt as u64, false).into(),
+                            lctx.const_string(&[0u8; 7], false).into(),
+                            lctx.const_string(&sn, false).into(),
+                        ],
+                        false,
+                    )
+                })
+                .collect();
+            let ev_arr = ev_ty.const_array(&ev_consts);
+            let g_ev = self
+                .module
+                .add_global(ev_arr.get_type(), None, "__tplc_task_events");
+            g_ev.set_initializer(&ev_arr);
+            g_ev.set_constant(true);
+            g_ev.set_linkage(Linkage::Internal);
+
+            // tplc_get_task_events(uint32_t* count) -> const TplcTaskEvent*
+            let ft = i8p.fn_type(&[i8p.into()], false);
+            let fe = self.module.add_function(
+                "tplc_get_task_events",
+                ft,
+                Some(Linkage::External),
+            );
+            let eb = lctx.append_basic_block(fe, "e");
+            self.b.position_at_end(eb);
+            let ecp = fe.get_nth_param(0).unwrap().into_pointer_value();
+            self.b
+                .build_store(
+                    ecp,
+                    lctx.i32_type()
+                        .const_int(ev_consts.len() as u64, false),
+                )
+                .unwrap();
+            self.b
+                .build_return(Some(&g_ev.as_pointer_value()))
+                .unwrap();
+        }
 
         // tplc_get_descriptor() -> ptr
         let ft = i8p.fn_type(&[], false);
@@ -3574,6 +3656,8 @@ pub fn emit_program_for_target<'ctx>(
             wcet_hint_ns: 0,
             priority: 10,
             programs: progs.iter().map(|p| p.name.clone()).collect(),
+            kind: TaskKind::Cyclic,
+            trig: None,
         }]
     } else {
         mir.tasks.clone()

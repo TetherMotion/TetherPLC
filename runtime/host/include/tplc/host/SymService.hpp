@@ -25,6 +25,13 @@ public:
     }
     void detach() { attach(nullptr, 0, nullptr); }
 
+    /* public lookup for trigger evaluation: resolves `name` against
+       the attached table; null when unknown/detached. Callers read
+       the value themselves (blob offset / AT image fields).        */
+    const TplcVarDesc* findVar(const char* name) const {
+        return find(name);
+    }
+
 private:
     static SymService* self(void* s) {
         return static_cast<SymService*>(

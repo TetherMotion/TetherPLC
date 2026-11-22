@@ -108,7 +108,7 @@ enum {
 enum TplcTaskKind {
     TPLC_TASK_CYCLIC       = 0,
     TPLC_TASK_FREEWHEELING = 1,
-    TPLC_TASK_EVENT        = 2,   /* v1: declared, unimplemented      */
+    TPLC_TASK_EVENT        = 2,   /* trigger-driven (TplcTaskEvent)   */
     TPLC_TASK_RESERVED_SFC = 3,   /* iteration-2 sequencing layer     */
     TPLC_TASK_STATUS       = 4
 };
@@ -173,6 +173,32 @@ typedef struct TplcTaskDesc {
     uint32_t task_local_size;
 } TplcTaskDesc;
 _Static_assert(sizeof(TplcTaskDesc) == 64, "TplcTaskDesc layout");
+
+/* ---- event-task triggers (TPLC_TASK_EVENT) ----------------------
+ * Generated modules export `tplc_get_task_events(count)` returning a
+ * table of TplcTaskEvent, one per EVENT-kind task, matched to
+ * TplcTaskDesc by name.  The host evaluates `signal` each scheduler
+ * pass: a sym-table name ("PROG.var"/"var"/"GVL.var", resolved via
+ * tplc-sym) or an image bit address ("%IX<b>.<bit>"/"%QX<b>.<bit>").
+ * MANUAL triggers carry no signal — they fire only via the ctl
+ * TASK_EVENT raise op. */
+#define TPLC_TASK_EVENT_SIG_MAX 48u
+
+enum TplcTaskEventTrig {
+    TPLC_TRIG_RISE   = 0,  /* fire on false→true transition of signal */
+    TPLC_TRIG_LEVEL  = 1,  /* fire every pass while signal is true    */
+    TPLC_TRIG_MANUAL = 2   /* fire only via ctl TASK_EVENT raise      */
+};
+
+typedef struct TplcTaskEvent {
+    uint8_t  task[TPLC_TASK_NAME_MAX];  /* == TplcTaskDesc.name          */
+    uint8_t  trig;                      /* TplcTaskEventTrig             */
+    uint8_t  _pad[7];
+    uint8_t  signal[TPLC_TASK_EVENT_SIG_MAX]; /* NUL-terminated; MANUAL: "" */
+} TplcTaskEvent;
+_Static_assert(sizeof(TplcTaskEvent) == 88, "TplcTaskEvent layout");
+
+typedef const TplcTaskEvent* (*TplcGetTaskEventsFn)(uint32_t* count);
 
 /* forward decls */
 typedef struct TplcCtx        TplcCtx;

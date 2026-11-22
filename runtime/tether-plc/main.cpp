@@ -734,6 +734,7 @@ int main(int argc, char** argv) {
     pcfg.ctx_flags = ctx_flags;
     pcfg.wcet_hard_ns = wcet_hard_ns;
     pcfg.fault_policy = fault_policy;
+    pcfg.host_caps = TPLC_EXT_EVENT_TASKS;
     pcfg.restart_max = restart_max;
 
     std::deque<uint64_t> fault_restarts;
@@ -1042,7 +1043,7 @@ int main(int argc, char** argv) {
 
     auto load_program = [&](const std::string& mpath) -> tplc::Status {
         unload_program();
-        auto mres = tplc::Module::open(mpath, /*host_caps*/ 0);
+        auto mres = tplc::Module::open(mpath, TPLC_EXT_EVENT_TASKS);
         if (!mres.ok()) return mres.st;
         mod = std::make_unique<tplc::Module>(std::move(mres.value));
         const TplcProgramDescriptor& nd = mod->descriptor();
@@ -2289,7 +2290,7 @@ int main(int argc, char** argv) {
             return;
         }
         close(tfd);
-        auto mres = tplc::Module::open(tp, /*host_caps*/ 0);
+        auto mres = tplc::Module::open(tp, TPLC_EXT_EVENT_TASKS);
         if (!mres.ok()) {
             ctl.errorReply(fd, t, mres.st.code, mres.st.msg.c_str(),
                            req);
@@ -2560,7 +2561,7 @@ int main(int argc, char** argv) {
             return;
         }
         close(tfd);
-        auto mres = tplc::Module::open(tp, /*host_caps*/ 0);
+        auto mres = tplc::Module::open(tp, TPLC_EXT_EVENT_TASKS);
         if (!mres.ok()) {
             ctl.errorReply(fd, t, mres.st.code, mres.st.msg.c_str(),
                            req);
@@ -3459,6 +3460,28 @@ int main(int argc, char** argv) {
         }
         audit(fd, "task.step",
               std::to_string(idx) + " n=" + std::to_string(count));
+        ctl.replyEmpty(fd, t, req);
+    });
+    ctl.on(TPLC_OP_TASK_EVENT, [&](int fd, uint16_t t,
+                                   const uint8_t* p, uint32_t n,
+                                   uint64_t req) {
+        if (!prog) {
+            ctl.errorReply(fd, t, tplc::TPLC_E_HOST_STATE,
+                           "no program", req);
+            return;
+        }
+        if (n != 4) {
+            ctl.errorReply(fd, t, TPLC_E_CTL_PAYLOAD,
+                           "{u32 task_idx}", req);
+            return;
+        }
+        uint32_t idx; memcpy(&idx, p, 4);
+        if (!sched.raiseEvent(*prog, idx)) {
+            ctl.errorReply(fd, t, TPLC_E_DBG_RESOLVE,
+                           "no such event task", req);
+            return;
+        }
+        audit(fd, "task.event", std::to_string(idx));
         ctl.replyEmpty(fd, t, req);
     });
 

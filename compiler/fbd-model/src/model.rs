@@ -23,15 +23,39 @@ pub struct FbdProject {
     pub global_vars: Vec<IfaceVar>,
 }
 
+/// task scheduling kind — "cyclic" (default) | "freewheeling" | "event"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct TaskTrigger {
+    /// "rise" | "level" | "manual"
+    #[serde(rename = "type")]
+    pub trig: String,
+    /// sym name ("PROG.var"/"var"/"GVL.var") or image bit
+    /// ("%IX<b>.<bit>"/"%QX<b>.<bit>"); unused for "manual"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Task {
     pub name: String,
+    /// cyclic period; ignored for event/freewheeling tasks
     pub period_ns: u64,
     #[serde(default)]
     pub programs: Vec<String>,
     #[serde(default)]
     pub priority: u32,
+    /// "cyclic" (default) | "freewheeling" | "event"
+    #[serde(default = "default_task_kind")]
+    pub kind: String,
+    /// required when kind == "event"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<TaskTrigger>,
+}
+
+fn default_task_kind() -> String {
+    "cyclic".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

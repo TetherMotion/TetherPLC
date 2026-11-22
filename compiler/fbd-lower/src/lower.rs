@@ -145,11 +145,67 @@ pub fn lower_mixed(project: &FbdProject, externs: &[ir::Pou]) -> LowerOutput {
     }
 
     for t in &project.tasks {
+        let kind = match t.kind.to_ascii_lowercase().as_str() {
+            "cyclic" => ir::TaskKind::Cyclic,
+            "freewheeling" => ir::TaskKind::Freewheeling,
+            "event" => ir::TaskKind::Event,
+            other => {
+                out.diags.push(tplc_mir::diag::Diag::error(
+                    "TPLC_E_TASK_KIND",
+                    format!("task {}: unknown kind '{other}'", t.name),
+                    tplc_mir::ir::Prov::None,
+                ));
+                ir::TaskKind::Cyclic
+            }
+        };
+        let trig = if kind == ir::TaskKind::Event {
+            match &t.trigger {
+                Some(tr) => {
+                    let tt = match tr.trig.to_ascii_lowercase().as_str() {
+                        "rise" => ir::TaskTrig::Rise,
+                        "level" => ir::TaskTrig::Level,
+                        "manual" => ir::TaskTrig::Manual,
+                        other => {
+                            out.diags.push(tplc_mir::diag::Diag::error(
+                                "TPLC_E_TASK_TRIG",
+                                format!(
+                                    "task {}: unknown trigger type '{other}'",
+                                    t.name
+                                ),
+                                tplc_mir::ir::Prov::None,
+                            ));
+                            ir::TaskTrig::Rise
+                        }
+                    };
+                    let sig = tr.signal.clone().unwrap_or_default();
+                    if tt != ir::TaskTrig::Manual && sig.trim().is_empty() {
+                        out.diags.push(tplc_mir::diag::Diag::error(
+                            "TPLC_E_TASK_TRIG",
+                            format!("task {}: trigger needs a signal", t.name),
+                            tplc_mir::ir::Prov::None,
+                        ));
+                    }
+                    Some((tt, sig))
+                }
+                None => {
+                    out.diags.push(tplc_mir::diag::Diag::error(
+                        "TPLC_E_TASK_TRIG",
+                        format!("event task {} has no trigger", t.name),
+                        tplc_mir::ir::Prov::None,
+                    ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
         out.module.tasks.push(ir::TaskDecl {
             name: t.name.clone(),
             period_ns: t.period_ns,
             wcet_hint_ns: 0,
             priority: t.priority.min(255) as u8,
+            kind,
+            trig,
             programs: t
                 .programs
                 .iter()

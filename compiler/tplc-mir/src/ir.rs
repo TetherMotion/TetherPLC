@@ -327,15 +327,41 @@ pub enum UnOp {
     Not,
 }
 
+/// task scheduling kind (mirrors TplcTaskKind in tplc_abi.h)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskKind {
+    #[default]
+    Cyclic = 0,
+    Freewheeling = 1,
+    Event = 2,
+}
+
+/// event-task trigger kind (mirrors TplcTaskEventTrig)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskTrig {
+    /// fire on false→true transition of `signal`
+    Rise = 0,
+    /// fire every scheduler pass while `signal` is true
+    Level = 1,
+    /// fire only via ctl TASK_EVENT raise (no signal)
+    Manual = 2,
+}
+
 #[derive(Debug, Clone)]
 pub struct TaskDecl {
     pub name: String,
-    /// cyclic period; 0 = event-driven (reserved)
+    /// cyclic period; ignored for Event/Freewheeling tasks
     pub period_ns: u64,
     pub wcet_hint_ns: u64,
     pub priority: u8,
     /// program instances bound to this task
     pub programs: Vec<String>,
+    /// scheduling kind (default Cyclic)
+    pub kind: TaskKind,
+    /// Event tasks only: (trigger kind, signal spec). Signal is a
+    /// sym-table name ("PROG.var"/"var"/"GVL.var") or an image bit
+    /// address ("%IX<b>.<bit>"/"%QX<b>.<bit>"); Manual carries "".
+    pub trig: Option<(TaskTrig, String)>,
 }
 
 #[derive(Debug, Clone)]

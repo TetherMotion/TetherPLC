@@ -21,6 +21,7 @@ struct ModuleSymbols {
     int32_t                      (*task_run)(TplcTaskCtx*)   = nullptr;
     int32_t                      (*migrate)(TplcMigrateCtx*) = nullptr; /* optional */
     TplcGetVarsFn                 get_vars = nullptr;   /* optional */
+    TplcGetTaskEventsFn           get_task_events = nullptr; /* opt */
 };
 
 class Module {
@@ -47,6 +48,12 @@ public:
     const TplcVarDesc* vars(uint32_t* count) const {
         if (!sym_.get_vars) { if (count) *count = 0; return nullptr; }
         return sym_.get_vars(count);
+    }
+    /* event-task trigger table (TPLC_TASK_EVENT tasks only); null
+       when the module exports no tplc_get_task_events            */
+    const TplcTaskEvent* taskEvents(uint32_t* count) const {
+        if (!sym_.get_task_events) { if (count) *count = 0; return nullptr; }
+        return sym_.get_task_events(count);
     }
     bool                         isOpen()     const { return handle_ != nullptr; }
 

@@ -46,6 +46,11 @@ public:
     bool step(Program& prog, uint32_t task_idx, uint32_t n);
     bool suspended(const Program& prog, uint32_t task_idx) const;
 
+    /* Event tasks (TPLC_TASK_EVENT): queue a manual fire — the task
+       runs on the next tick regardless of its signal trigger.
+       Returns false when the task is not an event task.            */
+    bool raiseEvent(Program& prog, uint32_t task_idx);
+
     /* Stats for the service plane */
     struct TaskStats {
         uint64_t runs = 0, late = 0, faults = 0, overruns = 0;
@@ -68,9 +73,19 @@ private:
         bool     first_run = true;
         bool     suspended = false;
         uint32_t step_budget = 0;
+        /* EVENT tasks: trigger descriptor (null when the module's
+           task-events table has no entry for this task) and edge
+           state. ev_pending is set by raiseEvent and consumed by
+           the next run.                                          */
+        const TplcTaskEvent* ev = nullptr;
+        bool     ev_prev = false;
+        bool     ev_pending = false;
         TaskStats stats;
     };
     std::vector<Entry> tasks_;
+    /* event-task helpers — called on the scan thread between ticks */
+    bool eventDue(Entry& e);
+    bool readSignal(Program& p, const char* sig, bool& out) const;
     /* scratch due-set, reused across ticks — a per-scan heap alloc in
        the scan loop is exactly what "no allocation after init" forbids */
     std::vector<Entry*> due_scratch_;
