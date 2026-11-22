@@ -1577,11 +1577,47 @@ fn cmd_build(args: &[String]) -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                 };
-            /* tplc_abi_version is defined in both modules — demote the
-            library copy so the linker doesn't see a duplicate strong
-            definition (globaldce removes it as unreferenced). */
-            if let Some(f) = libm.get_function("tplc_abi_version") {
-                f.set_linkage(Linkage::Internal);
+            /* Duplicate definitions (tplc_abi_version, or a POU the
+            program/an earlier lib already defines — e.g. two library
+            packages that each baked in a shared dep) would fail the
+            link as multiply-defined. Privatize+rename the incoming
+            copy: lib-internal call sites retarget it automatically,
+            and a same-source POU is layout-compatible by construction
+            so the private duplicate is code-identical. */
+            let prog_defs: std::collections::HashSet<String> = llmod
+                .get_functions()
+                .filter(|f| f.get_first_basic_block().is_some())
+                .filter_map(|f| {
+                    f.get_name().to_str().ok().map(|s| s.to_string())
+                })
+                .collect();
+            let lib_fns: Vec<_> = libm.get_functions().collect();
+            for f in lib_fns {
+                if f.get_first_basic_block().is_none() {
+                    continue;
+                }
+                let Ok(n) = f.get_name().to_str() else {
+                    continue;
+                };
+                if prog_defs.contains(n) {
+                    f.set_linkage(Linkage::Private);
+                    let mut uniq = format!("{n}.libdup");
+                    while llmod.get_function(&uniq).is_some()
+                        || libm.get_function(&uniq).is_some()
+                    {
+                        uniq.push('x');
+                    }
+                    /* FunctionValue lacks set_name in inkwell 0.9 —
+                    FFI directly; renaming updates lib-internal use
+                    sites automatically. */
+                    unsafe {
+                        inkwell::llvm_sys::core::LLVMSetValueName2(
+                            inkwell::values::AsValueRef::as_value_ref(&f),
+                            uniq.as_ptr().cast(),
+                            uniq.len(),
+                        );
+                    }
+                }
             }
             if let Err(e) = llmod.link_in_module(libm) {
                 eprintln!("tplcc: library bitcode link: {e:?}");

@@ -136,8 +136,15 @@ $TPLCC build oven.st -o /tmp/q.tplc
 
 - **Package format:** `.tplc` = compiled program + task bindings +
   service contracts. `tplcc build` (program) and
-  `tplcc build --library --name X lib.st` (reusable FB/FN library,
-  linked later via `--lib`).
+  `tplcc build --library --name X lib.st` (reusable FB/FN library —
+  carries IrBitcode+TargetObj+StSources). Consumers `--lib` a
+  package or point `--libdir` at a directory of `.st`/`.tplc` and
+  get autoresolution: undeclared `FB_*`/`F_*` refs pull what they
+  use (fixpoint, transitive). kind=library packages built for the
+  build target link their IrBitcode and unreferenced POUs are
+  globaldce'd away — sources still merge for sema/layout either
+  way; foreign-target or sourceless packages fall back to plain
+  source inclusion.
 - **Process image:** POSIX shm, `%I`/`%Q`/`%M`/`%MW` areas. `tplc-image
   create <shm-name> <in-bytes> <out-bytes>`; the shm *name* (not a
   path) is the handle — `tplc-image create /tmp/x` fails with -106.

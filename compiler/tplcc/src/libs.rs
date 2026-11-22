@@ -209,8 +209,13 @@ pub fn index_libdirs(dirs: &[String]) -> HashMap<String, LibHit> {
                 }
             } else if n.ends_with(".tplc") {
                 if let Some(meta) = pkg_meta(&p) {
-                    for name in meta.pous {
-                        index.entry(name).or_insert_with(|| LibHit::Pkg(p.clone()));
+                    /* only kind=library packages — a program package in
+                    a libdir would index its PROGRAM and hand the
+                    resolver a second main */
+                    if meta.kind == "library" {
+                        for name in meta.pous {
+                            index.entry(name).or_insert_with(|| LibHit::Pkg(p.clone()));
+                        }
                     }
                 }
             }
@@ -359,6 +364,34 @@ mod tests {
         let rep = resolve(&[dir.display().to_string()], &mut srcs, &mut pkgs);
         assert_eq!(srcs.len(), 3, "a.st and b.st must both be pulled");
         assert!(rep.misses.is_empty(), "misses: {:?}", rep.misses);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pkg_meta_and_bitcode_roundtrip() {
+        use tplc_pkg::writer::PackageWriter;
+        let dir = std::env::temp_dir().join(format!("tplc_libtest3_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("m.tplc");
+        let mut w = PackageWriter::new();
+        w.uuid_str("018c2f7e-9a3b-7c4d-8e5f-1234567890ab").unwrap();
+        w.add_section(
+            SectionType::Manifest,
+            br#"{"kind":"library","target_triple":"x86_64-pc-linux-gnu","pous":["FB_A","F_B"]}"#
+                .to_vec(),
+            false,
+            1,
+            0,
+        )
+        .unwrap();
+        w.add_section(SectionType::IrBitcode, b"BC\xde\xad".to_vec(), false, 1, 0)
+            .unwrap();
+        std::fs::write(&p, w.build().unwrap()).unwrap();
+        let m = pkg_meta(&p).unwrap();
+        assert_eq!(m.kind, "library");
+        assert_eq!(m.triple, "x86_64-pc-linux-gnu");
+        assert!(m.pous.contains("FB_A") && m.pous.contains("F_B"));
+        assert_eq!(pkg_bitcode(&p).unwrap(), b"BC\xde\xad");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

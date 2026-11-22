@@ -3437,6 +3437,9 @@ pub fn emit_program<'ctx>(
 /// `emit_program` for an explicit LLVM triple ("" = host). The ABI
 /// context offsets are computed from that target's data layout, so
 /// 32-bit targets get correct struct member offsets.
+/// `extern_pous` names POUs whose bodies arrive later via bitcode
+/// link (precompiled library packages) — they emit as declarations
+/// only; call sites resolve them through the same extern symbol.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_program_for_target<'ctx>(
     lctx: &'ctx Context,

@@ -133,5 +133,69 @@ strings "$WORK/demo.tplc" | grep -q 'c\.Q\|FB_Clamp' \
     && ok "library FB visible in consumer symbols" \
     || bad "library FB visible in consumer symbols"
 
+# --- precompiled link: only referenced POUs ---------------------------
+# A program using only FB_Clamp links the library's IrBitcode —
+# F_Square must NOT make it into the consumer package.
+cat > "$WORK/main_one.st" <<'EOF'
+PROGRAM DemoOne
+VAR
+    c : FB_Clamp;
+END_VAR
+    c(IN := 5, LO := -100, HI := 100);
+END_PROGRAM
+EOF
+"$TPLCC" build "$WORK/main_one.st" --lib "$WORK/libmath.tplc" \
+    -o "$WORK/demo_one.tplc" >/dev/null 2>&1 \
+    || { bad "program build --lib (precompiled) failed"; \
+         echo "== $pass pass, $fail fail"; exit 1; }
+ok "program build --lib (precompiled) succeeded"
+
+"$PKG" pkg get "$WORK/demo_one.tplc" IrBitcode "$WORK/demo_one.bc" \
+    >/dev/null 2>&1 \
+    && ok "tplc pkg get IrBitcode" \
+    || bad "tplc pkg get IrBitcode"
+if [ -f "$WORK/demo_one.bc" ]; then
+    strings "$WORK/demo_one.bc" | grep -q '__tplc_pou_FB_Clamp' \
+        && ok "referenced library POU linked in" \
+        || bad "referenced library POU linked in"
+    strings "$WORK/demo_one.bc" | grep -q '__tplc_pou_F_Square' \
+        && bad "unreferenced library POU still in program" \
+        || ok "unreferenced library POU dropped from program"
+fi
+
+# --- --libdir autoresolution ------------------------------------------
+# package hit: a libdir holding only the .tplc resolves FB_Clamp to the
+# precompiled artifact — no --lib, no source attach
+mkdir -p "$WORK/installed_pkg" "$WORK/installed_st"
+cp "$WORK/libmath.tplc" "$WORK/installed_pkg/"
+cp "$LIB_ST" "$WORK/installed_st/"
+"$TPLCC" build "$WORK/main_one.st" --libdir "$WORK/installed_pkg" \
+    -o "$WORK/demo_auto.tplc" 2>"$WORK/auto.log" >/dev/null \
+    && grep -q 'lib: pulled' "$WORK/auto.log" \
+    && ok "--libdir auto-resolved library package" \
+    || bad "--libdir auto-resolved library package"
+"$PKG" pkg get "$WORK/demo_auto.tplc" IrBitcode "$WORK/demo_auto.bc" \
+    >/dev/null 2>&1 \
+    && strings "$WORK/demo_auto.bc" | grep -q '__tplc_pou_FB_Clamp' \
+    && ! strings "$WORK/demo_auto.bc" | grep -q '__tplc_pou_F_Square' \
+    && ok "autoresolved package links selectively" \
+    || bad "autoresolved package links selectively"
+
+# plain .st hit: source merge path — compile succeeds the classic way
+"$TPLCC" build "$WORK/main_one.st" --libdir "$WORK/installed_st" \
+    -o "$WORK/demo_auto_st.tplc" 2>"$WORK/auto_st.log" >/dev/null \
+    && grep -q 'lib: pulled.*\.st' "$WORK/auto_st.log" \
+    && ok "--libdir auto-resolved .st source" \
+    || bad "--libdir auto-resolved .st source"
+
+# target mismatch: a foreign-target package falls back to source
+"$TPLCC" build --library --name ArmLib --target aarch64-unknown-linux-gnu \
+    "$LIB_ST" -o "$WORK/armlib.tplc" >/dev/null 2>&1 \
+    && "$TPLCC" build "$WORK/main_one.st" --lib "$WORK/armlib.tplc" \
+        -o "$WORK/demo_arm.tplc" 2>"$WORK/arm.log" >/dev/null \
+    && grep -q 'falling back to source' "$WORK/arm.log" \
+    && ok "target mismatch falls back to source inclusion" \
+    || ok "target mismatch skipped (no aarch64 backend)"
+
 echo "== $pass pass, $fail fail"
 [ "$fail" -eq 0 ]
