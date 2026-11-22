@@ -217,7 +217,16 @@ if(TPLC_ENABLE_MQTT)
     set(PAHO_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
     set(PAHO_BUILD_STATIC   ON  CACHE BOOL "" FORCE)
     set(PAHO_BUILD_SAMPLES  OFF CACHE BOOL "" FORCE)
-    set(PAHO_WITH_SSL       ON  CACHE BOOL "" FORCE)
+    # TLS needs OpenSSL — disable for cross builds that lack a target
+    # sysroot with OpenSSL (e.g. the aarch64 CI lane)
+    if(CMAKE_CROSSCOMPILING)
+      set(_tplc_mqtt_tls_default OFF)
+    else()
+      set(_tplc_mqtt_tls_default ON)
+    endif()
+    option(TPLC_MQTT_TLS "Enable TLS (OpenSSL) in the fetched paho.mqtt.c"
+      ${_tplc_mqtt_tls_default})
+    set(PAHO_WITH_SSL ${TPLC_MQTT_TLS} CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(pahomqttc)
     # prefer the SSL-enabled static lib (paho-mqtt3cs-static) when
     # PAHO_WITH_SSL built it; fall back to the plain variants

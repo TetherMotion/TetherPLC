@@ -109,7 +109,8 @@ jobs:
           cmake -B build-aarch64 \
             -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DTPLC_BIN="$PWD/compiler/target/aarch64-unknown-linux-gnu/debug/tplc"
+            -DTPLC_BIN="$PWD/compiler/target/aarch64-unknown-linux-gnu/debug/tplc" \
+            -DTPLC_MQTT_TLS=OFF
           cmake --build build-aarch64 -j8
 
       # CTest runs each test via qemu-aarch64 (CMAKE_CROSSCOMPILING_EMULATOR);
@@ -153,7 +154,7 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 21
           sudo apt-get update
-          sudo apt-get install -y libllvm-21-dev llvm-21-dev llvm-21-runtime \
+          sudo apt-get install -y libllvm21 llvm-21-dev llvm-21-runtime \
                                  libpolly-21-dev
           sudo update-alternatives --install /usr/bin/llvm-config llvm-config \
             /usr/bin/llvm-config-21 100 || true
