@@ -196,6 +196,9 @@ extern "C" fn steady_probe(_h: *mut u8) -> u64 {
 }
 
 #[test]
+// ctx fields are written for the JIT'd code, which reads them through
+// the tctx.prog pointer — rustc can't see those reads.
+#[allow(unused_assignments)]
 fn llvm_lowering_executes_through_jit() {
     let m = demo_module();
     let l = layout_program(&m, &m.pous[0]);
@@ -305,7 +308,7 @@ fn llvm_lowering_executes_through_jit() {
         FakeSvc.steady returns a huge value so any armed deadline
         is immediately exceeded                                  */
         let mut svc: [u64; 8] = [0; 8];
-        svc[3] = steady_probe as usize as u64; /* steady_ns @byte24  */
+        svc[3] = steady_probe as *const () as usize as u64; /* steady_ns @byte24  */
         svc[7] = 0; /* host cookie @byte56*/
         ctx.svc = svc.as_ptr() as *const u8;
         ctx.dl = 1;

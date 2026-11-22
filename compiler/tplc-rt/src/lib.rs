@@ -4995,6 +4995,7 @@ const MG_ERRID: usize = 32;
 const MG_STATE: usize = 36;
 const MG_NAXES: usize = 40;
 const MG_ENABLED: usize = 44;
+#[allow(dead_code)] // reserved ABI slot
 const MG_SRC: usize = 48;
 const MG_OVR: usize = 56;    // f64
 const MG_OVRACT: usize = 64; // f64
@@ -5011,8 +5012,10 @@ const MG_SVC_STATUS: usize = 56;
 const MG_SVC_SET_OVERRIDE: usize = 64;
 const MG_SVC_SET_SOURCE: usize = 72;
 const MG_SVC_SET_TRANSFORM: usize = 80;
+#[allow(dead_code)] // reserved ABI slot
 const MG_SVC_GET_SOURCE: usize = 88;
 const MG_SVC_GET_TRANSFORM: usize = 96;
+#[allow(dead_code)] // reserved ABI slot
 const MG_SVC_GET_OVERRIDE: usize = 104;
 const MG_SVC_AXES: usize = 112;
 
@@ -5045,8 +5048,10 @@ type FNmgSetOverride =
     unsafe extern "C" fn(*const u8, u32, f64, *mut f64) -> i32;
 type FNmgSetSource = unsafe extern "C" fn(*const u8, u32, i32) -> i32;
 type FNmgSetTransform = unsafe extern "C" fn(*const u8, u32, u32) -> i32;
+#[allow(dead_code)] // reserved ABI slot
 type FNmgGetI32 = unsafe extern "C" fn(*const u8, u32, *mut i32) -> i32;
 type FNmgGetU32 = unsafe extern "C" fn(*const u8, u32, *mut u32) -> i32;
+#[allow(dead_code)] // reserved ABI slot
 type FNmgGetF64 = unsafe extern "C" fn(*const u8, u32, *mut f64) -> i32;
 type FNmgAxes = unsafe extern "C" fn(
     *const u8, u32, *mut u32, u32, *mut i32,
@@ -6523,6 +6528,7 @@ const MQ_M5PUBRTOPIC_LEN: usize = 1860;
 const MQ_M5PUBRTOPIC: usize = 1861;
 const MQ_M5PUBCORR_LEN: usize = 1988;
 const MQ_M5PUBCORR: usize = 1989;
+#[allow(dead_code)] // reserved ABI slot
 const MQ_M5PUBCORRDLEN: usize = 2116;
 const MQ_M5PUBUPROPS_LEN: usize = 2120;
 const MQ_M5PUBUPROPS: usize = 2121;

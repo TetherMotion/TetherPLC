@@ -13,8 +13,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 pub struct RunOpts {
-    pub srcs: Vec<String>,
-    pub pkg: Option<String>,
     pub name: String,
     pub image: Option<String>,
     pub in_size: u32,
@@ -43,8 +41,6 @@ pub struct RunOpts {
 fn parse_common(args: &[String]) -> (RunOpts, Vec<String>, Vec<String>) {
     // returns (opts, positional srcs, passthrough-after---)
     let mut o = RunOpts {
-        srcs: vec![],
-        pkg: None,
         name: "main".into(),
         image: None,
         in_size: 64,
@@ -524,8 +520,6 @@ fn parse_dev(args: &[String]) -> (DevOpts, Vec<String>) {
 impl RunOpts {
     fn default_empty() -> Self {
         RunOpts {
-            srcs: vec![],
-            pkg: None,
             name: "main".into(),
             image: None,
             in_size: 64,

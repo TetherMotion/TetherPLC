@@ -14,6 +14,7 @@ pub fn is_repo(dir: &Path) -> bool {
 }
 
 /// Whether git2/libgit2 is usable at all in this build.
+#[allow(dead_code)] // probe for tests/diagnostics
 pub fn available() -> bool {
     // libgit2 is always linked; this exists so tests/UI can probe.
     true

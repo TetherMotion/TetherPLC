@@ -60,10 +60,6 @@ pub struct Tools {
 }
 
 impl Tools {
-    pub fn resolve(name: &str) -> Option<PathBuf> {
-        Self::default().find(name)
-    }
-
     pub fn find(&self, name: &str) -> Option<PathBuf> {
         // 1. explicit bindir
         let dirs: Vec<PathBuf> = {

@@ -116,11 +116,6 @@ impl Project {
         }
     }
 
-    /// Resolve a manifest-relative path to an absolute one.
-    pub fn resolve(&self, rel: &str) -> PathBuf {
-        self.root.join(rel)
-    }
-
     pub fn save(&self) -> std::io::Result<()> {
         let dir = self.tpl_dir();
         std::fs::create_dir_all(&dir)?;

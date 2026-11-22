@@ -15,6 +15,7 @@
 //!   tplc image|bridge|io|pump …   runtime tool passthrough
 //!   tplc check|build|info|…       tplcc subcommand passthrough
 
+#[allow(dead_code)] // ABI mirror of include/tplc/tplc_ctl.h
 mod ctl;
 mod ctlcmd;
 mod git;
@@ -363,38 +364,22 @@ pub(crate) fn detect_webui_dir() -> Option<String> {
 pub(crate) fn default_libdirs() -> Vec<String> {
     let mut out = Vec::new();
     // libraries/* + compat dirs under the repo root
-    let mut starts = Vec::new();
-    if let Ok(c) = std::env::current_dir() {
-        starts.push(c);
-    }
-    if let Ok(e) = std::env::current_exe() {
-        if let Some(d) = e.parent() {
-            starts.push(d.to_path_buf());
+    let Some(root) = Tools::default().repo_root() else {
+        return out;
+    };
+    let lib = root.join("libraries");
+    if let Ok(rd) = std::fs::read_dir(&lib) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.push(p.display().to_string());
+            }
         }
     }
-    'outer: for s in starts {
-        let mut d = Some(s.as_path());
-        for _ in 0..8 {
-            let Some(dir) = d else { break };
-            let lib = dir.join("libraries");
-            if lib.is_dir() {
-                if let Ok(rd) = std::fs::read_dir(&lib) {
-                    for e in rd.flatten() {
-                        let p = e.path();
-                        if p.is_dir() {
-                            out.push(p.display().to_string());
-                        }
-                    }
-                }
-                for rel in ["compat/tc2", "compat/tc3"] {
-                    let p = dir.join(rel);
-                    if p.is_dir() {
-                        out.push(p.display().to_string());
-                    }
-                }
-                break 'outer;
-            }
-            d = dir.parent();
+    for rel in ["compat/tc2", "compat/tc3"] {
+        let p = root.join(rel);
+        if p.is_dir() {
+            out.push(p.display().to_string());
         }
     }
     out

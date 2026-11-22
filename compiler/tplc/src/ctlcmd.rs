@@ -20,9 +20,6 @@ fn parse_u64(s: &str) -> u64 {
 fn parse_u32(s: &str) -> u32 {
     s.parse().unwrap_or(0)
 }
-fn parse_usize(s: &str) -> usize {
-    s.parse().unwrap_or(0)
-}
 
 /// 32-hex → raw 16B uuid; otherwise u16 len + bytes (path|uuid form).
 fn uuid_or_name(s: &str) -> Result<Vec<u8>, String> {
@@ -762,12 +759,11 @@ fn print_reply_fallback(op_code: u16, pl: &[u8], csv_mode: bool) {
             let sevnames = ["verbose", "info", "warning", "error", "critical"];
             let stnames = ["?", "raised", "cleared", "confirmed"];
             let mut r = Rd::new(pl);
-            let mut live = 0u32;
             let mut base = 0u32;
             match o {
                 x if x == op::EVTLOG_LIST => {
                     if pl.len() < 8 { println!("(short payload)"); return; }
-                    live = r.u32();
+                    let live = r.u32();
                     base = r.u32();
                     println!("live {}  shown {}", live, base);
                 }
@@ -1075,7 +1071,7 @@ pub fn run(sock: &str, args: &[String]) -> i32 {
 
     // single op + optional prefix payload
     let mut pre: Vec<u8> = Vec::new();
-    let mut op_code: u16 = 0;
+    let op_code: u16;
     let mut csv_mode = false;
     let arg = a.first().map(|s| s.as_str());
     let arg2 = a.get(1).map(|s| s.as_str());

@@ -43,9 +43,6 @@ impl Session {
     pub fn alive(&self) -> bool {
         pid_alive(self.runtime_pid) || pid_alive(self.pid)
     }
-    pub fn ctl_alive(&self) -> bool {
-        crate::ctl::Ctl::probe(&self.ctl)
-    }
 }
 
 pub fn session_path(name: &str) -> PathBuf {

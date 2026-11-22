@@ -158,6 +158,8 @@ fn debounce_project() -> FbdProject {
             period_ns: 10_000_000,
             priority: 0,
             programs: vec!["p1".into()],
+            kind: "cyclic".into(),
+            trigger: None,
         }],
     }
 }
