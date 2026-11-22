@@ -16,8 +16,20 @@
  *   signals master.<key>.do<g> / .ao<c>   (RxPDO, master -> slave)
  *   signals master.link / .cycles / .errors
  *
+ * Autodiscovery:
+ *   --scan            discovery only: print the bus table (vendor,
+ *                     product, revision, resolved part) and emit the
+ *                     equivalent fleet description on stdout
+ *                     (--fleet-out FILE also writes it).  Exit 1 when
+ *                     any slave is not in the Beckhoff catalog.
+ *   --fleet auto      resolve the fleet from the bus itself — no
+ *                     fleet file needed.  The resolved description is
+ *                     written to <simdir>/.fleet and the per-slave
+ *                     topology (part/key/PDO sizes) to <simdir>/.topology.
+ *
  * usage: tplc-ec-pump (--peer HOST --port PORT | --iface NAME)
  *                    --simdir DIR
+ *                    [--fleet FILE|auto] [--scan] [--fleet-out FILE]
  *                    [--io-port N] [--io-bind ADDR] [--hz N] [--time S]
  * SPDX-License-Identifier: Apache-2.0 OR MPL-2.0 */
 
@@ -134,10 +146,11 @@ struct PendingSignal {
 
 int main(int argc, char** argv) {
     std::string peer = "127.0.0.1", simdir, ioBind = "127.0.0.1", iface;
-    std::string fleetPath;
+    std::string fleetPath, fleetOut;
     uint16_t port = 47820, ioPort = 0;
     uint32_t hz = 500;
     double runSecs = 0;
+    bool scanOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto need = [&](const char* name) -> const char* {
@@ -152,6 +165,8 @@ int main(int argc, char** argv) {
         else if (a == "--iface")   iface   = need("--iface");
         else if (a == "--simdir")  simdir  = need("--simdir");
         else if (a == "--fleet")   fleetPath = need("--fleet");
+        else if (a == "--fleet-out") fleetOut = need("--fleet-out");
+        else if (a == "--scan")    scanOnly = true;
         else if (a == "--io-port") ioPort  = (uint16_t)std::stoul(need("--io-port"));
         else if (a == "--io-bind") ioBind  = need("--io-bind");
         else if (a == "--hz")      hz      = (uint32_t)std::stoul(need("--hz"));
@@ -159,7 +174,8 @@ int main(int argc, char** argv) {
         else if (a == "--help" || a == "-h") {
             std::fprintf(stderr,
                 "usage: %s (--peer HOST --port PORT | --iface NAME) "
-                "--simdir DIR [--fleet FILE] "
+                "--simdir DIR [--fleet FILE|auto] [--scan] "
+                "[--fleet-out FILE] "
                 "[--io-port N] [--io-bind ADDR] [--hz N] [--time S]\n",
                 argv[0]);
             return 0;
@@ -186,11 +202,117 @@ int main(int argc, char** argv) {
     signal(SIGINT, onSigint);
     signal(SIGTERM, onSigint);
 
-    /* fleet topology: default two-coupler fleet, or a line-based
-       description via --fleet (EK1100 / ELxxxx per line, chain order)
-       so "a bunch of EL1014" fleets are expressible              */
+    FleetMaster fm;
+    const bool linkOk = iface.empty() ? fm.open(peer, port)
+                                      : fm.openIface(iface);
+    if (!linkOk) {
+        std::fprintf(stderr, "tplc-ec-pump: link open failed\n");
+        return 1;
+    }
+
+    /* fleet topology: default two-coupler fleet, a line-based
+       --fleet FILE, or --fleet auto / --scan resolving the chain
+       from the bus itself (EK1100/ELxxxx per discovered slave).   */
     std::vector<tether::examples::FleetSlaveInfo> infos;
-    if (fleetPath.empty()) {
+    if (scanOnly || fleetPath == "auto") {
+        namespace d = tether::examples::detail;
+        auto found = fm.master().discovery().discover({
+            EtherCAT::DiscoveryOption::VendorId,
+            EtherCAT::DiscoveryOption::ProductCode,
+            EtherCAT::DiscoveryOption::RevisionNumber,
+            EtherCAT::DiscoveryOption::SerialNumber});
+        if (found.empty()) {
+            std::fprintf(stderr,
+                "tplc-ec-pump: no slaves discovered\n");
+            fm.close();
+            return 1;
+        }
+        std::vector<d::FleetScanSlave> ss;
+        ss.reserve(found.size());
+        for (const auto& s : found) {
+            d::FleetScanSlave e;
+            e.vendor  = s.vendor_id.value_or(0);
+            e.product = s.product_code.value_or(0);
+            e.name    = s.device_name.value_or("");
+            ss.push_back(std::move(e));
+        }
+        const auto sr = d::fleetTextFromScan(ss);
+        if (scanOnly) {
+            /* table on stderr, fleet text on stdout so
+               `tplc-ec-pump --scan > fleet.txt` just works       */
+            std::fprintf(stderr,
+                "tplc-ec-pump: scan — %zu slave(s), %zu coupler(s), "
+                "%zu module(s)\n",
+                found.size(), sr.couplers, sr.modules);
+            for (size_t i = 0; i < found.size(); ++i) {
+                const auto& s = found[i];
+                const auto& id = ss[i];
+                const char* part = "?";
+                char unk[80];
+                if (d::fleetIsCouplerProduct(id.product)) {
+                    part = "EK1100 (coupler)";
+                } else if (const auto* t =
+                           d::fleetModuleForProduct(id.product)) {
+                    part = t->name;
+                } else {
+                    std::snprintf(unk, sizeof unk,
+                        "UNKNOWN vendor=0x%08X product=0x%08X",
+                        id.vendor, id.product);
+                    part = unk;
+                }
+                std::fprintf(stderr,
+                    "  %2zu  vendor=0x%08X product=0x%08X "
+                    "rev=0x%08X serial=%u  %s\n", i, id.vendor,
+                    id.product, s.revision_number.value_or(0),
+                    (unsigned)s.serial_number.value_or(0), part);
+            }
+            if (!fleetOut.empty()) {
+                if (FILE* f = std::fopen(fleetOut.c_str(), "wb")) {
+                    std::fwrite(sr.text.data(), 1, sr.text.size(), f);
+                    std::fclose(f);
+                    std::fprintf(stderr,
+                        "tplc-ec-pump: fleet -> %s\n",
+                        fleetOut.c_str());
+                } else {
+                    std::fprintf(stderr,
+                        "tplc-ec-pump: cannot write %s\n",
+                        fleetOut.c_str());
+                }
+            } else {
+                std::fputs(sr.text.c_str(), stdout);
+                std::fflush(stdout);
+            }
+            for (const auto& u : sr.unknown)
+                std::fprintf(stderr,
+                    "tplc-ec-pump: unsupported slave vendor=0x%08X "
+                    "product=0x%08X\n", u.vendor, u.product);
+            fm.close();
+            return sr.unknown.empty() ? 0 : 1;
+        }
+        if (!sr.unknown.empty()) {
+            for (const auto& u : sr.unknown)
+                std::fprintf(stderr,
+                    "tplc-ec-pump: --fleet auto: unsupported slave "
+                    "vendor=0x%08X product=0x%08X\n",
+                    u.vendor, u.product);
+            std::fprintf(stderr,
+                "tplc-ec-pump: extend the Beckhoff catalog or use "
+                "--fleet FILE\n");
+            fm.close();
+            return 1;
+        }
+        std::string ferr;
+        infos = d::fleetInfosFromText(sr.text, &ferr);
+        if (infos.empty()) {
+            std::fprintf(stderr, "tplc-ec-pump: %s\n", ferr.c_str());
+            fm.close();
+            return 1;
+        }
+        std::fprintf(stderr,
+            "tplc-ec-pump: autodiscovered %zu slaves "
+            "(%zu couplers, %zu modules)\n",
+            found.size(), sr.couplers, sr.modules);
+    } else if (fleetPath.empty()) {
         infos = tether::examples::fleetInfos();
     } else {
         std::string ferr;
@@ -201,14 +323,6 @@ int main(int argc, char** argv) {
                          ferr.c_str());
             return 1;
         }
-    }
-
-    FleetMaster fm;
-    const bool linkOk = iface.empty() ? fm.open(peer, port)
-                                      : fm.openIface(iface);
-    if (!linkOk) {
-        std::fprintf(stderr, "tplc-ec-pump: link open failed\n");
-        return 1;
     }
 
     std::vector<EtherCAT::DiscoveredSlave> discovered;
@@ -279,6 +393,51 @@ int main(int argc, char** argv) {
             std::fwrite(cat.data(), 1, cat.size(), f);
             std::fclose(f);
             std::rename(tmp.c_str(), busPath.c_str());
+        }
+    }
+
+    /* resolved-topology artifacts for tooling and the IDE:
+       .fleet     canonical EK1100/ELxxxx description (reusable as
+                  --fleet FILE)
+       .topology  JSON per-slave {i,part,key,coupler,vendor,product,
+                  tx,rx} — tx/rx are PDO payload bytes, so a pdo=
+                  channel is valid for %I iff tx>0, %Q iff rx>0.   */
+    {
+        namespace d = tether::examples::detail;
+        const std::string ftext = d::fleetTextFromInfos(infos);
+        const auto fp = std::filesystem::path(simdir) / ".fleet";
+        if (FILE* f = std::fopen(
+                (fp.string() + ".tmp").c_str(), "wb")) {
+            std::fwrite(ftext.data(), 1, ftext.size(), f);
+            std::fclose(f);
+            std::rename((fp.string() + ".tmp").c_str(),
+                        fp.c_str());
+        }
+        std::string topo = "{\"v\":1,\"slaves\":[";
+        for (size_t i = 0; i < infos.size(); ++i) {
+            const auto& inf = infos[i];
+            const std::string part = inf.isCoupler
+                ? "EK1100"
+                : inf.name.substr(0, inf.name.find(" ("));
+            if (i) topo += ',';
+            topo += "{\"i\":" + std::to_string(i) +
+                    ",\"part\":\"" + part + "\"" +
+                    ",\"key\":\"" + inf.key + "\"" +
+                    ",\"coupler\":" +
+                        (inf.isCoupler ? "true" : "false") +
+                    ",\"vendor\":" + std::to_string(inf.vendorId) +
+                    ",\"product\":" + std::to_string(inf.productCode) +
+                    ",\"tx\":" + std::to_string(inf.txSize) +
+                    ",\"rx\":" + std::to_string(inf.rxSize) + "}";
+        }
+        topo += "]}";
+        const auto tp = std::filesystem::path(simdir) / ".topology";
+        if (FILE* f = std::fopen(
+                (tp.string() + ".tmp").c_str(), "wb")) {
+            std::fwrite(topo.data(), 1, topo.size(), f);
+            std::fclose(f);
+            std::rename((tp.string() + ".tmp").c_str(),
+                        tp.c_str());
         }
     }
 
