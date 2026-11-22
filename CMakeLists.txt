@@ -1771,6 +1771,15 @@ if(NOT CMAKE_CROSSCOMPILING)
         bash ${CMAKE_SOURCE_DIR}/tests/ec/fleet_e2e.sh)
     set_tests_properties(ec_fleet_e2e_veth PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 240 RESOURCE_LOCK plc_scan)
+    # Serve-level Discovery e2e over a real veth pair: iface_list,
+    # bus_scan meta-ops + /bus artifacts, then the full cyclic
+    # fleet_e2e as phase two. Skips without CAP_NET_ADMIN/CAP_NET_RAW.
+    add_test(NAME ec_serve_raw_e2e
+      COMMAND ${CMAKE_COMMAND} -E env
+        "BUILD=$<TARGET_FILE_DIR:tether-plc>"
+        bash ${CMAKE_SOURCE_DIR}/tests/ec/serve_raw_e2e.sh)
+    set_tests_properties(ec_serve_raw_e2e PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 300 RESOURCE_LOCK plc_scan)
   endif()
 
   # determinism contract (doc 14 §2): same input sequence twice must

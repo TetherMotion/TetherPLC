@@ -12,8 +12,9 @@
 #
 # Transport: UDP by default.  Set EC_IFACE=<base> (e.g. veth-tplc-ec)
 # to run the same scenario over raw L2 frames on a veth pair
-# (<base>0 = slave end, <base>1 = master end); requires runec (for
-# CAP_NET_ADMIN/CAP_NET_RAW) and ip(8), otherwise skips.
+# (<base>0 = slave end, <base>1 = master end); needs CAP_NET_ADMIN for
+# the veth pair and CAP_NET_RAW on the binaries — via root, runec,
+# 'sudo -n', or file caps (setcap); skips otherwise.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -27,6 +28,7 @@ CTL=$WORK/ctl.sock
 SIM=$WORK/sim
 EC_IFACE=${EC_IFACE:-}
 VETH_SLAVE= VETH_MASTER=
+PRIV=()
 SLAVE_PID= PUMP_PID= BRIDGE_PID= PLC_PID=
 IPBIN=
 
@@ -39,7 +41,7 @@ cleanup() {
     pkill -f "tplc-ec-pump.*$SIM" 2>/dev/null
     pkill -f "beckhoff_slave_chain.*--port $UDP_PORT" 2>/dev/null
     pkill -f "beckhoff_slave_chain.*--iface $VETH_SLAVE" 2>/dev/null
-    [ -n "$VETH_SLAVE" ] && runec "$IPBIN" link del "$VETH_SLAVE" 2>/dev/null
+    [ -n "$VETH_SLAVE" ] && "${PRIV[@]:-env}" "$IPBIN" link del "$VETH_SLAVE" 2>/dev/null
     "$BUILD"/tplc-image unlink "$IMG" 2>/dev/null
     rm -rf "$WORK"
 }
@@ -58,18 +60,39 @@ command -v python3 >/dev/null || { echo "SKIP: no python3"; exit 77; }
 
 # ---- raw-frame mode prerequisites -----------------------------------------
 if [ -n "$EC_IFACE" ]; then
-    command -v runec >/dev/null || { echo "SKIP: EC_IFACE set but no runec"; exit 77; }
     IPBIN=$(command -v ip || true)
     [ -n "$IPBIN" ] || { echo "SKIP: EC_IFACE set but no ip(8)"; exit 77; }
     VETH_SLAVE="${EC_IFACE}0"; VETH_MASTER="${EC_IFACE}1"
     [ ${#VETH_SLAVE} -le 15 ] || { echo "SKIP: iface name too long"; exit 77; }
-    runec "$IPBIN" link del "$VETH_SLAVE" 2>/dev/null
-    runec "$IPBIN" link del "$VETH_MASTER" 2>/dev/null
-    if ! runec "$IPBIN" link add "$VETH_SLAVE" type veth peer name "$VETH_MASTER" \
-         || ! runec "$IPBIN" link set "$VETH_SLAVE" up \
-         || ! runec "$IPBIN" link set "$VETH_MASTER" up; then
-        echo "SKIP: cannot create veth pair (need CAP_NET_ADMIN via runec)"
-        exit 77
+    # privilege wrapper: direct (root/setcap'd ip) || runec || sudo -n;
+    # file-cap'd binaries cover the no-wrapper AF_PACKET case too.
+    PRIV=()
+    if ! "$IPBIN" link add "$VETH_SLAVE" type veth peer name "$VETH_MASTER" 2>/dev/null; then
+        if command -v runec >/dev/null; then PRIV=(runec)
+        elif sudo -n true 2>/dev/null; then PRIV=(sudo -n)
+        else
+            echo "SKIP: cannot create veth (need CAP_NET_ADMIN: root, runec,"
+            echo "  'sudo -n', or 'sudo setcap cap_net_admin+ep $IPBIN')"
+            exit 77
+        fi
+        "${PRIV[@]:-env}" "$IPBIN" link del "$VETH_SLAVE" 2>/dev/null
+        "${PRIV[@]:-env}" "$IPBIN" link del "$VETH_MASTER" 2>/dev/null
+        if ! "${PRIV[@]}" "$IPBIN" link add "$VETH_SLAVE" type veth peer name "$VETH_MASTER"; then
+            echo "SKIP: ${PRIV[*]} ip link add failed"; exit 77
+        fi
+    fi
+    if ! "${PRIV[@]:-env}" "$IPBIN" link set "$VETH_SLAVE" up \
+         || ! "${PRIV[@]:-env}" "$IPBIN" link set "$VETH_MASTER" up; then
+        echo "SKIP: cannot bring veth pair up"; exit 77
+    fi
+    # raw-link binaries need CAP_NET_RAW — via PRIV/root, or file caps.
+    if [ "$(id -u)" != 0 ] && [ ${#PRIV[@]} -eq 0 ]; then
+        for b in "$TETHER_BIN" "$BUILD/tplc-ec-pump"; do
+            getcap "$b" 2>/dev/null | grep -q cap_net_raw || {
+                echo "SKIP: $b lacks cap_net_raw — 'sudo setcap cap_net_raw+ep $b',"
+                echo "  or run via runec/root/sudo"; exit 77
+            }
+        done
     fi
 fi
 
@@ -176,11 +199,11 @@ wait_io() {
 # ---- start the fleet -------------------------------------------------------
 if [ -n "$EC_IFACE" ]; then
     echo "transport: raw L2 frames on $VETH_SLAVE <-> $VETH_MASTER"
-    runec "$TETHER_BIN" --iface "$VETH_SLAVE" --io-port "$SLAVE_IO" \
+    "${PRIV[@]}" "$TETHER_BIN" --iface "$VETH_SLAVE" --io-port "$SLAVE_IO" \
         --hz 1000 >$WORK/slave.log 2>&1 &
     SLAVE_PID=$!
 
-    runec "$BUILD/tplc-ec-pump" --iface "$VETH_MASTER" \
+    "${PRIV[@]}" "$BUILD/tplc-ec-pump" --iface "$VETH_MASTER" \
         --simdir "$SIM" --io-port "$PUMP_IO" --hz 500 \
         >$WORK/pump.log 2>&1 &
     PUMP_PID=$!

@@ -504,7 +504,7 @@ fn do_bus_scan(cfg: &ServeCfg, req: &serde_json::Value) -> Result<serde_json::Va
 /// interface name iff exactly one physical Ethernet NIC exists (the
 /// "auto-select the sole physical interface" rule the Tether examples use).
 /// Non-Linux hosts get an empty list — the UI falls back to free text.
-fn do_iface_list(_cfg: &ServeCfg, _req: &serde_json::Value) -> serde_json::Value {
+fn do_iface_list(cfg: &ServeCfg, _req: &serde_json::Value) -> serde_json::Value {
     let mut ifaces: Vec<serde_json::Value> = Vec::new();
     let base = std::path::Path::new("/sys/class/net");
     if let Ok(rd) = std::fs::read_dir(base) {
@@ -559,31 +559,82 @@ fn do_iface_list(_cfg: &ServeCfg, _req: &serde_json::Value) -> serde_json::Value
     serde_json::json!({
         "ifaces": ifaces,
         "auto": if phys.len() == 1 { phys[0] } else { "" },
-        "raw_capable": raw_link_capable(),
+        "raw_capable": raw_link_capable(cfg),
     })
 }
 
 /// Raw EtherCAT (AF_PACKET) needs CAP_NET_RAW — probe once so the UI can
 /// show the setcap hint before the user runs a doomed raw-NIC scan.
-/// Non-Linux hosts report false (they have no raw transport anyway).
+/// "Capable" means either this process can open AF_PACKET (serve running
+/// privileged) or the resolved pump binary carries a cap_net_raw file
+/// cap (the setcap install path — children of an unprivileged serve get
+/// nothing from the parent). Non-Linux hosts report false.
 #[cfg(unix)]
-fn raw_link_capable() -> bool {
-    // ETH_P_ALL = 0x0003, AF_PACKET = 17, SOCK_RAW = 3, SOCK_CLOEXEC = 0o2000000
-    let fd = unsafe {
-        libc::socket(17, 3 | 0o2000000, (0x0003u16).to_be() as i32)
+fn raw_link_capable(cfg: &ServeCfg) -> bool {
+    if af_packet_probe() {
+        return true;
+    }
+    let Some(pump) = cfg
+        .ecpump
+        .clone()
+        .or_else(|| cfg.tools.find("tplc-ec-pump"))
+    else {
+        return false;
     };
+    file_cap_net_raw(&pump)
+}
+
+/// Try to open an AF_PACKET socket — succeeds iff this process has
+/// CAP_NET_RAW. Errors other than EPERM/EACCES don't prove the cap is
+/// missing, so they count as capable.
+#[cfg(unix)]
+fn af_packet_probe() -> bool {
+    // ETH_P_ALL = 0x0003, AF_PACKET = 17, SOCK_RAW = 3, SOCK_CLOEXEC = 0o2000000
+    let fd = unsafe { libc::socket(17, 3 | 0o2000000, (0x0003u16).to_be() as i32) };
     if fd >= 0 {
         unsafe { libc::close(fd) };
         true
     } else {
         let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        // EPERM/EACCES → no CAP_NET_RAW; other errors (e.g. EMFILE) don't
-        // prove the cap is missing, so treat them as capable.
         e != 1 && e != 13
     }
 }
+
+/// security.capability xattr on @p path: check CAP_NET_RAW (13) in the
+/// permitted set. vfs_cap_data v2/v3 layout: u32 magic, then two u32
+/// {permitted, inheritable} pairs (v3 appends a u32 rootid we ignore).
+#[cfg(target_os = "linux")]
+fn file_cap_net_raw(path: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let mut buf = [0u8; 24];
+    let cpath = match std::ffi::CString::new(path.as_os_str().as_bytes()) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let n = unsafe {
+        libc::getxattr(
+            cpath.as_ptr(),
+            b"security.capability\0".as_ptr().cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
+    if n < 12 {
+        return false;
+    }
+    let rev = u32::from_le_bytes(buf[0..4].try_into().unwrap()) & 0xFF00_0000;
+    if rev != 0x0100_0000 && rev != 0x0200_0000 && rev != 0x0300_0000 {
+        return false;
+    }
+    let permitted_lo = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+    permitted_lo & (1 << 13) != 0
+}
+#[cfg(all(unix, not(target_os = "linux")))]
+fn file_cap_net_raw(_path: &std::path::Path) -> bool {
+    false
+}
 #[cfg(not(unix))]
-fn raw_link_capable() -> bool {
+fn raw_link_capable(_cfg: &ServeCfg) -> bool {
     false
 }
 
