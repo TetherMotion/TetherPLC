@@ -2022,3 +2022,56 @@ documented procedures, lessons learned.
 **Acceptance criteria:**
 - Knowledge accessible to all team members.
 - New employees productive faster; issues resolved quicker.
+
+## Domain 16 — Fieldbus Discovery & Hardware Integration (US-136 – US-137)
+
+### US-136 — EtherCAT bus scan → structured hardware tree → devices in one click
+**Persona:** Commissioning engineer connecting a real Beckhoff chain
+(EK1100 couplers + EL terminals) to a project.
+**Context:** `tplc-ec-pump --scan` finds the chain in milliseconds, but
+the IDE currently shows a raw text table. Selecting hardware into the
+project means manually re-typing what the scan already knows.
+**Requirements:**
+- `--scan` writes `.topology` (JSON v2): per-slave part, coupler
+  segment, PDO endpoint key, vendor/product/rev/serial, SII device
+  name, channel layout (di/do/ai/ao), PDO byte sizes, `supported` flag
+  for non-catalog devices. `GET /bus` serves it.
+- Discovery pane renders the bus as a hardware tree grouped by EK1100
+  segment (one group = one physical location), each terminal shown
+  with a human summary ("8-ch digital out") + SII name + endpoint +
+  mapped/unmapped badge — not a raw text dump.
+- One-click "add" creates the device block — pins generated from the
+  bus's own channel layout, `endpoint` = discovered key, AT base
+  auto-allocated — into a target POU; "add all unmapped" adds the
+  chain. No manual endpoint or address entry.
+- Unknown (non-catalog) slaves render greyed with vendor/product hex —
+  visible, not silently dropped.
+**Acceptance criteria:**
+- Scan → tree in <1 s on a healthy link; scan log folded away, not
+  primary output.
+- Adding a discovered terminal requires zero typed values and cannot
+  duplicate a claimed endpoint.
+- A mapped badge proves the project ↔ bus correspondence without
+  opening the deploy map.
+
+### US-137 — Bus channels are autoconnected/autoconnectable into logic
+**Persona:** Controls engineer wiring field I/O into FBD.
+**Context:** After US-136, device blocks exist but wiring each channel
+to variables is still manual pin-dragging — the dominant cost on a
+large chain.
+**Requirements:**
+- Dragging a discovered terminal or a single channel onto the FBD
+  canvas lands a device block (pins + endpoint preset); dropping it
+  on a wire end or next to a type-compatible var block reuses the
+  wire-pick autoconnect path — the wire just lands.
+- "Wire channel" affordance: pick a bus channel → creates or targets
+  a var-in/var-out block and lands the wire; type-compatible targets
+  ranked (exact > coercible).
+- Project ↔ bus diff view: device blocks whose endpoint vanished
+  from the bus flag conflict; discovered terminals with no block
+  flag unmapped.
+**Acceptance criteria:**
+- A full chain can be placed and its channels wired without opening
+  any dialog per channel.
+- Renaming a device block's pin name never breaks the endpoint/AT
+  binding that ties it to the bus.

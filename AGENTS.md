@@ -235,11 +235,15 @@ schema/ packaging/ scripts/   package schema, deb packaging, misc
   with "no slaves discovered" even on unmodified code. Unit-test the
   catalog/parser layer; treat live-bus results as environment-gated.
 - `tplc-ec-pump` writes `.fleet`/`.topology`/`.bus` artifacts into
-  `--simdir`; `.topology` is the source for the WebUI discovered-
-  terminals view (GET /bus endpoint is planned, not yet built).
+  `--simdir` — both on `--scan` and on pump bring-up. `.topology` is
+  v2 JSON (key/coupler_idx/channel counts/SII name/supported) and
+  feeds the WebUI Discovery bus tree via `GET /bus`; `.bus` validates
+  `pdo=` endpoints.
 - WebUI (`TetherWebUI/` submodule) mirrors the terminal catalog in
   `src/plc/deploymap.ts` — keep `pdo=` endpoint names in lockstep
-  with `fleetInfosFromText` keys (`el1014.c1`, `.c1.2`, …).
+  with `fleetInfosFromText` keys (`el1014.c1`, `.c1.2`, …), and real
+  channel counts in lockstep with Tether's `fleetModuleCatalog`
+  (`di`/`dout` channels, bytes derived).
 
 ## Docs Map
 

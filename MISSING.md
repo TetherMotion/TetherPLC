@@ -198,3 +198,79 @@ lines with zero tooling feedback.
 4. **M3** — analog channel types + scaling block/device params.
 5. **M7/M8** — package the bridge/pump, write the quickstart, image
    force path.
+
+---
+
+# Missing — EtherCAT bus-scan → device UX (US-136 / US-137)
+
+> Tracking for the "scan the real bus, pick hardware into the project,
+> autoconnect channels" story. Ordered by what blocks the story most.
+
+- [x] **B1 — `--scan` publishes `.topology` (v2).** Implemented: scan
+  writes `.fleet`/`.topology` v2/`.bus` (DeviceNames added to discover
+  options — SII names on real HW); v2 carries `coupler_idx`, `name`,
+  `rev`, `serial`, `di/do/ai/ao`, `supported`. `fleetModuleCatalog`
+  gained real channel counts (`di`/`dout`) alongside byte sizes.
+- [x] **B2 — WebUI parses v2 + bus endpoints from topology.**
+  `BusSlave` extended (all v2 fields optional → v1-compatible);
+  `busSegments`/`channelSummary` helpers added.
+- [x] **B3 — BusTree view in the Discovery pane.** `busTree()`
+  replaces the flat table — segment cards per EK1100, terminal rows
+  with part/channels/SII name/endpoint/tx-rx chips, unsupported rows
+  greyed with vendor/product. `.fleet`/`.bus` collapsed into a
+  `<details>` raw-artifacts section.
+- [x] **B4 — Shared device-block factory.** `deviceChannelPins` +
+  `mkDiscoveredDevice(project, slave)` live in `deploymap.ts`;
+  `fbd-canvas.devicePins` delegates to it. Discovery-add and
+  palette-add share pin layout + AT allocation.
+- [x] **B5 — One-click add + add-all.** `+ device` per unmapped
+  terminal (target = open POU, else first program); "+ add N
+  unmapped" header button; endpoint claims prevent duplicates.
+- [x] **B6 — Autoconnect.** Implemented as `⚡ wire`: device block +
+  one declared POU `var` per channel + variable block wired to the
+  pin (`var_output` pins → `out` vars, `var_input` pins → `in` vars).
+  *Remaining:* channel-level drag/drop into FBD reusing `wirePick`
+  (the Discovery pane and FBD editor live in different activities,
+  so cross-pane drag isn't possible without a shared surface — needs
+  a design decision, e.g. bus tree inside the FBD workbench).
+- [x] **B7 — Project ↔ bus diff.** `deviceEndpointMap` drives
+  mapped ✓ (click → opens POU/network), unmapped → add buttons, and
+  a "project endpoints not on the bus" stale-claims section.
+- [x] **B8 — Tests + acceptance.** `deploymap.test.ts`: v2 fixtures,
+  `busSegments`, `channelSummary`, `mkDiscoveredDevice` (pins, AT
+  alloc, endpoint parity). `serve_raw_e2e.sh` asserts `--scan` writes
+  `.topology` v2 + `.bus`. Acceptance-matrix section added.
+  *Remaining:* UI-level e2e for tree/add/wire (playwright).
+- [x] **B9 — "Devices" document + rail entry.** Devices is a
+  first-class workbench tab (`__devices` document) reachable from
+  the shell **rail** (labeled `Devices` entry) and the explorer
+  sidebar (`DEV devices` row). The doc unifies three sources — live
+  EtherCAT bus tree (`.topology`), entity/service blocks from
+  catalog libs (`ENTITY_LIBS` regex: homeassistant, mqtt, iolink,
+  canopen, profinet, modbus, knx, opcua, bacnet, s7, io-link), and
+  the offline `TERMINALS` catalog — with a target-POU selector
+  (`devTargetPou`, persisted). All insert into the chosen POU's FBD
+  network (`deviceTargetNet`, falls back to creating a `devices`
+  net). Shared path: `insertDeviceSpec` (block + optional ⚡-wire:
+  declared POU vars + variable blocks per channel),
+  `addEntityBlock` (catalog FB + `attachLibSrc` source fetch),
+  `mkTerminalDevice`/`projectEndpointKeys` in `deploymap.ts`.
+  Rail buttons (Alarms/Events/Connect) were unified to the labeled
+  `rail-act` column. e2e: `rail-devices.spec.ts` (labels, uniform
+  60px widths, doc open, no-POU empty state).
+  *Remaining:* literal drag from a device row onto the canvas /
+  onto a wire (reuse `wirePick` machinery).
+
+### UX patterns this must reuse (from the code survey)
+
+- `wirePick` wire-drop autoconnect (`fbd-canvas.ts` ~line 1919): drop
+  on canvas → pick block → wire lands on first type-compatible input.
+- `suggestEndpoint` fleet occurrence naming + `nextFreeBase`
+  auto-AT allocation (`deploymap.ts`).
+- Device wizard `devicePins`/pin editor (`fbd-canvas.ts`) — becomes
+  the shared factory (B4).
+- `plc-pdo-ep` datalist endpoint autocomplete in the I/O-map grid —
+  extend to topology-derived keys.
+- Live PDO signals `master.<key>.di<g>` (ec-pump Tether IO) and
+  `plc.image.*.ch.*` channel signals — bus tree rows can link to
+  live values later.

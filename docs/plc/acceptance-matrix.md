@@ -75,6 +75,18 @@ swap injects no measurable pause, watchdog trip+escalation verified.
 | multi-shadow: ≤4 candidates, per-candidate ops | `shadow_e2e` multi section (cap, slots-full, duplicate-uuid, selector-required, uuid status/compare/image, `SHADOW[2].`/`dbg-read sel`/`fields sel`, drop+promote peer cleanup); `sim_shadow` `shadow.multi`/`shadow.multi2` vectors | green |
 | UI flow | TetherWebUI shadow card: deploy-as-shadow, diff table, `SHADOW.` watch/read, confirm-with-summary promote, drop/reset (single-candidate picker; indexed wire ready) | green |
 
+## EtherCAT discovery & device onboarding
+
+| criterion | covering test | status |
+|---|---|---|
+| `--scan` over native Tether host bring-up (real MAC, cBPF, poll thread, NIC checks) on raw NIC and UDP | `serve_raw_e2e` (`bus_scan --iface` over veth); verified on real HW (EK1100+EL2008, ~240 ms) | green |
+| scan publishes `.fleet` + `.topology` v2 + `.bus` into `--simdir` — keys, coupler segments, channel counts, SII names, supported flag | `serve_raw_e2e` artifact asserts; `deploymap.test.ts` v2 fixtures | green |
+| bus tree: segmented per EK1100, channel summaries, unsupported rows visible | `deploymap.test.ts` (`busSegments`, `channelSummary`) | green |
+| one-click device creation: shared factory, auto `%I`/`%Q` base, scan endpoint | `deploymap.test.ts` (`mkDiscoveredDevice` pin layout/AT alloc/endpoint parity) | green |
+| autoconnect: device block + declared POU vars wired per channel (UI-level, `plc-ide`) | `plc-ide.test.ts` ⚡-wire case (device + 8 variable blocks + wires + declared vars) | green — Playwright drag/drop e2e still open |
+| project↔bus diff: mapped/unmapped/stale-endpoint surfacing | `deviceEndpointMap`+bus tree (UI); stale claims asserted via deploy-map validation tests | partial |
+| "Devices" document: rail + explorer entry opens a workbench tab unifying live bus tree + catalog entities (HomeAssistant/MQTT/…) + offline terminal catalog, all inserting into a chosen target POU | `rail-devices.spec.ts` e2e (rail labels/uniform sizing, doc open, no-POU state); `plc-ide.test.ts` devices describe (render, +device → endpoint block, entity FB insert, ⚡ wired); `deploymap.test.ts` (`mkTerminalDevice`, `projectEndpointKeys`) | green |
+
 ## Pending chapters (not yet implemented — spec exists)
 
 None — all plan chapters are retired; `docs/plc/mcu-path.md` records

@@ -73,6 +73,27 @@ pub(crate) fn project_meta(cfg: &ServeCfg, op: &str, req: &serde_json::Value) ->
                 Err(e) => pj_err(&e),
             });
         }
+        "project_new" => {
+            let path = s("path");
+            if path.is_empty() {
+                return Some(pj_err("missing path"));
+            }
+            let name = s("name");
+            // init() creates the directory, scaffolds src/main.st,
+            // writes .tplc/project.json + .gitignore and git-inits.
+            return Some(match crate::project::init(
+                &PathBuf::from(path),
+                if name.is_empty() { None } else { Some(name) },
+            ) {
+                Ok(p) => {
+                    if let Ok(mut g) = cfg.project_root.lock() {
+                        *g = Some(p.root.clone());
+                    }
+                    pj_ok(project_manifest_json(&p))
+                }
+                Err(e) => pj_err(&e),
+            });
+        }
         "project_save" => {
             let Some(root) = proj_root(cfg) else {
                 return Some(pj_err("no project open"));

@@ -42,14 +42,6 @@
 #include "tether/io/Server.hpp"
 #include "tether/io/TcpTransport.hpp"
 
-#include <arpa/inet.h>
-#include <net/if.h>
-#include <sys/socket.h>
-#if defined(__linux__)
-#include <linux/if_packet.h>
-#include <linux/if_ether.h>
-#endif
-
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -149,6 +141,139 @@ struct PendingSignal {
     SchemaRef    ref;
 };
 
+/* ---- discovery artifacts (.topology v2 + .bus) ------------------------- */
+
+/* One slave in the .topology v2 JSON — the resolved view tooling and
+   the IDE's bus tree consume.  Channel counts (di/do/ai/ao) come from
+   Tether's fleetModuleCatalog; identity (rev/serial/name) from the SII
+   scan.  supported=false rows are non-catalog slaves — visible, never
+   silently dropped.                                                        */
+struct TopoSlave {
+    int          i = -1;
+    bool         coupler = false;
+    int          coupler_idx = 0;
+    std::string  part, key, name;
+    uint32_t     vendor = 0, product = 0, rev = 0, serial = 0;
+    unsigned     di = 0, dout = 0, ai = 0, ao = 0;
+    unsigned     tx = 0, rx = 0;
+    bool         supported = true;
+};
+
+std::string jsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 2);
+    for (const char c : s) {
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                char b[8];
+                std::snprintf(b, sizeof b, "\\u%04x", c);
+                out += b;
+            } else {
+                out += c;
+            }
+        }
+    }
+    return out;
+}
+
+/* Merge catalog-resolved infos (supported chain nodes, in order) with
+   the SII identity scan (every discovered node, in order).  Nodes the
+   catalog can't resolve contribute supported=false rows.             */
+std::vector<TopoSlave> topoSlaves(
+    const std::vector<tether::ethercat::beckhoff::FleetSlaveInfo>& infos,
+    const std::vector<EtherCAT::DiscoveredSlave>& found) {
+    namespace d = tether::ethercat::beckhoff::detail;
+    std::vector<TopoSlave> out;
+    out.reserve(found.size());
+    size_t j = 0;   /* infos cursor — supported nodes only */
+    for (size_t i = 0; i < found.size(); ++i) {
+        const auto& s = found[i];
+        const uint32_t product = s.product_code.value_or(0);
+        const bool supported =
+            d::fleetIsCouplerProduct(product) ||
+            d::fleetModuleForProduct(product) != nullptr;
+
+        TopoSlave t;
+        t.i        = static_cast<int>(i);
+        t.vendor   = s.vendor_id.value_or(0);
+        t.product  = product;
+        t.rev      = s.revision_number.value_or(0);
+        t.serial   = s.serial_number.value_or(0);
+        t.name     = s.device_name.value_or("");
+        t.supported = supported;
+        if (supported && j < infos.size()) {
+            const auto& inf = infos[j++];
+            t.coupler     = inf.isCoupler;
+            t.coupler_idx = inf.coupler;
+            t.key         = inf.key;
+            t.tx          = inf.txSize;
+            t.rx          = inf.rxSize;
+            t.part        = inf.isCoupler
+                ? "EK1100"
+                : inf.name.substr(0, inf.name.find(" ("));
+            if (const auto* m = d::fleetModuleType(t.part)) {
+                t.di = m->di;  t.dout = m->dout;
+                t.ai = m->ai;  t.ao   = m->ao;
+            }
+        }
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+void writeTopologyArtifact(const std::filesystem::path& simdir,
+                           const std::vector<TopoSlave>& slaves) {
+    std::string topo = "{\"v\":2,\"slaves\":[";
+    for (size_t i = 0; i < slaves.size(); ++i) {
+        const auto& s = slaves[i];
+        if (i) topo += ',';
+        topo += "{\"i\":" + std::to_string(s.i) +
+            ",\"part\":\"" + jsonEscape(s.part) + "\"" +
+            ",\"key\":\"" + jsonEscape(s.key) + "\"" +
+            ",\"coupler\":" + (s.coupler ? "true" : "false") +
+            ",\"coupler_idx\":" + std::to_string(s.coupler_idx) +
+            ",\"name\":\"" + jsonEscape(s.name) + "\"" +
+            ",\"vendor\":" + std::to_string(s.vendor) +
+            ",\"product\":" + std::to_string(s.product) +
+            ",\"rev\":" + std::to_string(s.rev) +
+            ",\"serial\":" + std::to_string(s.serial) +
+            ",\"di\":" + std::to_string(s.di) +
+            ",\"do\":" + std::to_string(s.dout) +
+            ",\"ai\":" + std::to_string(s.ai) +
+            ",\"ao\":" + std::to_string(s.ao) +
+            ",\"tx\":" + std::to_string(s.tx) +
+            ",\"rx\":" + std::to_string(s.rx) +
+            ",\"supported\":" + (s.supported ? "true" : "false") + "}";
+    }
+    topo += "]}";
+    const auto tp = std::filesystem::path(simdir) / ".topology";
+    writeFileAtomic(tp, reinterpret_cast<const uint8_t*>(topo.data()),
+                    topo.size());
+}
+
+/* .bus — pdo= endpoint catalog the bridge validates against.  Built
+   from resolved infos so a scan alone can publish it (no bring-up).  */
+void writeBusCatalogArtifact(
+    const std::filesystem::path& simdir,
+    const std::vector<tether::ethercat::beckhoff::FleetSlaveInfo>& infos) {
+    std::string cat = "# tplc-ec-pump bus catalog v1\n";
+    for (const auto& inf : infos) {
+        if (inf.isCoupler) continue;
+        if (inf.txSize)
+            cat += "tx " + inf.key + " " + std::to_string(inf.txSize) + "\n";
+        if (inf.rxSize)
+            cat += "rx " + inf.key + " " + std::to_string(inf.rxSize) + "\n";
+    }
+    const auto bp = std::filesystem::path(simdir) / ".bus";
+    writeFileAtomic(bp, reinterpret_cast<const uint8_t*>(cat.data()),
+                    cat.size());
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -210,39 +335,17 @@ int main(int argc, char** argv) {
     signal(SIGTERM, onSigint);
 
     FleetMaster fm;
+    /* iface mode goes through the host Ethernet session (real MAC,
+       promiscuous socket, cBPF filter, poll thread) — the same path the
+       Tether examples use.  The naive PacketEthercatLink sent with a
+       hard-coded src MAC whose replies a real NIC drops.            */
     const bool linkOk = iface.empty() ? fm.open(peer, port)
-                                      : fm.openIface(iface);
+                                      : fm.openHost(iface);
     if (!linkOk) {
-        if (!iface.empty()) {
-            if (::if_nametoindex(iface.c_str()) == 0) {
-                std::fprintf(stderr,
-                    "tplc-ec-pump: no such interface '%s'\n", iface.c_str());
-            } else {
-                /* The link only reports bool — probe AF_PACKET ourselves to
-                   tell "needs CAP_NET_RAW" apart from a bind failure.      */
-#if defined(__linux__)
-                int probe = ::socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC,
-                                     htons(ETH_P_ALL));
-                const int e = (probe < 0) ? errno : 0;
-                if (probe >= 0) ::close(probe);
-                if (e == EPERM || e == EACCES) {
-                    std::fprintf(stderr,
-                        "tplc-ec-pump: raw EtherCAT on '%s' needs CAP_NET_RAW —\n"
-                        "  (a) install runec (github.com/ulikoehler/runec): "
-                        "make && sudo make install\n"
-                        "  (b) run this binary via sudo\n"
-                        "  (c) sudo setcap cap_net_raw+ep %s\n"
-                        "  or use EtherCAT/UDP (no privileges needed)\n",
-                        iface.c_str(), argv[0]);
-                } else
-#endif
-                {
-                    std::fprintf(stderr,
-                        "tplc-ec-pump: link open failed on '%s'\n",
-                        iface.c_str());
-                }
-            }
-        } else {
+        /* iface failures are already diagnosed by Tether's host
+           bring-up (interface not found + list, link down, permission
+           denied + runec guidance) — nothing left to add here.     */
+        if (iface.empty()) {
             std::fprintf(stderr,
                 "tplc-ec-pump: link open failed for %s:%u\n",
                 peer.c_str(), (unsigned)port);
@@ -255,12 +358,16 @@ int main(int argc, char** argv) {
        from the bus itself (EK1100/ELxxxx per discovered slave).   */
     std::vector<tether::ethercat::beckhoff::FleetSlaveInfo> infos;
     if (scanOnly || fleetPath == "auto") {
+        std::fprintf(stderr,
+            "tplc-ec-pump: scanning bus for slaves%s\n",
+            scanOnly ? " (--scan)" : " (--fleet auto)");
         namespace d = tether::ethercat::beckhoff::detail;
         auto found = fm.master().discovery().discover({
             EtherCAT::DiscoveryOption::VendorId,
             EtherCAT::DiscoveryOption::ProductCode,
             EtherCAT::DiscoveryOption::RevisionNumber,
-            EtherCAT::DiscoveryOption::SerialNumber});
+            EtherCAT::DiscoveryOption::SerialNumber,
+            EtherCAT::DiscoveryOption::DeviceNames});
         if (found.empty()) {
             std::fprintf(stderr,
                 "tplc-ec-pump: no slaves discovered\n");
@@ -321,6 +428,20 @@ int main(int argc, char** argv) {
             } else {
                 std::fputs(sr.text.c_str(), stdout);
                 std::fflush(stdout);
+            }
+            /* publish the same artifacts the pump path does — a scan
+               alone feeds the IDE's bus tree + pdo endpoint checks   */
+            {
+                const auto scanInfos =
+                    d::fleetInfosFromText(sr.text);
+                writeFileAtomic(
+                    std::filesystem::path(simdir) / ".fleet",
+                    reinterpret_cast<const uint8_t*>(sr.text.data()),
+                    sr.text.size());
+                writeTopologyArtifact(simdir,
+                                      topoSlaves(scanInfos, found));
+                if (!scanInfos.empty())
+                    writeBusCatalogArtifact(simdir, scanInfos);
             }
             for (const auto& u : sr.unknown)
                 std::fprintf(stderr,
@@ -421,64 +542,22 @@ int main(int argc, char** argv) {
     // Bus catalog for map validation (TPLC_E_MAP_PDO): the bridge's
     // pdo= channels are checked against <simdir>/.bus.  Static for the
     // life of the pump — the fleet topology does not change.
-    {
-        std::string cat = "# tplc-ec-pump bus catalog v1\n";
-        for (const auto& l : links) {
-            cat += l.txpdo ? "tx " : "rx ";
-            cat += l.key + " " + std::to_string(l.size) + "\n";
-        }
-        const auto busPath = std::filesystem::path(simdir) / ".bus";
-        const auto tmp = busPath.string() + ".tmp";
-        if (FILE* f = std::fopen(tmp.c_str(), "wb")) {
-            std::fwrite(cat.data(), 1, cat.size(), f);
-            std::fclose(f);
-            std::rename(tmp.c_str(), busPath.c_str());
-        }
-    }
+    writeBusCatalogArtifact(simdir, infos);
 
     /* resolved-topology artifacts for tooling and the IDE:
        .fleet     canonical EK1100/ELxxxx description (reusable as
                   --fleet FILE)
-       .topology  JSON per-slave {i,part,key,coupler,vendor,product,
-                  tx,rx} — tx/rx are PDO payload bytes, so a pdo=
-                  channel is valid for %I iff tx>0, %Q iff rx>0.   */
+       .topology  v2 JSON per-slave — key/part/channel counts/SII
+                  identity + supported flag; the IDE's bus tree and
+                  pdo= endpoint checks consume it.                */
     {
         namespace d = tether::ethercat::beckhoff::detail;
         const std::string ftext = d::fleetTextFromInfos(infos);
         const auto fp = std::filesystem::path(simdir) / ".fleet";
-        if (FILE* f = std::fopen(
-                (fp.string() + ".tmp").c_str(), "wb")) {
-            std::fwrite(ftext.data(), 1, ftext.size(), f);
-            std::fclose(f);
-            std::rename((fp.string() + ".tmp").c_str(),
-                        fp.c_str());
-        }
-        std::string topo = "{\"v\":1,\"slaves\":[";
-        for (size_t i = 0; i < infos.size(); ++i) {
-            const auto& inf = infos[i];
-            const std::string part = inf.isCoupler
-                ? "EK1100"
-                : inf.name.substr(0, inf.name.find(" ("));
-            if (i) topo += ',';
-            topo += "{\"i\":" + std::to_string(i) +
-                    ",\"part\":\"" + part + "\"" +
-                    ",\"key\":\"" + inf.key + "\"" +
-                    ",\"coupler\":" +
-                        (inf.isCoupler ? "true" : "false") +
-                    ",\"vendor\":" + std::to_string(inf.vendorId) +
-                    ",\"product\":" + std::to_string(inf.productCode) +
-                    ",\"tx\":" + std::to_string(inf.txSize) +
-                    ",\"rx\":" + std::to_string(inf.rxSize) + "}";
-        }
-        topo += "]}";
-        const auto tp = std::filesystem::path(simdir) / ".topology";
-        if (FILE* f = std::fopen(
-                (tp.string() + ".tmp").c_str(), "wb")) {
-            std::fwrite(topo.data(), 1, topo.size(), f);
-            std::fclose(f);
-            std::rename((tp.string() + ".tmp").c_str(),
-                        tp.c_str());
-        }
+        writeFileAtomic(fp,
+            reinterpret_cast<const uint8_t*>(ftext.data()),
+            ftext.size());
+        writeTopologyArtifact(simdir, topoSlaves(infos, discovered));
     }
 
     // --- Tether IO server: master-side PDO views ---------------------------

@@ -6,7 +6,8 @@
 #   beckhoff_slave_chain --iface    (raw AF_PACKET slave, CAP_NET_RAW)
 #   tplc serve (privileged)         meta-ops over /ws
 #     iface_list -> veth ends enumerated, raw_capable=true
-#     bus_scan --iface -> exit 0, scan table, <simdir>/.fleet written
+#     bus_scan --iface -> exit 0, scan table, <simdir>/.fleet
+#                          + .topology v2 + .bus written
 #     bus_scan bad iface -> clean "no such interface" error
 #     GET /bus -> .fleet artifact served
 #   fleet_e2e EC_IFACE phase        full cyclic path: raw slave chain
@@ -166,6 +167,30 @@ fleet = open(os.path.join(sim, ".fleet")).read() \
 assert "EK" in fleet or "EL" in fleet, f"fleet artifact missing/empty: {fleet!r}"
 ok(f"<simdir>/.fleet written ({len(fleet.splitlines())} lines)")
 
+# .topology v2 — the IDE bus tree's structured view: keys, coupler
+# segments, channel counts, supported flags for every discovered node
+tp = os.path.join(sim, ".topology")
+assert os.path.exists(tp), "scan did not write <simdir>/.topology"
+topo = json.load(open(tp))
+assert topo.get("v") == 2 and topo.get("slaves"), topo
+sl = topo["slaves"]
+assert any(s.get("coupler") for s in sl), "no coupler row in .topology"
+mod = [s for s in sl if not s.get("coupler") and s.get("supported")]
+assert mod, "no supported module rows in .topology"
+m0 = mod[0]
+for f in ("part", "key", "coupler_idx", "di", "do", "ai", "ao", "tx", "rx"):
+    assert f in m0, f".topology slave missing field {f}"
+assert m0["key"].startswith(m0["part"].lower()), m0
+assert m0["coupler_idx"] >= 1, m0
+ok(f"<simdir>/.topology v2 ({len(sl)} slaves, keys+coupler_idx+channel counts)")
+
+# .bus pdo= endpoint catalog — non-coupler modules contribute tx/rx lines
+bus = open(os.path.join(sim, ".bus")).read() \
+      if os.path.exists(os.path.join(sim, ".bus")) else ""
+assert any(l.startswith(("tx ", "rx ")) for l in bus.splitlines()), \
+    f".bus artifact missing endpoints: {bus!r}"
+ok(f"<simdir>/.bus written ({sum(1 for l in bus.splitlines() if l[:2] in ('tx','rx'))} endpoints)")
+
 # error paths stay clean: no such iface / no link at all
 d = ws.meta("bus_scan", {"iface": "nosuchnic9"})
 assert d["exit"] != 0 and "no such interface" in d["stderr"], d["stderr"]
@@ -192,9 +217,9 @@ print('PASS GET /bus serves the .fleet artifact')
 fi
 
 # ---- full cyclic path --------------------------------------------------------
-# The serve-level scan only writes .fleet; the complete process (discovery
-# -> bring-up -> cyclic PDO -> PLC %I/%Q) is fleet_e2e's veth mode — run it
-# as the second phase with its own pair.
+# The serve-level scan writes .fleet/.topology/.bus; the complete process
+# (discovery -> bring-up -> cyclic PDO -> PLC %I/%Q) is fleet_e2e's veth
+# mode — run it as the second phase with its own pair.
 echo "---- full cyclic e2e (fleet_e2e EC_IFACE=veth-tplc-ec) ----"
 EC_IFACE=veth-tplc-ec BUILD="$BUILD" TETHER_BIN="$TETHER_BIN" \
     bash tests/ec/fleet_e2e.sh
