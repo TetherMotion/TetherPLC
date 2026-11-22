@@ -17,12 +17,12 @@ jobs:
   linux-x86_64:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: TetherPLC
 
       - name: Checkout Tether (tether_io sources)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: TetherMotion/Tether
           ref: ${{ env.TETHER_REF }}
@@ -65,12 +65,12 @@ jobs:
   linux-aarch64-qemu:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: TetherPLC
 
       - name: Checkout Tether (tether_io sources)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: TetherMotion/Tether
           ref: ${{ env.TETHER_REF }}
@@ -129,12 +129,12 @@ jobs:
   linux-x86_64-llvm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: TetherPLC
 
       - name: Checkout Tether (tether_io sources)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: TetherMotion/Tether
           ref: ${{ env.TETHER_REF }}
