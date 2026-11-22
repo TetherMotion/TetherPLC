@@ -227,7 +227,7 @@ schema/ packaging/ scripts/   package schema, deb packaging, misc
 - `tplc-ec-pump` writes `.fleet`/`.topology`/`.bus` artifacts into
   `--simdir`; `.topology` is the source for the WebUI discovered-
   terminals view (GET /bus endpoint is planned, not yet built).
-- WebUI (`../TetherWebUI`) mirrors the terminal catalog in
+- WebUI (`TetherWebUI/` submodule) mirrors the terminal catalog in
   `src/plc/deploymap.ts` — keep `pdo=` endpoint names in lockstep
   with `fleetInfosFromText` keys (`el1014.c1`, `.c1.2`, …).
 

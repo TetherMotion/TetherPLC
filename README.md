@@ -59,6 +59,8 @@ libraries/           IEC libraries compiled with tplcc --library:
                      canopen/ iolink/ profinet/
 compat/              tc2/tc3 compatibility wrappers (.st)
 examples/            ha_demo.st (interactive Home Assistant demo)
+TetherWebUI/         git submodule — browser IDE; `tplc dev`/`serve`
+                     auto-builds its dist/ (override: --webui/TPLC_WEBUI)
 tests/               unit, compat e2e scripts, vector suites (see below)
 docs/                architecture, per-topic specs, design goals
 ```
@@ -74,6 +76,13 @@ docs/                architecture, per-topic specs, design goals
 - **LLVM 21** development files for `tplcc` (`inkwell`/`llvm21-1`).
   On Ubuntu: `apt install llvm-21-dev libclang-21-dev` or point
   `LLVM_SYS_211_PREFIX` at an LLVM 21 install.
+- **TetherWebUI submodule** (`TetherWebUI/`): the browser IDE — init it
+  with `git submodule update --init` (or clone `--recursive`). On first
+  `tplc dev`/`tplc serve` its `dist/` is built automatically
+  (`npm install` + `npm run build` when missing or stale;
+  `TPLC_NO_WEBUI_BUILD=1` opts out). `--webui <dir>` / `TPLC_WEBUI`
+  point at any built dist; a sibling `../TetherWebUI` checkout is the
+  fallback when the submodule isn't initialized.
 - **Optional — sibling Tether checkout** at `../Tether` (or set
   `-DTETHER_DIR=`): required for `tplc-io`, `tplc-io-cli`,
   `tplc-io-probe` and `tplc-ec-pump` (EtherCAT fleet pump, tether_io
@@ -198,7 +207,7 @@ files on the command line — explicit sources override the manifest.
 ./compiler/target/release/tplc dev
 # inside the project dir the manifest sources are picked up
 automatically; compile → image → tether-plc → tplc-io → webserver:
-#   http://127.0.0.1:8089  WebUI (auto-detected ../TetherWebUI/dist)
+#   http://127.0.0.1:8089  WebUI (TetherWebUI/ submodule, auto-built)
 #   tplc ctl status        inspect the running PLC
 #   tplc down              shut the stack down
 ```
@@ -316,7 +325,7 @@ tplc serve --ctl /tmp/oven.ctl --port 8089 \
 #                    (compile/blocks/libsrc/pkgmap), F_EVENT pushes
 # GET /tether-io     WebSocket → tplc-io provider (live values)
 # GET /health        liveness
-# GET /*             static WebUI (auto-detected ../TetherWebUI/dist)
+# GET /*             static WebUI (TetherWebUI/ submodule, auto-built)
 ```
 
 Point TetherWebUI's dev proxy at this and the browser IDE gets

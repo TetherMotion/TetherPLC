@@ -164,7 +164,9 @@ Flags: `--ctl` (ctl UDS, default: live session else
 `--tplccd` (daemon UDS; `""` disables), `--libdir <dir>` (repeatable;
 each dir's `.st` files and `.tplc` packages feed `blocks`/`libsrc` —
 point it at the installed `libraries/` tree), `--webui DIR` /
-`--no-webui`, `--tplc-io host:port` + `--io`/`--io-port`/`--packages`/
+`--no-webui` (default: the `TetherWebUI/` submodule's `dist/`, built
+automatically when missing/stale; a sibling `../TetherWebUI` checkout
+is the fallback), `--tplc-io host:port` + `--io`/`--io-port`/`--packages`/
 `--pkg` to spawn `tplc-io`.
 
 `tests/serve/e2e.sh` exercises the whole surface with a minimal

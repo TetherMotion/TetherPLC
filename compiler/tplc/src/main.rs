@@ -343,7 +343,9 @@ fn resolve_serve_project(dir: Option<&str>) -> Option<std::path::PathBuf> {
 }
 
 /// Candidate TetherWebUI dist dirs: `<…>/TetherWebUI/dist` walked up
-/// from cwd and the executable dir (same order as detection).
+/// from cwd and the executable dir (same order as detection).  The
+/// in-repo submodule (`TetherWebUI/`) is preferred over a sibling
+/// `../TetherWebUI` checkout — `--webui`/`TPLC_WEBUI` override both.
 fn webui_candidates() -> Vec<std::path::PathBuf> {
     let mut starts = Vec::new();
     if let Ok(c) = std::env::current_dir() {
@@ -359,7 +361,7 @@ fn webui_candidates() -> Vec<std::path::PathBuf> {
         let mut d = Some(s.as_path());
         for _ in 0..8 {
             let Some(dir) = d else { break };
-            for rel in ["../TetherWebUI", "TetherWebUI", "../../TetherWebUI"] {
+            for rel in ["TetherWebUI", "../TetherWebUI", "../../TetherWebUI"] {
                 out.push(dir.join(rel).join("dist"));
             }
             d = dir.parent();
